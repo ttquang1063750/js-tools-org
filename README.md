@@ -23,6 +23,7 @@ js-tools-org/
 ├── index.html      # Main landing page
 ├── styles.css      # Global styles (dark theme, CSS variables, animations)
 ├── main.js         # JS: year injection + hero particle canvas animation
+├── i18n.js         # EN/VI translations + language toggle logic
 ├── favicon.svg     # SVG favicon
 ├── og-image.svg    # OG image source (1200×630)
 ├── og-image.png    # OG image rendered (generated from og-image.svg)
@@ -33,13 +34,21 @@ js-tools-org/
 ## Features
 
 - **Dark theme** — black/navy background, `#4f8ef7` primary accent
-- **Hero particle canvas** — 100 particles floating upward, attracted to mouse cursor
+- **Time-based weather canvas** — hero background changes based on time of day:
+  - 🌅 5h–8h `dawn` — warm orange/yellow particles + drifting clouds
+  - ☀️ 8h–17h `day` — soft blue particles + drifting clouds
+  - 🌇 17h–20h `dusk` — orange/purple particles + clouds
+  - 🌧️ 20h–23h `rain` — animated rain drops
+  - 🌙 23h–5h `night` — twinkling stars + falling snowflakes
+- **Mouse attraction** — particles and snowflakes are attracted to the cursor
+- **Mode switcher** — 5 emoji buttons (fixed bottom-right) to preview each mode; switching also updates all CSS variables (bg, accent, border, hero gradient) instantly
 - **Ambient orbs** — blurred radial glows with CSS float animation
 - **Entrance animations** — badge, headline, subtitle, CTA, stats bar fade-in on load
 - **Stats bar** — 2 Tools · 0 Bytes uploaded · 100% In-browser
 - **App logos in nav/footer** — inline SVG for Image Optimizer and SnapCast
 - **Full SEO** — meta description, canonical, Open Graph, Twitter Card, JSON-LD structured data
 - **Google AdSense** — 2 responsive ad units (below hero, between tools and why section)
+- **i18n (EN / VI)** — toggle button in nav auto-detects browser language (`navigator.language`), persists choice in `localStorage`; all text via `data-i18n` attributes in `i18n.js`
 
 ## Local development
 
