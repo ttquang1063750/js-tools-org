@@ -320,13 +320,14 @@ document.getElementById('year').textContent = new Date().getFullYear();
 
 // ── Lazy Load Iframes ──────────────────────────────────────────
 (function () {
+  const iframes = document.querySelectorAll('.sc-demo iframe');
   if ('IntersectionObserver' in window) {
     const iframeObserver = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
           const iframe = entry.target;
           const src = iframe.dataset.src;
-          if (src && iframe.src !== src) {
+          if (src) {
             iframe.src = src;
             iframe.removeAttribute('data-src');
           }
@@ -335,13 +336,16 @@ document.getElementById('year').textContent = new Date().getFullYear();
       });
     }, { rootMargin: '200px' });
 
-    document.querySelectorAll('.sc-demo iframe').forEach(iframe => {
-      iframeObserver.observe(iframe);
+    iframes.forEach(iframe => {
+      if (iframe.dataset.src) {
+        iframeObserver.observe(iframe);
+      }
     });
   } else {
-    document.querySelectorAll('.sc-demo iframe').forEach(iframe => {
-      if (iframe.dataset.src) {
-        iframe.src = iframe.dataset.src;
+    iframes.forEach(iframe => {
+      const src = iframe.dataset.src;
+      if (src) {
+        iframe.src = src;
         iframe.removeAttribute('data-src');
       }
     });
