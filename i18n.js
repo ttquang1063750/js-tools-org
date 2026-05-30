@@ -36,6 +36,7 @@ const TRANSLATIONS = {
     'sc.demo.qr.hint': 'Scan with your phone to send a photo to the demo slideshow',
     'sc.demo.qr.btn': '📱 View QR code →',
     'sc.demo.qr.note': 'Opens the guest upload screen on your phone',
+    'sc.demo.contact.label': '📸 Photo slots are limited. Want a private demo for your event?',
     'why.title': 'Why JS Tools?',
     'why.privacy.title': 'Privacy First',
     'why.privacy.desc': 'Your files never leave your device. Processing happens entirely in the browser.',
@@ -82,6 +83,7 @@ const TRANSLATIONS = {
     'sc.demo.qr.hint': 'Quét bằng điện thoại để gửi ảnh lên demo slideshow',
     'sc.demo.qr.btn': '📱 Xem QR code →',
     'sc.demo.qr.note': 'Mở màn hình upload ảnh dành cho khách',
+    'sc.demo.contact.label': '📸 Lượt gửi ảnh có giới hạn. Muốn demo riêng cho sự kiện của bạn?',
     'why.title': 'Tại sao chọn JS Tools?',
     'why.privacy.title': 'Bảo mật tuyệt đối',
     'why.privacy.desc': 'File của bạn không bao giờ rời khỏi thiết bị. Xử lý hoàn toàn trên trình duyệt.',
@@ -118,7 +120,7 @@ const TRANSLATIONS = {
     // Update toggle button
     const btn = document.getElementById('langToggle');
     if (btn) {
-      btn.textContent = l === 'vi' ? '🇺🇸 EN' : '🇻🇳 VI';
+      btn.textContent = l === 'vi' ? '🇺🇸 English' : '🇻🇳 Việt Nam';
       btn.title = l === 'vi' ? 'Switch to English' : 'Chuyển sang tiếng Việt';
     }
   }
