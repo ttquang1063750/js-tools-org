@@ -60,10 +60,15 @@ document.getElementById('year').textContent = new Date().getFullYear();
 
 
   // ── Mouse ──
+  let canvasRect = canvas.getBoundingClientRect();
+  function updateRect() {
+    canvasRect = canvas.getBoundingClientRect();
+  }
+  window.addEventListener('scroll', updateRect, { passive: true });
+
   window.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
-    mouse.x = e.clientX - rect.left;
-    mouse.y = e.clientY - rect.top;
+    mouse.x = e.clientX - canvasRect.left;
+    mouse.y = e.clientY - canvasRect.top;
   }, { passive: true });
 
   function resize() {
@@ -305,7 +310,10 @@ document.getElementById('year').textContent = new Date().getFullYear();
     draw();
   }
 
-  window.addEventListener('resize', resize);
+  window.addEventListener('resize', () => {
+    resize();
+    updateRect();
+  });
   applyPalette(mode);
   init();
 })();
