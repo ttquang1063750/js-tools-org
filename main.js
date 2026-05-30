@@ -64,7 +64,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
     const rect = canvas.getBoundingClientRect();
     mouse.x = e.clientX - rect.left;
     mouse.y = e.clientY - rect.top;
-  });
+  }, { passive: true });
 
   function resize() {
     W = canvas.width  = canvas.offsetWidth;
@@ -153,7 +153,9 @@ document.getElementById('year').textContent = new Date().getFullYear();
 
   function init() {
     resize();
-    const count = (mode === 'night') ? 120 : (mode === 'rain') ? 140 : 100;
+    const count = (window.innerWidth < 768)
+      ? 35
+      : ((mode === 'night') ? 120 : (mode === 'rain') ? 140 : 100);
     particles = Array.from({ length: count }, createParticle);
     if (mode === 'day' || mode === 'dawn' || mode === 'dusk') {
       clouds = Array.from({ length: 5 }, createCloud);
@@ -268,15 +270,90 @@ document.getElementById('year').textContent = new Date().getFullYear();
     }
   }
 
+  let animFrameId = null;
   function draw() {
     ctx.clearRect(0, 0, W, H);
     if (clouds.length) drawClouds();
     drawParticles();
-    requestAnimationFrame(draw);
+    animFrameId = requestAnimationFrame(draw);
+  }
+
+  // IntersectionObserver to pause/resume canvas animations when hero is out of view
+  if ('IntersectionObserver' in window) {
+    const heroSection = document.querySelector('.hero');
+    const heroObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          if (!animFrameId) {
+            animFrameId = requestAnimationFrame(draw);
+          }
+        } else {
+          if (animFrameId) {
+            cancelAnimationFrame(animFrameId);
+            animFrameId = null;
+          }
+        }
+      });
+    }, { threshold: 0 });
+
+    if (heroSection) {
+      heroObserver.observe(heroSection);
+    } else {
+      draw();
+    }
+  } else {
+    draw();
   }
 
   window.addEventListener('resize', resize);
   applyPalette(mode);
   init();
-  draw();
+})();
+
+// ── Lazy Load Iframes ──────────────────────────────────────────
+(function () {
+  if ('IntersectionObserver' in window) {
+    const iframeObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const iframe = entry.target;
+          const src = iframe.dataset.src;
+          if (src && iframe.src !== src) {
+            iframe.src = src;
+            iframe.removeAttribute('data-src');
+          }
+          iframeObserver.unobserve(iframe);
+        }
+      });
+    }, { rootMargin: '200px' });
+
+    document.querySelectorAll('.sc-demo iframe').forEach(iframe => {
+      iframeObserver.observe(iframe);
+    });
+  } else {
+    document.querySelectorAll('.sc-demo iframe').forEach(iframe => {
+      if (iframe.dataset.src) {
+        iframe.src = iframe.dataset.src;
+        iframe.removeAttribute('data-src');
+      }
+    });
+  }
+})();
+
+// ── Dynamic Google AdSense Loader ─────────────────────────────
+(function () {
+  let adSenseLoaded = false;
+  function loadAdSense() {
+    if (adSenseLoaded) return;
+    adSenseLoaded = true;
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3175971990265774";
+    script.crossOrigin = "anonymous";
+    document.head.appendChild(script);
+    events.forEach(e => window.removeEventListener(e, loadAdSense, { passive: true }));
+  }
+  const events = ['scroll', 'touchstart', 'mousemove', 'click'];
+  events.forEach(e => window.addEventListener(e, loadAdSense, { passive: true, once: true }));
+  setTimeout(loadAdSense, 3500);
 })();
