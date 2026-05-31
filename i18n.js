@@ -37,14 +37,14 @@ const TRANSLATIONS = {
     'sc.demo.qr.btn': '📱 View QR code →',
     'sc.demo.qr.note': 'Opens the guest upload screen on your phone',
     'sc.demo.contact.label': '📸 Photo slots are limited. Want a private demo for your event?',
-    'why.title': 'Why JS Tools?',
+    'why.title': 'Why js-tools?',
     'why.privacy.title': 'Privacy First',
     'why.privacy.desc': 'Your files never leave your device. Processing happens entirely in the browser.',
     'why.free.title': 'Instant & Free',
     'why.free.desc': 'No account needed. Open a tool and start working immediately, at no cost.',
     'why.oss.title': 'Open Source',
     'why.oss.desc': 'Every tool is open-source. Inspect, fork, or contribute on GitHub.',
-    'footer.copy': '© {year} JS Tools — Built with ❤️ and open web standards.',
+    'footer.copy': '© {year} js-tools — Built with ❤️ and open web standards.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -84,14 +84,14 @@ const TRANSLATIONS = {
     'sc.demo.qr.btn': '📱 Xem QR code →',
     'sc.demo.qr.note': 'Mở màn hình upload ảnh dành cho khách',
     'sc.demo.contact.label': '📸 Lượt gửi ảnh có giới hạn. Muốn demo riêng cho sự kiện của bạn?',
-    'why.title': 'Tại sao chọn JS Tools?',
+    'why.title': 'Tại sao chọn js-tools?',
     'why.privacy.title': 'Bảo mật tuyệt đối',
     'why.privacy.desc': 'File của bạn không bao giờ rời khỏi thiết bị. Xử lý hoàn toàn trên trình duyệt.',
     'why.free.title': 'Miễn phí & tức thì',
     'why.free.desc': 'Không cần tài khoản. Mở công cụ và bắt đầu làm việc ngay, hoàn toàn miễn phí.',
     'why.oss.title': 'Mã nguồn mở',
     'why.oss.desc': 'Mọi công cụ đều mã nguồn mở. Xem, fork hoặc đóng góp trên GitHub.',
-    'footer.copy': '© {year} JS Tools — Làm với ❤️ và chuẩn web mở.',
+    'footer.copy': '© {year} js-tools — Làm với ❤️ và chuẩn web mở.',
   },
 };
 
@@ -120,8 +120,8 @@ const TRANSLATIONS = {
     // Update toggle button
     const btn = document.getElementById('langToggle');
     if (btn) {
-      btn.innerHTML = l === 'vi' 
-        ? '<span class="lang-flag">🇺🇸</span> <span class="lang-text">English</span>' 
+      btn.innerHTML = l === 'vi'
+        ? '<span class="lang-flag">🇺🇸</span> <span class="lang-text">English</span>'
         : '<span class="lang-flag">🇻🇳</span> <span class="lang-text">Việt Nam</span>';
       btn.title = l === 'vi' ? 'Switch to English' : 'Chuyển sang tiếng Việt';
     }
