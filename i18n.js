@@ -120,7 +120,9 @@ const TRANSLATIONS = {
     // Update toggle button
     const btn = document.getElementById('langToggle');
     if (btn) {
-      btn.textContent = l === 'vi' ? '🇺🇸 English' : '🇻🇳 Việt Nam';
+      btn.innerHTML = l === 'vi' 
+        ? '<span class="lang-flag">🇺🇸</span> <span class="lang-text">English</span>' 
+        : '<span class="lang-flag">🇻🇳</span> <span class="lang-text">Việt Nam</span>';
       btn.title = l === 'vi' ? 'Switch to English' : 'Chuyển sang tiếng Việt';
     }
   }
