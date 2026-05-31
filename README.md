@@ -24,9 +24,12 @@ js-tools-org/
 ├── styles.css      # Global styles (dark theme, CSS variables, animations)
 ├── main.js         # JS: year injection + hero particle canvas animation
 ├── i18n.js         # EN/VI translations + language toggle logic
-├── favicon.svg     # SVG favicon
-├── og-image.svg    # OG image source (1200×630)
-├── og-image.png    # OG image rendered (generated from og-image.svg)
+├── assets/         # App assets (icons, images)
+│   ├── favicon.svg     # SVG favicon
+│   ├── og-image.svg    # OG image source (1200×630)
+│   ├── og-image.png    # OG image rendered (generated from og-image.svg)
+│   ├── optimizer.svg   # Image Optimizer logo asset
+│   └── snapcast.svg    # Snapcast logo asset
 ├── robots.txt
 └── sitemap.xml
 ```
@@ -67,7 +70,7 @@ npx serve .
 The `og-image.png` is generated from `og-image.svg` using `rsvg-convert`:
 
 ```bash
-rsvg-convert -w 1200 -h 630 og-image.svg -o og-image.png
+rsvg-convert -w 1200 -h 630 assets/og-image.svg -o assets/og-image.png
 ```
 
 ## Deploy
