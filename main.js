@@ -205,6 +205,26 @@ document.getElementById('year').textContent = new Date().getFullYear();
   function drawParticles() {
     for (const p of particles) {
       if (p.type === 'rain') {
+        // Mouse influence with repulsion boundary
+        const isMouseValid = mouse.x >= 0 && mouse.x <= W && mouse.y >= 0 && mouse.y <= H;
+        if (isMouseValid) {
+          const dx = mouse.x - p.x;
+          const dy = mouse.y - p.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < REPEL_RADIUS) {
+            // Soft boundary: gently nudge particle out
+            const penetration = REPEL_RADIUS - dist;
+            p.x -= (dx / dist) * penetration * 0.3; // Gentle nudge
+            p.y -= (dy / dist) * penetration * 0.3;
+
+            // Strong repulsion force
+            const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
+            p.vx -= (dx / dist) * repelForce;
+            p.vy -= (dy / dist) * repelForce;
+          }
+        }
+
         p.x += p.vx;
         p.y += p.vy;
         ctx.beginPath();
