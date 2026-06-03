@@ -244,7 +244,10 @@ document.getElementById('year').textContent = new Date().getFullYear();
             const ratio = pushDist / Math.max(0.1, dist);
             p.x = mouse.x - (dx * ratio);
             p.y = mouse.y - (dy * ratio);
-            // Also apply strong repulsion force
+            // Reset velocity to prevent bouncing/jittering
+            p.vx = 0;
+            p.vy = 0;
+            // Apply repulsion force to smoothly push outward
             const repelForce = REPEL_FORCE;
             p.vx -= (dx / dist) * repelForce;
             p.vy -= (dy / dist) * repelForce;
@@ -286,7 +289,10 @@ document.getElementById('year').textContent = new Date().getFullYear();
           const ratio = pushDist / Math.max(0.1, dist);
           p.x = mouse.x - (dx * ratio);
           p.y = mouse.y - (dy * ratio);
-          // Also apply strong repulsion force
+          // Reset velocity to prevent bouncing/jittering
+          p.vx = 0;
+          p.vy = 0;
+          // Apply repulsion force to smoothly push outward
           const repelForce = REPEL_FORCE;
           p.vx -= (dx / dist) * repelForce;
           p.vy -= (dy / dist) * repelForce;
