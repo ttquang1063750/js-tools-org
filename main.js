@@ -229,8 +229,9 @@ document.getElementById('year').textContent = new Date().getFullYear();
       }
 
       if (p.type === 'snow') {
-        // Gentle mouse influence for all snow particles (only when mouse is inside)
-        if (mouseInside) {
+        // Gentle mouse influence for all snow particles (only when mouse is inside canvas)
+        const isMouseValid = mouse.x >= 0 && mouse.x <= W && mouse.y >= 0 && mouse.y <= H;
+        if (isMouseValid) {
           const dx = mouse.x - p.x;
           const dy = mouse.y - p.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
@@ -257,8 +258,9 @@ document.getElementById('year').textContent = new Date().getFullYear();
         continue;
       }
 
-      // Generic floating particle (dawn / dusk / day) — all particles gently influenced by mouse (only when inside)
-      if (mouseInside) {
+      // Generic floating particle (dawn / dusk / day) — all particles gently influenced by mouse (only when inside canvas)
+      const isMouseValid = mouse.x >= 0 && mouse.x <= W && mouse.y >= 0 && mouse.y <= H;
+      if (isMouseValid) {
         const dx = mouse.x - p.x;
         const dy = mouse.y - p.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
