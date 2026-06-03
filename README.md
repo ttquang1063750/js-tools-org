@@ -1,6 +1,6 @@
 # js-tools.org
 
-Static landing page for [js-tools.org](https://js-tools.org) — introducing free, browser-based developer tools.
+Static landing page for [js-tools.org](https://js-tools.org) — experience, speed, convenience. Everything happens in your browser. No installation — just run. Unlock the power of JavaScript and your browser.
 
 ## Tools
 
