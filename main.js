@@ -7,6 +7,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
   const ctx = canvas.getContext('2d');
   let W, H, particles = [], clouds = [];
   const mouse = { x: -9999, y: -9999 };
+  let mouseInside = false; // Track if mouse is over canvas
   const ATTRACT_FORCE  = 0.003; // Very light attraction applied to all particles
 
   // ── Color palettes per mode ──
@@ -70,10 +71,13 @@ document.getElementById('year').textContent = new Date().getFullYear();
     mouse.y = e.clientY - canvasRect.top;
   }, { passive: true });
 
-  // Reset mouse when leaving canvas — particles return to natural random movement
+  // Track mouse enter/leave to enable/disable attraction
+  canvas.addEventListener('mouseenter', () => {
+    mouseInside = true;
+  });
+
   canvas.addEventListener('mouseleave', () => {
-    mouse.x = -9999;
-    mouse.y = -9999;
+    mouseInside = false;
   });
 
   function resize() {
@@ -225,14 +229,16 @@ document.getElementById('year').textContent = new Date().getFullYear();
       }
 
       if (p.type === 'snow') {
-        // Gentle mouse influence for all snow particles
-        const dx = mouse.x - p.x;
-        const dy = mouse.y - p.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        // Apply very light attraction to all particles, decreasing with distance
-        const force = ATTRACT_FORCE / Math.max(1, dist / 200);
-        p.vx += dx * force;
-        p.vy += dy * force;
+        // Gentle mouse influence for all snow particles (only when mouse is inside)
+        if (mouseInside) {
+          const dx = mouse.x - p.x;
+          const dy = mouse.y - p.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          // Apply very light attraction to all particles, decreasing with distance
+          const force = ATTRACT_FORCE / Math.max(1, dist / 200);
+          p.vx += dx * force;
+          p.vy += dy * force;
+        }
         p.vx *= 0.97;
         p.vy *= 0.97;
         p.vy += 0.015;
@@ -251,14 +257,16 @@ document.getElementById('year').textContent = new Date().getFullYear();
         continue;
       }
 
-      // Generic floating particle (dawn / dusk / day) — all particles gently influenced by mouse
-      const dx = mouse.x - p.x;
-      const dy = mouse.y - p.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      // Apply very light attraction to all particles, decreasing with distance
-      const force = ATTRACT_FORCE / Math.max(1, dist / 200);
-      p.vx += dx * force;
-      p.vy += dy * force;
+      // Generic floating particle (dawn / dusk / day) — all particles gently influenced by mouse (only when inside)
+      if (mouseInside) {
+        const dx = mouse.x - p.x;
+        const dy = mouse.y - p.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        // Apply very light attraction to all particles, decreasing with distance
+        const force = ATTRACT_FORCE / Math.max(1, dist / 200);
+        p.vx += dx * force;
+        p.vy += dy * force;
+      }
       p.vx *= 0.96;
       p.vy *= 0.96;
       p.vy -= 0.012;
