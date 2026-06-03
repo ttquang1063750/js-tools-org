@@ -79,7 +79,7 @@ const TRANSLATIONS = {
     'sc.open': 'Mở công cụ →',
     'sc.demo.label': '🎉 Demo trực tiếp — ảnh cập nhật theo thời gian thực',
     'sc.demo.title': 'Trải nghiệm ngay — không cần đăng ký',
-    'sc.demo.desc': 'Đây là một sự kiện Snapcast thật, đang chạy trực tiếp. Quét mã QR bằng điện thoại, chụp ảnh và xem ảnh xuất hiện trên slideshow trong vài giây. Hoàn toàn miễn phí.',
+    'sc.demo.desc': 'Đây là một sự kiện Snapcast thật, đang chạy trực tiếp. Quét mã QR bằng điện thoại, chụp ảnh và xem ảnh xuất hiện trên slideshow trong vài giây.',
     'sc.demo.qr.hint': 'Quét bằng điện thoại để gửi ảnh lên demo slideshow',
     'sc.demo.qr.btn': '📱 Xem QR code →',
     'sc.demo.qr.note': 'Mở màn hình upload ảnh dành cho khách',
