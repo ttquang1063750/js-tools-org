@@ -222,6 +222,11 @@ document.getElementById('year').textContent = new Date().getFullYear();
             const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
             p.vx -= (dx / dist) * repelForce;
             p.vy -= (dy / dist) * repelForce;
+          } else {
+            // Far enough — gentle attraction
+            const force = ATTRACT_FORCE / Math.max(1, dist / 200);
+            p.vx += dx * force;
+            p.vy += dy * force;
           }
         }
 
