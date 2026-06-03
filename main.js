@@ -9,6 +9,8 @@ document.getElementById('year').textContent = new Date().getFullYear();
   const mouse = { x: -9999, y: -9999 };
   let mouseInside = false; // Track if mouse is over canvas
   const ATTRACT_FORCE  = 0.003; // Very light attraction applied to all particles
+  const REPEL_RADIUS   = 60;    // Minimum distance — particles can't get closer
+  const REPEL_FORCE    = 0.008; // Repulsion force when too close
 
   // ── Color palettes per mode ──
   const PALETTES = {
@@ -229,16 +231,24 @@ document.getElementById('year').textContent = new Date().getFullYear();
       }
 
       if (p.type === 'snow') {
-        // Gentle mouse influence for all snow particles (only when mouse is inside canvas)
+        // Mouse influence with repulsion boundary (only when mouse is inside canvas)
         const isMouseValid = mouse.x >= 0 && mouse.x <= W && mouse.y >= 0 && mouse.y <= H;
         if (isMouseValid) {
           const dx = mouse.x - p.x;
           const dy = mouse.y - p.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
-          // Apply very light attraction to all particles, decreasing with distance
-          const force = ATTRACT_FORCE / Math.max(1, dist / 200);
-          p.vx += dx * force;
-          p.vy += dy * force;
+
+          if (dist < REPEL_RADIUS) {
+            // Too close — repel outward
+            const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
+            p.vx -= (dx / dist) * repelForce;
+            p.vy -= (dy / dist) * repelForce;
+          } else {
+            // Far enough — gentle attraction
+            const force = ATTRACT_FORCE / Math.max(1, dist / 200);
+            p.vx += dx * force;
+            p.vy += dy * force;
+          }
         }
         p.vx *= 0.97;
         p.vy *= 0.97;
@@ -258,16 +268,24 @@ document.getElementById('year').textContent = new Date().getFullYear();
         continue;
       }
 
-      // Generic floating particle (dawn / dusk / day) — all particles gently influenced by mouse (only when inside canvas)
+      // Generic floating particle (dawn / dusk / day) — mouse influence with repulsion boundary
       const isMouseValid = mouse.x >= 0 && mouse.x <= W && mouse.y >= 0 && mouse.y <= H;
       if (isMouseValid) {
         const dx = mouse.x - p.x;
         const dy = mouse.y - p.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        // Apply very light attraction to all particles, decreasing with distance
-        const force = ATTRACT_FORCE / Math.max(1, dist / 200);
-        p.vx += dx * force;
-        p.vy += dy * force;
+
+        if (dist < REPEL_RADIUS) {
+          // Too close — repel outward
+          const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
+          p.vx -= (dx / dist) * repelForce;
+          p.vy -= (dy / dist) * repelForce;
+        } else {
+          // Far enough — gentle attraction
+          const force = ATTRACT_FORCE / Math.max(1, dist / 200);
+          p.vx += dx * force;
+          p.vy += dy * force;
+        }
       }
       p.vx *= 0.96;
       p.vy *= 0.96;
