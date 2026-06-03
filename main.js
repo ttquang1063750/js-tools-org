@@ -7,8 +7,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
   const ctx = canvas.getContext('2d');
   let W, H, particles = [], clouds = [];
   const mouse = { x: -9999, y: -9999 };
-  const ATTRACT_RADIUS = 100;  // Reduced from 160 — particles only react when closer
-  const ATTRACT_FORCE  = 0.015; // Reduced from 0.06 — much gentler attraction
+  const ATTRACT_FORCE  = 0.003; // Very light attraction applied to all particles
 
   // ── Color palettes per mode ──
   const PALETTES = {
@@ -220,18 +219,17 @@ document.getElementById('year').textContent = new Date().getFullYear();
       }
 
       if (p.type === 'snow') {
-        // Mouse attraction for snow
+        // Gentle mouse influence for all snow particles
         const dx = mouse.x - p.x;
         const dy = mouse.y - p.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < ATTRACT_RADIUS) {
-          const force = (1 - dist / ATTRACT_RADIUS) * ATTRACT_FORCE;
-          p.vx += dx * force;
-          p.vy += dy * force;
-        }
+        // Apply very light attraction to all particles, decreasing with distance
+        const force = ATTRACT_FORCE / Math.max(1, dist / 200);
+        p.vx += dx * force;
+        p.vy += dy * force;
         p.vx *= 0.97;
         p.vy *= 0.97;
-        if (dist >= ATTRACT_RADIUS) p.vy += 0.015;
+        p.vy += 0.015;
 
         p.x += p.vx;
         p.y += p.vy;
@@ -247,18 +245,17 @@ document.getElementById('year').textContent = new Date().getFullYear();
         continue;
       }
 
-      // Generic floating particle (dawn / dusk / day)
+      // Generic floating particle (dawn / dusk / day) — all particles gently influenced by mouse
       const dx = mouse.x - p.x;
       const dy = mouse.y - p.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < ATTRACT_RADIUS) {
-        const force = (1 - dist / ATTRACT_RADIUS) * ATTRACT_FORCE;
-        p.vx += dx * force;
-        p.vy += dy * force;
-      }
+      // Apply very light attraction to all particles, decreasing with distance
+      const force = ATTRACT_FORCE / Math.max(1, dist / 200);
+      p.vx += dx * force;
+      p.vy += dy * force;
       p.vx *= 0.96;
       p.vy *= 0.96;
-      if (dist >= ATTRACT_RADIUS) p.vy -= 0.012;
+      p.vy -= 0.012;
 
       p.x += p.vx;
       p.y += p.vy;
