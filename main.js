@@ -70,6 +70,12 @@ document.getElementById('year').textContent = new Date().getFullYear();
     mouse.y = e.clientY - canvasRect.top;
   }, { passive: true });
 
+  // Reset mouse when leaving canvas — particles return to natural random movement
+  canvas.addEventListener('mouseleave', () => {
+    mouse.x = -9999;
+    mouse.y = -9999;
+  });
+
   function resize() {
     W = canvas.width  = canvas.offsetWidth;
     H = canvas.height = canvas.offsetHeight;
