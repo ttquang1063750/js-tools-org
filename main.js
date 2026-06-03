@@ -239,7 +239,12 @@ document.getElementById('year').textContent = new Date().getFullYear();
           const dist = Math.sqrt(dx * dx + dy * dy);
 
           if (dist < REPEL_RADIUS) {
-            // Smooth repulsion - no hard boundary, just push outward gently
+            // Soft boundary: gently nudge particle out
+            const penetration = REPEL_RADIUS - dist;
+            p.x -= (dx / dist) * penetration * 0.3; // Gentle nudge
+            p.y -= (dy / dist) * penetration * 0.3;
+
+            // Strong repulsion force
             const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
             p.vx -= (dx / dist) * repelForce;
             p.vy -= (dy / dist) * repelForce;
@@ -276,7 +281,12 @@ document.getElementById('year').textContent = new Date().getFullYear();
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < REPEL_RADIUS) {
-          // Smooth repulsion - no hard boundary, just push outward gently
+          // Soft boundary: gently nudge particle out
+          const penetration = REPEL_RADIUS - dist;
+          p.x -= (dx / dist) * penetration * 0.3; // Gentle nudge
+          p.y -= (dy / dist) * penetration * 0.3;
+
+          // Strong repulsion force
           const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
           p.vx -= (dx / dist) * repelForce;
           p.vy -= (dy / dist) * repelForce;
