@@ -64,27 +64,3 @@ python3 -m http.server 8080
 # Using Node
 npx serve .
 ```
-
-## Regenerate OG image
-
-The `og-image.png` is generated from `og-image.svg` using `rsvg-convert`:
-
-```bash
-rsvg-convert -w 1200 -h 630 assets/og-image.svg -o assets/og-image.png
-```
-
-## Deploy
-
-Cloudflare Pages is connected to this GitHub repo. Every push to `main` triggers an automatic deployment.
-
-Manual deploy via Wrangler:
-
-```bash
-CLOUDFLARE_API_TOKEN=<token> CLOUDFLARE_ACCOUNT_ID=<account_id> \
-  npx wrangler pages deploy . --project-name js-tools-org
-```
-
-## AdSense notes
-
-- Verification meta tag + async script are in `<head>`
-- Ad units use `data-ad-slot="AUTO"` — replace with real slot IDs from AdSense dashboard once the account is approved
