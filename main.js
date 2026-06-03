@@ -239,16 +239,8 @@ document.getElementById('year').textContent = new Date().getFullYear();
           const dist = Math.sqrt(dx * dx + dy * dy);
 
           if (dist < REPEL_RADIUS) {
-            // HARD BOUNDARY: push particle outside the circle
-            const pushDist = REPEL_RADIUS + 2; // Push slightly outside
-            const ratio = pushDist / Math.max(0.1, dist);
-            p.x = mouse.x - (dx * ratio);
-            p.y = mouse.y - (dy * ratio);
-            // Reset velocity to prevent bouncing/jittering
-            p.vx = 0;
-            p.vy = 0;
-            // Apply repulsion force to smoothly push outward
-            const repelForce = REPEL_FORCE;
+            // Smooth repulsion - no hard boundary, just push outward gently
+            const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
             p.vx -= (dx / dist) * repelForce;
             p.vy -= (dy / dist) * repelForce;
           } else {
@@ -284,16 +276,8 @@ document.getElementById('year').textContent = new Date().getFullYear();
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < REPEL_RADIUS) {
-          // HARD BOUNDARY: push particle outside the circle
-          const pushDist = REPEL_RADIUS + 2; // Push slightly outside
-          const ratio = pushDist / Math.max(0.1, dist);
-          p.x = mouse.x - (dx * ratio);
-          p.y = mouse.y - (dy * ratio);
-          // Reset velocity to prevent bouncing/jittering
-          p.vx = 0;
-          p.vy = 0;
-          // Apply repulsion force to smoothly push outward
-          const repelForce = REPEL_FORCE;
+          // Smooth repulsion - no hard boundary, just push outward gently
+          const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
           p.vx -= (dx / dist) * repelForce;
           p.vy -= (dy / dist) * repelForce;
         } else {
