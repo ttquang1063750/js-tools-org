@@ -256,7 +256,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
       }
 
       if (p.type === 'snow') {
-        // Mouse influence with repulsion boundary (only when mouse is inside canvas)
+        // Mouse influence with repulsion boundary ONLY (snowflakes fall naturally, don't attract upward)
         const isMouseValid = mouse.x >= 0 && mouse.x <= W && mouse.y >= 0 && mouse.y <= H;
         if (isMouseValid) {
           const dx = mouse.x - p.x;
@@ -273,12 +273,8 @@ document.getElementById('year').textContent = new Date().getFullYear();
             const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
             p.vx -= (dx / dist) * repelForce;
             p.vy -= (dy / dist) * repelForce;
-          } else {
-            // Far enough — gentle attraction
-            const force = ATTRACT_FORCE / Math.max(1, dist / 200);
-            p.vx += dx * force;
-            p.vy += dy * force;
           }
+          // NO attraction for snowflakes — let them fall naturally
         }
         p.vx *= 0.97;
         p.vy *= 0.97;
