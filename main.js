@@ -7,8 +7,8 @@ document.getElementById('year').textContent = new Date().getFullYear();
   const ctx = canvas.getContext('2d');
   let W, H, particles = [], clouds = [];
   const mouse = { x: -9999, y: -9999 };
-  const ATTRACT_RADIUS = 160;
-  const ATTRACT_FORCE  = 0.06;
+  const ATTRACT_RADIUS = 100;  // Reduced from 160 — particles only react when closer
+  const ATTRACT_FORCE  = 0.015; // Reduced from 0.06 — much gentler attraction
 
   // ── Color palettes per mode ──
   const PALETTES = {
