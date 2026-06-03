@@ -10,7 +10,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
   let mouseInside = false; // Track if mouse is over canvas
   const ATTRACT_FORCE  = 0.003; // Very light attraction applied to all particles
   const REPEL_RADIUS   = 30;    // Smaller zone — particles can get closer to mouse
-  const REPEL_FORCE    = 0.04;  // Strong repulsion to keep particles OUT
+  const REPEL_FORCE    = 0.15;  // Very strong repulsion to enforce boundary
 
   // ── Color palettes per mode ──
   const PALETTES = {
