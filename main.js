@@ -239,8 +239,13 @@ document.getElementById('year').textContent = new Date().getFullYear();
           const dist = Math.sqrt(dx * dx + dy * dy);
 
           if (dist < REPEL_RADIUS) {
-            // Too close — repel outward
-            const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
+            // HARD BOUNDARY: push particle outside the circle
+            const pushDist = REPEL_RADIUS + 2; // Push slightly outside
+            const ratio = pushDist / Math.max(0.1, dist);
+            p.x = mouse.x - (dx * ratio);
+            p.y = mouse.y - (dy * ratio);
+            // Also apply strong repulsion force
+            const repelForce = REPEL_FORCE;
             p.vx -= (dx / dist) * repelForce;
             p.vy -= (dy / dist) * repelForce;
           } else {
@@ -276,8 +281,13 @@ document.getElementById('year').textContent = new Date().getFullYear();
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < REPEL_RADIUS) {
-          // Too close — repel outward
-          const repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS);
+          // HARD BOUNDARY: push particle outside the circle
+          const pushDist = REPEL_RADIUS + 2; // Push slightly outside
+          const ratio = pushDist / Math.max(0.1, dist);
+          p.x = mouse.x - (dx * ratio);
+          p.y = mouse.y - (dy * ratio);
+          // Also apply strong repulsion force
+          const repelForce = REPEL_FORCE;
           p.vx -= (dx / dist) * repelForce;
           p.vy -= (dy / dist) * repelForce;
         } else {
