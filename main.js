@@ -306,11 +306,32 @@ document.getElementById('year').textContent = new Date().getFullYear();
     }
   }
 
+  // Draw repulsion boundary circle around mouse
+  function drawRepulsionCircle() {
+    const isMouseValid = mouse.x >= 0 && mouse.x <= W && mouse.y >= 0 && mouse.y <= H;
+    if (!isMouseValid) return;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(79, 142, 247, 0.4)'; // Semi-transparent blue
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(mouse.x, mouse.y, REPEL_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Optional: draw center dot
+    ctx.fillStyle = 'rgba(79, 142, 247, 0.6)';
+    ctx.beginPath();
+    ctx.arc(mouse.x, mouse.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   let animFrameId = null;
   function draw() {
     ctx.clearRect(0, 0, W, H);
     if (clouds.length) drawClouds();
     drawParticles();
+    drawRepulsionCircle(); // Draw the visible boundary
     animFrameId = requestAnimationFrame(draw);
   }
 
