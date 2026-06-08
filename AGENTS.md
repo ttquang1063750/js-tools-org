@@ -81,9 +81,9 @@ js-tools-org/
 
 ### 6. **Ad Integration**
 - **Google AdSense**: 2 responsive ad units
-  - Below hero section (ad-slot=AUTO)
-  - Between tools and why section (ad-slot=AUTO)
-- **Approval Status**: Account pending verification; replace slot IDs when approved
+  - Below hero section (ad-slot=3853008302)
+  - Between tools and why section (ad-slot=8722191605)
+- **Approval Status**: Active and approved; slot IDs updated
 
 ---
 
