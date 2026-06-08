@@ -286,4 +286,4 @@ CLOUDFLARE_API_TOKEN=<token> CLOUDFLARE_ACCOUNT_ID=<account_id> \
 ---
 
 **Last Updated**: 2026-06-03  
-**Maintained by**: Quang (ttquang1063750@gmail.com)
+**Maintained by**: Quang (support@js-tools.org)
