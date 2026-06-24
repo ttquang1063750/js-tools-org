@@ -4,7 +4,7 @@
 
 ## 12. Tích hợp Tìm kiếm Blog & Bình luận Facebook (2026-06-24)
 
-* **Tìm kiếm Blog Client-side**: Xây dựng ô tìm kiếm tĩnh thời gian thực (real-time search) trên trang danh sách blog (`blog/index.html`). Sử dụng thuật toán chuẩn hóa loại bỏ dấu tiếng Việt (diacritics removal) để tìm kiếm chính xác, hỗ trợ lọc thẻ card, ẩn hiện tiêu đề đề mục tự động, và hiển thị thông báo thân thiện khi không tìm thấy kết quả. Cập nhật song ngữ tự động cho ô tìm kiếm placeholder và thông báo không tìm thấy kết quả.
+* **Tìm kiếm Blog Client-side & Static Search Index**: Xây dựng ô tìm kiếm tĩnh thời gian thực trên trang danh sách blog (`blog/index.html`). Sử dụng tệp chỉ mục `blog/search-index.json` được tạo tự động để hỗ trợ tìm kiếm sâu (Deep Search) xuyên suốt tiêu đề bài học và tiêu đề mục con (headings/subheadings) của tất cả 54 bài viết. Tích hợp thuật toán chuẩn hóa loại bỏ dấu tiếng Việt (diacritics removal), tự động chuyển đổi ngôn ngữ hiển thị kết quả và thông báo tìm kiếm theo ngôn ngữ đang chọn (EN/VI).
 * **Bình luận Facebook**: Nhúng Facebook Comments SDK và tích hợp tự động khung bình luận của Facebook (`fb-comments` widget) cho toàn bộ 50+ trang bài viết chi tiết trong thư mục `blog/`. Mỗi bài viết được đồng bộ hóa bình luận theo URL chính thức (`canonical path`), cho phép người đọc đặt câu hỏi và trao đổi trực tiếp bằng tài khoản cá nhân.
 
 ---
