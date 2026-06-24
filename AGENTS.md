@@ -6,9 +6,12 @@ Landing page for [js-tools.org](https://js-tools.org) — experience, speed, con
 
 ## Project Overview
 
-**js-tools.org** is a static landing page showcasing two browser-based developer tools:
-1. **Image Optimizer** — Compress & convert images (JPEG, PNG, WebP, HEIC) entirely in-browser
-2. **SnapCast** — Real-time photo slideshow for live events
+**js-tools.org** is a static landing page showcasing browser-based tools:
+1. **SnapCast** — Real-time photo slideshow for live events
+2. **ColorQuarium** — Ambient animated aquarium display controlled from your phone
+3. **Image Optimizer** — Compress & convert images (JPEG, PNG, WebP, HEIC) entirely in-browser
+4. **QR Generator** — Create and customize QR codes in the browser
+5. **Remove BG** — Background removal tool
 
 **Tech Stack**: Pure HTML + CSS + vanilla JavaScript (no framework, no build step)
 **Deployment**: Cloudflare Pages (auto-deploys on `main` push)
@@ -19,238 +22,205 @@ Landing page for [js-tools.org](https://js-tools.org) — experience, speed, con
 
 ```
 js-tools-org/
-├── index.html           # Main landing page + hero canvas + tool cards
-├── styles.css           # Global styles (dark theme, animations, responsive)
+├── index.html           # Main landing page + hero canvas + tool cards + live demos
+├── styles.css           # Global styles (dark theme, animations, responsive, hamburger menu)
 ├── main.js              # Year injection + canvas particle animation + lazy-load iframes
 ├── i18n.js              # EN/VI translation system + language toggle
-├── assets/              # Visual assets
-│   ├── favicon.svg      # SVG favicon
-│   ├── logo.svg         # Logo
-│   ├── og-image.svg     # OG image source (1200×630)
-│   ├── og-image.png     # OG image (generated from SVG)
-│   ├── optimizer.svg    # Image Optimizer logo
-│   └── snapcast.svg     # SnapCast logo
+├── privacy.html         # Privacy policy (bilingual EN/VI)
+├── terms.html           # Terms of service (bilingual EN/VI)
 ├── robots.txt           # SEO robots configuration
 ├── sitemap.xml          # SEO sitemap
-├── README.md            # Project documentation
-├── AGENTS.md            # This file — agent guide
-└── .gitignore           # Git ignore rules
+├── serve.json           # Local dev server config
+├── ads.txt              # AdSense ads.txt
+├── assets/              # Visual assets
+│   ├── favicon.svg
+│   ├── logo.svg
+│   ├── og-image.svg / og-image.png
+│   ├── optimizer.svg    # Image Optimizer logo
+│   ├── snapcast.svg     # SnapCast logo
+│   ├── coloraquarium.png # ColorQuarium fish logo (700x700)
+│   ├── colorquarium-qr.png # QR code for ColorQuarium mobile remote
+│   ├── qr.svg           # QR Generator logo
+│   ├── rmbg.svg         # Remove BG logo
+│   └── event-qr.png     # SnapCast event QR code
+├── blog/                # Blog section: tool articles + programming series
+│   ├── index.html       # Blog list index (bilingual EN/VI)
+│   ├── blog.css         # Blog typography, article styles, card tags, Facebook CTA
+│   ├── blog.js          # Language toggle for blog data-lang-content sections
+│   ├── ide.css          # VS Code Light Theme code window + quiz styles
+│   ├── ide.js           # Code copy + quiz verification logic
+│   ├── prism.css        # Local Prism syntax highlight (Tomorrow Night theme)
+│   ├── prism.js         # Local Prism library with C/C++ support
+│   │
+│   ├── # ── Tool articles (bilingual EN/VI) ──
+│   ├── colorquarium-explained.html
+│   ├── custom-qr-codes-in-browser.html
+│   ├── how-to-compress-images.html
+│   ├── how-to-remove-background-in-browser.html
+│   ├── snapcast-wedding-slideshow.html
+│   ├── snapcast-corporate-events.html
+│   ├── snapcast-technology-explained.html
+│   ├── webp-vs-jpeg-vs-png.html
+│   │
+│   ├── # ── C Programming Series (8 lessons, Vietnamese) ──
+│   ├── c-programming-series.html    # Curriculum hub
+│   ├── c-environment-setup.html
+│   ├── c-basics-and-bitwise.html
+│   ├── c-control-flow.html
+│   ├── c-struct-typedef.html
+│   ├── c-memory-management.html
+│   ├── c-pointers-deep-dive.html
+│   ├── c-data-structures.html
+│   ├── c-ds-visualizer-demo.html
+│   │
+│   ├── # ── C++ Programming Series (8 lessons, Vietnamese) ──
+│   ├── cpp-programming-series.html  # Curriculum hub
+│   ├── cpp-environment-setup.html
+│   ├── cpp-basics-and-vector.html
+│   ├── cpp-oop-basics.html
+│   ├── cpp-oop-polymorphism.html
+│   ├── cpp-smart-pointers.html
+│   ├── cpp-templates.html
+│   ├── cpp-modern-features.html
+│   ├── cpp-bst-visualizer.html
+│   │
+│   ├── # ── JavaScript Series (8 lessons, Vietnamese) ──
+│   ├── js-programming-series.html   # Curriculum hub
+│   ├── js-engine-and-execution.html
+│   ├── js-objects-and-prototypes.html
+│   ├── js-dom-event-model.html
+│   ├── js-functional-programming.html
+│   ├── js-modules-and-scope.html
+│   ├── js-metaprogramming.html
+│   ├── js-event-loop-async.html
+│   ├── js-event-loop-visualizer.html
+│   │
+│   ├── # ── JavaScript Canvas Series (14 lessons, Vietnamese) ──
+│   ├── canvas-programming-series.html   # Curriculum hub
+│   ├── canvas-basics-and-drawing.html
+│   ├── canvas-text-and-images.html
+│   ├── canvas-transforms-and-state.html
+│   ├── canvas-pixel-manipulation.html
+│   ├── canvas-math-foundations.html
+│   ├── canvas-animation-loop.html
+│   ├── canvas-easing-and-tweening.html
+│   ├── canvas-responsive-and-dpi.html
+│   ├── canvas-interaction-events.html
+│   ├── canvas-physics-simulation.html
+│   ├── canvas-collision-and-particles.html
+│   ├── canvas-game-development.html
+│   ├── canvas-data-visualization.html
+│   ├── canvas-creative-and-performance.html
+│   │
+│   └── codes/           # Companion code samples (C, C++, JS)
+├── README.md
+├── AGENTS.md            # This file
+├── changelog.md         # Performance & feature changelog
+└── .gitignore
 ```
 
 ---
 
 ## Key Features
 
-### 1. **Hero Section with Canvas Particle Animation**
-- **Location**: `index.html` (lines 101–139) + `main.js` (lines 5–360)
-- **5 Time-Based Modes**:
-  - 🌅 **Dawn** (5h–8h): Warm orange/yellow particles + drifting clouds
-  - ☀️ **Day** (8h–17h): Soft blue/white particles + clouds
-  - 🌇 **Dusk** (17h–20h): Orange/purple particles + clouds
-  - 🌧️ **Rain** (20h–23h): Animated falling raindrops
-  - 🌙 **Night** (23h–5h): Twinkling stars + falling snowflakes
-- **Mode Switcher**: 5 emoji buttons (fixed bottom-right) let users preview each mode
-- **Mouse Interaction**:
-  - **Soft Boundary**: 30px repulsion zone around cursor (particles gently pushed out)
-  - **Attraction**: Particles follow cursor from distance (except snowflakes — they fall naturally)
-  - **Smooth Physics**: Distance-based force falloff, no hard boundaries causing jitter
+### 1. Hero Section with Canvas Particle Animation
+- **Location**: `index.html` + `main.js`
+- **5 Time-Based Modes**: Dawn, Day, Dusk, Rain, Night — each with unique particles, colors, and weather effects
+- **Mode Switcher**: 5 emoji buttons (fixed bottom-right)
+- **Mouse Interaction**: Soft boundary repulsion (30px), gentle attraction, smooth physics
 
-### 2. **Dynamic Theming**
-- Color palette changes with time of day (or when user clicks mode button)
-- CSS variables (`--bg`, `--accent`, `--border`, etc.) updated in real-time
-- Hero gradient background updates to match mode
+### 2. Dynamic Theming
+- CSS variables (`--bg`, `--accent`, `--border`, etc.) updated in real-time per mode
+- Hero gradient background matches mode
 
-### 3. **i18n (EN / VI)**
-- **System**: `i18n.js` with `data-i18n` attributes in HTML
-- **Language Detection**: Auto-detects from `navigator.language`, persists choice in `localStorage`
-- **Toggle Button**: Top-right nav, switches between English and Vietnamese
-- **Coverage**: All text content translated (hero, tools, why section, footer)
+### 3. i18n (EN / VI)
+- **System**: `i18n.js` with `data-i18n` attributes + `data-i18n-html` for rich content
+- **Blog**: `data-lang-content="en"|"vi"` dual-section toggling via `blog.js`
+- **Language Detection**: Auto from `navigator.language`, persisted in `localStorage`
+- **Toggle**: Nav button switches between English and Vietnamese
 
-### 4. **Tool Cards + Live Demo**
-- **Layout**: Each tool grouped with its demo (vertical stack)
-  1. **SnapCast Card** → SnapCast live demo (with QR code iframe)
-  2. **Image Optimizer Card** → (ready for demo)
-- **Live Demo**: SnapCast event at `snapcast.js-tools.org/slideshow/XDXQK8` with real-time photo sync
-- **Lazy Loading**: Iframes load only when visible (Intersection Observer)
+### 4. Tool Cards + Live Demos
+- **Tools on homepage**: SnapCast, ColorQuarium, Image Optimizer, QR Generator, Remove BG
+- **Live demos**: SnapCast and ColorQuarium have embedded iframe demos with QR codes
+- **Demo component**: `.sc-demo` layout (iframe left + QR right, collapses to stack on mobile)
+- **Lazy Loading**: Iframes load via `IntersectionObserver` with `data-src`
 
-### 5. **SEO & Social**
-- **Meta Tags**: Title, description, canonical, Open Graph, Twitter Card, JSON-LD
-- **Structured Data**: Schema.org `WebSite` + `SoftwareApplication` definitions
-- **Mobile Friendly**: Responsive design (mobile-first CSS)
-- **Performance**: No external dependencies, pure vanilla code
+### 5. Navigation
+- **Header**: Hamburger menu (CSS-only, checkbox hack) at ≤880px breakpoint
+  - Uses `<input type="checkbox" id="nav-toggle">` + `<label>` with sibling selector `~ nav`
+  - Shows SnapCast, ColorQuarium, Blog links + language toggle
+- **Footer**: Full nav with all tools + Blog + Privacy + Terms (icon + text links)
+- **Consistent across all pages**: index, privacy, terms, and all 36 blog HTML files
 
-### 6. **Ad Integration**
-- **Google AdSense**: 2 responsive ad units
-  - Below hero section (ad-slot=3853008302)
-  - Between tools and why section (ad-slot=8722191605)
-- **Approval Status**: Active and approved; slot IDs updated
+### 6. Blog Section
+- **Tool articles**: 8 bilingual EN/VI articles about SnapCast, Image Optimizer, QR Generator, ColorQuarium, Remove BG
+- **Programming series**: C (8 lessons), C++ (8 lessons), JavaScript (8 lessons), HTML5 Canvas (14 lessons) — all in Vietnamese
+  - **Academic Rigor**: The lessons feature high-quality computer science concepts. For example:
+    - *C Series (Lesson 7)*: Formal Big O Time & Space complexity analysis, C examples for $O(1)$ to $O(N!)$, and recursion Call Stack depth analysis.
+    - *C++ Series*: Name mangling, SSO (Small String Optimization), Vector dynamic array structures, RAII, Vptr/Vtable dynamic dispatch, and smart pointer atomic control blocks.
+    - *JavaScript Series*: Parser/AST, Ignition bytecode, TurboFan JIT machine code, deoptimization triggers, Shapes/IC optimizations, ESM Live Bindings vs CJS Copy-on-Import, and custom Proxy-based Reactivity mapped to mock DOM.
+- **Article template structure**: `.article-hero` (tag, title, meta) → `.article-body` (EN/VI sections) → `.article-cta` → `.article-discuss` (Facebook CTA) → `.article-related`
+- **Tag color classes**: `--sc` (purple), `--io` (green), `--qr` (cyan), `--cq` (teal), `--c` (C), `--cpp` (C++), `--js` (JS), `--canvas` (Canvas)
+- **VS Code Light Theme**: White background, dark code blocks, Prism syntax highlighting
+- **Interactive quizzes**: `ide.js` + `ide.css` for programming lessons
 
----
+### 7. SEO & Social
+- Meta tags, Open Graph, Twitter Card, JSON-LD structured data
+- `sitemap.xml` with all pages registered
+- Mobile-first responsive design
 
-## Canvas Particle Animation Details
-
-### Constants (main.js, lines 11–13)
-```javascript
-const ATTRACT_FORCE  = 0.003;  // Very light attraction to all particles
-const REPEL_RADIUS   = 30;     // Invisible boundary zone (pixels)
-const REPEL_FORCE    = 0.15;   // Strong repulsion to enforce boundary
-```
-
-### Particle Types & Colors
-- **Stars** (night): Static white circles, twinkle effect
-- **Snowflakes** (night): Fall naturally with slight repulsion (no attraction upward)
-- **Rain** (rain mode): Diagonal raindrops with repulsion + attraction
-- **Generic particles** (dawn/dusk/day): 2-5 random colors per mode, float upward with mouse influence
-
-### Physics
-- **Soft Boundary**: When `dist < REPEL_RADIUS`, nudge particle outward by `penetration * 0.3` per frame (no hard teleport)
-- **Strong Repulsion**: `repelForce = REPEL_FORCE * (1 - dist / REPEL_RADIUS)` decreases with distance
-- **Gentle Attraction** (far particles): `force = ATTRACT_FORCE / Math.max(1, dist / 200)` pulls toward cursor
-- **Velocity Damping**: 0.96–0.97 friction factor per frame
-- **Gravity**: Downward acceleration (0.012–0.015 per frame depending on particle type)
-
-### Mouse Tracking
-- Bounds checking: Only apply forces when `mouse.x >= 0 && mouse.x <= W && mouse.y >= 0 && mouse.y <= H`
-- Canvas rect updated on scroll + resize events
-- Repulsion applies to: rain, snowflakes, generic particles
-
----
-
-## Styling Architecture
-
-### Color Palette (CSS Variables)
-```css
---bg: #0a0f1e              /* Dark navy background */
---bg-card: #111827         /* Card background */
---bg-card-hover: #1a2235   /* Hover state */
---accent: #4f8ef7          /* Primary blue */
---accent-2: #a78bfa        /* Secondary purple */
---border: rgba(79,142,247,0.18)
---text: #ffffff
---text-muted: #c4c9db
---radius: 16px
---shadow: 0 4px 32px rgba(0,0,0,0.7)
-```
-
-### Responsive Breakpoints
-- **Mobile** (< 600px): Single-column layout, smaller padding
-- **Desktop** (≥ 600px): Multi-column grids, full-width layouts
-
-### Key Classes
-- `.hero`: Hero section with canvas background
-- `.tool-block`: Vertical container (tool card + demo)
-- `.tool-card`: Card styling (hover effect: translateY(-4px))
-- `.sc-demo`: SnapCast demo section styling
-- `.why-grid`: 3-column grid for "Why js-tools?" section
+### 8. Ad Integration
+- Google AdSense with responsive ad units
+- Lazy-loaded on first user interaction or 3.5s timeout
 
 ---
 
 ## Development Setup
 
-### Local Server (No Build Step)
 ```bash
+# Using Node (preferred)
+npx serve -l 5500 .
+
 # Using Python
 python3 -m http.server 8080
-
-# Using Node
-npx serve .
-
-# Then open http://localhost:8080
 ```
 
-### File Editing Tips
-- **HTML Changes**: Edit `index.html` directly; refresh browser
-- **CSS Changes**: Edit `styles.css`; hard refresh (Cmd+Shift+R)
-- **JavaScript**: Edit `main.js` (particle animation) or `i18n.js` (translations)
-- **Translations**: Add keys to `TRANSLATIONS` object in `i18n.js`
+No build step required. Edit HTML/CSS/JS directly and refresh.
 
 ---
 
 ## Common Tasks
 
+### Add a Blog Article
+1. Create new HTML file in `blog/` using existing article as template
+2. Include header (with hamburger nav) + footer (full nav) matching other blog pages
+3. Add bilingual content in `data-lang-content="en"|"vi"` sections
+4. Add card to `blog/index.html` grid with appropriate tag class
+5. Add URL to `sitemap.xml`
+
 ### Add a Translation String
-1. Edit `i18n.js` → `TRANSLATIONS.en` (add English)
-2. Add `TRANSLATIONS.vi` (Vietnamese translation)
-3. Add `data-i18n="my.key"` to HTML element
-4. Element text auto-updates on language toggle
-
-**Example**:
-```javascript
-// i18n.js
-en: { 'hero.sub': 'Experience the power of JavaScript and your browser.' },
-vi: { 'hero.sub': 'Trải nghiệm sức mạnh của JavaScript và trình duyệt của bạn.' }
-```
-
-```html
-<!-- index.html -->
-<p class="hero-sub" data-i18n="hero.sub">...</p>
-```
-
-### Change Mode Colors
-1. Edit `PALETTES` object in `main.js` (lines 16–22)
-2. Each mode has: `bg`, `bgCard`, `accent`, `accent2`, `border`, `hero`
-3. Colors update instantly when user clicks mode button
-
-**Example**:
-```javascript
-dawn: { 
-  bg: '#0e0a04', 
-  accent: '#f59e0b', 
-  accent2: '#fb923c',
-  // ... other colors
-}
-```
+1. Add key to `TRANSLATIONS.en` and `TRANSLATIONS.vi` in `i18n.js`
+2. Add `data-i18n="my.key"` to HTML element
 
 ### Adjust Particle Physics
-- **Slower attraction**: Decrease `ATTRACT_FORCE` (0.003 → 0.001)
-- **Stronger repulsion**: Increase `REPEL_FORCE` (0.15 → 0.25)
-- **Larger/smaller boundary**: Change `REPEL_RADIUS` (30 → 50)
-- **More/fewer particles**: Change `count` in `init()` function (line 172–174)
-
-### Regenerate OG Image
-```bash
-rsvg-convert -w 1200 -h 630 assets/og-image.svg -o assets/og-image.png
-```
-
----
-
-## Recent Changes (This Session)
-
-### Canvas Particle Animation Improvements
-- **Issue**: Particles were clustering on mouse hover (too strong attraction)
-- **Solution**: 
-  - Reduced attraction force (`ATTRACT_FORCE = 0.003`)
-  - Added invisible repulsion boundary (`REPEL_RADIUS = 30`)
-  - Implemented soft position nudge (no hard teleport) + strong repulsion force
-  - Removed hard boundary constraints that caused jittering
-
-### Rain & Snow Particle Fixes
-- **Rain particles**: Added full mouse interaction (repulsion + attraction)
-- **Snowflakes**: Disabled upward attraction (let them fall naturally), kept repulsion only
-
-### Branding Updates
-- Removed "free" messaging throughout (README, index.html, i18n.js)
-- Updated hero badge: "⚡ Fast · Client-side · Privacy-first" (was "Free · Open-source · Privacy-first")
-- Changed "Why" section: "Experience, Lightning Fast, Convenient" (was "Privacy First, Free, Open Source")
-
-### Layout Reorganization
-- **Tools section**: Changed from grid (both cards side-by-side) to vertical stack
-- **New structure**: SnapCast card → SnapCast demo | Image Optimizer card → (ready for demo)
-- **Benefit**: Better narrative flow (tool → see it in action)
+- `ATTRACT_FORCE` (0.003), `REPEL_RADIUS` (30), `REPEL_FORCE` (0.15) in `main.js`
 
 ---
 
 ## Deployment
 
-### Automatic Deployment
-- Every push to `main` branch auto-deploys to Cloudflare Pages
+- Every push to `main` auto-deploys to Cloudflare Pages
 - Live at [https://js-tools.org](https://js-tools.org)
 
-### Manual Deployment (if needed)
-```bash
-CLOUDFLARE_API_TOKEN=<token> CLOUDFLARE_ACCOUNT_ID=<account_id> \
-  npx wrangler pages deploy . --project-name js-tools-org
-```
+---
+
+## Related Projects
+
+- **SnapCast**: [snapcast.js-tools.org](https://snapcast.js-tools.org) — separate Firebase project
+- **ColorQuarium**: [colorquarium.js-tools.org](https://colorquarium.js-tools.org) — separate Firebase project
+- **Image Optimizer**: [image-optimizer.js-tools.org](https://image-optimizer.js-tools.org)
+- **QR Generator**: [qr.js-tools.org](https://qr.js-tools.org)
+- **GitHub**: [ttquang1063750/js-tools-org](https://github.com/ttquang1063750/js-tools-org)
 
 ---
 
@@ -258,32 +228,18 @@ CLOUDFLARE_API_TOKEN=<token> CLOUDFLARE_ACCOUNT_ID=<account_id> \
 
 ### Before Modifying Code
 1. **Check CSS patterns**: Use flexbox + gap (no old margin/padding stacking)
-2. **Responsive first**: Test changes on mobile (< 600px) and desktop
+2. **Responsive first**: Test at mobile (<600px), tablet (<880px for hamburger), desktop
 3. **i18n coverage**: Any new text needs EN + VI translations
-4. **Canvas performance**: Particle counts scale with viewport size to avoid lag
+4. **Consistent nav**: Header and footer must match across ALL pages (index, privacy, terms, 36 blog files)
+5. **Canvas performance**: Particle counts scale with viewport size
 
 ### When Adding Features
 - Keep vanilla JavaScript (no libraries unless justified)
-- Use CSS variables for theming (colors, spacing, radii)
-- Lazy-load iframes with Intersection Observer
-- Follow existing naming: kebab-case for CSS classes, camelCase for JS
-
-### Testing
-- **Local**: `python3 -m http.server 8080` (or `npx serve .`)
-- **Hard refresh**: Cmd+Shift+R to bust CSS cache
-- **Mobile test**: Browser dev tools (F12) → device toolbar
-- **Translations**: Toggle language button (top-right nav)
-- **Particle modes**: Click emoji buttons (bottom-right)
+- Use CSS variables for theming
+- Lazy-load iframes with IntersectionObserver
+- Follow naming: kebab-case CSS classes, camelCase JS
 
 ---
 
-## Related Projects
-
-- **Image Optimizer**: [image-optimizer.js-tools.org](https://image-optimizer.js-tools.org)
-- **SnapCast**: [snapcast.js-tools.org](https://snapcast.js-tools.org)
-- **GitHub**: [ttquang1063750/js-tools-org](https://github.com/ttquang1063750/js-tools-org)
-
----
-
-**Last Updated**: 2026-06-03  
+**Last Updated**: 2026-06-24
 **Maintained by**: Quang (support@js-tools.org)
