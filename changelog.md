@@ -2,6 +2,13 @@
 
 ---
 
+## 12. Tích hợp Tìm kiếm Blog & Bình luận Facebook (2026-06-24)
+
+* **Tìm kiếm Blog Client-side**: Xây dựng ô tìm kiếm tĩnh thời gian thực (real-time search) trên trang danh sách blog (`blog/index.html`). Sử dụng thuật toán chuẩn hóa loại bỏ dấu tiếng Việt (diacritics removal) để tìm kiếm chính xác, hỗ trợ lọc thẻ card, ẩn hiện tiêu đề đề mục tự động, và hiển thị thông báo thân thiện khi không tìm thấy kết quả. Cập nhật song ngữ tự động cho ô tìm kiếm placeholder và thông báo không tìm thấy kết quả.
+* **Bình luận Facebook**: Nhúng Facebook Comments SDK và tích hợp tự động khung bình luận của Facebook (`fb-comments` widget) cho toàn bộ 50+ trang bài viết chi tiết trong thư mục `blog/`. Mỗi bài viết được đồng bộ hóa bình luận theo URL chính thức (`canonical path`), cho phép người đọc đặt câu hỏi và trao đổi trực tiếp bằng tài khoản cá nhân.
+
+---
+
 ## 11. Nâng cấp chiều sâu JS Series & Bổ sung phân tích Big O (2026-06-24)
 
 * **Phân tích chi phí thuật toán (Big O Notation)**: Bổ sung chi tiết bài học lý thuyết về độ phức tạp thời gian và không gian vào Bài 7 trong Series C (`c-data-structures.html`). Thêm biểu đồ tăng trưởng ASCII, quy tắc rút gọn (Sum/Product), các ví dụ code C đầy đủ cho các lớp $O(1)$, $O(\log N)$, $O(N)$, $O(N \log N)$, $O(N^2)$, $O(2^N)$, $O(N!)$, và giải thích chi phí Call Stack trong đệ quy dẫn đến Stack Overflow.
