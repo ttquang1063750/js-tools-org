@@ -57,8 +57,8 @@
         <h1 class="article-hero__title" data-lang-content="en">Modern C++ Memory Management: Smart Pointers</h1>
         <h1 class="article-hero__title" data-lang-content="vi">Quản lý bộ nhớ C++ hiện đại: Tạm biệt con trỏ thô với Smart Pointers</h1>
         <div class="article-hero__meta">
-          <span data-lang-content="en">June 24, 2026 · 6 min read</span>
-          <span data-lang-content="vi">24 tháng 6, 2026 · 6 phút đọc</span>
+          <span data-lang-content="en">June 25, 2026 · 14 min read</span>
+          <span data-lang-content="vi">25 tháng 6, 2026 · 14 phút đọc</span>
         </div>
       </div>
     </section>
@@ -203,6 +203,476 @@ int main() {
 }</code></pre>
               </div>
 
+              <h2>4. unique_ptr Custom Deleter: Quản lý tài nguyên đặc biệt</h2>
+              <p>Mặc định, `std::unique_ptr` sử dụng `delete` hoặc `delete[]` để giải phóng bộ nhớ. Nhưng nếu bạn quản lý các tài nguyên khác (ví dụ: FILE pointers, sockets, hoặc các đối tượng được cấp phát bằng hàm tùy chỉnh), bạn cần cung cấp một **Custom Deleter** - một hàm được gọi khi `unique_ptr` bị hủy:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <span class="code-filename">unique_ptr_deleter.cpp</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;memory&gt;
+#include &lt;cstdio&gt;
+
+// Custom deleter cho FILE*
+void closeFile(FILE* f) {
+    if (f) {
+        std::cout &lt;&lt; "[Deleter] Closing file" &lt;&lt; std::endl;
+        fclose(f);
+    }
+}
+
+// Custom deleter cho array
+struct ArrayDeleter {
+    void operator()(int* ptr) const {
+        std::cout &lt;&lt; "[ArrayDeleter] Freeing array via custom function" &lt;&lt; std::endl;
+        delete[] ptr;
+    }
+};
+
+int main() {
+    // Ví dụ 1: Custom deleter cho FILE*
+    {
+        std::unique_ptr&lt;FILE, decltype(&closeFile)&gt; file(
+            fopen("test.txt", "w"),
+            &closeFile
+        );
+        if (file) {
+            fprintf(file.get(), "Hello, World!\n");
+        }
+        // Khi thoát scope, closeFile() sẽ được gọi tự động
+    }
+
+    // Ví dụ 2: Custom deleter là functor
+    {
+        std::unique_ptr&lt;int[], ArrayDeleter&gt; arr(new int[100]);
+        arr[0] = 42;
+        // Khi thoát scope, ArrayDeleter::operator() sẽ được gọi
+    }
+
+    return 0;
+}</code></pre>
+              </div>
+
+              <h2>5. std::make_shared vs shared_ptr Constructor: Tối ưu hóa Control Block</h2>
+              <p>Khi bạn sử dụng <code>std::shared_ptr&lt;T&gt;(new T())</code>, hệ thống phải cấp phát **hai lần trên Heap** riêng biệt - một lần cho object T và một lần cho Control Block. Điều này tốn kém bộ nhớ và gây ra nhiều lần truy cập Heap.</p>
+
+              <p>Ngược lại, `std::make_shared&lt;T&gt;()` thực hiện **cấp phát duy nhất** - nó gộp object T và Control Block vào một khối nhớ liền kề. Điều này cải thiện **Cache Locality** (tính lân cận dữ liệu) và tốc độ xử lý:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <span class="code-filename">make_shared.cpp</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;memory&gt;
+
+class DatabaseConnection {
+public:
+    std::string connectionString;
+    DatabaseConnection(const std::string& conn) : connectionString(conn) {
+        std::cout &lt;&lt; "[DB] Connected to: " &lt;&lt; conn &lt;&lt; std::endl;
+    }
+    ~DatabaseConnection() {
+        std::cout &lt;&lt; "[DB] Disconnected" &lt;&lt; std::endl;
+    }
+};
+
+int main() {
+    // BAD: Two separate Heap allocations
+    // Allocation 1: DatabaseConnection object
+    // Allocation 2: Control Block
+    std::shared_ptr&lt;DatabaseConnection&gt; db1(
+        new DatabaseConnection("server1.db")
+    );
+
+    // GOOD: Single Heap allocation
+    // Both object and Control Block allocated together
+    auto db2 = std::make_shared&lt;DatabaseConnection&gt;("server2.db");
+
+    std::cout &lt;&lt; "db2 reference count: " &lt;&lt; db2.use_count() &lt;&lt; std::endl;
+
+    // Memory layout comparison:
+    std::cout &lt;&lt; "\ndb1 memory layout (Two allocations):" &lt;&lt; std::endl;
+    std::cout &lt;&lt; "  Object address: " &lt;&lt; db1.get() &lt;&lt; std::endl;
+
+    std::cout &lt;&lt; "\ndb2 memory layout (Single allocation):" &lt;&lt; std::endl;
+    std::cout &lt;&lt; "  Object address: " &lt;&lt; db2.get() &lt;&lt; std::endl;
+
+    return 0;
+}</code></pre>
+              </div>
+
+              <h2>6. std::weak_ptr: Phá vỡ Circular Reference</h2>
+              <p>Một hiểm họa của `shared_ptr` là **Circular Reference (Tham chiếu vòng)**: khi hai hay nhiều đối tượng chứa `shared_ptr` chỉ tay vào nhau. Vì mỗi liên kết tăng bộ đếm tham chiếu, không bao giờ đủ điều kiện để gọi destructor, dẫn đến rò rỉ bộ nhớ toàn bộ.</p>
+
+              <p><code>std::weak_ptr</code> là giải pháp: nó hoạt động giống `shared_ptr` nhưng **không nắm quyền sở hữu**. Nó chỉ quan sát đối tượng mà không ảnh hưởng tới Strong Ref Count:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <span class="code-filename">weak_ptr_circular.cpp</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;memory&gt;
+
+class Parent;
+class Child;
+
+// PROBLEM: Circular Reference
+class ParentBad {
+public:
+    std::shared_ptr&lt;Child&gt; child;
+    ~ParentBad() { std::cout &lt;&lt; "[Parent] Destructor" &lt;&lt; std::endl; }
+};
+
+class ChildBad {
+public:
+    std::shared_ptr&lt;ParentBad&gt; parent;  // Strong reference - creates cycle!
+    ~ChildBad() { std::cout &lt;&lt; "[Child] Destructor" &lt;&lt; std::endl; }
+};
+
+// SOLUTION: Use weak_ptr to break cycle
+class Parent {
+public:
+    std::shared_ptr&lt;Child&gt; child;
+    ~Parent() { std::cout &lt;&lt; "[Parent] Destructor called" &lt;&lt; std::endl; }
+};
+
+class Child {
+public:
+    std::weak_ptr&lt;Parent&gt; parent;  // Weak reference - does NOT keep parent alive
+    ~Child() { std::cout &lt;&lt; "[Child] Destructor called" &lt;&lt; std::endl; }
+};
+
+int main() {
+    std::cout &lt;&lt; "--- Creating Parent-Child with weak_ptr (CORRECT) ---" &lt;&lt; std::endl;
+    {
+        auto parent = std::make_shared&lt;Parent&gt;();
+        auto child = std::make_shared&lt;Child&gt;();
+
+        parent-&gt;child = child;
+        child-&gt;parent = parent;  // Weak reference - no cycle!
+
+        std::cout &lt;&lt; "Parent ref count: " &lt;&lt; parent.use_count() &lt;&lt; std::endl;
+        std::cout &lt;&lt; "Child ref count: " &lt;&lt; child.use_count() &lt;&lt; std::endl;
+
+        // Access parent through weak_ptr
+        if (auto p = child-&gt;parent.lock()) {  // lock() converts weak_ptr to shared_ptr
+            std::cout &lt;&lt; "Child successfully accessed parent" &lt;&lt; std::endl;
+        }
+    }
+    std::cout &lt;&lt; "Both Parent and Child destructors called!" &lt;&lt; std::endl;
+
+    return 0;
+}</code></pre>
+              </div>
+
+              <pre style="background: #0f1423; color: #a78bfa; padding: 15px; border-radius: 8px; font-family: monospace; overflow-x: auto; border: 1px solid var(--border); line-height: 1.4;">Circular Reference Problem vs Solution:
+
+PROBLEM (Circular Reference):
+┌──────────────────────┐         ┌──────────────────────┐
+│ Parent               │         │ Child                │
+├──────────────────────┤         ├──────────────────────┤
+│ shared_ptr child ────┼────────►│ shared_ptr parent ───┼──┐
+│ ref_count: 2         │◄────────│ ref_count: 2         │  │
+└──────────────────────┘         └──────────────────────┘  │
+         ^                                                   │
+         └───────────────────────────────────────────────────┘
+
+Result: ref_count never reaches 0, memory leak!
+
+SOLUTION (Use weak_ptr):
+┌──────────────────────┐         ┌──────────────────────┐
+│ Parent               │         │ Child                │
+├──────────────────────┤         ├──────────────────────┤
+│ shared_ptr child ────┼────────►│ weak_ptr parent ─────┼───┐
+│ ref_count: 1         │         │ ref_count: 1         │   │
+└──────────────────────┘         └──────────────────────┘   │
+                                                             │
+Parent ref_count decreases to 0, destructor called!
+              </pre>
+
+              <h2>7. Exception Safety & RAII Pattern</h2>
+              <p>Smart Pointers là nền tảng của **RAII (Resource Acquisition Is Initialization)** pattern - một cách tiếp cận quản lý tài nguyên mà đảm bảo an toàn kể cả khi có exception xảy ra. Khi một exception được ném, các biến cục bộ được hủy theo thứ tự ngược lại (stack unwinding), và Smart Pointers sẽ tự động giải phóng tài nguyên:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <span class="code-filename">exception_safety.cpp</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;memory&gt;
+#include &lt;stdexcept&gt;
+
+class DatabaseConnection {
+public:
+    DatabaseConnection() {
+        std::cout &lt;&lt; "[DB] Connection opened" &lt;&lt; std::endl;
+    }
+    ~DatabaseConnection() {
+        std::cout &lt;&lt; "[DB] Connection closed (automatic cleanup)" &lt;&lt; std::endl;
+    }
+    void query(const std::string& sql) {
+        if (sql.empty()) {
+            throw std::runtime_error("Empty SQL query!");
+        }
+        std::cout &lt;&lt; "[DB] Executing: " &lt;&lt; sql &lt;&lt; std::endl;
+    }
+};
+
+void processDataWithException() {
+    auto db = std::make_unique&lt;DatabaseConnection&gt;();
+
+    try {
+        db-&gt;query("SELECT * FROM users");
+        db-&gt;query("");  // This will throw!
+        db-&gt;query("SELECT * FROM products");  // Never reached
+    } catch (const std::exception& e) {
+        std::cout &lt;&lt; "[Error] Caught exception: " &lt;&lt; e.what() &lt;&lt; std::endl;
+        // Even though exception occurred, 'db' destructor will be called
+        // when exiting this function, closing connection automatically
+    }
+}
+
+int main() {
+    std::cout &lt;&lt; "--- Exception Safety with Smart Pointers ---" &lt;&lt; std::endl;
+    processDataWithException();
+    std::cout &lt;&lt; "Function ended. Database connection cleaned up!" &lt;&lt; std::endl;
+    return 0;
+}</code></pre>
+              </div>
+
+              <h2>8. Migrating from Raw Pointers: Refactoring Legacy Code</h2>
+              <p>Nếu bạn có code cũ viết với raw pointers (C-style), việc chuyển sang Smart Pointers đòi hỏi thay đổi logic và cấu trúc. Dưới đây là một số mẫu phổ biến:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <span class="code-filename">migration_legacy.cpp</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;memory&gt;
+#include &lt;vector&gt;
+
+class Image {
+public:
+    int width, height;
+    Image(int w, int h) : width(w), height(h) {
+        std::cout &lt;&lt; "[Image] Created " &lt;&lt; w &lt;&lt; "x" &lt;&lt; h &lt;&lt; std::endl;
+    }
+    ~Image() {
+        std::cout &lt;&lt; "[Image] Destroyed" &lt;&lt; std::endl;
+    }
+};
+
+// OLD WAY (Raw pointers - dangerous!)
+/*
+void processImagesOld() {
+    Image* img1 = new Image(800, 600);
+    Image* img2 = new Image(1024, 768);
+
+    // ... process images ...
+
+    delete img1;  // Easy to forget!
+    delete img2;  // If exception occurs, these never execute
+}
+*/
+
+// NEW WAY (Smart pointers - safe!)
+void processImagesNew() {
+    auto img1 = std::make_unique&lt;Image&gt;(800, 600);
+    auto img2 = std::make_unique&lt;Image&gt;(1024, 768);
+
+    std::cout &lt;&lt; "Processing images..." &lt;&lt; std::endl;
+    // Automatic cleanup when exiting scope, exception-safe
+}
+
+// Container of Smart Pointers (very common pattern)
+std::vector&lt;std::unique_ptr&lt;Image&gt;&gt; loadImageLibrary() {
+    std::vector&lt;std::unique_ptr&lt;Image&gt;&gt; images;
+
+    for (int i = 0; i &lt; 3; ++i) {
+        images.push_back(std::make_unique&lt;Image&gt;(640 + i*64, 480 + i*64));
+    }
+
+    return images;  // Move semantics transfers ownership to caller
+}
+
+int main() {
+    std::cout &lt;&lt; "--- Migration from Raw to Smart Pointers ---" &lt;&lt; std::endl;
+    processImagesNew();
+
+    std::cout &lt;&lt; "\nLoading image library:" &lt;&lt; std::endl;
+    auto library = loadImageLibrary();
+    std::cout &lt;&lt; "Library has " &lt;&lt; library.size() &lt;&lt; " images" &lt;&lt; std::endl;
+
+    return 0;
+}</code></pre>
+              </div>
+
+              <h2>9. Custom Deleters & Complex Ownership Patterns</h2>
+              <p>Đôi khi, bạn cần sử dụng các hàm hủy tùy chỉnh không chỉ cho `unique_ptr` mà cả cho `shared_ptr`. Ví dụ điển hình là quản lý `FILE*` hoặc các tiến trình (subprocess) được mở bằng `popen()`:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <span class="code-filename">custom_deleters.cpp</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;memory&gt;
+#include &lt;cstdio&gt;
+
+// Deleter for FILE*
+struct FileCloser {
+    void operator()(FILE* f) const {
+        if (f) {
+            std::cout &lt;&lt; "[FileCloser] Closing file" &lt;&lt; std::endl;
+            fclose(f);
+        }
+    }
+};
+
+// Deleter for popen() subprocess
+struct ProcessCloser {
+    void operator()(FILE* p) const {
+        if (p) {
+            std::cout &lt;&lt; "[ProcessCloser] Closing subprocess" &lt;&lt; std::endl;
+            pclose(p);
+        }
+    }
+};
+
+// File I/O with shared_ptr
+void demonstrateFileHandling() {
+    std::cout &lt;&lt; "--- File Handling with Custom Deleter ---" &lt;&lt; std::endl;
+
+    // Using shared_ptr with custom deleter
+    std::shared_ptr&lt;FILE&gt; file(
+        fopen("/tmp/test.txt", "w"),
+        FileCloser()
+    );
+
+    if (file) {
+        fprintf(file.get(), "Hello from smart pointer!\n");
+        std::cout &lt;&lt; "File written successfully" &lt;&lt; std::endl;
+    }
+    // FileCloser called automatically when shared_ptr is destroyed
+}
+
+// Subprocess handling
+void demonstrateProcessHandling() {
+    std::cout &lt;&lt; "\n--- Subprocess Handling with Custom Deleter ---" &lt;&lt; std::endl;
+
+    std::shared_ptr&lt;FILE&gt; proc(
+        popen("echo 'Running subprocess'", "r"),
+        ProcessCloser()
+    );
+
+    if (proc) {
+        char buffer[128];
+        while (fgets(buffer, sizeof(buffer), proc.get()) != nullptr) {
+            std::cout &lt;&lt; "[Output] " &lt;&lt; buffer;
+        }
+    }
+    // ProcessCloser called automatically
+}
+
+int main() {
+    demonstrateFileHandling();
+    demonstrateProcessHandling();
+    return 0;
+}</code></pre>
+              </div>
+
+              <h2>10. Comparison Table: unique_ptr vs shared_ptr vs weak_ptr</h2>
+
+              <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background: #0f1423; border: 1px solid var(--border);">
+                <thead>
+                  <tr style="background: #1a2641; border-bottom: 2px solid var(--border);">
+                    <th style="padding: 12px; text-align: left; color: #60a5fa;">Tính năng</th>
+                    <th style="padding: 12px; text-align: center; color: #60a5fa;">unique_ptr</th>
+                    <th style="padding: 12px; text-align: center; color: #60a5fa;">shared_ptr</th>
+                    <th style="padding: 12px; text-align: center; color: #60a5fa;">weak_ptr</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 12px;">Độ lớn (32-bit)</td>
+                    <td style="padding: 12px; text-align: center;">4 bytes</td>
+                    <td style="padding: 12px; text-align: center;">8 bytes</td>
+                    <td style="padding: 12px; text-align: center;">8 bytes</td>
+                  </tr>
+                  <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 12px;">Số lượng sở hữu</td>
+                    <td style="padding: 12px; text-align: center;">1 (độc quyền)</td>
+                    <td style="padding: 12px; text-align: center;">Nhiều</td>
+                    <td style="padding: 12px; text-align: center;">0 (quan sát)</td>
+                  </tr>
+                  <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 12px;">Có thể copy</td>
+                    <td style="padding: 12px; text-align: center;">Không</td>
+                    <td style="padding: 12px; text-align: center;">Có</td>
+                    <td style="padding: 12px; text-align: center;">Có</td>
+                  </tr>
+                  <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 12px;">Tốc độ</td>
+                    <td style="padding: 12px; text-align: center;">Cực nhanh</td>
+                    <td style="padding: 12px; text-align: center;">Nhanh</td>
+                    <td style="padding: 12px; text-align: center;">Nhanh</td>
+                  </tr>
+                  <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 12px;">Overhead</td>
+                    <td style="padding: 12px; text-align: center;">Không</td>
+                    <td style="padding: 12px; text-align: center;">Control Block</td>
+                    <td style="padding: 12px; text-align: center;">Minimal</td>
+                  </tr>
+                  <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 12px;">Dùng cho</td>
+                    <td style="padding: 12px; text-align: center;">Sở hữu duy nhất</td>
+                    <td style="padding: 12px; text-align: center;">Sở hữu chia sẻ</td>
+                    <td style="padding: 12px; text-align: center;">Phá vỡ cycle</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px;">Circular ref risk</td>
+                    <td style="padding: 12px; text-align: center;">Không</td>
+                    <td style="padding: 12px; text-align: center;">Có</td>
+                    <td style="padding: 12px; text-align: center;">Giải pháp</td>
+                  </tr>
+                </tbody>
+              </table>
+
               <div class="quiz-container">
                 <h3>Câu hỏi ôn tập kiến thức</h3>
                 <p>Điều gì xảy ra với bộ nhớ Heap được quản lý bởi một <code>std::shared_ptr</code> khi bộ đếm tham chiếu (Reference Count) chạm mốc 0?</p>
@@ -229,7 +699,14 @@ int main() {
 
             </div>
 
-          </div>
+          </div>              <div class="article-related">
+                <h2>Các bài viết tiếp theo trong series</h2>
+                <div class="article-related__links">
+                  <a href="cpp-move-semantics" class="article-related__link">← Bài 7: Move Semantics & RValue References</a>
+                  <a href="cpp-iterators" class="article-related__link">Bài 9: Iterators & Range-based Loops →</a>
+                </div>
+              </div>
+
         
             <!-- ── Comments Section ── -->
             <div class="article-comments" style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px;">
