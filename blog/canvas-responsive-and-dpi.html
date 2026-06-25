@@ -75,7 +75,7 @@
 
             <!-- ── VIETNAMESE ── -->
             <div data-lang-content="vi">
-              <p>Trong các ứng dụng đồ họa thực tế, việc giữ cho canvas co giãn theo khung nhìn (responsive), đồng thời giữ độ sắc nét trên màn hình Retina/HiDPI là vô cùng quan trọng. Bài học này sẽ phân tích chi tiết bản chất kỹ thuật của hệ thống hiển thị pixel, cách browser xử lý canvas buffer, và những góc tối trong việc ánh xạ tọa độ touch/mouse.</p>
+              <p>Trong các ứng dụng đồ họa thực tế, việc giữ cho canvas co giãn theo khung nhìn (responsive), đồng thời giữ độ sắc nét trên màn hình Retina/HiDPI là vô cùng quan trọng. Bài học này sẽ phân tích chi tiết bản chất kỹ thuật của hệ thống hiển thị pixel, cách browser xử lý canvas buffer, kỹ thuật scale HiDPI đúng chuẩn, <code>ResizeObserver</code>, letterboxing giữ tỉ lệ, và những góc tối trong việc ánh xạ tọa độ touch/mouse cũng như tối ưu hiệu năng trên thiết bị di động.</p>
 
               <h2>1. Bản Chất Pixel: CSS Pixel vs Physical Pixel</h2>
               <p>Một thẻ Canvas có hai lớp lưới pixel hoàn toàn độc lập mà bạn cần phân biệt rõ ràng:</p>
@@ -98,9 +98,126 @@
 [Physical Screen]      (Các bóng LED hiển thị vật lý trên thiết bị)
               </pre>
 
-              <p>Nếu tỉ lệ giữa <strong>Backing Store / CSS Size</strong> không khớp với mật độ pixel vật lý của màn hình (chính là <code>window.devicePixelRatio</code>), card đồ họa buộc phải thực hiện thuật toán nội suy (Interpolation) phóng to/thu nhỏ các pixel đệm khiến đồ họa bị **mờ nhòe, vỡ hạt hoặc răng cưa** nặng nề.</p>
+              <p>Nếu tỉ lệ giữa <strong>Backing Store / CSS Size</strong> không khớp với mật độ pixel vật lý của màn hình (chính là <code>window.devicePixelRatio</code>), card đồ họa buộc phải thực hiện thuật toán nội suy (Interpolation) phóng to/thu nhỏ các pixel đệm khiến đồ họa bị <strong>mờ nhòe, vỡ hạt hoặc răng cưa</strong> nặng nề.</p>
 
-              <h2>2. Góc Tối Khi Thay Đổi Kích Thước: Hủy Bỏ Drawing State</h2>
+              <p>Hãy tưởng tượng cụ thể: trên một chiếc MacBook Retina có <code>devicePixelRatio = 2</code>, mỗi điểm CSS (1 CSS px) tương ứng với một lưới 2×2 = 4 điểm sáng vật lý trên màn hình. Nếu bạn tạo một canvas <code>&lt;canvas width="600" height="280"&gt;</code> rồi để CSS kéo giãn nó lên <code>width: 600px</code>, thì backing store chỉ có 600×280 pixel thật, trong khi màn hình lại đang yêu cầu 1200×560 điểm vật lý để lấp đầy. Trình duyệt buộc phải "đoán" màu cho các pixel còn thiếu bằng phép nội suy song tuyến (bilinear) — kết quả là các đường nét sắc, chữ và viền tròn đều bị nhòe đi một lớp mờ mỏng. Đây chính là hiện tượng <em>retina blur</em> kinh điển mà mọi lập trình viên canvas đều gặp.</p>
+
+              <p>Sơ đồ dưới đây minh họa trực quan sự khác biệt giữa canvas <strong>không scale DPR</strong> (1 pixel logic bị kéo giãn ra phủ 4 pixel vật lý → mờ) và canvas <strong>scale DPR đúng</strong> (mỗi pixel logic được vẽ chi tiết tới từng pixel vật lý → sắc nét):</p>
+
+              <div style="display:flex;gap:16px;flex-wrap:wrap;margin:20px 0;">
+                <figure style="flex:1;min-width:220px;margin:0;text-align:center;">
+                  <svg viewBox="0 0 200 130" width="100%" style="background:#0a0f1e;border:1px solid #334155;border-radius:6px;" xmlns="http://www.w3.org/2000/svg">
+                    <text x="100" y="18" fill="#f87171" font-size="11" text-anchor="middle" font-family="monospace">Không scale (DPR bỏ qua)</text>
+                    <g transform="translate(40,32)">
+                      <!-- big blurry pixels -->
+                      <rect x="0" y="0" width="30" height="30" fill="#1d4ed8" opacity="0.45"/>
+                      <rect x="30" y="0" width="30" height="30" fill="#2563eb" opacity="0.55"/>
+                      <rect x="60" y="0" width="30" height="30" fill="#1d4ed8" opacity="0.4"/>
+                      <rect x="0" y="30" width="30" height="30" fill="#2563eb" opacity="0.5"/>
+                      <rect x="30" y="30" width="30" height="30" fill="#3b82f6" opacity="0.6"/>
+                      <rect x="60" y="30" width="30" height="30" fill="#2563eb" opacity="0.5"/>
+                      <rect x="0" y="60" width="30" height="30" fill="#1d4ed8" opacity="0.4"/>
+                      <rect x="30" y="60" width="30" height="30" fill="#2563eb" opacity="0.5"/>
+                      <rect x="60" y="60" width="30" height="30" fill="#1d4ed8" opacity="0.45"/>
+                      <text x="45" y="50" fill="#fff" font-size="9" text-anchor="middle" opacity="0.6">pixel to → mờ</text>
+                    </g>
+                  </svg>
+                  <figcaption style="color:#94a3b8;font-size:0.8rem;margin-top:6px;">Backing store 600×280 bị kéo lên 1200×560 → nội suy</figcaption>
+                </figure>
+                <figure style="flex:1;min-width:220px;margin:0;text-align:center;">
+                  <svg viewBox="0 0 200 130" width="100%" style="background:#0a0f1e;border:1px solid #334155;border-radius:6px;" xmlns="http://www.w3.org/2000/svg">
+                    <text x="100" y="18" fill="#34d399" font-size="11" text-anchor="middle" font-family="monospace">Scale DPR đúng</text>
+                    <g transform="translate(40,32)">
+                      <!-- fine sharp grid -->
+                      <g fill="#3b82f6">
+                        <rect x="0" y="0" width="14" height="14"/><rect x="15" y="0" width="14" height="14" opacity="0.8"/><rect x="30" y="0" width="14" height="14"/><rect x="45" y="0" width="14" height="14" opacity="0.8"/><rect x="60" y="0" width="14" height="14"/><rect x="75" y="0" width="14" height="14" opacity="0.8"/>
+                        <rect x="0" y="15" width="14" height="14" opacity="0.8"/><rect x="15" y="15" width="14" height="14"/><rect x="30" y="15" width="14" height="14" opacity="0.8"/><rect x="45" y="15" width="14" height="14"/><rect x="60" y="15" width="14" height="14" opacity="0.8"/><rect x="75" y="15" width="14" height="14"/>
+                        <rect x="0" y="30" width="14" height="14"/><rect x="15" y="30" width="14" height="14" opacity="0.8"/><rect x="30" y="30" width="14" height="14"/><rect x="45" y="30" width="14" height="14" opacity="0.8"/><rect x="60" y="30" width="14" height="14"/><rect x="75" y="30" width="14" height="14" opacity="0.8"/>
+                        <rect x="0" y="45" width="14" height="14" opacity="0.8"/><rect x="15" y="45" width="14" height="14"/><rect x="30" y="45" width="14" height="14" opacity="0.8"/><rect x="45" y="45" width="14" height="14"/><rect x="60" y="45" width="14" height="14" opacity="0.8"/><rect x="75" y="45" width="14" height="14"/>
+                        <rect x="0" y="60" width="14" height="14"/><rect x="15" y="60" width="14" height="14" opacity="0.8"/><rect x="30" y="60" width="14" height="14"/><rect x="45" y="60" width="14" height="14" opacity="0.8"/><rect x="60" y="60" width="14" height="14"/><rect x="75" y="60" width="14" height="14" opacity="0.8"/>
+                      </g>
+                    </g>
+                  </svg>
+                  <figcaption style="color:#94a3b8;font-size:0.8rem;margin-top:6px;">Backing store 1200×560 đúng bằng pixel vật lý → sắc nét</figcaption>
+                </figure>
+              </div>
+
+              <p>Bạn có thể kiểm tra giá trị này ngay trong console: <code>window.devicePixelRatio</code> trả về <code>1</code> trên màn hình thường, <code>2</code> trên hầu hết màn hình Retina/laptop hiện đại, và <code>3</code> trên nhiều điện thoại cao cấp. Lưu ý giá trị này <strong>không cố định</strong> — nó thay đổi khi người dùng zoom trang (Ctrl/Cmd +/−) hoặc kéo cửa sổ giữa hai màn hình có mật độ khác nhau, nên ta cần lắng nghe và scale lại động (xem Mục 4).</p>
+
+              <h2>2. HiDPI Scaling Đúng Cách: width = cssW × dpr</h2>
+              <p>Nguyên tắc vàng để canvas luôn sắc nét: <strong>tách rời kích thước hiển thị (CSS) khỏi kích thước backing store (attribute)</strong>. CSS quy định canvas to bao nhiêu trên màn hình; attribute <code>width</code>/<code>height</code> quy định buffer chứa bao nhiêu pixel thật. Công thức chuẩn gồm 3 bước:</p>
+              <ol>
+                <li>Đặt <code>canvas.width = cssWidth × dpr</code> và <code>canvas.height = cssHeight × dpr</code> để buffer có đủ độ phân giải vật lý.</li>
+                <li>Giữ CSS size cố định: <code>canvas.style.width = cssWidth + 'px'</code> (để layout không bị phình to gấp đôi).</li>
+                <li>Gọi <code>ctx.scale(dpr, dpr)</code> một lần — từ đó về sau bạn vẽ bằng tọa độ CSS bình thường (ví dụ vẽ tại x=300 là tâm của canvas 600px logic), còn trình duyệt tự nhân lên cho buffer vật lý.</li>
+              </ol>
+              <p>Nhờ <code>ctx.scale(dpr, dpr)</code>, toàn bộ code vẽ của bạn <strong>không cần biết</strong> tới dpr — bạn luôn làm việc trong hệ tọa độ CSS logic, code sạch và di động giữa các thiết bị. Đây là ví dụ setup cơ bản:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+                  <span class="code-filename">hidpi_basic.js</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-javascript">const canvas = document.getElementById('myCanvas');
+const ctx = canvas.getContext('2d');
+
+const cssWidth = 600;   // kích thước hiển thị logic mong muốn
+const cssHeight = 280;
+const dpr = window.devicePixelRatio || 1;
+
+// 1. Buffer vật lý = CSS × dpr
+canvas.width  = Math.round(cssWidth  * dpr);
+canvas.height = Math.round(cssHeight * dpr);
+
+// 2. Khóa kích thước hiển thị bằng CSS
+canvas.style.width  = cssWidth  + 'px';
+canvas.style.height = cssHeight + 'px';
+
+// 3. Scale context — từ giờ vẽ bằng tọa độ CSS logic
+ctx.scale(dpr, dpr);
+
+// Vẽ tại tâm 300,140 — sắc nét trên mọi màn hình
+ctx.fillStyle = '#3b82f6';
+ctx.beginPath();
+ctx.arc(300, 140, 60, 0, Math.PI * 2);
+ctx.fill();</code></pre>
+              </div>
+
+              <p>Trong dự án thực tế, bạn nên gói logic này vào một <strong>hàm helper</strong> tái sử dụng được. Hàm dưới đây nhận một canvas, tự đọc kích thước CSS hiện tại của nó qua <code>getBoundingClientRect()</code>, set buffer đúng theo dpr và trả về context đã scale sẵn. Quan trọng: ta dùng <code>setTransform</code> thay vì <code>scale</code> để khi gọi lại nhiều lần (lúc resize) ma trận không bị nhân chồng lên nhau:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+                  <span class="code-filename">setupHiDPI.js</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-javascript">/**
+ * Cấu hình canvas sắc nét trên màn hình HiDPI.
+ * Trả về context đã scale theo dpr — vẽ bằng tọa độ CSS logic.
+ */
+function setupHiDPI(canvas, maxDpr = 2) {
+  const ctx = canvas.getContext('2d');
+  // Giới hạn dpr để tiết kiệm bộ nhớ/pin (xem Mục 7)
+  const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+  const rect = canvas.getBoundingClientRect();
+
+  canvas.width  = Math.round(rect.width  * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+
+  // setTransform: reset ma trận rồi scale — an toàn khi gọi lại nhiều lần
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Trả kèm kích thước logic để code vẽ dùng
+  return { ctx, dpr, width: rect.width, height: rect.height };
+}
+
+// Dùng:
+const { ctx, width, height } = setupHiDPI(canvas);
+ctx.strokeRect(0, 0, width, height); // viền vẫn 1px sắc nét</code></pre>
+              </div>
+
+              <h2>3. Góc Tối Khi Thay Đổi Kích Thước: Hủy Bỏ Drawing State</h2>
               <p>Khi bạn thay đổi thuộc tính `width` hoặc `height` của canvas bằng Javascript (ngay cả khi giá trị mới bằng giá trị cũ), trình duyệt sẽ thực hiện một tác vụ phần cứng ngầm:</p>
               <blockquote>
                 <p><strong>[QUAN TRỌNG]</strong> Trình duyệt sẽ giải phóng vùng nhớ đệm cũ (Backing Store), cấp phát một vùng nhớ bitmap mới tinh, và <strong>reset hoàn toàn trạng thái context (Context State Stack)</strong> về mặc định. Mọi cài đặt như <code>fillStyle</code>, <code>strokeStyle</code>, ma trận biến đổi (translate, rotate, scale), độ dày nét vẽ, font chữ... đều bị xóa sạch.</p>
@@ -145,7 +262,143 @@ function resize() {
 }</code></pre>
               </div>
 
-              <h2>3. Công Thức Toán Học Ánh Xạ Tọa Độ Chuột Nâng Cao</h2>
+              <h2>4. ResizeObserver &amp; Canvas Responsive Đúng Chuẩn</h2>
+              <p>Cách cũ là lắng nghe <code>window.addEventListener('resize', ...)</code>. Nhưng cách này có khuyết điểm lớn: nó chỉ kích hoạt khi <em>cửa sổ trình duyệt</em> đổi kích thước, mà <strong>không</strong> phát hiện được khi container của canvas đổi kích thước vì lý do khác — ví dụ sidebar mở/đóng, flexbox co giãn, hay một panel CSS grid thay đổi. Giải pháp hiện đại là <code>ResizeObserver</code>: nó quan sát trực tiếp <em>element</em> chứa canvas và gọi callback mỗi khi kích thước box của element đó thay đổi, bất kể nguyên nhân.</p>
+              <p>Tuy nhiên resize/observe có thể bắn ra hàng chục lần liên tiếp khi người dùng kéo cửa sổ. Việc cấp phát lại buffer canvas (đổi <code>width</code>/<code>height</code>) là tác vụ nặng, nên ta cần <strong>debounce</strong> (gom nhiều sự kiện thành một lần xử lý cuối). Mẫu phổ biến là dùng <code>requestAnimationFrame</code> làm hàng rào: nhiều callback trong cùng một frame chỉ dẫn tới đúng một lần vẽ lại.</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+                  <span class="code-filename">resize_observer.js</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-javascript">let rafId = 0;
+
+const ro = new ResizeObserver(() =&gt; {
+  // Debounce qua rAF: gom nhiều callback trong 1 frame thành 1 lần resize
+  if (rafId) return;
+  rafId = requestAnimationFrame(() =&gt; {
+    rafId = 0;
+    const { ctx, width, height } = setupHiDPI(canvas); // gọi lại helper Mục 2
+    draw(ctx, width, height); // canvas.width đổi → phải vẽ lại toàn bộ
+  });
+});
+
+// Quan sát container, không phải window
+ro.observe(canvas.parentElement);
+
+// Nhớ dọn dẹp khi component bị huỷ
+// ro.disconnect();</code></pre>
+              </div>
+
+              <p>Một yêu cầu thường gặp khác là <strong>khóa tỉ lệ khung hình (aspect-ratio lock)</strong> — ví dụ một game luôn phải giữ tỉ lệ 16:9 dù container rộng/hẹp ra sao. Kỹ thuật <strong>letterboxing</strong> (giống viền đen trên/dưới khi xem phim) tính ra vùng vẽ lớn nhất vừa khít tỉ lệ mong muốn bên trong container, rồi căn giữa và chừa lề. Công thức: so sánh tỉ lệ container với tỉ lệ đích — nếu container "quá rộng" thì khóa theo chiều cao và chừa lề trái/phải; ngược lại khóa theo chiều rộng và chừa lề trên/dưới:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+                  <span class="code-filename">letterbox_fit.js</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-javascript">// Tính vùng vẽ giữ tỉ lệ targetRatio bên trong container (cw × ch)
+function fitWithLetterbox(cw, ch, targetRatio /* = 16/9 */) {
+  const containerRatio = cw / ch;
+  let w, h;
+  if (containerRatio &gt; targetRatio) {
+    // Container quá rộng → khóa chiều cao, chừa lề ngang
+    h = ch;
+    w = ch * targetRatio;
+  } else {
+    // Container quá cao → khóa chiều rộng, chừa lề dọc
+    w = cw;
+    h = cw / targetRatio;
+  }
+  return {
+    width:  w,
+    height: h,
+    offsetX: (cw - w) / 2, // lề trái (letterbox)
+    offsetY: (ch - h) / 2  // lề trên (pillarbox)
+  };
+}
+
+const fit = fitWithLetterbox(rect.width, rect.height, 16 / 9);
+ctx.translate(fit.offsetX, fit.offsetY); // dịch vùng vẽ vào giữa</code></pre>
+              </div>
+
+              <p>Hãy thử nghiệm trực tiếp với demo dưới đây: kéo thanh trượt để thu hẹp container và quan sát canvas tự re-fit, giữ tỉ lệ và thêm viền letterbox tự động.</p>
+
+              <div class="canvas-demo" data-demo="letterbox">
+                <div class="canvas-demo__header"><span class="canvas-demo__title">✨ Demo tương tác: Aspect-ratio &amp; Letterbox</span><button class="canvas-demo__reset" type="button">↻ Reset</button></div>
+                <div class="canvas-demo__stage"><canvas class="canvas-demo__canvas" width="600" height="280"></canvas></div>
+                <div class="canvas-demo__controls">
+                  <label class="canvas-demo__control"><span>Chiều rộng container <b data-out="cw">100</b>%</span><input type="range" data-ctl="cw" min="30" max="100" value="100"></label>
+                  <label class="canvas-demo__control"><span>Tỉ lệ đích <b data-out="ratio">16:9</b></span><input type="range" data-ctl="ratio" min="0" max="3" value="0"></label>
+                </div>
+              </div>
+              <script>
+              (function () {
+                const root = document.currentScript.previousElementSibling;
+                const canvas = root.querySelector('canvas'); const ctx = canvas.getContext('2d');
+                const W = canvas.width, H = canvas.height;
+                const out = (k) => root.querySelector('[data-out="' + k + '"]');
+                const ctl = (k) => root.querySelector('[data-ctl="' + k + '"]');
+                const ratios = [[16, 9], [4, 3], [1, 1], [21, 9]];
+                const state = { cw: 100, ratio: 0, raf: 0, running: false, t: 0 };
+                function fit(cw, ch, target) {
+                  const cr = cw / ch; let w, h;
+                  if (cr > target) { h = ch; w = ch * target; } else { w = cw; h = cw / target; }
+                  return { w, h, ox: (cw - w) / 2, oy: (ch - h) / 2 };
+                }
+                function sync() {
+                  state.cw = +ctl('cw').value; state.ratio = +ctl('ratio').value;
+                  const r = ratios[state.ratio];
+                  out('cw').textContent = state.cw; out('ratio').textContent = r[0] + ':' + r[1];
+                }
+                root.querySelectorAll('[data-ctl]').forEach(el => el.addEventListener('input', sync));
+                root.querySelector('.canvas-demo__reset').addEventListener('click', () => {
+                  ctl('cw').value = 100; ctl('ratio').value = 0; sync();
+                });
+                function frame() {
+                  state.t += 0.02;
+                  ctx.clearRect(0, 0, W, H);
+                  // vẽ "container" (vùng khả dụng)
+                  const margin = 20;
+                  const fullW = W - margin * 2;
+                  const contW = fullW * (state.cw / 100);
+                  const contH = H - margin * 2;
+                  const cx = margin + (fullW - contW) / 2;
+                  ctx.strokeStyle = '#475569'; ctx.lineWidth = 1.5;
+                  ctx.setLineDash([5, 4]);
+                  ctx.strokeRect(cx, margin, contW, contH);
+                  ctx.setLineDash([]);
+                  // letterbox fit
+                  const r = ratios[state.ratio]; const target = r[0] / r[1];
+                  const f = fit(contW, contH, target);
+                  // vùng letterbox (viền tối)
+                  ctx.fillStyle = 'rgba(15,23,42,0.6)';
+                  ctx.fillRect(cx, margin, contW, contH);
+                  // vùng vẽ thực
+                  const gx = cx + f.ox, gy = margin + f.oy;
+                  const grad = ctx.createLinearGradient(gx, gy, gx + f.w, gy + f.h);
+                  grad.addColorStop(0, '#3b82f6'); grad.addColorStop(1, '#06b6d4');
+                  ctx.fillStyle = grad;
+                  ctx.fillRect(gx, gy, f.w, f.h);
+                  // nội dung mẫu: vòng tròn căn giữa giữ tỉ lệ
+                  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                  ctx.beginPath();
+                  ctx.arc(gx + f.w / 2, gy + f.h / 2, Math.min(f.w, f.h) * 0.18 * (1 + Math.sin(state.t) * 0.08), 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.fillStyle = '#e2e8f0'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+                  ctx.fillText(Math.round(f.w) + ' × ' + Math.round(f.h) + ' px', gx + f.w / 2, gy + f.h - 10);
+                  state.raf = requestAnimationFrame(frame);
+                }
+                function start() { if (!state.running) { state.running = true; frame(); } }
+                function stop() { state.running = false; cancelAnimationFrame(state.raf); }
+                sync();
+                if ('IntersectionObserver' in window) { new IntersectionObserver(es => es.forEach(e => e.isIntersecting ? start() : stop()), { threshold: 0.1 }).observe(canvas); } else { start(); }
+              })();
+              </script>
+
+              <h2>5. Công Thức Toán Học Ánh Xạ Tọa Độ Chuột Nâng Cao</h2>
               <p>Để ánh xạ chính xác tọa độ chuột từ màn hình vào tọa độ vẽ trên canvas, ta không chỉ trừ đơn thuần góc lề `rect.left` mà phải tính đến **CSS borders, paddings** và sự chênh lệch tỉ lệ phân giải hệ số zoom.</p>
               <p>Công thức tổng quát để tính tọa độ local thực tế \(x_{local}\) và \(y_{local}\) từ sự kiện chuột:</p>
               
@@ -186,7 +439,81 @@ function resize() {
 }</code></pre>
               </div>
 
-              <h2>4. Sử dụng Fullscreen API &amp; Touch Events di động</h2>
+              <p>Để cảm nhận rõ tác động của việc scale DPR, hãy thử demo dưới đây. Nửa trái được vẽ <strong>không</strong> scale theo dpr (mờ trên màn Retina), nửa phải được vẽ <strong>có</strong> scale dpr (sắc nét). Bấm nút để bật/tắt, đồng thời quan sát <code>devicePixelRatio</code> hiện tại của thiết bị bạn:</p>
+
+              <div class="canvas-demo" data-demo="dprcompare">
+                <div class="canvas-demo__header"><span class="canvas-demo__title">✨ Demo tương tác: So sánh DPR Scaling</span><button class="canvas-demo__reset" type="button">↻ Reset</button></div>
+                <div class="canvas-demo__stage"><canvas class="canvas-demo__canvas" width="600" height="280"></canvas></div>
+                <div class="canvas-demo__controls">
+                  <label class="canvas-demo__control"><span>Độ dày nét vẽ <b data-out="lw">2</b>px</span><input type="range" data-ctl="lw" min="1" max="6" value="2"></label>
+                  <label class="canvas-demo__control"><span>devicePixelRatio thiết bị: <b data-out="dpr">?</b></span><input type="range" data-ctl="dummy" min="0" max="1" value="0" disabled></label>
+                </div>
+              </div>
+              <script>
+              (function () {
+                const root = document.currentScript.previousElementSibling;
+                const canvas = root.querySelector('canvas'); const ctx = canvas.getContext('2d');
+                const W = canvas.width, H = canvas.height;
+                const out = (k) => root.querySelector('[data-out="' + k + '"]');
+                const ctl = (k) => root.querySelector('[data-ctl="' + k + '"]');
+                const dpr = window.devicePixelRatio || 1;
+                const state = { lw: 2, t: 0, raf: 0, running: false };
+                // Hai offscreen buffer: một KHÔNG scale (thấp phân giải), một CÓ scale
+                const halfW = W / 2;
+                function makeBuffer(scaled) {
+                  const c = document.createElement('canvas');
+                  // Không scale: buffer chỉ bằng kích thước logic (sẽ bị blit phóng to → mờ)
+                  // Có scale: buffer nhân dpr → sắc nét
+                  const f = scaled ? dpr : 1;
+                  c.width = halfW * f; c.height = H * f;
+                  const cc = c.getContext('2d');
+                  cc.scale(f, f);
+                  return { c, cc };
+                }
+                let bufBlur, bufSharp;
+                function drawContent(cc, lw) {
+                  cc.clearRect(0, 0, halfW, H);
+                  cc.strokeStyle = '#60a5fa'; cc.lineWidth = lw;
+                  // lưới mảnh + chữ nhỏ — chỗ blur lộ rõ nhất
+                  for (let i = 20; i < halfW; i += 22) { cc.beginPath(); cc.moveTo(i, 20); cc.lineTo(i, H - 20); cc.stroke(); }
+                  cc.beginPath(); cc.arc(halfW / 2, H / 2, 50, 0, Math.PI * 2); cc.stroke();
+                  cc.fillStyle = '#e2e8f0'; cc.font = '13px monospace'; cc.textAlign = 'center';
+                  cc.fillText('Chữ nhỏ sắc nét?', halfW / 2, H - 30);
+                }
+                function rebuild() {
+                  bufBlur = makeBuffer(false); bufSharp = makeBuffer(true);
+                  drawContent(bufBlur.cc, state.lw); drawContent(bufSharp.cc, state.lw);
+                }
+                function sync() {
+                  state.lw = +ctl('lw').value; out('lw').textContent = state.lw;
+                  out('dpr').textContent = dpr.toFixed(2);
+                  rebuild();
+                }
+                root.querySelectorAll('[data-ctl]:not([disabled])').forEach(el => el.addEventListener('input', sync));
+                root.querySelector('.canvas-demo__reset').addEventListener('click', () => { ctl('lw').value = 2; sync(); });
+                function frame() {
+                  ctx.clearRect(0, 0, W, H);
+                  // nửa trái: blit buffer thấp phân giải → trình duyệt phóng to → mờ
+                  ctx.drawImage(bufBlur.c, 0, 0, halfW, H);
+                  // nửa phải: blit buffer dpr → sắc nét
+                  ctx.drawImage(bufSharp.c, halfW, 0, halfW, H);
+                  // nhãn + đường chia
+                  ctx.fillStyle = 'rgba(248,113,113,0.15)'; ctx.fillRect(0, 0, halfW, H);
+                  ctx.fillStyle = 'rgba(52,211,153,0.12)'; ctx.fillRect(halfW, 0, halfW, H);
+                  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(halfW, 0); ctx.lineTo(halfW, H); ctx.stroke();
+                  ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+                  ctx.fillStyle = '#f87171'; ctx.fillText('KHÔNG scale (mờ)', halfW / 2, 22);
+                  ctx.fillStyle = '#34d399'; ctx.fillText('CÓ scale dpr (nét)', halfW + halfW / 2, 22);
+                  state.raf = requestAnimationFrame(frame);
+                }
+                function start() { if (!state.running) { state.running = true; frame(); } }
+                function stop() { state.running = false; cancelAnimationFrame(state.raf); }
+                sync();
+                if ('IntersectionObserver' in window) { new IntersectionObserver(es => es.forEach(e => e.isIntersecting ? start() : stop()), { threshold: 0.1 }).observe(canvas); } else { start(); }
+              })();
+              </script>
+
+              <h2>6. Sử dụng Fullscreen API &amp; Touch Events di động</h2>
               <p>Khi vào chế độ Fullscreen, trình duyệt sẽ phóng to canvas ra toàn màn hình thiết bị. Canvas cần lắng nghe sự thay đổi này thông qua `ResizeObserver` để tự động điều chỉnh lại `devicePixelRatio` giúp game hoặc đồ họa không bị méo lệch.</p>
               <p>Đối với Touch Events trên thiết bị di động, mảng `e.touches` chứa danh sách tất cả các ngón tay đang chạm vào màn hình. Ta cần lặp qua mảng này và map tọa độ cho từng ngón tay độc lập để xử lý multi-touch.</p>
 
@@ -210,7 +537,38 @@ canvas.addEventListener('touchstart', (e) => {
 }, { passive: false });</code></pre>
               </div>
 
-              <h2>5. Câu hỏi trắc nghiệm ôn tập</h2>
+              <h2>7. Hiệu Năng &amp; Viewport Trên Thiết Bị Di Động</h2>
+              <p>Trên mobile, ba yếu tố quyết định trải nghiệm canvas. Thứ nhất, <strong>meta viewport</strong> phải khai báo đúng để trang không bị thu nhỏ kỳ lạ và để 1 CSS px ánh xạ chuẩn: <code>&lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;</code>. Thứ hai, CSS <code>touch-action</code> giúp loại bỏ độ trễ và ngăn các cử chỉ mặc định (scroll, pinch-zoom) tranh chấp với thao tác vẽ — đặt <code>touch-action: none</code> cho canvas tương tác để toàn quyền xử lý touch, mượt hơn nhiều so với gọi <code>preventDefault()</code> trong từng event.</p>
+              <p>Thứ ba — và quan trọng nhất cho pin: nhiều điện thoại có <code>devicePixelRatio = 3</code>, nghĩa là buffer canvas full-screen có thể lên tới hơn 3 triệu pixel, đốt RAM và GPU khủng khiếp. Hãy <strong>giới hạn (cap) dpr</strong>, thường ở <code>2</code> hoặc thậm chí <code>1.5</code> cho các hiệu ứng động nặng — mắt người gần như không phân biệt được dpr 2 và 3 ở khoảng cách cầm điện thoại, nhưng số pixel phải xử lý giảm hơn một nửa, giúp giữ 60 FPS và tiết kiệm pin đáng kể:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+                  <span class="code-filename">mobile_dpr_cap.css.js</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-javascript">/* CSS: cho phép canvas tự xử lý mọi cử chỉ touch */
+/*
+.game-canvas {
+  touch-action: none;       // tắt scroll/zoom mặc định
+  -webkit-user-select: none;
+  user-select: none;
+}
+*/
+
+// JS: cap dpr để tiết kiệm pin & giữ FPS trên mobile
+const rawDpr = window.devicePixelRatio || 1;
+const dpr = Math.min(rawDpr, 2); // không bao giờ vượt 2
+
+canvas.width  = Math.round(cssWidth  * dpr);
+canvas.height = Math.round(cssHeight * dpr);
+ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+// Tip: với animation rất nặng, hạ tiếp xuống 1.5 trên máy yếu
+// const dpr = navigator.hardwareConcurrency &lt; 4 ? 1.5 : Math.min(rawDpr, 2);</code></pre>
+              </div>
+
+              <h2>8. Câu hỏi trắc nghiệm ôn tập</h2>
 
               <div class="quiz-container">
                 <h3 class="quiz-title">Trắc nghiệm 1: devicePixelRatio</h3>
@@ -255,10 +613,10 @@ canvas.addEventListener('touchstart', (e) => {
             <div class="article-related">
               <h2>Bài viết liên quan trong series</h2>
               <div class="article-related__links">
-                <a href="canvas-easing-and-tweening" class="article-related__link">← Bài 7: Easing &amp; Tweening: Công Thức Animation Chuyên Sâu</a>
-                <a href="canvas-interaction-events" class="article-related__link">Bài 9: Interaction: Mouse, Touch &amp; Hit Detection →</a>
-                <a href="canvas-programming-series" class="article-related__link">Quay lại Lộ trình Canvas Series</a>
-              </div>
+                  <a href="canvas-sprite-animation" class="article-related__link">← Bài 9: Sprite Animation &amp; Spritesheet</a>
+                  <a href="canvas-interaction-events" class="article-related__link">Bài 11: Interaction: Mouse, Touch &amp; Hit Detection →</a>
+                  <a href="canvas-programming-series" class="article-related__link">Quay lại Lộ trình Canvas Series</a>
+                </div>
             </div>
 
           </div>
