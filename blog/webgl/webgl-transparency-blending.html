@@ -1,0 +1,940 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 10: Độ Trong Suốt, Alpha Blending &amp; Sắp Xếp Độ Sâu — js-tools</title>
+    <meta
+      name="description"
+      content="Học độ trong suốt trong WebGL: alpha channel, gl.blendFunc và phương trình pha trộn, premultiplied alpha, depth testing vs depth writing, sắp xếp back-to-front, và giới thiệu Order-Independent Transparency (OIT)."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgl/webgl-transparency-blending" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <style>
+      .blend-note {
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 16px;
+        font-family: 'Courier New', Courier, monospace;
+        color: #ca8a04;
+        overflow-x: auto;
+        margin: 20px 0;
+        line-height: 1.7;
+      }
+      body.light-theme .blend-note {
+        background: #f8f9fa;
+        border-color: #e5e5e5;
+        color: #b45309;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgl">
+        <div class="container">
+          <a href="webgl-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGL Series</span
+            ><span data-lang-content="vi">Quay lại Series WebGL</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgl">WebGL &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGL Lesson 10: Transparency, Blending &amp; Depth Sorting
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 10: Độ Trong Suốt, Alpha Blending &amp; Sắp Xếp Độ Sâu
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 27, 2026 · 17 min read</span>
+            <span data-lang-content="vi">27 tháng 6, 2026 · 17 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Disclaimer -->
+              <div data-lang-content="en">
+                <p>
+                  <em
+                    >This programming guide is only available in Vietnamese. Switch the language toggle to Vietnamese to
+                    read the full article.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Cho tới giờ chúng ta luôn vẽ các vật thể <em>đục</em> (opaque): mỗi pixel chỉ mang đúng một màu của
+                  fragment gần camera nhất, và bộ <strong>depth buffer</strong> tự động loại bỏ những gì bị che khuất.
+                  Nhưng thế giới thực đầy rẫy kính, nước, khói, lửa, kính màu, hiệu ứng UI mờ… — những bề mặt cho ánh
+                  sáng (và màu của vật phía sau) đi xuyên qua. Để mô phỏng chúng, ta cần
+                  <strong>alpha blending</strong>: pha trộn màu của fragment đang vẽ với màu đã có sẵn trong
+                  framebuffer. Bài này sẽ mổ xẻ cơ chế pha trộn của WebGL, lý do vì sao trong suốt lại đòi hỏi sắp xếp
+                  thứ tự vẽ, và vì sao đây là một trong những bài toán "dễ làm sai" nhất trong đồ họa thời gian thực.
+                </p>
+
+                <h2>1. Alpha channel &amp; bài toán trong suốt</h2>
+                <p>
+                  Mỗi màu trong WebGL là một vector <code>vec4(r, g, b, a)</code>. Ba thành phần đầu là màu; thành phần
+                  thứ tư — <strong>alpha</strong> — biểu thị <em>độ đục</em> của fragment: <code>a = 1.0</code> là đục
+                  hoàn toàn, <code>a = 0.0</code> là trong suốt hoàn toàn (vô hình), còn <code>a = 0.5</code> nghĩa là
+                  fragment chỉ "góp" một nửa màu của nó, để lộ một nửa màu phía sau. Bản thân alpha <em>không</em> tự
+                  động làm gì cả: nếu bạn không bật blending, GPU sẽ ghi đè màu mới lên màu cũ và alpha bị bỏ qua hoàn
+                  toàn ở bước ghi framebuffer.
+                </p>
+                <p>
+                  Vì sao trong suốt khó hơn hẳn vật đục? Với vật đục, kết quả tại mỗi pixel
+                  <strong>độc lập với thứ tự vẽ</strong>: dù bạn vẽ vật A trước hay vật B trước, depth test luôn giữ lại
+                  fragment gần nhất, nên ảnh cuối cùng như nhau. Trong suốt phá vỡ tính chất tuyệt vời đó. Khi pha trộn,
+                  màu cuối là một <em>hàm của toàn bộ chuỗi fragment đã đi qua pixel đó</em>, và phép pha trộn nói chung
+                  <strong>không giao hoán</strong> (không đối xứng): vẽ kính đỏ rồi kính xanh cho kết quả khác với vẽ
+                  kính xanh rồi kính đỏ. Hệ quả: ta phải kiểm soát chặt chẽ <strong>thứ tự vẽ</strong> và cách
+                  <strong>depth buffer</strong> tương tác với blending. Đây chính là gốc rễ của mọi rắc rối trong phần
+                  còn lại của bài.
+                </p>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span>
+                      <span class="dot dot-yellow"></span>
+                      <span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">enable_blending.js</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-javascript">// Mặc định blending TẮT: fragment shader ghi đè thẳng lên framebuffer,
+// thành phần alpha bị bỏ qua hoàn toàn ở bước ghi.
+gl.disable(gl.BLEND);
+
+// Bật blending để GPU pha trộn màu nguồn (source) với màu đích (destination).
+gl.enable(gl.BLEND);
+
+// Một fragment shader xuất ra alpha = 0.5 => chỉ góp một nửa màu.
+// Nhưng nếu KHÔNG bật gl.BLEND, alpha này vô nghĩa khi ghi ra màn hình.
+//   gl_FragColor = vec4(color.rgb, 0.5);
+</code></pre>
+                </div>
+
+                <h2>2. gl.blendFunc &amp; phương trình pha trộn</h2>
+                <p>
+                  Khi blending được bật, với mỗi fragment GPU tính màu cuối theo một
+                  <strong>phương trình pha trộn</strong>. Gọi <code>src</code> là màu fragment shader vừa xuất ra (color
+                  nguồn) và <code>dst</code> là màu đang có sẵn trong framebuffer (color đích), công thức tổng quát là:
+                </p>
+                <div class="blend-note">result = src × srcFactor &nbsp;+&nbsp; dst × dstFactor</div>
+                <p>
+                  Hàm <code>gl.blendFunc(srcFactor, dstFactor)</code> cho phép bạn chọn hai hệ số nhân này từ một tập
+                  hằng số của WebGL. Preset trong suốt phổ biến nhất là
+                  <strong>alpha blending chuẩn ("over" operator của Porter-Duff)</strong>:
+                </p>
+                <div class="blend-note">
+                  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)<br />
+                  result = src.rgb × src.a &nbsp;+&nbsp; dst.rgb × (1 − src.a)
+                </div>
+                <p>
+                  Diễn giải: fragment đóng góp tỉ lệ <code>src.a</code> của màu nó, và để lộ phần
+                  <code>(1 − src.a)</code>
+                  của màu nền phía sau. Đây là phép nội suy tuyến tính (lerp) giữa nền và màu mới theo alpha — đúng trực
+                  giác về một tấm kính mờ. Vài preset quan trọng khác:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Additive (cộng dồn) — <code>gl.blendFunc(gl.ONE, gl.ONE)</code>:</strong> màu nguồn được
+                    <em>cộng thẳng</em> vào nền. Hoàn hảo cho ánh sáng phát quang: lửa, tia laser, đốm sáng, hệ hạt
+                    (particle). Vùng chồng lấp càng sáng — và quan trọng là phép cộng <strong>giao hoán</strong> nên
+                    additive blending <em>không cần sắp xếp</em> thứ tự!
+                  </li>
+                  <li>
+                    <strong>Multiply (nhân) — <code>gl.blendFunc(gl.DST_COLOR, gl.ZERO)</code>:</strong> nhân màu nguồn
+                    với màu nền, luôn làm tối đi. Dùng cho bóng đổ giả, kính màu hấp thụ ánh sáng, lớp phủ ám màu.
+                  </li>
+                  <li>
+                    <strong>Premultiplied alpha — <code>gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)</code>:</strong>
+                    xem phần dưới.
+                  </li>
+                </ul>
+                <p>
+                  Ngoài <code>blendFunc</code>, bạn còn có thể đổi cả <em>toán tử</em> bằng
+                  <code>gl.blendEquation(gl.FUNC_ADD)</code> (mặc định là cộng; còn có <code>FUNC_SUBTRACT</code>,
+                  <code>FUNC_REVERSE_SUBTRACT</code>, và với WebGL2 là <code>MIN</code>/<code>MAX</code>). Và
+                  <code>gl.blendFuncSeparate</code> cho phép đặt hệ số riêng cho kênh RGB và kênh alpha:
+                </p>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span>
+                      <span class="dot dot-yellow"></span>
+                      <span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">blend_presets.js</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-javascript">gl.enable(gl.BLEND);
+
+// 1) Alpha blending chuẩn ("over") — kính mờ, cửa sổ, UI mờ
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+// 2) Additive — lửa, laser, particle phát sáng (KHÔNG cần sắp xếp)
+gl.blendFunc(gl.ONE, gl.ONE);
+
+// 3) Multiply — ám màu, bóng giả, kính hấp thụ
+gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+
+// Toán tử pha trộn (mặc định FUNC_ADD)
+gl.blendEquation(gl.FUNC_ADD);
+
+// Hệ số riêng cho RGB và alpha (hữu ích khi render ra texture có alpha)
+gl.blendFuncSeparate(
+  gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, // cho RGB
+  gl.ONE,       gl.ONE_MINUS_SRC_ALPHA  // cho alpha
+);</code></pre>
+                </div>
+
+                <p>
+                  <strong>Premultiplied alpha</strong> là một mẹo quan trọng để tránh các "viền đen/halo" xấu xí quanh
+                  texture có alpha. Ý tưởng: thay vì lưu màu "thẳng" (straight/unassociated) rồi nhân alpha lúc blend,
+                  ta <em>nhân sẵn alpha vào RGB ngay từ đầu</em> (<code>rgb' = rgb × a</code>). Khi đó công thức "over"
+                  trở thành <code>gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)</code>. Lợi ích: lọc texture (mipmap,
+                  bilinear) không còn kéo các pixel "màu rác" có alpha=0 vào vùng nhìn thấy, và bạn có thể trộn lẫn vật
+                  additive với vật trong suốt mà không đổi state — vì màu đã nhân alpha sẵn thì <code>a=0</code> tự
+                  nhiên cho đóng góp bằng 0.
+                </p>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span>
+                      <span class="dot dot-yellow"></span>
+                      <span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">premultiplied.frag.glsl</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-glsl">precision highp float;
+uniform sampler2D u_tex;
+varying vec2 v_uv;
+
+void main() {
+  vec4 c = texture2D(u_tex, v_uv);   // alpha "thẳng" (straight)
+  // Nhân sẵn alpha vào RGB => xuất ra màu premultiplied.
+  // Kết hợp với gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA) ở phía JS.
+  gl_FragColor = vec4(c.rgb * c.a, c.a);
+}</code></pre>
+                </div>
+
+                <h2>3. Depth testing vs Depth writing với vật trong suốt</h2>
+                <p>
+                  Đây là phần tinh tế nhất. Cần phân biệt rõ hai việc mà depth buffer làm:
+                  <strong>depth testing</strong> (so độ sâu của fragment với giá trị đã lưu để quyết định có vẽ hay
+                  không) và <strong>depth writing</strong> (ghi độ sâu của fragment vừa vẽ vào buffer). Với vật đục, ta
+                  bật cả hai: <code>gl.enable(gl.DEPTH_TEST)</code> và mặc định <code>gl.depthMask(true)</code>.
+                </p>
+                <p>
+                  Vấn đề: nếu một vật trong suốt được vẽ và <em>ghi</em> độ sâu của nó vào buffer, thì những vật trong
+                  suốt khác nằm <em>phía sau</em> nó (xa hơn) sẽ <strong>trượt depth test và bị loại bỏ</strong> — dù lẽ
+                  ra ta phải nhìn thấy chúng xuyên qua tấm kính phía trước! Kết quả là các bề mặt sau "biến mất" một
+                  cách vô lý. Giải pháp chuẩn: với pass vẽ vật trong suốt, hãy <strong>tắt ghi độ sâu</strong> bằng
+                  <code>gl.depthMask(false)</code> nhưng <em>vẫn giữ depth testing bật</em> — như vậy vật trong suốt vẫn
+                  bị các vật đục ở gần che đúng cách, nhưng không tự che lẫn nhau qua depth buffer.
+                </p>
+                <p>
+                  Tắt depth write giải quyết việc "bị loại oan", nhưng <em>không</em> giải quyết được thứ tự pha trộn.
+                  Vì phép "over" không giao hoán, ta phải tự tay vẽ các vật trong suốt theo thứ tự
+                  <strong>back-to-front</strong> (xa trước, gần sau): vật xa nhất vẽ trước để các tấm gần hơn pha trộn
+                  chồng lên nó đúng trình tự ánh sáng đi vào mắt. Quy trình điển hình của một frame:
+                </p>
+                <ol>
+                  <li>Vẽ toàn bộ vật <strong>đục</strong> trước, bật depth test + depth write.</li>
+                  <li>Sắp xếp các vật <strong>trong suốt</strong> theo khoảng cách tới camera, xa → gần.</li>
+                  <li>Bật blending, <code>gl.depthMask(false)</code>, rồi vẽ chúng theo thứ tự đã sắp xếp.</li>
+                </ol>
+                <p>
+                  Cách này vẫn có giới hạn cố hữu: sắp xếp theo <em>tâm</em> vật thể sẽ sai khi các vật giao nhau hoặc
+                  lồng vào nhau, và không thể sắp xếp đúng <em>từng pixel</em> bên trong một lưới tam giác lõm. Đó là lý
+                  do người ta phát minh ra OIT ở phần 5.
+                </p>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span>
+                      <span class="dot dot-yellow"></span>
+                      <span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">transparent_pass.js</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-javascript">// --- PASS 1: vật đục ---
+gl.enable(gl.DEPTH_TEST);
+gl.depthMask(true);          // ghi độ sâu bình thường
+gl.disable(gl.BLEND);
+drawOpaqueObjects();
+
+// --- PASS 2: vật trong suốt ---
+// Sắp xếp BACK-TO-FRONT theo khoảng cách tới camera (xa vẽ trước)
+transparent.sort((a, b) => b.distanceToCamera - a.distanceToCamera);
+
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+gl.depthMask(false);         // VẪN test độ sâu, nhưng KHÔNG ghi
+for (const obj of transparent) {
+  drawObject(obj);           // vật xa hơn sẽ được tấm gần hơn phủ chồng đúng thứ tự
+}
+gl.depthMask(true);          // khôi phục cho frame sau</code></pre>
+                </div>
+
+                <h2>4. Demo tương tác: pha trộn &amp; sắp xếp độ sâu</h2>
+                <p>
+                  Dưới đây là ba tấm phẳng (quad) bán trong suốt nằm ở ba độ sâu khác nhau, xoay chậm. Hãy thử đổi
+                  <strong>chế độ pha trộn</strong>, kéo thanh <strong>alpha</strong>, và đặc biệt là bật/tắt
+                  <strong>Depth Write</strong>: khi bật ghi độ sâu cho vật trong suốt (cấu hình "sai"), bạn sẽ thấy các
+                  tấm phía sau bị cắt cụt một cách vô lý — chính là artifact sắp xếp độ sâu mà phần 3 mô tả. Tắt nó đi
+                  để pha trộn trở lại đúng:
+                </p>
+
+                <div class="canvas-demo" data-demo="webgl-blending">
+                  <div class="canvas-demo__header">
+                    <span class="canvas-demo__title">🎮 Demo tương tác: Alpha Blending &amp; Depth Sorting</span>
+                    <button class="canvas-demo__reset" type="button">↻ Reset</button>
+                  </div>
+                  <div class="canvas-demo__stage">
+                    <canvas class="canvas-demo__canvas" width="600" height="320" aria-label="Blending Demo"></canvas>
+                  </div>
+                  <div
+                    class="canvas-demo__controls"
+                    style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))"
+                  >
+                    <label class="canvas-demo__control">
+                      <span>Chế độ pha trộn:</span>
+                      <select id="blendMode">
+                        <option value="alpha" selected>Alpha Blend (over)</option>
+                        <option value="additive">Additive (cộng)</option>
+                        <option value="multiply">Multiply (nhân)</option>
+                      </select>
+                    </label>
+                    <label class="canvas-demo__control">
+                      <span>Alpha (độ đục):</span>
+                      <input type="range" id="blendAlpha" min="0.1" max="1" step="0.05" value="0.55" />
+                    </label>
+                    <label class="canvas-demo__control">
+                      <span>Bật/Tắt Depth Write:</span>
+                      <input type="checkbox" id="depthWrite" />
+                    </label>
+                  </div>
+                </div>
+                <script>
+                  (function () {
+                    const root = document.currentScript.previousElementSibling;
+                    const canvas = root.querySelector('.canvas-demo__canvas');
+                    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+                    if (!gl) {
+                      canvas.style.display = 'none';
+                      return;
+                    }
+
+                    const vsSource = `
+                      attribute vec3 a_position;
+                      uniform mat4 u_MVP;
+                      void main() {
+                        gl_Position = u_MVP * vec4(a_position, 1.0);
+                      }
+                    `;
+                    const fsSource = `
+                      precision highp float;
+                      uniform vec3 u_color;
+                      uniform float u_alpha;
+                      void main() {
+                        gl_FragColor = vec4(u_color, u_alpha);
+                      }
+                    `;
+
+                    function createShader(type, src) {
+                      const s = gl.createShader(type);
+                      gl.shaderSource(s, src);
+                      gl.compileShader(s);
+                      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                        console.error('Shader error:', gl.getShaderInfoLog(s));
+                      }
+                      return s;
+                    }
+                    const program = gl.createProgram();
+                    gl.attachShader(program, createShader(gl.VERTEX_SHADER, vsSource));
+                    gl.attachShader(program, createShader(gl.FRAGMENT_SHADER, fsSource));
+                    gl.linkProgram(program);
+                    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                      console.error('Program link error:', gl.getProgramInfoLog(program));
+                    }
+
+                    const posLoc = gl.getAttribLocation(program, 'a_position');
+                    const mvpLoc = gl.getUniformLocation(program, 'u_MVP');
+                    const colorLoc = gl.getUniformLocation(program, 'u_color');
+                    const alphaLoc = gl.getUniformLocation(program, 'u_alpha');
+
+                    // Một quad đơn vị trên mặt phẳng XY (z = 0)
+                    const quad = new Float32Array([
+                      -0.7, -0.7, 0, 0.7, -0.7, 0, 0.7, 0.7, 0, -0.7, -0.7, 0, 0.7, 0.7, 0, -0.7, 0.7, 0,
+                    ]);
+                    const vbo = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+                    gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+                    function rotY(rad) {
+                      const s = Math.sin(rad),
+                        c = Math.cos(rad);
+                      return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]);
+                    }
+                    function perspective(fovDeg, aspect, near, far) {
+                      const f = 1.0 / Math.tan((fovDeg * Math.PI) / 360.0);
+                      const ri = 1.0 / (near - far);
+                      return new Float32Array([
+                        f / aspect,
+                        0,
+                        0,
+                        0,
+                        0,
+                        f,
+                        0,
+                        0,
+                        0,
+                        0,
+                        (near + far) * ri,
+                        -1,
+                        0,
+                        0,
+                        2 * near * far * ri,
+                        0,
+                      ]);
+                    }
+                    function multiply(a, b) {
+                      const o = new Float32Array(16);
+                      for (let r = 0; r < 4; ++r)
+                        for (let c = 0; c < 4; ++c)
+                          o[r * 4 + c] =
+                            a[r * 4] * b[c] +
+                            a[r * 4 + 1] * b[4 + c] +
+                            a[r * 4 + 2] * b[8 + c] +
+                            a[r * 4 + 3] * b[12 + c];
+                      return o;
+                    }
+                    function translate(x, y, z) {
+                      return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]);
+                    }
+
+                    // Ba tấm ở ba độ sâu (z trong không gian model). zDepth lớn = xa camera hơn.
+                    const planes = [
+                      { color: [0.95, 0.25, 0.3], z: -1.1 }, // đỏ, xa nhất
+                      { color: [0.25, 0.85, 0.4], z: 0.0 }, // xanh lá, giữa
+                      { color: [0.3, 0.55, 0.98], z: 1.1 }, // xanh dương, gần nhất
+                    ];
+
+                    const controls = {
+                      mode: root.querySelector('#blendMode'),
+                      alpha: root.querySelector('#blendAlpha'),
+                      depthWrite: root.querySelector('#depthWrite'),
+                    };
+
+                    function applyBlendMode(mode) {
+                      gl.enable(gl.BLEND);
+                      if (mode === 'additive') {
+                        gl.blendFunc(gl.ONE, gl.ONE);
+                      } else if (mode === 'multiply') {
+                        gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+                      } else {
+                        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                      }
+                    }
+
+                    let angle = 0;
+                    function draw() {
+                      gl.viewport(0, 0, canvas.width, canvas.height);
+                      gl.clearColor(0.05, 0.05, 0.08, 1.0);
+                      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                      gl.enable(gl.DEPTH_TEST);
+
+                      angle += 0.004;
+                      const view = translate(0, 0, -4.0);
+                      const proj = perspective(45, canvas.width / canvas.height, 0.1, 100);
+                      const vp = multiply(view, proj);
+
+                      const alpha = parseFloat(controls.alpha.value);
+                      const mode = controls.mode.value;
+                      applyBlendMode(mode);
+
+                      // Tắt/bật ghi độ sâu theo checkbox để người dùng thấy artifact.
+                      gl.depthMask(controls.depthWrite.checked);
+
+                      // Vẽ BACK-TO-FRONT: sắp xếp theo z model (xa trước).
+                      // z model âm = xa hơn sau khi view dịch -4 => sort tăng dần theo z.
+                      const ordered = planes.slice().sort((a, b) => a.z - b.z);
+
+                      gl.useProgram(program);
+                      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+                      gl.enableVertexAttribArray(posLoc);
+                      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+                      for (const p of ordered) {
+                        const model = multiply(translate(0, 0, p.z), rotY(angle));
+                        const mvp = multiply(vp, model);
+                        gl.uniformMatrix4fv(mvpLoc, false, mvp);
+                        gl.uniform3f(colorLoc, p.color[0], p.color[1], p.color[2]);
+                        gl.uniform1f(alphaLoc, alpha);
+                        gl.drawArrays(gl.TRIANGLES, 0, 6);
+                      }
+
+                      gl.depthMask(true); // khôi phục cho lần clear sau
+                      requestAnimationFrame(draw);
+                    }
+
+                    root.querySelector('.canvas-demo__reset').addEventListener('click', () => {
+                      controls.mode.value = 'alpha';
+                      controls.alpha.value = '0.55';
+                      controls.depthWrite.checked = false;
+                    });
+                    draw();
+                  })();
+                </script>
+
+                <h2>5. Order-Independent Transparency (giới thiệu)</h2>
+                <p>
+                  Sắp xếp back-to-front nghe đơn giản nhưng trong thực tế rất phiền: bạn phải sắp lại
+                  <em>mỗi frame</em> khi camera di chuyển (tốn CPU), việc sắp theo tâm vật thể vẫn sai khi chúng
+                  <strong>giao cắt hoặc lồng nhau</strong>, và không bao giờ xử lý đúng được các tam giác chồng lấp
+                  <em>trong cùng một lưới</em>. <strong>Order-Independent Transparency (OIT)</strong> là họ kỹ thuật cho
+                  ra kết quả pha trộn đúng (hoặc gần đúng) mà <em>không cần</em> sắp xếp thủ công.
+                </p>
+                <p>
+                  Kỹ thuật thực dụng nhất cho WebGL là <strong>Weighted Blended OIT</strong> (McGuire &amp; Bavoil,
+                  2013). Ý tưởng: thay vì pha trộn theo thứ tự, ta tích lũy mọi fragment trong suốt vào hai render
+                  target — một accumulation buffer cộng dồn <code>color × weight</code> và một revealage buffer theo dõi
+                  độ "lộ" còn lại — với <strong>blending giao hoán</strong> (phép cộng), nên thứ tự không còn quan
+                  trọng. Trọng số <code>weight</code> là một hàm xấp xỉ phụ thuộc độ sâu và alpha, ưu tiên fragment gần
+                  camera. Cuối cùng một pass "resolve" trộn hai buffer lại thành ảnh trong suốt mượt mà.
+                </p>
+                <p>
+                  Hạn chế: Weighted Blended OIT chỉ là <em>xấp xỉ</em> — nó không phân giải chính xác thứ tự nên các
+                  cảnh có chênh lệch alpha lớn có thể trông hơi sai. Các phương pháp chính xác tuyệt đối như
+                  <strong>per-pixel linked lists / A-buffer</strong> đòi hỏi ghi tùy ý vào bộ nhớ (cần WebGL2/WebGPU và
+                  rất tốn tài nguyên). Vì vậy trong thực tế, lựa chọn thường là: dùng additive cho hiệu ứng phát sáng
+                  (không cần sort), sort back-to-front cho số ít vật trong suốt rõ ràng, và để dành OIT cho những cảnh
+                  thực sự dày đặc lớp trong suốt.
+                </p>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span>
+                      <span class="dot dot-yellow"></span>
+                      <span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">weighted_oit.frag.glsl</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-glsl">// Pass tích lũy của Weighted Blended OIT (cần 2 render target, WebGL2 MRT).
+// Phía JS: cả hai target dùng blendFunc cộng dồn (giao hoán) => không cần sort.
+//   accum:    gl.blendFunc(gl.ONE, gl.ONE)
+//   revealage: gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_COLOR)
+#version 300 es
+precision highp float;
+in float v_viewDepth;          // độ sâu trong không gian view
+in vec4  v_color;              // màu + alpha của fragment trong suốt
+layout(location = 0) out vec4 accum;
+layout(location = 1) out float revealage;
+
+void main() {
+  float a = v_color.a;
+  // Trọng số ưu tiên fragment gần camera (một trong các công thức của bài báo gốc)
+  float w = a * clamp(0.03 / (1e-5 + pow(abs(v_viewDepth) / 200.0, 4.0)), 1e-2, 3e3);
+  accum     = vec4(v_color.rgb * a, a) * w;  // cộng dồn, thứ tự không quan trọng
+  revealage = a;                              // theo dõi độ "lộ" còn lại
+}</code></pre>
+                </div>
+
+                <h2>6. Câu hỏi trắc nghiệm ôn tập</h2>
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm 1: Phương trình pha trộn</h3>
+                  <p class="quiz-question">
+                    Với <code>gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)</code> và fragment có alpha = 0.25, màu
+                    cuối tại pixel được tính như thế nào?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! src.rgb được nhân 0.25 và màu nền dst.rgb được nhân (1 − 0.25) = 0.75 — đúng phép nội suy tuyến tính theo alpha.'
+                        )
+                      "
+                    >
+                      result = src.rgb × 0.25 + dst.rgb × 0.75
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Chưa đúng. Đó là additive (gl.ONE, gl.ONE) — cộng thẳng, không có nội suy theo alpha.'
+                        )
+                      "
+                    >
+                      result = src.rgb + dst.rgb (cộng thẳng hai màu)
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Alpha 0.25 nghĩa là fragment khá trong suốt; nó chỉ góp 25% màu của mình, không phải 75%.'
+                        )
+                      "
+                    >
+                      result = src.rgb × 0.75 + dst.rgb × 0.25
+                    </button>
+                  </div>
+                  <div class="quiz-feedback"></div>
+                </div>
+
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm 2: Depth write</h3>
+                  <p class="quiz-question">
+                    Vì sao khi vẽ vật trong suốt người ta thường gọi <code>gl.depthMask(false)</code> nhưng vẫn giữ
+                    <code>DEPTH_TEST</code> bật?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Không đúng. depthMask(false) không tắt blending; blending do gl.BLEND và blendFunc kiểm soát.'
+                        )
+                      "
+                    >
+                      Để tự động bật chế độ pha trộn additive cho mọi fragment.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Vẫn test để vật đục gần che đúng; nhưng không ghi độ sâu để vật trong suốt không tự loại lẫn nhau, tránh việc bề mặt phía sau biến mất oan.'
+                        )
+                      "
+                    >
+                      Để vật trong suốt vẫn bị vật đục che đúng, nhưng không tự che lẫn nhau qua depth buffer (tránh mất
+                      bề mặt phía sau).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Tắt depth write không thay thế việc sắp xếp; bạn vẫn phải vẽ back-to-front vì phép over không giao hoán.'
+                        )
+                      "
+                    >
+                      Vì khi tắt depth write thì không còn cần sắp xếp thứ tự vẽ nữa.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback"></div>
+                </div>
+
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm 3: Sắp xếp &amp; OIT</h3>
+                  <p class="quiz-question">
+                    Chế độ pha trộn nào <strong>không</strong> đòi hỏi sắp xếp back-to-front, và vì sao?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Chưa đúng. Multiply (DST_COLOR, ZERO) phụ thuộc dst nên nói chung vẫn nhạy thứ tự khi xen kẽ với các phép khác.'
+                        )
+                      "
+                    >
+                      Multiply, vì nhân màu luôn cho kết quả tối đi.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Additive (gl.ONE, gl.ONE) là phép cộng — giao hoán, nên thứ tự vẽ không ảnh hưởng kết quả. Đó cũng là nguyên lý nền của Weighted Blended OIT.'
+                        )
+                      "
+                    >
+                      Additive (gl.ONE, gl.ONE), vì phép cộng giao hoán nên thứ tự vẽ không đổi kết quả.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Alpha blending over chính là phép KHÔNG giao hoán — nó là lý do ta phải sắp xếp.'
+                        )
+                      "
+                    >
+                      Alpha blend "over", vì alpha luôn nội suy đối xứng giữa hai màu.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback"></div>
+                </div>
+
+                <div class="article-cta">
+                  <h3>Tải mã nguồn thực hành</h3>
+                  <p>
+                    File chứa các preset blendFunc, pass vẽ vật trong suốt back-to-front và demo ba tấm kính để bạn tự
+                    thử nghiệm:
+                  </p>
+                  <a href="webgl_blending.js" download class="article-cta__btn">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    Tải về mã nguồn Blending mẫu
+                  </a>
+                </div>
+              </div>
+              <div class="article-related">
+                <h2 data-lang-content="en">Related Articles</h2>
+                <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="webgl-framebuffer-postprocessing" class="article-related__link article-related__link--next">
+                    <span data-lang-content="en">Lesson 11: Offscreen Framebuffers & Post-processing</span>
+                    <span data-lang-content="vi">Bài 11: Framebuffer & Kỹ Thuật Hậu Kỳ (Post-processing)</span>
+                  </a>
+                  <a href="webgl-model-loading" class="article-related__link article-related__link--prev">
+                    <span data-lang-content="en">Lesson 9: Loading 3D Models (OBJ & glTF)</span>
+                    <span data-lang-content="vi">Bài 9: Nạp Mô Hình 3D — OBJ & glTF</span>
+                  </a>
+                  <a href="webgl-programming-series" class="article-related__link">
+                    <span data-lang-content="en">Back to WebGL Course Overview</span>
+                    <span data-lang-content="vi">Quay lại Lộ trình WebGL Series</span>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://snapcast.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/snapcast.svg"
+              alt=""
+              width="54"
+              height="16"
+              aria-hidden="true"
+              style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+            />
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <svg
+              viewBox="0 0 320 320"
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0"
+            >
+              <g transform="translate(0 20)">
+                <g transform="translate(20 30) rotate(-6)">
+                  <rect
+                    width="180"
+                    height="140"
+                    rx="14"
+                    fill="rgba(5,150,105,0.18)"
+                    stroke="rgba(255,255,255,0.2)"
+                    stroke-width="2"
+                  />
+                </g>
+                <g transform="translate(120 110) rotate(4)">
+                  <rect
+                    width="180"
+                    height="140"
+                    rx="14"
+                    fill="rgba(6,182,212,0.18)"
+                    stroke="rgba(255,255,255,0.2)"
+                    stroke-width="2"
+                  />
+                  <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                  <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                  <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                </g>
+              </g>
+            </svg>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script src="../ide.js" defer></script>
+  </body>
+</html>

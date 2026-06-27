@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 11: Framebuffer &amp; Kỹ Thuật Hậu Kỳ (Post-processing) — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu Framebuffer Object (FBO), cơ chế render-to-texture và lập trình các bộ lọc hậu kỳ (vignette, blur, sobel) bằng Fragment Shader."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgl/webgl-framebuffer-postprocessing" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgl">
+        <div class="container">
+          <a href="webgl-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGL Series</span
+            ><span data-lang-content="vi">Quay lại Series WebGL</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgl">WebGL &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGL Lesson 11: Offscreen Framebuffers &amp; Post-processing
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 11: Framebuffer &amp; Kỹ Thuật Hậu Kỳ (Post-processing)
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 27, 2026 · 18 min read</span>
+            <span data-lang-content="vi">27 tháng 6, 2026 · 18 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Disclaimer -->
+              <div data-lang-content="en">
+                <p>
+                  <em
+                    >This programming guide is only available in Vietnamese. Switch the language toggle to Vietnamese to
+                    read the full article.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Khi chơi game 3D, chúng ta thường thấy các hiệu ứng hình ảnh điện ảnh ấn tượng như: làm mờ chuyển động
+                  (motion blur), viền tối điện ảnh (vignette), chuyển màu nghệ thuật, hay phát sáng (bloom). Những hiệu
+                  ứng này không được vẽ trực tiếp từ mô hình 3D thô mà được xử lý ở giai đoạn sau cùng gọi là **Hậu kỳ
+                  (Post-processing)** nhờ kỹ thuật kết xuất gián tiếp qua **Framebuffer Object (FBO)**.
+                </p>
+
+                <h2>1. Khái niệm Render to Texture &amp; Off-screen Framebuffer</h2>
+                <p>
+                  Mặc định, mọi lệnh vẽ của WebGL sẽ kết xuất điểm ảnh trực tiếp lên màn hình của trình duyệt (được gọi
+                  là Default Framebuffer). Tuy nhiên, WebGL cho phép chúng ta tạo ra các bộ đệm ảo tùy ý gọi là
+                  **Framebuffer Object (FBO)**.
+                </p>
+                <p>
+                  Thay vì vẽ lên màn hình, GPU vẽ toàn bộ khung cảnh 3D vào một Texture được gắn kết (attached) làm bộ
+                  nhớ màu sắc của FBO. Kỹ thuật này được gọi là **Render to Texture**.
+                </p>
+
+                <h2>2. Các bước khởi tạo Framebuffer Object (FBO)</h2>
+                <p>Quy trình thiết lập một FBO off-screen hoàn chỉnh:</p>
+                <ol>
+                  <li>
+                    Tạo FBO phụ:
+                    <pre><code class="language-js">const fbo = gl.createFramebuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);</code></pre>
+                  </li>
+                  <li>
+                    Tạo và gắn kết Texture làm kênh màu (Color Attachment):
+                    <pre><code class="language-js">const targetTexture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, targetTexture);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, targetTexture, 0);</code></pre>
+                  </li>
+                  <li>
+                    Tạo và gắn kết Depth Buffer để hỗ trợ tính toán ẩn/hiện 3D (Depth Testing) bên trong FBO:
+                    <pre><code class="language-js">const depthBuffer = gl.createRenderbuffer();
+gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
+gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
+gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthBuffer);</code></pre>
+                  </li>
+                  <li>
+                    Xác minh tính hoàn tất của FBO trước khi vẽ:
+                    <pre><code class="language-js">if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+    console.error("Lỗi cấu hình FBO!");
+}</code></pre>
+                  </li>
+                </ol>
+
+                <h2>3. Bộ lọc Hậu kỳ trên màn phẳng (Screen-space Quad)</h2>
+                <p>Sau khi đã render khung cảnh 3D vào FBO Texture, quá trình hậu kỳ diễn ra qua 2 bước:</p>
+                <ol>
+                  <li>
+                    Hủy kích hoạt FBO để quay lại vẽ lên màn hình chính: `gl.bindFramebuffer(gl.FRAMEBUFFER, null);`
+                  </li>
+                  <li>
+                    Vẽ một hình chữ nhật phẳng 2D phủ kín toàn bộ màn hình (Screen-space Quad) dùng FBO Texture làm đầu
+                    vào.
+                  </li>
+                  <li>
+                    Trong Fragment Shader của hình phẳng này, chúng ta áp dụng các công thức toán học để xử lý điểm ảnh
+                    (pixel manipulation):
+                    <ul>
+                      <li>
+                        <strong>Grayscale (Ảnh xám)</strong>: Lấy trung bình trọng số độ sáng của mắt người đối với 3
+                        kênh đỏ, xanh lá, xanh dương:
+                        <div style="font-family: monospace; padding-left: 20px; color: #f59e0b">
+                          gray = 0.2126*R + 0.7152*G + 0.0722*B
+                        </div>
+                      </li>
+                      <li>
+                        <strong>Vignette (Tối góc)</strong>: Giảm độ sáng của pixel tỷ lệ thuận với bình phương khoảng
+                        cách từ tâm màn hình:
+                        <div style="font-family: monospace; padding-left: 20px; color: #f59e0b">
+                          vignette = 1.0 - dot(uv - 0.5, uv - 0.5) * 1.5
+                        </div>
+                      </li>
+                      <li>
+                        <strong>Kernel Filters (Lọc hạt nhân)</strong>: GPU đọc 9 pixel lân cận xung quanh pixel hiện
+                        tại và nhân chập với ma trận hệ số để tạo các hiệu ứng mờ (Gaussian Blur) hoặc lọc biên cạnh sắc
+                        nét (Sobel Edge).
+                      </li>
+                    </ul>
+                  </li>
+                </ol>
+
+                <div class="canvas-demo" data-demo="webgl-postprocess">
+                  <div class="canvas-demo__header">
+                    <span class="canvas-demo__title"
+                      >🎮 Demo tương tác: 3D Offscreen Rendering &amp; Post-processing Kernels</span
+                    >
+                    <button class="canvas-demo__reset" type="button">↻ Reset</button>
+                  </div>
+                  <div class="canvas-demo__stage">
+                    <canvas
+                      class="canvas-demo__canvas"
+                      width="600"
+                      height="320"
+                      aria-label="Post processing Demo"
+                    ></canvas>
+                  </div>
+                  <div
+                    class="canvas-demo__controls"
+                    style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr))"
+                  >
+                    <label class="canvas-demo__control">
+                      <span>Hiệu ứng hậu kỳ:</span>
+                      <select id="postEffectSelect">
+                        <option value="none" selected>Không lọc (Normal)</option>
+                        <option value="grayscale">Ảnh xám (Grayscale)</option>
+                        <option value="invert">Nghịch đảo màu (Invert)</option>
+                        <option value="vignette">Tối góc điện ảnh (Vignette)</option>
+                        <option value="sobel">Dò biên cạnh (Sobel Edge)</option>
+                        <option value="blur">Gaussian Blur (Làm mờ)</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+                <script>
+                  (function () {
+                    const root = document.currentScript.previousElementSibling;
+                    const canvas = root.querySelector('.canvas-demo__canvas');
+                    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+
+                    if (!gl) {
+                      canvas.style.display = 'none';
+                      return;
+                    }
+
+                    // 1. Shaders for 3D Scene (offscreen cube render)
+                    const sceneVs = `
+                      attribute vec3 a_position;
+                      attribute vec3 a_color;
+                      uniform mat4 u_MVP;
+                      varying vec3 v_color;
+                      void main() {
+                        v_color = a_color;
+                        gl_Position = u_MVP * vec4(a_position, 1.0);
+                      }
+                    `;
+                    const sceneFs = `
+                      precision mediump float;
+                      varying vec3 v_color;
+                      void main() {
+                        gl_FragColor = vec4(v_color, 1.0);
+                      }
+                    `;
+
+                    // 2. Shaders for Post-processing Full-screen Quad
+                    const quadVs = `
+                      attribute vec2 a_position;
+                      varying vec2 v_texCoord;
+                      void main() {
+                        v_texCoord = a_position * 0.5 + 0.5;
+                        gl_Position = vec4(a_position, 0.0, 1.0);
+                      }
+                    `;
+                    const quadFs = `
+                      precision mediump float;
+                      varying vec2 v_texCoord;
+                      uniform sampler2D u_screenTexture;
+                      uniform int u_effect; // 0: none, 1: grayscale, 2: invert, 3: vignette, 4: sobel, 5: blur
+                      uniform vec2 u_resolution;
+
+                      void main() {
+                        vec2 uv = v_texCoord;
+
+                        if (u_effect == 0) {
+                          gl_FragColor = texture2D(u_screenTexture, uv);
+                        }
+                        else if (u_effect == 1) {
+                          vec4 color = texture2D(u_screenTexture, uv);
+                          float gray = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+                          gl_FragColor = vec4(vec3(gray), 1.0);
+                        }
+                        else if (u_effect == 2) {
+                          vec4 color = texture2D(u_screenTexture, uv);
+                          gl_FragColor = vec4(1.0 - color.rgb, 1.0);
+                        }
+                        else if (u_effect == 3) {
+                          vec4 color = texture2D(u_screenTexture, uv);
+                          vec2 d = abs(uv - 0.5) * 1.4;
+                          float vignette = 1.0 - dot(d, d);
+                          gl_FragColor = vec4(color.rgb * vignette, 1.0);
+                        }
+                        else if (u_effect == 4) { // Sobel Edge Detection
+                          float offset = 1.0 / u_resolution.y;
+                          vec2 offsets[9];
+                          offsets[0] = vec2(-offset,  offset); // top-left
+                          offsets[1] = vec2( 0.0,     offset); // top-center
+                          offsets[2] = vec2( offset,  offset); // top-right
+                          offsets[3] = vec2(-offset,  0.0);    // center-left
+                          offsets[4] = vec2( 0.0,     0.0);    // center-center
+                          offsets[5] = vec2( offset,  0.0);    // center-right
+                          offsets[6] = vec2(-offset, -offset); // bottom-left
+                          offsets[7] = vec2( 0.0,    -offset); // bottom-center
+                          offsets[8] = vec2( offset, -offset); // bottom-right
+
+                          float kernelX[9];
+                          kernelX[0] = -1.0; kernelX[1] = 0.0; kernelX[2] = 1.0;
+                          kernelX[3] = -2.0; kernelX[4] = 0.0; kernelX[5] = 2.0;
+                          kernelX[6] = -1.0; kernelX[7] = 0.0; kernelX[8] = 1.0;
+
+                          float kernelY[9];
+                          kernelY[0] = -1.0; kernelY[1] = -2.0; kernelY[2] = -1.0;
+                          kernelY[3] =  0.0; kernelY[4] =  0.0; kernelY[5] =  0.0;
+                          kernelY[6] =  1.0; kernelY[7] =  2.0; kernelY[8] =  1.0;
+
+                          vec3 sampleTex[9];
+                          for(int i = 0; i < 9; i++) {
+                            sampleTex[i] = vec3(texture2D(u_screenTexture, uv + offsets[i]));
+                          }
+
+                          vec3 gradX = vec3(0.0);
+                          vec3 gradY = vec3(0.0);
+                          for(int i = 0; i < 9; i++) {
+                            gradX += sampleTex[i] * kernelX[i];
+                            gradY += sampleTex[i] * kernelY[i];
+                          }
+                          vec3 edge = sqrt(gradX * gradX + gradY * gradY);
+                          gl_FragColor = vec4(edge, 1.0);
+                        }
+                        else if (u_effect == 5) { // Simple Blur Kernel
+                          float offset = 1.2 / u_resolution.x;
+                          vec4 sum = vec4(0.0);
+                          sum += texture2D(u_screenTexture, uv + vec2(-offset,  offset)) * 0.0625;
+                          sum += texture2D(u_screenTexture, uv + vec2( 0.0,     offset)) * 0.125;
+                          sum += texture2D(u_screenTexture, uv + vec2( offset,  offset)) * 0.0625;
+                          sum += texture2D(u_screenTexture, uv + vec2(-offset,  0.0))    * 0.125;
+                          sum += texture2D(u_screenTexture, uv + vec2( 0.0,     0.0))    * 0.25;
+                          sum += texture2D(u_screenTexture, uv + vec2( offset,  0.0))    * 0.125;
+                          sum += texture2D(u_screenTexture, uv + vec2(-offset, -offset)) * 0.0625;
+                          sum += texture2D(u_screenTexture, uv + vec2( 0.0,    -offset)) * 0.125;
+                          sum += texture2D(u_screenTexture, uv + vec2( offset, -offset)) * 0.0625;
+                          gl_FragColor = vec4(sum.rgb, 1.0);
+                        }
+                      }
+                    `;
+
+                    function createShader(gl, type, src) {
+                      const s = gl.createShader(type);
+                      gl.shaderSource(s, src);
+                      gl.compileShader(s);
+                      return s;
+                    }
+
+                    // Compile and Link Scene Program
+                    const sceneProg = gl.createProgram();
+                    gl.attachShader(sceneProg, createShader(gl, gl.VERTEX_SHADER, sceneVs));
+                    gl.attachShader(sceneProg, createShader(gl, gl.FRAGMENT_SHADER, sceneFs));
+                    gl.linkProgram(sceneProg);
+
+                    const cubePosLoc = gl.getAttribLocation(sceneProg, 'a_position');
+                    const cubeColLoc = gl.getAttribLocation(sceneProg, 'a_color');
+                    const cubeMvpLoc = gl.getUniformLocation(sceneProg, 'u_MVP');
+
+                    // Compile and Link Quad Program
+                    const quadProg = gl.createProgram();
+                    gl.attachShader(quadProg, createShader(gl, gl.VERTEX_SHADER, quadVs));
+                    gl.attachShader(quadProg, createShader(gl, gl.FRAGMENT_SHADER, quadFs));
+                    gl.linkProgram(quadProg);
+
+                    const quadPosLoc = gl.getAttribLocation(quadProg, 'a_position');
+                    const quadTexLoc = gl.getUniformLocation(quadProg, 'u_screenTexture');
+                    const quadEffectLoc = gl.getUniformLocation(quadProg, 'u_effect');
+                    const quadResLoc = gl.getUniformLocation(quadProg, 'u_resolution');
+
+                    // Geometry 1: 3D Cube VBO
+                    const cubeVertices = new Float32Array([
+                      // [x,y,z, r,g,b]
+                      -0.4, -0.4, 0.4, 0.9, 0.3, 0.2, 0.4, -0.4, 0.4, 0.2, 0.8, 0.3, 0.4, 0.4, 0.4, 0.1, 0.5, 0.9, -0.4,
+                      0.4, 0.4, 0.9, 0.9, 0.1, -0.4, -0.4, -0.4, 0.8, 0.2, 0.8, -0.4, 0.4, -0.4, 0.2, 0.9, 0.9, 0.4,
+                      0.4, -0.4, 0.9, 0.9, 0.9, 0.4, -0.4, -0.4, 0.4, 0.4, 0.4,
+                    ]);
+
+                    const cubeIndices = new Uint16Array([
+                      0,
+                      1,
+                      2,
+                      0,
+                      2,
+                      3, // Front
+                      4,
+                      5,
+                      6,
+                      4,
+                      6,
+                      7, // Back
+                      3,
+                      2,
+                      6,
+                      3,
+                      6,
+                      5, // Top
+                      4,
+                      7,
+                      1,
+                      4,
+                      1,
+                      0, // Bottom
+                      1,
+                      7,
+                      6,
+                      1,
+                      6,
+                      2, // Right
+                      4,
+                      0,
+                      3,
+                      4,
+                      3,
+                      5, // Left
+                    ]);
+
+                    const cubeVbo = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, cubeVbo);
+                    gl.bufferData(gl.ARRAY_BUFFER, cubeVertices, gl.STATIC_DRAW);
+
+                    const cubeIbo = gl.createBuffer();
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, cubeIbo);
+                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, cubeIndices, gl.STATIC_DRAW);
+
+                    // Geometry 2: Fullscreen 2D Quad
+                    const quadVertices = new Float32Array([
+                      -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
+                    ]);
+
+                    const quadVbo = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
+                    gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
+
+                    // 3. FBO Creation
+                    const fboWidth = 512;
+                    const fboHeight = 512;
+
+                    const fbo = gl.createFramebuffer();
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+
+                    const fboTexture = gl.createTexture();
+                    gl.bindTexture(gl.TEXTURE_2D, fboTexture);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, fboWidth, fboHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboTexture, 0);
+
+                    const fboDepth = gl.createRenderbuffer();
+                    gl.bindRenderbuffer(gl.RENDERBUFFER, fboDepth);
+                    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, fboWidth, fboHeight);
+                    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, fboDepth);
+
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+                    // Minimal Matrix Helpers
+                    function getRotationX(rad) {
+                      const s = Math.sin(rad),
+                        c = Math.cos(rad);
+                      return new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]);
+                    }
+
+                    function getRotationY(rad) {
+                      const s = Math.sin(rad),
+                        c = Math.cos(rad);
+                      return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]);
+                    }
+
+                    function getPerspective(fovDeg, aspect, near, far) {
+                      const f = 1.0 / Math.tan((fovDeg * Math.PI) / 360.0);
+                      const rangeInv = 1.0 / (near - far);
+                      return new Float32Array([
+                        f / aspect,
+                        0,
+                        0,
+                        0,
+                        0,
+                        f,
+                        0,
+                        0,
+                        0,
+                        0,
+                        (near + far) * rangeInv,
+                        -1,
+                        0,
+                        0,
+                        2 * near * far * rangeInv,
+                        0,
+                      ]);
+                    }
+
+                    function multiply(a, b) {
+                      const out = new Float32Array(16);
+                      for (let r = 0; r < 4; ++r) {
+                        for (let c = 0; c < 4; ++c) {
+                          out[r * 4 + c] =
+                            a[r * 4 + 0] * b[0 * 4 + c] +
+                            a[r * 4 + 1] * b[1 * 4 + c] +
+                            a[r * 4 + 2] * b[2 * 4 + c] +
+                            a[r * 4 + 3] * b[3 * 4 + c];
+                        }
+                      }
+                      return out;
+                    }
+
+                    const controls = {
+                      effect: root.querySelector('#postEffectSelect'),
+                    };
+
+                    let angle = 0;
+                    function draw() {
+                      // ── PASS 1: Render 3D Scene into FBO ──
+                      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                      gl.viewport(0, 0, fboWidth, fboHeight);
+                      gl.clearColor(0.04, 0.08, 0.18, 1.0); // Offscreen background
+                      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                      gl.enable(gl.DEPTH_TEST);
+
+                      angle += 0.007;
+                      const rx = getRotationX(angle * 0.4);
+                      const ry = getRotationY(angle);
+                      const model = multiply(ry, rx);
+
+                      const view = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1.8, 1]);
+
+                      const proj = getPerspective(45, fboWidth / fboHeight, 0.1, 10);
+                      const mv = multiply(model, view);
+                      const mvp = multiply(mv, proj);
+
+                      gl.useProgram(sceneProg);
+                      gl.uniformMatrix4fv(cubeMvpLoc, false, mvp);
+
+                      // Bind Cube buffer
+                      gl.bindBuffer(gl.ARRAY_BUFFER, cubeVbo);
+                      gl.enableVertexAttribArray(cubePosLoc);
+                      gl.vertexAttribPointer(cubePosLoc, 3, gl.FLOAT, false, 24, 0);
+                      gl.enableVertexAttribArray(cubeColLoc);
+                      gl.vertexAttribPointer(cubeColLoc, 3, gl.FLOAT, false, 24, 12);
+                      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, cubeIbo);
+                      gl.drawElements(gl.TRIANGLES, 36, gl.UNSIGNED_SHORT, 0);
+
+                      // ── PASS 2: Render FBO Texture to Screen with filter effect ──
+                      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                      gl.viewport(0, 0, canvas.width, canvas.height);
+                      gl.clearColor(0.02, 0.04, 0.1, 1.0);
+                      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                      gl.disable(gl.DEPTH_TEST); // Drawing a 2D quad, depth testing not needed
+
+                      gl.useProgram(quadProg);
+                      gl.activeTexture(gl.TEXTURE0);
+                      gl.bindTexture(gl.TEXTURE_2D, fboTexture);
+                      gl.uniform1i(quadTexLoc, 0);
+
+                      // Effect mapping
+                      const effMap = { none: 0, grayscale: 1, invert: 2, vignette: 3, sobel: 4, blur: 5 };
+                      gl.uniform1i(quadEffectLoc, effMap[controls.effect.value]);
+                      gl.uniform2f(quadResLoc, canvas.width, canvas.height);
+
+                      // Bind Quad buffer
+                      gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
+                      gl.enableVertexAttribArray(quadPosLoc);
+                      gl.vertexAttribPointer(quadPosLoc, 2, gl.FLOAT, false, 8, 0);
+                      gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+                      requestAnimationFrame(draw);
+                    }
+
+                    root.querySelector('.canvas-demo__reset').addEventListener('click', () => {
+                      controls.effect.value = 'none';
+                    });
+
+                    draw();
+                  })();
+                </script>
+
+                <h2>4. Câu hỏi trắc nghiệm ôn tập</h2>
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm 1: Gắn kết DEPTH_ATTACHMENT cho FBO</h3>
+                  <p class="quiz-question">
+                    Tại sao khi cấu hình FBO để vẽ cảnh 3D có kiểm tra chiều sâu (Depth testing), ta bắt buộc phải gắn
+                    kết Depth buffer (Depth attachment) bên cạnh Color texture?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Kênh màu Color attachment chỉ chứa thông tin RGB/RGBA, không lưu chiều sâu.'
+                        )
+                      "
+                    >
+                      A. Vì kênh màu Color attachment tự động đồng bộ hóa chiều sâu.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Đúng! Nếu FBO không có Depth attachment, GPU sẽ không thể lưu trữ hay so sánh giá trị Z của các đỉnh vẽ trước và sau, dẫn đến việc tắt tính năng Depth testing và làm các đa giác 3D đè lên nhau lộn xộn bất kể khoảng cách.'
+                        )
+                      "
+                    >
+                      B. Vì không có Depth buffer phụ gắn kèm FBO, GPU không thể so sánh giá trị Z-buffer, làm mất tính
+                      năng loại bỏ mặt ẩn 3D.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. Depth buffer không có vai trò thay thế Color texture.')"
+                    >
+                      C. Để thay thế hoàn toàn Color texture khi FBO bị lỗi đầy bộ nhớ.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm 2: Luma Grayscale formula</h3>
+                  <p class="quiz-question">
+                    Tại sao trong công thức đổi sang ảnh xám Grayscale (Luma), hệ số nhân cho màu xanh lá (Green) lại
+                    lớn vượt trội so với Đỏ (Red) và Xanh dương (Blue)?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Ánh sáng xanh lá có bước sóng nằm ở giữa dải khả kiến, mắt nhạy hơn chứ không phải do tốc độ truyền.'
+                        )
+                      "
+                    >
+                      A. Vì ánh sáng xanh lá di chuyển nhanh hơn các màu khác trên màn hình tinh thể lỏng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Độ rộng dải động lưu trữ màu sắc của các kênh là như nhau (8 bits mỗi kênh).'
+                        )
+                      "
+                    >
+                      B. Vì kênh màu xanh lá chiếm nhiều bit lưu trữ hơn trong bộ đệm RGBA.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Cấu tạo võng mạc của mắt người có xu hướng nhạy cảm nhất với ánh sáng màu xanh lá cây (lục), sau đó tới màu đỏ (lõm) và ít nhạy cảm nhất với màu xanh dương. Các hệ số 0.2126 (R), 0.7152 (G), 0.0722 (B) phản ánh chính xác cấu sinh học võng mạc này.'
+                        )
+                      "
+                    >
+                      C. Vì mắt người nhạy cảm với bước sóng ánh sáng màu xanh lá hơn hẳn hai màu đỏ và xanh dương.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm 3: Vì sao cần Render-to-Texture (FBO) cho Post-processing</h3>
+                  <p class="quiz-question">
+                    Tại sao kỹ thuật hậu xử lý (post-processing) bắt buộc phải vẽ cảnh ra một
+                    <strong>Framebuffer Object</strong> (texture) trước, thay vì xử lý trực tiếp lên màn hình?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. FBO không làm tăng tốc độ vẽ tam giác; nó chỉ đổi đích render từ màn hình sang texture.'
+                        )
+                      "
+                    >
+                      A. Vì vẽ vào FBO khiến GPU rasterization tam giác nhanh gấp đôi so với vẽ ra màn hình.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Bộ đệm màn hình mặc định cũng có depth buffer; vấn đề không nằm ở việc thiếu kiểm tra chiều sâu.'
+                        )
+                      "
+                    >
+                      B. Vì bộ đệm màn hình mặc định không hỗ trợ kiểm tra chiều sâu (depth test).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Bộ lọc hậu kỳ (blur, bloom, convolution kernel...) cần đọc lại màu của các pixel lân cận. Khi vẽ vào FBO, kết quả cảnh được lưu thành một texture có thể lấy mẫu tự do ở pass thứ hai; còn bộ đệm màn hình đang vẽ thì không thể đọc ngược lại như một texture đầu vào.'
+                        )
+                      "
+                    >
+                      C. Vì lưu cảnh thành texture mới cho phép shader pass sau lấy mẫu lại màu các pixel lân cận (cần
+                      cho blur, bloom, convolution kernel).
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="article-cta">
+                  <p>Mã nguồn thiết lập FBO offscreen rendering và bộ lọc pixel:</p>
+                  <a href="fbo_postprocessing.js" download class="btn-download">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    Tải mã nguồn FBO &amp; Post-processing
+                  </a>
+                </div>
+              </div>
+              <div class="article-related">
+                <h2 data-lang-content="en">Related Articles</h2>
+                <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="webgl-shadow-mapping" class="article-related__link article-related__link--next">
+                    <span data-lang-content="en">Lesson 12: Real-time Shadow Mapping</span>
+                    <span data-lang-content="vi">Bài 12: Đổ Bóng Real-time (Shadow Mapping)</span>
+                  </a>
+                  <a href="webgl-transparency-blending" class="article-related__link article-related__link--prev">
+                    <span data-lang-content="en">Lesson 10: Transparency, Blending & Depth Sorting</span>
+                    <span data-lang-content="vi">Bài 10: Độ Trong Suốt, Alpha Blending & Sắp Xếp Độ Sâu</span>
+                  </a>
+                  <a href="webgl-programming-series" class="article-related__link">
+                    <span data-lang-content="en">Back to WebGL Course Overview</span>
+                    <span data-lang-content="vi">Quay lại Lộ trình WebGL Series</span>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://snapcast.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/snapcast.svg"
+              alt=""
+              width="54"
+              height="16"
+              aria-hidden="true"
+              style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+            />
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <svg
+              viewBox="0 0 320 320"
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0"
+            >
+              <g transform="translate(0 20)">
+                <g transform="translate(20 30) rotate(-6)">
+                  <rect
+                    width="180"
+                    height="140"
+                    rx="14"
+                    fill="rgba(5,150,105,0.18)"
+                    stroke="rgba(255,255,255,0.2)"
+                    stroke-width="2"
+                  />
+                </g>
+                <g transform="translate(120 110) rotate(4)">
+                  <rect
+                    width="180"
+                    height="140"
+                    rx="14"
+                    fill="rgba(6,182,212,0.18)"
+                    stroke="rgba(255,255,255,0.2)"
+                    stroke-width="2"
+                  />
+                  <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                  <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                  <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                </g>
+              </g>
+            </svg>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script src="../ide.js" defer></script>
+  </body>
+</html>

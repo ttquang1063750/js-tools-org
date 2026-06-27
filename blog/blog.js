@@ -22,6 +22,18 @@ function setupViOnlyArticles() {
           nestedEl.removeAttribute('data-lang-content');
         });
       }
+
+      // 3. For any other bilingual blocks inside <main> (like hero, related, comments), default them to Vietnamese
+      var mainEl = document.querySelector('main');
+      if (mainEl) {
+        mainEl.querySelectorAll('[data-lang-content="en"]').forEach(function (el) {
+          el.removeAttribute('data-lang-content');
+          el.style.display = 'none';
+        });
+        mainEl.querySelectorAll('[data-lang-content="vi"]').forEach(function (el) {
+          el.removeAttribute('data-lang-content');
+        });
+      }
     }
   }
 }
@@ -62,6 +74,9 @@ function renderSearchCard(item) {
   if (series.indexOf('cpp') !== -1) {
     tagText = currentLang === 'vi' ? 'C++ Lập trình' : 'C++ Programming';
     tagClass = 'blog-card__tag--cpp';
+  } else if (series.indexOf('webgl') !== -1) {
+    tagText = currentLang === 'vi' ? 'WebGL & 3D' : 'WebGL & 3D';
+    tagClass = 'blog-card__tag--webgl';
   } else if (series.indexOf('canvas') !== -1) {
     tagText = currentLang === 'vi' ? 'Canvas & Đồ họa' : 'Canvas & Graphics';
     tagClass = 'blog-card__tag--canvas';

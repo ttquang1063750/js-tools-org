@@ -130,6 +130,14 @@ js-tools-org/
 │   │   ├── canvas-creative-and-performance.html
 │   │   └── ... Canvas code samples (.js, game html) ...
 │   │
+│   ├── # ── WebGL & 3D Graphics Series (Vietnamese, HTML & demo samples co-located) ──
+│   ├── webgl/
+│   │   ├── webgl-programming-series.html   # Curriculum hub
+│   │   ├── webgl-basics-and-pipeline.html
+│   │   ├── webgl-coordinate-and-math.html
+│   │   ├── webgl-shaders-glsl.html
+│   │   └── ... WebGL code samples (.js) ...
+│   │
 │   └── # ── Bash Programming Series (Vietnamese, HTML & scripts co-located) ──
 │       ├── bash/
 │       │   ├── bash-programming-series.html   # Curriculum hub
@@ -186,17 +194,18 @@ js-tools-org/
 ### 6. Blog Section
 
 - **Tool articles**: 8 bilingual EN/VI articles about SnapCast, Image Optimizer, QR Generator, ColorQuarium, Remove BG
-- **Programming series**: C (8 lessons), C++ (8 lessons), JavaScript (12 lessons), HTML5 Canvas (14 lessons) — all in Vietnamese
+- **Programming series**: C (8 lessons), C++ (8 lessons), JavaScript (12 lessons), HTML5 Canvas (14 lessons), WebGL & 3D (10 lessons) — all in Vietnamese
   - **Academic Rigor**: The lessons feature high-quality computer science concepts. For example:
     - _C Series (Lesson 7)_: Formal Big O Time & Space complexity analysis, C examples for $O(1)$ to $O(N!)$, and recursion Call Stack depth analysis.
     - _C++ Series_: Name mangling, SSO (Small String Optimization), Vector dynamic array structures, RAII, Vptr/Vtable dynamic dispatch, and smart pointer atomic control blocks.
     - _JavaScript Series_: Parser/AST, Ignition bytecode, TurboFan JIT machine code, deoptimization triggers, Shapes/IC optimizations, ESM Live Bindings vs CJS Copy-on-Import, and custom Proxy-based Reactivity mapped to mock DOM.
+    - _WebGL Series_: GPU hardware massively parallel ALU architecture, Graphics pipeline rasterization stage, affine matrices, perspective projection math formulas, GLSL shader compiler pipelines, and live Barycentric color interpolation visualizers.
 - **Interactive JS Playgrounds**: Custom `js-playground` boxes (textarea source input + standard console capture log output) allowing code execution directly inside the browser.
 - **Dynamic Code Viewer**: Interactive canvas demos and visualizer iframes include a toggleable `⟨⟩ Xem Code` button that displays their formatted, dedented, syntax-highlighted source code inline (and lazy-fetches external visualizer source files).
-- **Client-Side Search & Static Index**: Real-time search engine on `blog/index.html` utilizing a pre-built static `search-index.json`. It performs deep searches across all 58 articles, mapping matched lesson titles and subheadings to direct URLs with diacritics-insensitive matching in both English and Vietnamese.
+- **Client-Side Search & Static Index**: Real-time search engine on `blog/index.html` utilizing a pre-built static `search-index.json`. It performs deep searches across all 62 articles, mapping matched lesson titles and subheadings to direct URLs with diacritics-insensitive matching in both English and Vietnamese.
 - **Facebook Comments**: Native `fb-comments` comments widget integrated at the bottom of all 50+ detail pages mapped to canonical URLs for social media discussions.
 - **Article template structure**: `.article-hero` (tag, title, meta) → `.article-body` (EN/VI sections) → `.article-cta` → `.article-discuss` (Facebook CTA) → `.article-related`
-- **Tag color classes**: `--sc` (purple), `--io` (green), `--qr` (cyan), `--cq` (teal), `--c` (C), `--cpp` (C++), `--js` (JS), `--canvas` (Canvas)
+- **Tag color classes**: `--sc` (purple), `--io` (green), `--qr` (cyan), `--cq` (teal), `--c` (C), `--cpp` (C++), `--js` (JS), `--canvas` (Canvas), `--webgl` (violet)
 - **VS Code Light Theme**: White background, dark code blocks, Prism syntax highlighting
 - **Interactive quizzes**: `ide.js` + `ide.css` for programming lessons
 
