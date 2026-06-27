@@ -107,6 +107,41 @@
 
               <p><strong>Event Delegation (Ủy quyền sự kiện)</strong>: Thay vì gán hàng trăm trình lắng nghe sự kiện lên từng thẻ <code>&lt;li&gt;</code> hay nút bấm con trong một danh sách lớn (gây tốn bộ nhớ vì V8 phải cấp phát hàng trăm closures lưu trữ ngữ cảnh), chúng ta chỉ cần gán duy nhất 1 trình lắng nghe sự kiện lên thẻ cha (Container). Nhờ cơ chế Bubbling, sự kiện click ở nút con dội lên cha, cha chỉ cần dùng <code>event.target.closest('.item-class')</code> để xác định chính xác nút con nào được click và thực thi logic.</p>
 
+              <h3>Các Lựa Chọn Nâng Cao: addEventListener Options</h3>
+              <p>Phương thức <code>addEventListener</code> hỗ trợ tham số thứ ba dạng object cấu hình:</p>
+              <ul>
+                <li><strong><code>capture</code> (boolean):</strong> Nếu <code>true</code>, đăng ký listener chạy trong giai đoạn Capturing thay vì mặc định Bubbling.</li>
+                <li><strong><code>once</code> (boolean):</strong> Nếu <code>true</code>, listener tự động bị xóa bỏ (removeEventListener) ngay sau lần kích hoạt đầu tiên. Rất hữu ích cho các tác vụ khởi tạo một lần.</li>
+                <li><strong><code>passive</code> (boolean):</strong> Nếu <code>true</code>, hứa với trình duyệt rằng listener sẽ không bao giờ gọi <code>event.preventDefault()</code>. Điều này giúp tối ưu hóa hiệu năng cuộn chuột cực kỳ mạnh mẽ trên thiết bị di động (đạt 60fps mượt mà), vì trình duyệt không cần chờ JS thực thi xong để xác định có ngăn cuộn hay không.</li>
+                <li><strong><code>signal</code> (AbortSignal):</strong> Nhận vào một <code>AbortSignal</code> từ <code>AbortController</code>. Cho phép hủy hàng loạt trình lắng nghe sự kiện chỉ bằng một cú gọi <code>controller.abort()</code>, loại bỏ nguy cơ rò rỉ bộ nhớ.</li>
+              </ul>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <span class="code-filename">addeventlistener_options.js</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-js">// 1. Tối ưu passive scroll listener
+window.addEventListener('touchmove', (e) => {
+  // Trình duyệt di động không cần block scroll chờ JS chạy xong
+}, { passive: true });
+
+// 2. Tự hủy listener bằng AbortController
+const controller = new AbortController();
+
+window.addEventListener('resize', () => {
+  console.log("Cửa sổ thay đổi kích thước!");
+}, { signal: controller.signal });
+
+// Hủy tất cả listeners dùng chung signal này
+controller.abort();</code></pre>
+              </div>
+
               <h2>2. Tối ưu hiệu năng: Debounce vs Throttle dưới lăng kính Timers</h2>
               <p>Các sự kiện như <code>scroll</code>, <code>resize</code>, hoặc <code>keyup</code> kích hoạt liên tục với tần suất rất cao (lên tới 60-120 lần/giây). Nếu chạy các tác vụ nặng (gọi API tìm kiếm, tính toán vị trí DOM) ở mỗi lần kích hoạt sẽ làm nghẽn Call Stack và gây sụt giảm khung hình nghiêm trọng. Giải pháp:</p>
               
@@ -143,58 +178,433 @@
                   <span class="code-filename">reactive_store.js</span>
                   <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
                 </div>
-                <pre><code class="language-js">// Khởi tạo Store phản ứng tự động kích hoạt hàm render DOM khi cập nhật trạng thái
+                <pre><code class="language-js">// Vue 3 Reactivity Mock: Dùng WeakMap để lưu trữ các proxy của đối tượng (tránh tạo lại Proxy nhiều lần)
+const reactiveRegistry = new WeakMap();
+
+function reactive(target, callback) {
+  if (typeof target !== 'object' || target === null) return target;
+  
+  // Trả về proxy cũ nếu đối tượng đã được bọc Proxy rồi
+  if (reactiveRegistry.has(target)) return reactiveRegistry.get(target);
+
+  const proxy = new Proxy(target, {
+    get(obj, prop, receiver) {
+      const res = Reflect.get(obj, prop, receiver);
+      // Đệ quy bọc Proxy cho nested objects (lazy reactive)
+      return typeof res === 'object' && res !== null ? reactive(res, callback) : res;
+    },
+    set(obj, prop, value, receiver) {
+      const oldValue = obj[prop];
+      if (oldValue !== value) {
+        const success = Reflect.set(obj, prop, value, receiver);
+        if (success) callback(prop, value, oldValue);
+        return success;
+      }
+      return true;
+    }
+  });
+
+  reactiveRegistry.set(target, proxy);
+  return proxy;
+}
+
 class ReactiveStore {
   constructor(initialState) {
     this.subscribers = new Set();
-    this.state = new Proxy(initialState, {
-      set: (target, prop, value, receiver) => {
-        const oldValue = target[prop];
-        if (oldValue !== value) {
-          const success = Reflect.set(target, prop, value, receiver);
-          if (success) this.notify(prop, value, oldValue);
-          return success;
-        }
-        return true;
-      }
-    });
+    this.state = reactive(initialState, (prop, val, old) => this.notify(prop, val, old));
   }
-
-  subscribe(callback) {
-    this.subscribers.add(callback);
-    return () => this.subscribers.delete(callback);
-  }
-
-  notify(prop, newValue, oldValue) {
-    this.subscribers.forEach(cb => cb({ prop, newValue, oldValue, state: this.state }));
-  }
+  subscribe(cb) { this.subscribers.add(cb); return () => this.subscribers.delete(cb); }
+  notify(prop, val, old) { this.subscribers.forEach(cb => cb({ prop, newValue: val, oldValue: old, state: this.state })); }
 }</code></pre>
               </div>
 
-              <h2>4. Câu hỏi trắc nghiệm ôn tập</h2>
+              <div class="js-playground" data-pg="pg-reactive-store">
+                <div class="js-playground__header">
+                  <span class="js-playground__title">▶ Thử chạy: Nested Reactive Store</span>
+                  <div class="js-playground__actions">
+                    <button class="js-playground__btn js-playground__run" type="button">▶ Run</button>
+                    <button class="js-playground__btn js-playground__reset" type="button">↻ Reset</button>
+                  </div>
+                </div>
+                <textarea class="js-playground__code" spellcheck="false" rows="22">// Import / Định nghĩa store phản ứng
+const reactiveRegistry = new WeakMap();
+function reactive(target, callback) {
+  if (typeof target !== 'object' || target === null) return target;
+  if (reactiveRegistry.has(target)) return reactiveRegistry.get(target);
+  const p = new Proxy(target, {
+    get(t, k, r) {
+      const v = Reflect.get(t, k, r);
+      return typeof v === 'object' && v !== null ? reactive(v, callback) : v;
+    },
+    set(t, k, v, r) {
+      const old = t[k];
+      if (old !== v) {
+        const s = Reflect.set(t, k, v, r);
+        if (s) callback(k, v, old);
+        return s;
+      }
+      return true;
+    }
+  });
+  reactiveRegistry.set(target, p);
+  return p;
+}
+
+const data = {
+  user: { name: "Quang", profile: { role: "Member" } },
+  cart: { count: 0 }
+};
+
+// Khởi tạo state
+const state = reactive(data, (key, val, old) => {
+  console.log(`[REACTIVE UPDATE] ${key}: ${JSON.stringify(old)} -> ${JSON.stringify(val)}`);
+});
+
+// Thao tác đổi properties (kể cả nested properties!)
+state.cart.count = 5;
+state.user.profile.role = "Admin";</textarea>
+                <div class="js-playground__console" aria-live="polite"></div>
+              </div>
+              <script>
+              (function () {
+                const root = document.currentScript.previousElementSibling;
+                const ta = root.querySelector('.js-playground__code');
+                const out = root.querySelector('.js-playground__console');
+                const initial = ta.value;
+                function fmt(v) {
+                  if (typeof v === 'string') return v;
+                  if (typeof v === 'function') return '[Function: ' + (v.name || 'anonymous') + ']';
+                  if (v === undefined) return 'undefined';
+                  if (v === null) return 'null';
+                  try { return JSON.stringify(v); } catch (e) { return String(v); }
+                }
+                function line(text, cls) {
+                  const el = document.createElement('div');
+                  el.className = 'js-playground__line' + (cls ? ' ' + cls : '');
+                  el.textContent = text; out.appendChild(el);
+                }
+                function run() {
+                  out.innerHTML = '';
+                  const c = {
+                    log: (...a) => line(a.map(fmt).join(' ')),
+                    warn: (...a) => line('⚠️ ' + a.map(fmt).join(' '), 'js-playground__line--muted'),
+                    error: (...a) => line('⛔ ' + a.map(fmt).join(' '), 'js-playground__line--err')
+                  };
+                  try { new Function('console', '"use strict";\n' + ta.value)(c); }
+                  catch (e) { line('⛔ ' + e.name + ': ' + e.message, 'js-playground__line--err'); }
+                  if (!out.children.length) line('(không có output)', 'js-playground__line--muted');
+                }
+                root.querySelector('.js-playground__run').addEventListener('click', run);
+                root.querySelector('.js-playground__reset').addEventListener('click', () => { ta.value = initial; run(); });
+                run();
+              })();
+              </script>
+
+              <!-- Playground: Event Delegation -->
+              <h2>4. Playground: Event Delegation — Quản Lý 1000 Items Với 1 Listener</h2>
+              <p>Event Delegation không chỉ tốt hơn về memory — nó còn hoạt động tự động với các element được thêm vào DOM sau (dynamic items):</p>
+
+              <div class="js-playground" data-pg="pg-delegation">
+                <div class="js-playground__header">
+                  <span class="js-playground__title">▶ Thử chạy: Event Delegation vs Per-element Listeners</span>
+                  <div class="js-playground__actions">
+                    <button class="js-playground__btn js-playground__run" type="button">▶ Run</button>
+                    <button class="js-playground__btn js-playground__reset" type="button">↻ Reset</button>
+                  </div>
+                </div>
+                <textarea class="js-playground__code" spellcheck="false" rows="28">// Giả lập: so sánh memory usage
+const N = 1000;
+
+// ❌ Cách sai: N listener riêng biệt
+function badApproach() {
+  const listeners = [];
+  for (let i = 0; i < N; i++) {
+    // Mỗi function closure ~50 bytes → N * 50 bytes bộ nhớ
+    const handler = (e) => console.log(`Item ${i} clicked`);
+    listeners.push(handler);
+    // element.addEventListener('click', handler);  // thực tế
+  }
+  return listeners.length;
+}
+
+// ✅ Cách đúng: 1 listener trên container
+function goodApproach(container) {
+  let clickCount = 0;
+  // container.addEventListener('click', (e) => {
+  //   const item = e.target.closest('.item');
+  //   if (item) {
+  //     const id = item.dataset.id;
+  //     console.log(`Item ${id} clicked via delegation`);
+  //   }
+  // });
+  // Chỉ 1 closure, hoạt động với cả dynamic items thêm sau!
+  return 1;
+}
+
+const badListeners = badApproach();
+const goodListeners = goodApproach(null);
+
+console.log(`❌ Per-element: ${badListeners} listeners, ~${(badListeners * 50 / 1024).toFixed(1)}KB closures`);
+console.log(`✅ Delegation: ${goodListeners} listener duy nhất, ~0.05KB closure`);
+console.log(`Tiết kiệm: ${(badListeners / goodListeners).toLocaleString()}x ít listeners`);
+
+// Bonus: stopPropagation vs stopImmediatePropagation
+function demoStopPropagation() {
+  let log = [];
+  const fakeEvent = {
+    stopPropagation: () => log.push("stopPropagation called"),
+    stopImmediatePropagation: () => log.push("stopImmediatePropagation called"),
+    bubbles: true
+  };
+  // stopPropagation: ngăn bubble lên cha, KHÔNG ngăn listener khác trên cùng element
+  // stopImmediatePropagation: ngăn bubble + ngăn tất cả listener còn lại
+  fakeEvent.stopImmediatePropagation();
+  console.log("\n" + log.join(", "));
+  console.log("stopImmediatePropagation ngăn: bubble + other listeners trên cùng element");
+}
+demoStopPropagation();</textarea>
+                <div class="js-playground__console" aria-live="polite"></div>
+              </div>
+              <script>
+              (function () {
+                const root = document.currentScript.previousElementSibling;
+                const ta = root.querySelector('.js-playground__code');
+                const out = root.querySelector('.js-playground__console');
+                const initial = ta.value;
+                function fmt(v) {
+                  if (typeof v === 'string') return v;
+                  if (typeof v === 'function') return '[Function: ' + (v.name || 'anonymous') + ']';
+                  if (v === undefined) return 'undefined';
+                  if (v === null) return 'null';
+                  try { return JSON.stringify(v); } catch (e) { return String(v); }
+                }
+                function line(text, cls) {
+                  const el = document.createElement('div');
+                  el.className = 'js-playground__line' + (cls ? ' ' + cls : '');
+                  el.textContent = text; out.appendChild(el);
+                }
+                function run() {
+                  out.innerHTML = '';
+                  const c = {
+                    log: (...a) => line(a.map(fmt).join(' ')),
+                    warn: (...a) => line('⚠️ ' + a.map(fmt).join(' '), 'js-playground__line--muted'),
+                    error: (...a) => line('⛔ ' + a.map(fmt).join(' '), 'js-playground__line--err')
+                  };
+                  try { new Function('console', '"use strict";\n' + ta.value)(c); }
+                  catch (e) { line('⛔ ' + e.name + ': ' + e.message, 'js-playground__line--err'); }
+                  if (!out.children.length) line('(không có output)', 'js-playground__line--muted');
+                }
+                root.querySelector('.js-playground__run').addEventListener('click', run);
+                root.querySelector('.js-playground__reset').addEventListener('click', () => { ta.value = initial; run(); });
+                run();
+              })();
+              </script>
+
+              <!-- Playground: Debounce vs Throttle -->
+              <h2>5. Playground: Debounce vs Throttle — Implement Từ Đầu</h2>
+              <p>Hiểu rõ bên trong của Debounce và Throttle giúp bạn chọn đúng pattern và tune parameters:</p>
+
+              <div class="js-playground" data-pg="pg-debounce-throttle">
+                <div class="js-playground__header">
+                  <span class="js-playground__title">▶ Thử chạy: Debounce & Throttle Implementation</span>
+                  <div class="js-playground__actions">
+                    <button class="js-playground__btn js-playground__run" type="button">▶ Run</button>
+                    <button class="js-playground__btn js-playground__reset" type="button">↻ Reset</button>
+                  </div>
+                </div>
+                <textarea class="js-playground__code" spellcheck="false" rows="30">// DEBOUNCE: chờ user dừng rồi mới chạy
+function debounce(fn, delay) {
+  let timer = null;
+  return function(...args) {
+    clearTimeout(timer);  // hủy lần chờ trước
+    timer = setTimeout(() => {
+      fn.apply(this, args);
+      timer = null;
+    }, delay);
+  };
+}
+
+// THROTTLE: chạy tối đa 1 lần mỗi {limit}ms
+function throttle(fn, limit) {
+  let lastRun = 0;
+  let timer = null;
+  return function(...args) {
+    const now = Date.now();
+    const remaining = limit - (now - lastRun);
+    if (remaining <= 0) {
+      clearTimeout(timer);
+      lastRun = now;
+      fn.apply(this, args);
+    } else {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        lastRun = Date.now();
+        fn.apply(this, args);
+      }, remaining);
+    }
+  };
+}
+
+// Demo: giả lập 10 sự kiện liên tiếp trong 500ms
+const EVENTS = 10;
+let debounceCount = 0, throttleCount = 0;
+
+const searchAPI = debounce(() => {
+  debounceCount++;
+  console.log(`[Debounce] API called: lần #${debounceCount}`);
+}, 100);
+
+const scrollHandler = throttle(() => {
+  throttleCount++;
+  console.log(`[Throttle] Handler called: lần #${throttleCount}`);
+}, 100);
+
+// Giả lập burst events
+console.log("Giả lập 10 events trong 50ms...");
+for (let i = 0; i < EVENTS; i++) {
+  searchAPI();    // chỉ chạy 1 lần cuối cùng sau khi burst dừng
+  scrollHandler(); // chạy ngay lần đầu, rồi throttle
+}
+
+setTimeout(() => {
+  console.log(`\nKết quả sau burst:`);
+  console.log(`Debounce: ${debounceCount} lần gọi (chỉ 1, sau khi dừng)`);
+  console.log(`Throttle: ${throttleCount} lần gọi (ngay lần đầu)`);
+}, 200);</textarea>
+                <div class="js-playground__console" aria-live="polite"></div>
+              </div>
+              <script>
+              (function () {
+                const root = document.currentScript.previousElementSibling;
+                const ta = root.querySelector('.js-playground__code');
+                const out = root.querySelector('.js-playground__console');
+                const initial = ta.value;
+                function fmt(v) {
+                  if (typeof v === 'string') return v;
+                  if (typeof v === 'function') return '[Function: ' + (v.name || 'anonymous') + ']';
+                  if (v === undefined) return 'undefined';
+                  if (v === null) return 'null';
+                  try { return JSON.stringify(v); } catch (e) { return String(v); }
+                }
+                function line(text, cls) {
+                  const el = document.createElement('div');
+                  el.className = 'js-playground__line' + (cls ? ' ' + cls : '');
+                  el.textContent = text; out.appendChild(el);
+                }
+                function run() {
+                  out.innerHTML = '';
+                  const c = {
+                    log: (...a) => line(a.map(fmt).join(' ')),
+                    warn: (...a) => line('⚠️ ' + a.map(fmt).join(' '), 'js-playground__line--muted'),
+                    error: (...a) => line('⛔ ' + a.map(fmt).join(' '), 'js-playground__line--err')
+                  };
+                  try { new Function('console', '"use strict";\n' + ta.value)(c); }
+                  catch (e) { line('⛔ ' + e.name + ': ' + e.message, 'js-playground__line--err'); }
+                  if (!out.children.length) line('(không có output)', 'js-playground__line--muted');
+                }
+                root.querySelector('.js-playground__run').addEventListener('click', run);
+                root.querySelector('.js-playground__reset').addEventListener('click', () => { ta.value = initial; run(); });
+                run();
+              })();
+              </script>
+
+              <!-- MutationObserver & CustomEvent -->
+              <h2>6. MutationObserver & CustomEvent — API DOM Nâng Cao</h2>
+              <p><strong>MutationObserver</strong> cho phép quan sát mọi thay đổi DOM (thêm node, xóa node, thay đổi attribute) mà không cần polling. <strong>CustomEvent</strong> cho phép tạo sự kiện tùy chỉnh với payload data riêng:</p>
+
+              <div class="code-window">
+                <div class="code-header">
+                  <div class="code-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <span class="code-filename">MutationObserver & CustomEvent</span>
+                  <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <pre><code class="language-js">// 1. MutationObserver: quan sát thay đổi DOM
+const observer = new MutationObserver((mutations) => {
+  mutations.forEach(mutation => {
+    if (mutation.type === 'childList') {
+      mutation.addedNodes.forEach(node => {
+        console.log('Node added:', node.nodeName);
+      });
+    }
+    if (mutation.type === 'attributes') {
+      console.log(`Attribute changed: ${mutation.attributeName}`);
+    }
+  });
+});
+
+// Cấu hình: theo dõi gì
+observer.observe(document.body, {
+  childList: true,     // theo dõi thêm/xóa con trực tiếp
+  subtree: true,       // theo dõi cả cây con
+  attributes: true,    // theo dõi thay đổi attributes
+  attributeFilter: ['class', 'data-state']  // chỉ theo dõi các attr này
+});
+
+// Cleanup: quan trọng để tránh memory leak!
+observer.disconnect();
+
+// 2. CustomEvent: tạo sự kiện tùy chỉnh với data payload
+const cartUpdated = new CustomEvent('cart:updated', {
+  bubbles: true,        // bubble lên cha để delegation hoạt động
+  cancelable: true,
+  detail: {             // payload data tùy chỉnh
+    items: 3,
+    total: 150000,
+    currency: 'VND'
+  }
+});
+
+// Dispatch event từ bất kỳ element nào
+document.querySelector('#cart-icon').dispatchEvent(cartUpdated);
+
+// Lắng nghe ở container (delegation pattern)
+document.addEventListener('cart:updated', (e) => {
+  const { items, total } = e.detail;
+  console.log(`Cart: ${items} items, ${total.toLocaleString()} VND`);
+  // Cập nhật UI không cần prop drilling!
+});</code></pre>
+              </div>
+
+              <!-- Quizzes -->
+              <h2>7. Câu hỏi trắc nghiệm ôn tập</h2>
               <div class="quiz-container">
-                <h3 class="quiz-title">Trắc nghiệm: Phân biệt stopPropagation vs stopImmediatePropagation</h3>
-                <p class="quiz-question">Sự khác biệt chính giữa event.stopPropagation() và event.stopImmediatePropagation() là gì?</p>
+                <h3 class="quiz-title">Trắc nghiệm 1: stopPropagation vs stopImmediatePropagation</h3>
+                <p class="quiz-question">Sự khác biệt chính giữa <code>event.stopPropagation()</code> và <code>event.stopImmediatePropagation()</code> là gì?</p>
                 <div class="quiz-options">
-                  <button class="quiz-option" data-correct="true" onclick="checkQuiz(this, true, 'Chính xác! stopPropagation chặn sự kiện nổi bọt lên các phần tử cha. Còn stopImmediatePropagation vừa chặn nổi bọt, vừa chặn toàn bộ các trình lắng nghe sự kiện (listeners) khác gán trên cùng phần tử đó chạy.')">stopPropagation chặn sự kiện nổi bọt lên cha; stopImmediatePropagation chặn nổi bọt và chặn luôn các listeners khác cùng gán trên phần tử hiện tại thực thi.</button>
-                  <button class="quiz-option" onclick="checkQuiz(this, false, 'Sai. Cả hai đều có thể dùng ở pha nổi bọt (Bubbling).')">stopPropagation dùng cho giai đoạn Bubbling, còn stopImmediatePropagation chỉ dùng được ở giai đoạn Capturing.</button>
-                  <button class="quiz-option" onclick="checkQuiz(this, false, 'Sai. stopPropagation không reload trang, nó chỉ ngăn chặn sự lan truyền sự kiện.')">stopPropagation hủy bỏ hoàn toàn sự kiện, còn stopImmediatePropagation tải lại trang DOM để reset trạng thái.</button>
+                  <button class="quiz-option" data-correct="true" onclick="checkQuiz(this, true, 'Chính xác! stopPropagation chặn sự kiện nổi bọt lên các phần tử cha. Còn stopImmediatePropagation vừa chặn nổi bọt, vừa chặn toàn bộ các listener khác gán trên cùng phần tử đó.')">stopPropagation chặn nổi bọt lên cha; stopImmediatePropagation chặn nổi bọt và chặn luôn các listeners khác cùng gán trên phần tử hiện tại.</button>
+                  <button class="quiz-option" onclick="checkQuiz(this, false, 'Sai. Cả hai đều có thể dùng ở pha nổi bọt (Bubbling).')">stopPropagation dùng cho giai đoạn Bubbling, còn stopImmediatePropagation chỉ dùng được ở Capturing.</button>
+                  <button class="quiz-option" onclick="checkQuiz(this, false, 'Sai. stopPropagation không reload trang, nó chỉ ngăn chặn sự lan truyền.')">stopPropagation hủy bỏ hoàn toàn sự kiện, còn stopImmediatePropagation tải lại trang DOM.</button>
                 </div>
                 <div class="quiz-feedback"></div>
               </div>
 
+              <div class="quiz-container">
+                <h3 class="quiz-title">Trắc nghiệm 2: Debounce vs Throttle</h3>
+                <p class="quiz-question">Bạn muốn gọi API search khi user gõ, nhưng chỉ sau khi họ dừng gõ 500ms. Pattern nào phù hợp?</p>
+                <div class="quiz-options">
+                  <button class="quiz-option" onclick="checkQuiz(this, false, 'Sai. Throttle gọi ngay lần đầu tiên rồi giới hạn tần suất — không đợi user dừng.')">A. Throttle với limit = 500ms</button>
+                  <button class="quiz-option" data-correct="true" onclick="checkQuiz(this, true, 'Chính xác! Debounce trì hoãn thực thi cho đến khi không có event mới trong delay ms. Mỗi lần user gõ sẽ reset timer 500ms. Chỉ khi dừng gõ 500ms thì API mới được gọi.')">B. Debounce với delay = 500ms</button>
+                  <button class="quiz-option" onclick="checkQuiz(this, false, 'Sai. requestAnimationFrame chạy mỗi frame (~16ms) — không liên quan đến debouncing.')">C. requestAnimationFrame callback</button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
               <div class="article-cta">
                 <h3>Tải file code thực hành minh họa bài học</h3>
-                <p>Chúng tôi đã viết sẵn một file script hoàn chỉnh tích hợp mô hình PubSub, thiết kế lớp ReactiveStore thông qua Proxy để tự động đồng bộ hóa hóa đơn thanh toán giỏ hàng:</p>
-                <a href="codes/reactive_store.js" download class="btn-facebook" style="background:#ca8a04; text-decoration:none;">Tải về reactive_store.js</a>
+                <p>File đầy đủ: Event Delegation, Debounce/Throttle implementations, MutationObserver, CustomEvent, ReactiveStore (Proxy-based):</p>
+                <a href="codes/reactive_store.js" download class="article-cta__btn">Tải về reactive_store.js</a>
               </div>
             </div>
 
             <div class="article-related">
               <h2>Bài viết liên quan trong series</h2>
               <div class="article-related__links">
-                <a href="js-modules-and-scope" class="article-related__link">Bài 6: Hệ thống Module — Scope Isolation, ES Modules vs CommonJS</a>
-                <a href="js-event-loop-visualizer" class="article-related__link">Bài 8: Trình mô phỏng Event Loop trực quan hóa tương tác</a>
+                <a href="js-modules-and-scope" class="article-related__link">← Bài 10: Hệ Thống Module — ESM vs CommonJS & Tree Shaking</a>
+                <a href="js-event-loop-visualizer" class="article-related__link">Bài 12: Trình Mô Phỏng Event Loop Trực Quan →</a>
                 <a href="js-programming-series" class="article-related__link">Quay lại Lộ trình JavaScript Series</a>
               </div>
             </div>
