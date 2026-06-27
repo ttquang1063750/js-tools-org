@@ -97,13 +97,17 @@ js-tools-org/
 │   ├── # ── JavaScript Series (Vietnamese, HTML & code samples co-located) ──
 │   ├── js/
 │   │   ├── js-programming-series.html   # Curriculum hub
+│   │   ├── js-fundamentals-types.html
+│   │   ├── js-modern-syntax.html
 │   │   ├── js-engine-and-execution.html
 │   │   ├── js-objects-and-prototypes.html
-│   │   ├── js-dom-event-model.html
 │   │   ├── js-functional-programming.html
-│   │   ├── js-modules-and-scope.html
-│   │   ├── js-metaprogramming.html
+│   │   ├── js-error-handling.html
+│   │   ├── js-regular-expressions.html
 │   │   ├── js-event-loop-async.html
+│   │   ├── js-metaprogramming.html
+│   │   ├── js-modules-and-scope.html
+│   │   ├── js-dom-event-model.html
 │   │   ├── js-event-loop-visualizer.html
 │   │   └── ... JS code samples (.js, visualizer html) ...
 │   │
@@ -182,12 +186,14 @@ js-tools-org/
 ### 6. Blog Section
 
 - **Tool articles**: 8 bilingual EN/VI articles about SnapCast, Image Optimizer, QR Generator, ColorQuarium, Remove BG
-- **Programming series**: C (8 lessons), C++ (8 lessons), JavaScript (8 lessons), HTML5 Canvas (14 lessons) — all in Vietnamese
+- **Programming series**: C (8 lessons), C++ (8 lessons), JavaScript (12 lessons), HTML5 Canvas (14 lessons) — all in Vietnamese
   - **Academic Rigor**: The lessons feature high-quality computer science concepts. For example:
     - _C Series (Lesson 7)_: Formal Big O Time & Space complexity analysis, C examples for $O(1)$ to $O(N!)$, and recursion Call Stack depth analysis.
     - _C++ Series_: Name mangling, SSO (Small String Optimization), Vector dynamic array structures, RAII, Vptr/Vtable dynamic dispatch, and smart pointer atomic control blocks.
     - _JavaScript Series_: Parser/AST, Ignition bytecode, TurboFan JIT machine code, deoptimization triggers, Shapes/IC optimizations, ESM Live Bindings vs CJS Copy-on-Import, and custom Proxy-based Reactivity mapped to mock DOM.
-- **Client-Side Search & Static Index**: Real-time search engine on `blog/index.html` utilizing a pre-built static `search-index.json`. It performs deep searches across all 54 articles, mapping matched lesson titles and subheadings to direct URLs with diacritics-insensitive matching in both English and Vietnamese.
+- **Interactive JS Playgrounds**: Custom `js-playground` boxes (textarea source input + standard console capture log output) allowing code execution directly inside the browser.
+- **Dynamic Code Viewer**: Interactive canvas demos and visualizer iframes include a toggleable `⟨⟩ Xem Code` button that displays their formatted, dedented, syntax-highlighted source code inline (and lazy-fetches external visualizer source files).
+- **Client-Side Search & Static Index**: Real-time search engine on `blog/index.html` utilizing a pre-built static `search-index.json`. It performs deep searches across all 58 articles, mapping matched lesson titles and subheadings to direct URLs with diacritics-insensitive matching in both English and Vietnamese.
 - **Facebook Comments**: Native `fb-comments` comments widget integrated at the bottom of all 50+ detail pages mapped to canonical URLs for social media discussions.
 - **Article template structure**: `.article-hero` (tag, title, meta) → `.article-body` (EN/VI sections) → `.article-cta` → `.article-discuss` (Facebook CTA) → `.article-related`
 - **Tag color classes**: `--sc` (purple), `--io` (green), `--qr` (cyan), `--cq` (teal), `--c` (C), `--cpp` (C++), `--js` (JS), `--canvas` (Canvas)
@@ -278,5 +284,5 @@ No build step required. Edit HTML/CSS/JS directly and refresh.
 
 ---
 
-**Last Updated**: 2026-06-24
+**Last Updated**: 2026-06-27
 **Maintained by**: Quang (support@js-tools.org)
