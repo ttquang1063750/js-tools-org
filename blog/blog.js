@@ -255,4 +255,205 @@ document.addEventListener('DOMContentLoaded', function () {
     script.async = true;
     giscusContainer.appendChild(script);
   }
+
+  // 4. Auto Code Viewer for Interactive Demos (.canvas-demo)
+  var demos = document.querySelectorAll('.canvas-demo');
+  demos.forEach(function (demo) {
+    var scriptEl = demo.nextElementSibling;
+    while (scriptEl && scriptEl.tagName !== 'SCRIPT') {
+      scriptEl = scriptEl.nextElementSibling;
+    }
+
+    if (scriptEl) {
+      var header = demo.querySelector('.canvas-demo__header');
+      if (header) {
+        var actions = header.querySelector('.canvas-demo__actions');
+        if (!actions) {
+          actions = document.createElement('div');
+          actions.className = 'canvas-demo__actions';
+          actions.style.display = 'flex';
+          actions.style.gap = '8px';
+          actions.style.alignItems = 'center';
+
+          var resetBtn = header.querySelector('.canvas-demo__reset');
+          if (resetBtn) {
+            header.removeChild(resetBtn);
+            actions.appendChild(resetBtn);
+          }
+          header.appendChild(actions);
+        }
+
+        var codeBtn = document.createElement('button');
+        codeBtn.type = 'button';
+        codeBtn.className = 'canvas-demo__view-code';
+        codeBtn.innerHTML = '⟨⟩ Xem Code';
+        codeBtn.style.fontSize = '12px';
+        codeBtn.style.fontWeight = '600';
+        codeBtn.style.color = '#4b5563';
+        codeBtn.style.background = '#fff';
+        codeBtn.style.border = '1px solid #d1d5db';
+        codeBtn.style.borderRadius = '6px';
+        codeBtn.style.padding = '4px 12px';
+        codeBtn.style.cursor = 'pointer';
+        codeBtn.style.transition = 'all 0.15s';
+
+        codeBtn.addEventListener('mouseenter', function () {
+          codeBtn.style.background = '#f3f4f6';
+          codeBtn.style.color = '#111827';
+        });
+        codeBtn.addEventListener('mouseleave', function () {
+          codeBtn.style.background = '#fff';
+          codeBtn.style.color = '#4b5563';
+        });
+
+        actions.insertBefore(codeBtn, actions.firstChild);
+
+        var codeContainer = document.createElement('div');
+        codeContainer.className = 'canvas-demo__code-wrapper hidden';
+        codeContainer.style.display = 'none';
+        codeContainer.style.borderTop = '1px solid #e5e5e5';
+        codeContainer.style.background = '#1e1e24';
+        codeContainer.style.padding = '16px';
+
+        var rawCode = scriptEl.textContent.trim();
+        // Remove outer IIFE if present for cleaner display
+        if (rawCode.indexOf('(function') === 0 && rawCode.slice(-5) === ')();') {
+          var innerMatch = rawCode.match(/^\(function\s*\(\)\s*\{([\s\S]*)\}\)\(\);$/);
+          if (innerMatch) {
+            rawCode = innerMatch[1].trim();
+            var lines = rawCode.split('\n');
+            var minIndent = Infinity;
+            lines.forEach(function (line) {
+              if (line.trim()) {
+                var indent = line.match(/^\s*/)[0].length;
+                if (indent < minIndent) minIndent = indent;
+              }
+            });
+            if (minIndent !== Infinity && minIndent > 0) {
+              rawCode = lines
+                .map(function (line) {
+                  return line.substring(minIndent);
+                })
+                .join('\n');
+            }
+          }
+        }
+
+        var pre = document.createElement('pre');
+        pre.style.margin = '0';
+        pre.style.overflowX = 'auto';
+        pre.style.fontSize = '13px';
+        pre.style.lineHeight = '1.5';
+
+        var code = document.createElement('code');
+        code.className = 'language-javascript';
+        code.textContent = rawCode;
+        pre.appendChild(code);
+        codeContainer.appendChild(pre);
+
+        demo.appendChild(codeContainer);
+
+        codeBtn.addEventListener('click', function () {
+          if (codeContainer.style.display === 'none') {
+            codeContainer.style.display = 'block';
+            codeBtn.style.background = '#e5e7eb';
+            codeBtn.style.borderColor = '#9ca3af';
+            codeBtn.textContent = '⟨⟩ Ẩn Code';
+            if (window.Prism) {
+              window.Prism.highlightElement(code);
+            }
+          } else {
+            codeContainer.style.display = 'none';
+            codeBtn.style.background = '#fff';
+            codeBtn.style.borderColor = '#d1d5db';
+            codeBtn.textContent = '⟨⟩ Xem Code';
+          }
+        });
+      }
+    }
+  });
+
+  // 5. Dynamic Code Viewer for Embedded Visualizer iFrames
+  var iframes = document.querySelectorAll('iframe');
+  iframes.forEach(function (iframe) {
+    var src = iframe.getAttribute('src');
+    if (src && src.indexOf('.html') !== -1 && src.indexOf('http') === -1) {
+      var container = iframe.parentNode;
+      if (container) {
+        var wrapper = document.createElement('div');
+        wrapper.className = 'iframe-code-explorer';
+        wrapper.style.margin = '16px 0 28px 0';
+        wrapper.style.textAlign = 'center';
+
+        var viewBtn = document.createElement('button');
+        viewBtn.type = 'button';
+        viewBtn.className = 'canvas-demo__btn canvas-demo__btn--ghost';
+        viewBtn.innerHTML = '⟨⟩ Xem Code Công Cụ Mô Phỏng';
+        viewBtn.style.padding = '8px 16px';
+        viewBtn.style.fontSize = '13px';
+        viewBtn.style.fontWeight = '600';
+        viewBtn.style.cursor = 'pointer';
+        viewBtn.style.borderRadius = '6px';
+        viewBtn.style.transition = 'all 0.15s';
+
+        wrapper.appendChild(viewBtn);
+        iframe.after(wrapper);
+
+        var codeContainer = document.createElement('div');
+        codeContainer.style.display = 'none';
+        codeContainer.style.textAlign = 'left';
+        codeContainer.style.marginTop = '16px';
+        codeContainer.style.border = '1px solid #e5e5e5';
+        codeContainer.style.borderRadius = '8px';
+        codeContainer.style.background = '#1e1e24';
+        codeContainer.style.padding = '16px';
+        codeContainer.style.overflow = 'hidden';
+
+        var pre = document.createElement('pre');
+        pre.style.margin = '0';
+        pre.style.overflowX = 'auto';
+        pre.style.maxHeight = '500px';
+        pre.style.fontSize = '12.5px';
+
+        var code = document.createElement('code');
+        code.className = 'language-markup';
+        pre.appendChild(code);
+        codeContainer.appendChild(pre);
+        wrapper.appendChild(codeContainer);
+
+        var fetched = false;
+
+        viewBtn.addEventListener('click', function () {
+          if (codeContainer.style.display === 'none') {
+            if (!fetched) {
+              viewBtn.textContent = 'Đang tải mã nguồn...';
+              fetch(src)
+                .then(function (r) {
+                  return r.text();
+                })
+                .then(function (text) {
+                  code.textContent = text;
+                  if (window.Prism) {
+                    window.Prism.highlightElement(code);
+                  }
+                  viewBtn.textContent = '⟨⟩ Ẩn Code Công Cụ Mô Phỏng';
+                  codeContainer.style.display = 'block';
+                  fetched = true;
+                })
+                .catch(function (err) {
+                  viewBtn.textContent = 'Lỗi tải mã nguồn';
+                  console.error(err);
+                });
+            } else {
+              viewBtn.textContent = '⟨⟩ Ẩn Code Công Cụ Mô Phỏng';
+              codeContainer.style.display = 'block';
+            }
+          } else {
+            codeContainer.style.display = 'none';
+            viewBtn.textContent = '⟨⟩ Xem Code Công Cụ Mô Phỏng';
+          }
+        });
+      }
+    }
+  });
 });
