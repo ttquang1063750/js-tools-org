@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Advanced I/O Redirection &amp; File Descriptors in Bash — js-tools</title>
+    <meta
+      name="description"
+      content="Learn standard streams, custom file descriptors, named pipes (FIFOs), and network socket scripting using /dev/tcp in Bash."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/bash/bash-io-redirection" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--bash">
+        <div class="container">
+          <a href="bash-programming-series" class="article-hero__back"
+            >← <span data-lang-content="en">Back to Bash Series</span
+            ><span data-lang-content="vi">Quay lại Series Bash</span></a
+          >
+          <div class="article-hero__tag article-hero__tag--bash">Bash &amp; Shell</div>
+          <h1 class="article-hero__title" data-lang-content="en">Advanced I/O Redirection &amp; File Descriptors</h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 9: Điều Hướng I/O Nâng Cao &amp; File Descriptors
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 27, 2026 · 15 min read</span>
+            <span data-lang-content="vi">27 tháng 6, 2026 · 15 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- ── ENGLISH ── -->
+              <div data-lang-content="en">
+                <p>
+                  <em
+                    >This programming guide is only available in Vietnamese. Switch to Vietnamese to read the full
+                    article.</em
+                  >
+                </p>
+              </div>
+
+              <!-- ── VIETNAMESE ── -->
+              <div data-lang-content="vi">
+                <p>
+                  Trong hệ điều hành Unix và Linux, triết lý thiết kế cốt lõi là
+                  <strong>"Everything is a file"</strong> (Tất cả mọi thứ đều là tập tin). Từ các file văn bản thông
+                  thường, thư mục, thiết bị phần cứng (như bàn phím, màn hình), cho đến các cổng kết nối mạng (sockets)
+                  — tất cả đều được biểu diễn và thao tác dưới dạng luồng byte (stream of bytes) thông qua một giao diện
+                  chung. Việc quản lý và điều hướng các luồng dữ liệu này được thực hiện thông qua hệ thống
+                  <strong>File Descriptors (FD)</strong>. Làm chủ các khái niệm này là chìa khóa để viết các script tự
+                  động hóa mức hệ thống một cách chuyên nghiệp.
+                </p>
+
+                <h2>1. Kiến trúc File Descriptors &amp; Cơ chế Nhân hệ điều hành (Kernel)</h2>
+                <p>
+                  Để hiểu bản chất của File Descriptor (FD), ta cần đi sâu vào cách Linux Kernel quản lý tài nguyên
+                  trong bộ nhớ:
+                </p>
+                <ul>
+                  <li>
+                    <strong>File Descriptor Table (Bảng FD cấp Tiến trình):</strong> Mỗi tiến trình sở hữu riêng một
+                    bảng chứa các chỉ số số nguyên không âm (0, 1, 2, 3...). Mỗi chỉ số này trỏ tới một bản ghi trong
+                    bảng Open File Table của Kernel.
+                  </li>
+                  <li>
+                    <strong>Open File Table (Bảng File Đang Mở cấp Hệ thống):</strong> Chứa các thông tin trạng thái
+                    hoạt động của file: chế độ mở (đọc/ghi/append), vị trí con trỏ đọc ghi hiện tại (file offset), và
+                    con trỏ trỏ tới bảng chứa inode.
+                  </li>
+                  <li>
+                    <strong>Inode Table (Bảng Inode):</strong> Biểu diễn đối tượng vật lý thực tế trên ổ cứng (chứa
+                    metadata của file, quyền truy cập, kích thước file và vị trí các block dữ liệu thực tế).
+                  </li>
+                </ul>
+                <p>
+                  Mặc định, khi một shell hoặc tiến trình mới khởi động, Kernel sẽ tự động mở sẵn 3 luồng tiêu chuẩn
+                  tương ứng với các chỉ số FD sau:
+                </p>
+
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Số hiệu FD</th>
+                      <th>Tên gọi</th>
+                      <th>Thiết bị mặc định</th>
+                      <th>Mô tả hoạt động của luồng dữ liệu</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>0</code></td>
+                      <td><code>stdin</code> (Standard Input)</td>
+                      <td>Keyboard / Terminal</td>
+                      <td>Luồng nhập dữ liệu tiêu chuẩn. Nhận dữ liệu đầu vào cho tiến trình.</td>
+                    </tr>
+                    <tr>
+                      <td><code>1</code></td>
+                      <td><code>stdout</code> (Standard Output)</td>
+                      <td>Screen / Terminal</td>
+                      <td>Luồng xuất kết quả tiêu chuẩn. Hiển thị kết quả hoạt động bình thường.</td>
+                    </tr>
+                    <tr>
+                      <td><code>2</code></td>
+                      <td><code>stderr</code> (Standard Error)</td>
+                      <td>Screen / Terminal</td>
+                      <td>Luồng báo lỗi tiêu chuẩn. Đẩy thông điệp chẩn đoán lỗi độc lập với stdout.</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h3>Cơ chế hệ thống đằng sau Redirection và hàm hệ thống <code>dup2()</code></h3>
+                <p>
+                  Khi ta viết lệnh chuyển hướng <code>command &gt; file.txt</code>, Kernel không hề thay đổi mã nguồn
+                  của chương trình để trỏ vào file. Thay vào đó, Shell (tiến trình cha) thực hiện các bước sau:
+                </p>
+                <ol>
+                  <li>Gọi hàm hệ thống <code>fork()</code> để sinh ra tiến trình con.</li>
+                  <li>
+                    Tiến trình con gọi hàm <code>open("file.txt", ...)</code> để lấy ra một số hiệu FD mới (ví dụ: FD
+                    3).
+                  </li>
+                  <li>
+                    Tiến trình con gọi hàm hệ thống <code>dup2(3, 1)</code>. Hệ thống sẽ sao chép con trỏ tại vị trí số
+                    3 trong bảng FD ghi đè lên vị trí số 1. Từ lúc này, FD 1 không còn trỏ ra màn hình nữa mà trỏ trực
+                    tiếp tới <code>file.txt</code>.
+                  </li>
+                  <li>Tiến trình con đóng FD 3 dư thừa bằng <code>close(3)</code>.</li>
+                  <li>
+                    Tiến trình con gọi hàm hệ thống <code>execve()</code> để chạy chương trình <code>command</code>. Bất
+                    kỳ dòng code nào ghi vào FD 1 (stdout) của chương trình con đều tự động đi vào file.
+                  </li>
+                </ol>
+
+                <h3>
+                  Phân tích cạm bẫy thứ tự: <code>&gt;file 2&gt;&amp;1</code> so với <code>2&gt;&amp;1 &gt;file</code>
+                </h3>
+                <p>
+                  Shell xử lý các phép toán chuyển hướng tuần tự từ trái qua phải. Sự thay đổi con trỏ FD diễn ra lập
+                  tức:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span><span class="dot dot-yellow"></span
+                      ><span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">fd_order_analysis.sh</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash"># Cú pháp A (Đúng):
+# Bước 1: Shell gặp `> log.txt`. Nó hướng FD 1 sang file log.txt. (Bảng FD: 1 -> log.txt)
+# Bước 2: Shell gặp `2>&1`. Nó copy đích trỏ của FD 1 (log.txt) vào FD 2. (Bảng FD: 2 -> log.txt)
+# Kết quả: Cả hai luồng 1 và 2 đều đẩy dữ liệu vào log.txt.
+command &gt; log.txt 2&gt;&amp;1
+
+# Cú pháp B (Sai):
+# Bước 1: Shell gặp `2>&1`. Nó copy đích trỏ của FD 1 (lúc này đang là Màn hình) vào FD 2. (Bảng FD: 2 -> Màn hình)
+# Bước 2: Shell gặp `> log.txt`. Nó hướng FD 1 sang file log.txt. (Bảng FD: 1 -> log.txt, FD 2 -> Màn hình)
+# Kết quả: stdout ghi vào log.txt, nhưng stderr (FD 2) vẫn ghi ra màn hình terminal!
+command 2&gt;&amp;1 &gt; log.txt</code></pre>
+                </div>
+
+                <h2>2. exec &amp; Quản lý File Descriptor tùy biến (FD 3-9)</h2>
+                <p>
+                  Trong lập trình shell, ta có thể tự mở thêm các số hiệu FD từ 3 tới 9 bằng lệnh built-in
+                  <code>exec</code>.
+                </p>
+
+                <h3>Bảng so sánh phương thức điều hướng I/O</h3>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Cú pháp</th>
+                      <th>Tên gọi</th>
+                      <th>Bản chất hoạt động</th>
+                      <th>Ưu điểm &amp; Trường hợp sử dụng</th>
+                      <th>Nhược điểm &amp; Cạm bẫy</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>cmd &gt; file</code></td>
+                      <td>Output Redirection</td>
+                      <td>Ghi đè nội dung file bằng stdout của <code>cmd</code>.</td>
+                      <td>Nhanh, đơn giản để ghi đè log/file mới.</td>
+                      <td>Xóa sạch dữ liệu cũ của file mà không báo trước.</td>
+                    </tr>
+                    <tr>
+                      <td><code>cmd &gt;&gt; file</code></td>
+                      <td>Append Redirection</td>
+                      <td>Ghi nối đuôi dữ liệu vào cuối file.</td>
+                      <td>An toàn, bảo toàn lịch sử log ứng dụng.</td>
+                      <td>Làm phình kích thước file nếu không có logrotate.</td>
+                    </tr>
+                    <tr>
+                      <td><code>exec 3&lt; file</code></td>
+                      <td>Custom FD Read</td>
+                      <td>Mở một FD cố định trỏ tới file để đọc dần bằng <code>read -u 3</code>.</td>
+                      <td>Không chiếm dụng stdin (FD 0), tránh xung đột vòng lặp.</td>
+                      <td>Bắt buộc phải đóng thủ công qua <code>exec 3&lt;&amp;-</code> để tránh leak FD.</td>
+                    </tr>
+                    <tr>
+                      <td><code>cmd &lt;&lt; EOF</code></td>
+                      <td>Here-Document</td>
+                      <td>Truyền nhiều dòng text trực tiếp vào stdin của <code>cmd</code>.</td>
+                      <td>Dễ viết cấu hình file tạm, xuất thông báo nhiều dòng.</td>
+                      <td>Tải toàn bộ nội dung vào bộ nhớ (RAM), không phù hợp với file lớn.</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h3>Ứng dụng thực tiễn: Đọc cấu hình song song với tương tác người dùng</h3>
+                <p>
+                  Một lỗi kinh điển khi dùng vòng lặp đọc file là nếu bạn dùng <code>while read line</code> thông thường
+                  (redirect ở cuối block <code>&lt; file</code>), toàn bộ stdin (FD 0) của vòng lặp bị file chiếm dụng.
+                  Bất kỳ lệnh nhập liệu nào bên trong vòng lặp như <code>read -p</code> từ bàn phím sẽ đọc nhầm dữ liệu
+                  của dòng tiếp theo trong file cấu hình thay vì đợi người dùng gõ phím.
+                </p>
+                <p>Giải pháp phòng thủ là mở một File Descriptor số 3 độc lập:</p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span><span class="dot dot-yellow"></span
+                      ><span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">isolated_read.sh</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash"># Mở FD 3 trỏ tới file config
+exec 3&lt; server_list.txt
+
+while read -u 3 server_ip; do
+    echo "--- Kiểm tra máy chủ: $server_ip ---"
+    # Lệnh read dưới đây vẫn nhận dữ liệu từ bàn phím bình thường vì stdin (FD 0) hoàn toàn tự do!
+    read -p "Bạn có muốn deploy sang IP này không? (y/n): " choice
+    if [ "$choice" = "y" ]; then
+         echo "Đang khởi động SSH deploy tới $server_ip..."
+    fi
+done
+
+# Đóng FD 3 giải phóng tài nguyên
+exec 3&lt;&amp;-</code></pre>
+                </div>
+
+                <h2>3. Giao tiếp giữa các tiến trình bằng Named Pipes (FIFOs)</h2>
+                <p>
+                  Khi dùng ống dẫn thông thường (Anonymous Pipe) như <code>cat file.txt | grep "error"</code>, hệ thống
+                  tự động gọi hàm <code>pipe()</code> tạo ra một buffer trong RAM và chỉ kết nối giữa hai tiến trình
+                  cha-con chạy đồng thời, sau đó biến mất khi kết thúc lệnh.
+                </p>
+                <p>
+                  <strong>Named Pipe (FIFO)</strong> là một thực thể đặc biệt được đăng ký trên hệ thống tập tin (tạo
+                  bằng <code>mkfifo</code>). Nó hoạt động như một đường dẫn trung gian giúp hai tiến trình độc lập hoàn
+                  toàn (không có quan hệ cha-con) có thể bắt tay và gửi dữ liệu cho nhau.
+                </p>
+
+                <h3>Cơ chế hoạt động hệ thống và Giới hạn bộ đệm</h3>
+                <ul>
+                  <li>
+                    <strong>Blocking Mode (Chế độ chặn):</strong> Khi một tiến trình mở FIFO để ghi (Writer), hệ thống
+                    sẽ chặn tiến trình đó lại (treo dòng) cho đến khi có một tiến trình khác mở FIFO để đọc (Reader). Cơ
+                    chế này giúp đồng bộ hóa các ứng dụng cực kỳ tốt mà không gây tốn tài nguyên CPU vì tiến trình bị
+                    rơi vào trạng thái ngủ (Sleep) chờ ngắt từ kernel.
+                  </li>
+                  <li>
+                    <strong>Giới hạn Buffer:</strong> Named Pipe lưu trữ dữ liệu hoàn toàn trên bộ đệm bộ nhớ của Kernel
+                    chứ không hề ghi xuống ổ cứng vật lý. Trên hệ điều hành Linux hiện đại, kích thước mặc định của bộ
+                    đệm pipe này là <strong>64 KB</strong> (quy định tại <code>/proc/sys/fs/pipe-max-size</code>). Nếu
+                    Writer ghi vượt quá dung lượng này mà Reader chưa kịp đọc hết, Writer sẽ bị chặn (block) cho đến khi
+                    Reader giải phóng bộ đệm.
+                  </li>
+                </ul>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span><span class="dot dot-yellow"></span
+                      ><span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">fifo_demo.sh</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash"># Tạo Named Pipe
+mkfifo /tmp/log_pipe
+
+# Tiến trình Reader (Chạy ngầm): Đợi nhận log và xử lý ghi file có tag time
+while read -r log_msg; do
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $log_msg" &gt;&gt; /var/log/app_events.log
+done &lt; /tmp/log_pipe &amp;
+
+# Tiến trình Writer (Chạy từ ứng dụng khác): Đẩy log vào pipe
+echo "User admin logged in" &gt; /tmp/log_pipe
+echo "Database migration complete" &gt; /tmp/log_pipe</code></pre>
+                </div>
+
+                <h2>4. Lập trình Socket trực tiếp trên Bash qua <code>/dev/tcp</code> và <code>/dev/udp</code></h2>
+                <p>
+                  Đây là một tính năng ẩn cực kỳ mạnh mẽ của Bash được biên dịch thông qua tùy chọn cấu hình flag
+                  <code>--enable-net-redirections</code>. Khi bạn thực hiện chuyển hướng vào đường dẫn ảo
+                  <code>/dev/tcp/host/port</code>, trình biên dịch Bash sẽ tự động bắt lấy chuỗi này và gọi hàm thư viện
+                  socket C tiêu chuẩn:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span><span class="dot dot-yellow"></span
+                      ><span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">c_socket_analogy.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// Bản chất nội tại của Bash tương đương với đoạn mã C:
+int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+struct sockaddr_in serv_addr;
+serv_addr.sin_family = AF_INET;
+serv_addr.sin_port = htons(port);
+connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));</code></pre>
+                </div>
+
+                <h3>So sánh giữa <code>/dev/tcp</code> với các công cụ mạng tiêu chuẩn</h3>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Công cụ</th>
+                      <th>Cơ chế hoạt động</th>
+                      <th>Ưu điểm</th>
+                      <th>Nhược điểm &amp; Hạn chế</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        <strong><code>/dev/tcp</code> (Bash)</strong>
+                      </td>
+                      <td>Built-in trong trình biên dịch shell.</td>
+                      <td>
+                        <strong>Không phụ thuộc bất kỳ phần mềm ngoài nào.</strong> Chạy được trên các hệ thống tối giản
+                        (Docker container, hệ thống nhúng).
+                      </td>
+                      <td>
+                        Chỉ hỗ trợ Bash (không hỗ trợ sh, zsh, dash). Không có cơ chế SSL/TLS tích hợp sẵn (không dùng
+                        trực tiếp được cho HTTPS).
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong><code>curl</code> / <code>wget</code></strong>
+                      </td>
+                      <td>Tiến trình ngoài chuyên dụng.</td>
+                      <td>
+                        Hỗ trợ đầy đủ giao thức HTTP, HTTPS, tự động giải quyết SSL, chuyển hướng (redirect), headers.
+                      </td>
+                      <td>
+                        Không có sẵn trong các Docker image tối giản (Alpine/Slim), gây overhead khởi tạo tiến trình.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong><code>nc</code> (Netcat)</strong>
+                      </td>
+                      <td>Utility kết nối socket thô.</td>
+                      <td>Mạnh mẽ, hỗ trợ lắng nghe cổng (Listen mode - <code>nc -l</code>) và UDP.</td>
+                      <td>
+                        Cú pháp không đồng nhất giữa các phiên bản (BSD Netcat vs GNU Netcat). Thường bị quản trị viên
+                        gỡ bỏ vì lý do bảo mật.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h3>Ứng dụng: Gửi gói tin HTTP GET thô và lấy nội dung</h3>
+                <p>Đoạn script minh họa giao tiếp socket thô theo đúng chuẩn RFC 7230 để lấy dữ liệu:</p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <div class="code-dots">
+                      <span class="dot dot-red"></span><span class="dot dot-yellow"></span
+                      ><span class="dot dot-green"></span>
+                    </div>
+                    <span class="code-filename">http_raw_request.sh</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash"># Mở socket TCP kết nối hai chiều đọc ghi trên FD 5
+exec 5&lt;&gt; /dev/tcp/httpbin.org/80
+
+# Gửi HTTP Request thô (Mỗi dòng kết thúc bằng ký tự carriage return \r\n)
+echo -e "GET /ip HTTP/1.1\r\nHost: httpbin.org\r\nConnection: close\r\n\r\n" &gt;&amp;5
+
+# Đọc kết quả trả về từ FD 5
+while read -r -u 5 line; do
+    echo "Phản hồi: $line"
+done
+
+# Đóng FD 5 sau khi hoàn thành
+exec 5&gt;&amp;-
+exec 5&lt;&amp;-</code></pre>
+                </div>
+
+                <h2>5. Trắc nghiệm ôn tập</h2>
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm 1: Phép điều hướng I/O</h3>
+                  <p class="quiz-question">
+                    Đoạn lệnh nào sau đây sẽ chuyển hướng cả output bình thường (stdout) và thông điệp lỗi (stderr) vào
+                    tập tin output.log đúng cách?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Lệnh này chỉ ghi stdout vào output.log, lỗi stderr vẫn đẩy ra màn hình.'
+                        )
+                      "
+                    >
+                      A. <code>cmd 2&gt;&amp;1 &gt; output.log</code>
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Cần hướng stdout vào file trước rồi hướng stderr vào đích stdout hiện có.'
+                        )
+                      "
+                    >
+                      B. <code>cmd &gt; output.log 2&gt;&amp;1</code>
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. Lệnh này chỉ chuyển hướng lỗi stderr vào file.')"
+                    >
+                      C. <code>cmd 2&gt; output.log</code>
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm 2: Named Pipes</h3>
+                  <p class="quiz-question">Lệnh nào dùng để tạo ra một Named Pipe trong Linux?</p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="checkQuiz(this, true, 'Chính xác! Lệnh mkfifo tạo ra một named pipe trên ổ cứng.')"
+                    >
+                      A. <code>mkfifo pipe_name</code>
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. ln -s dùng để tạo liên kết tượng trưng (Symbolic Link).')"
+                    >
+                      B. <code>ln -s pipe_name</code>
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. pipe không phải là một câu lệnh độc lập.')"
+                    >
+                      C. <code>pipe pipe_name</code>
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="article-cta">
+                  <h3>Tải file code thực hành minh họa bài học</h3>
+                  <p>Tập tin script tổng hợp các kỹ thuật điều hướng nâng cao và socket scripting trong bài học:</p>
+                  <a
+                    href="io_redirection.sh"
+                    download
+                    class="btn-facebook"
+                    style="background: #22c55e; text-decoration: none"
+                    >Tải về io_redirection.sh</a
+                  >
+                </div>
+              </div>
+            </div>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="bash-devops-automation" class="article-related__link article-related__link--prev"
+                  >Bài 8: DevOps Automation &amp; CI/CD Pipelines</a
+                >
+                <a href="bash-defensive-scripting" class="article-related__link article-related__link--next"
+                  >Bài 10: Defensive Bash &amp; Bảo Mật Script</a
+                >
+              </div>
+            </div>
+
+            <!-- ── Comments Section ── -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin-bottom: 24px" data-lang-content="en">
+                Comments
+              </h2>
+              <h2 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin-bottom: 24px" data-lang-content="vi">
+                Bình luận
+              </h2>
+              <div class="giscus"></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://snapcast.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/snapcast.svg"
+              alt=""
+              width="54"
+              height="16"
+              aria-hidden="true"
+              style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+            />
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <svg
+              viewBox="0 0 320 320"
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0"
+            >
+              <g transform="translate(0 20)">
+                <g transform="translate(20 30) rotate(-6)">
+                  <rect
+                    width="180"
+                    height="140"
+                    rx="14"
+                    fill="rgba(5,150,105,0.18)"
+                    stroke="rgba(255,255,255,0.2)"
+                    stroke-width="2"
+                  />
+                </g>
+                <g transform="translate(120 110) rotate(4)">
+                  <rect
+                    width="180"
+                    height="140"
+                    rx="14"
+                    fill="rgba(6,182,212,0.18)"
+                    stroke="rgba(255,255,255,0.2)"
+                    stroke-width="2"
+                  />
+                  <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                  <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                  <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                </g>
+              </g>
+            </svg>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script src="../ide.js" defer></script>
+  </body>
+</html>
