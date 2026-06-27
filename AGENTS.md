@@ -7,6 +7,7 @@ Landing page for [js-tools.org](https://js-tools.org) — experience, speed, con
 ## Project Overview
 
 **js-tools.org** is a static landing page showcasing browser-based tools:
+
 1. **SnapCast** — Real-time photo slideshow for live events
 2. **ColorQuarium** — Ambient animated aquarium display controlled from your phone
 3. **Image Optimizer** — Compress & convert images (JPEG, PNG, WebP, HEIC) entirely in-browser
@@ -32,6 +33,10 @@ js-tools-org/
 ├── sitemap.xml          # SEO sitemap
 ├── serve.json           # Local dev server config
 ├── ads.txt              # AdSense ads.txt
+├── package.json         # Node config for Prettier formatting
+├── .prettierrc          # Prettier formatting rules
+├── .gitignore           # Git ignore patterns
+├── .vscode/             # VS Code settings (Format on save enabled)
 ├── assets/              # Visual assets
 │   ├── favicon.svg
 │   ├── logo.svg
@@ -51,6 +56,7 @@ js-tools-org/
 │   ├── ide.js           # Code copy + quiz verification logic
 │   ├── prism.css        # Local Prism syntax highlight (Tomorrow Night theme)
 │   ├── prism.js         # Local Prism library with C/C++ support
+│   ├── search-index.json # Client-side search index
 │   │
 │   ├── # ── Tool articles (bilingual EN/VI) ──
 │   ├── colorquarium-explained.html
@@ -62,61 +68,77 @@ js-tools-org/
 │   ├── snapcast-technology-explained.html
 │   ├── webp-vs-jpeg-vs-png.html
 │   │
-│   ├── # ── C Programming Series (8 lessons, Vietnamese) ──
-│   ├── c-programming-series.html    # Curriculum hub
-│   ├── c-environment-setup.html
-│   ├── c-basics-and-bitwise.html
-│   ├── c-control-flow.html
-│   ├── c-struct-typedef.html
-│   ├── c-memory-management.html
-│   ├── c-pointers-deep-dive.html
-│   ├── c-data-structures.html
-│   ├── c-ds-visualizer-demo.html
+│   ├── # ── C Programming Series (Vietnamese, HTML & code samples co-located) ──
+│   ├── c/
+│   │   ├── c-programming-series.html    # Curriculum hub
+│   │   ├── c-environment-setup.html
+│   │   ├── c-basics-and-bitwise.html
+│   │   ├── c-control-flow.html
+│   │   ├── c-struct-typedef.html
+│   │   ├── c-memory-management.html
+│   │   ├── c-pointers-deep-dive.html
+│   │   ├── c-data-structures.html
+│   │   ├── c-ds-visualizer-demo.html
+│   │   └── ... C code samples (.c, visualizer html) ...
 │   │
-│   ├── # ── C++ Programming Series (8 lessons, Vietnamese) ──
-│   ├── cpp-programming-series.html  # Curriculum hub
-│   ├── cpp-environment-setup.html
-│   ├── cpp-basics-and-vector.html
-│   ├── cpp-oop-basics.html
-│   ├── cpp-oop-polymorphism.html
-│   ├── cpp-smart-pointers.html
-│   ├── cpp-templates.html
-│   ├── cpp-modern-features.html
-│   ├── cpp-bst-visualizer.html
+│   ├── # ── C++ Programming Series (Vietnamese, HTML & code samples co-located) ──
+│   ├── cpp/
+│   │   ├── cpp-programming-series.html  # Curriculum hub
+│   │   ├── cpp-environment-setup.html
+│   │   ├── cpp-basics-and-vector.html
+│   │   ├── cpp-oop-basics.html
+│   │   ├── cpp-oop-polymorphism.html
+│   │   ├── cpp-smart-pointers.html
+│   │   ├── cpp-templates.html
+│   │   ├── cpp-modern-features.html
+│   │   ├── cpp-bst-visualizer.html
+│   │   └── ... C++ code samples (.cpp, visualizer html) ...
 │   │
-│   ├── # ── JavaScript Series (8 lessons, Vietnamese) ──
-│   ├── js-programming-series.html   # Curriculum hub
-│   ├── js-engine-and-execution.html
-│   ├── js-objects-and-prototypes.html
-│   ├── js-dom-event-model.html
-│   ├── js-functional-programming.html
-│   ├── js-modules-and-scope.html
-│   ├── js-metaprogramming.html
-│   ├── js-event-loop-async.html
-│   ├── js-event-loop-visualizer.html
+│   ├── # ── JavaScript Series (Vietnamese, HTML & code samples co-located) ──
+│   ├── js/
+│   │   ├── js-programming-series.html   # Curriculum hub
+│   │   ├── js-engine-and-execution.html
+│   │   ├── js-objects-and-prototypes.html
+│   │   ├── js-dom-event-model.html
+│   │   ├── js-functional-programming.html
+│   │   ├── js-modules-and-scope.html
+│   │   ├── js-metaprogramming.html
+│   │   ├── js-event-loop-async.html
+│   │   ├── js-event-loop-visualizer.html
+│   │   └── ... JS code samples (.js, visualizer html) ...
 │   │
-│   ├── # ── JavaScript Canvas Series (14 lessons, Vietnamese) ──
-│   ├── canvas-programming-series.html   # Curriculum hub
-│   ├── canvas-basics-and-drawing.html
-│   ├── canvas-text-and-images.html
-│   ├── canvas-transforms-and-state.html
-│   ├── canvas-pixel-manipulation.html
-│   ├── canvas-math-foundations.html
-│   ├── canvas-animation-loop.html
-│   ├── canvas-easing-and-tweening.html
-│   ├── canvas-responsive-and-dpi.html
-│   ├── canvas-interaction-events.html
-│   ├── canvas-physics-simulation.html
-│   ├── canvas-collision-and-particles.html
-│   ├── canvas-game-development.html
-│   ├── canvas-data-visualization.html
-│   ├── canvas-creative-and-performance.html
+│   ├── # ── JavaScript Canvas Series (Vietnamese, HTML & code samples co-located) ──
+│   ├── canvas/
+│   │   ├── canvas-programming-series.html   # Curriculum hub
+│   │   ├── canvas-basics-and-drawing.html
+│   │   ├── canvas-text-and-images.html
+│   │   ├── canvas-transforms-and-state.html
+│   │   ├── canvas-pixel-manipulation.html
+│   │   ├── canvas-math-foundations.html
+│   │   ├── canvas-animation-loop.html
+│   │   ├── canvas-easing-and-tweening.html
+│   │   ├── canvas-responsive-and-dpi.html
+│   │   ├── canvas-interaction-events.html
+│   │   ├── canvas-physics-simulation.html
+│   │   ├── canvas-collision-and-particles.html
+│   │   ├── canvas-game-development.html
+│   │   ├── canvas-data-visualization.html
+│   │   ├── canvas-creative-and-performance.html
+│   │   └── ... Canvas code samples (.js, game html) ...
 │   │
-│   └── codes/           # Companion code samples (C, C++, JS)
-├── README.md
-├── AGENTS.md            # This file
-├── changelog.md         # Performance & feature changelog
-└── .gitignore
+│   └── # ── Bash Programming Series (Vietnamese, HTML & scripts co-located) ──
+│       ├── bash/
+│       │   ├── bash-programming-series.html   # Curriculum hub
+│       │   ├── bash-terminal-basics.html
+│       │   ├── bash-variables-and-strings.html
+│       │   ├── bash-control-flow.html
+│       │   ├── bash-functions-and-scripts.html
+│       │   ├── bash-text-processing.html
+│       │   ├── bash-process-and-signals.html
+│       │   ├── bash-real-world-scripts.html
+│       │   ├── bash-devops-automation.html
+│       │   └── ... Bash script samples (.sh) ...
+└── README.md
 ```
 
 ---
@@ -124,28 +146,33 @@ js-tools-org/
 ## Key Features
 
 ### 1. Hero Section with Canvas Particle Animation
+
 - **Location**: `index.html` + `main.js`
 - **5 Time-Based Modes**: Dawn, Day, Dusk, Rain, Night — each with unique particles, colors, and weather effects
 - **Mode Switcher**: 5 emoji buttons (fixed bottom-right)
 - **Mouse Interaction**: Soft boundary repulsion (30px), gentle attraction, smooth physics
 
 ### 2. Dynamic Theming
+
 - CSS variables (`--bg`, `--accent`, `--border`, etc.) updated in real-time per mode
 - Hero gradient background matches mode
 
 ### 3. i18n (EN / VI)
+
 - **System**: `i18n.js` with `data-i18n` attributes + `data-i18n-html` for rich content
 - **Blog**: `data-lang-content="en"|"vi"` dual-section toggling via `blog.js`
 - **Language Detection**: Auto from `navigator.language`, persisted in `localStorage`
 - **Toggle**: Nav button switches between English and Vietnamese
 
 ### 4. Tool Cards + Live Demos
+
 - **Tools on homepage**: SnapCast, ColorQuarium, Image Optimizer, QR Generator, Remove BG
 - **Live demos**: SnapCast and ColorQuarium have embedded iframe demos with QR codes
 - **Demo component**: `.sc-demo` layout (iframe left + QR right, collapses to stack on mobile)
 - **Lazy Loading**: Iframes load via `IntersectionObserver` with `data-src`
 
 ### 5. Navigation
+
 - **Header**: Hamburger menu (CSS-only, checkbox hack) at ≤880px breakpoint
   - Uses `<input type="checkbox" id="nav-toggle">` + `<label>` with sibling selector `~ nav`
   - Shows SnapCast, ColorQuarium, Blog links + language toggle
@@ -153,12 +180,13 @@ js-tools-org/
 - **Consistent across all pages**: index, privacy, terms, and all 36 blog HTML files
 
 ### 6. Blog Section
+
 - **Tool articles**: 8 bilingual EN/VI articles about SnapCast, Image Optimizer, QR Generator, ColorQuarium, Remove BG
 - **Programming series**: C (8 lessons), C++ (8 lessons), JavaScript (8 lessons), HTML5 Canvas (14 lessons) — all in Vietnamese
   - **Academic Rigor**: The lessons feature high-quality computer science concepts. For example:
-    - *C Series (Lesson 7)*: Formal Big O Time & Space complexity analysis, C examples for $O(1)$ to $O(N!)$, and recursion Call Stack depth analysis.
-    - *C++ Series*: Name mangling, SSO (Small String Optimization), Vector dynamic array structures, RAII, Vptr/Vtable dynamic dispatch, and smart pointer atomic control blocks.
-    - *JavaScript Series*: Parser/AST, Ignition bytecode, TurboFan JIT machine code, deoptimization triggers, Shapes/IC optimizations, ESM Live Bindings vs CJS Copy-on-Import, and custom Proxy-based Reactivity mapped to mock DOM.
+    - _C Series (Lesson 7)_: Formal Big O Time & Space complexity analysis, C examples for $O(1)$ to $O(N!)$, and recursion Call Stack depth analysis.
+    - _C++ Series_: Name mangling, SSO (Small String Optimization), Vector dynamic array structures, RAII, Vptr/Vtable dynamic dispatch, and smart pointer atomic control blocks.
+    - _JavaScript Series_: Parser/AST, Ignition bytecode, TurboFan JIT machine code, deoptimization triggers, Shapes/IC optimizations, ESM Live Bindings vs CJS Copy-on-Import, and custom Proxy-based Reactivity mapped to mock DOM.
 - **Client-Side Search & Static Index**: Real-time search engine on `blog/index.html` utilizing a pre-built static `search-index.json`. It performs deep searches across all 54 articles, mapping matched lesson titles and subheadings to direct URLs with diacritics-insensitive matching in both English and Vietnamese.
 - **Facebook Comments**: Native `fb-comments` comments widget integrated at the bottom of all 50+ detail pages mapped to canonical URLs for social media discussions.
 - **Article template structure**: `.article-hero` (tag, title, meta) → `.article-body` (EN/VI sections) → `.article-cta` → `.article-discuss` (Facebook CTA) → `.article-related`
@@ -167,11 +195,13 @@ js-tools-org/
 - **Interactive quizzes**: `ide.js` + `ide.css` for programming lessons
 
 ### 7. SEO & Social
+
 - Meta tags, Open Graph, Twitter Card, JSON-LD structured data
 - `sitemap.xml` with all pages registered
 - Mobile-first responsive design
 
 ### 8. Ad Integration
+
 - Google AdSense with responsive ad units
 - Lazy-loaded on first user interaction or 3.5s timeout
 
@@ -194,6 +224,7 @@ No build step required. Edit HTML/CSS/JS directly and refresh.
 ## Common Tasks
 
 ### Add a Blog Article
+
 1. Create new HTML file in `blog/` using existing article as template
 2. Include header (with hamburger nav) + footer (full nav) matching other blog pages
 3. Add bilingual content in `data-lang-content="en"|"vi"` sections
@@ -201,10 +232,12 @@ No build step required. Edit HTML/CSS/JS directly and refresh.
 5. Add URL to `sitemap.xml`
 
 ### Add a Translation String
+
 1. Add key to `TRANSLATIONS.en` and `TRANSLATIONS.vi` in `i18n.js`
 2. Add `data-i18n="my.key"` to HTML element
 
 ### Adjust Particle Physics
+
 - `ATTRACT_FORCE` (0.003), `REPEL_RADIUS` (30), `REPEL_FORCE` (0.15) in `main.js`
 
 ---
@@ -229,6 +262,7 @@ No build step required. Edit HTML/CSS/JS directly and refresh.
 ## Notes for Agents
 
 ### Before Modifying Code
+
 1. **Check CSS patterns**: Use flexbox + gap (no old margin/padding stacking)
 2. **Responsive first**: Test at mobile (<600px), tablet (<880px for hamburger), desktop
 3. **i18n coverage**: Any new text needs EN + VI translations
@@ -236,6 +270,7 @@ No build step required. Edit HTML/CSS/JS directly and refresh.
 5. **Canvas performance**: Particle counts scale with viewport size
 
 ### When Adding Features
+
 - Keep vanilla JavaScript (no libraries unless justified)
 - Use CSS variables for theming
 - Lazy-load iframes with IntersectionObserver

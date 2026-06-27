@@ -1,4 +1,5 @@
-var _initLang = localStorage.getItem('lang') || (navigator.language && navigator.language.startsWith('vi') ? 'vi' : 'en');
+var _initLang =
+  localStorage.getItem('lang') || (navigator.language && navigator.language.startsWith('vi') ? 'vi' : 'en');
 var currentLang = _initLang;
 
 function setupViOnlyArticles() {
@@ -9,15 +10,15 @@ function setupViOnlyArticles() {
       // 1. Hide/remove the English disclaimer block
       enDisclaimer.removeAttribute('data-lang-content');
       enDisclaimer.style.display = 'none';
-      
+
       // 2. Make the Vietnamese content always visible
       var viContent = articleWrap.querySelector('[data-lang-content="vi"]');
       if (viContent) {
         viContent.removeAttribute('data-lang-content');
         viContent.style.display = 'block';
-        
+
         // Remove data-lang-content from any nested elements inside the Vietnamese content to prevent them from being hidden in English mode
-        viContent.querySelectorAll('[data-lang-content]').forEach(function(nestedEl) {
+        viContent.querySelectorAll('[data-lang-content]').forEach(function (nestedEl) {
           nestedEl.removeAttribute('data-lang-content');
         });
       }
@@ -29,10 +30,10 @@ setupViOnlyArticles();
 
 function applyLangContent(lang) {
   currentLang = lang;
-  document.querySelectorAll('[data-lang-content]').forEach(function(el) {
+  document.querySelectorAll('[data-lang-content]').forEach(function (el) {
     el.classList.toggle('active', el.dataset.langContent === lang);
   });
-  
+
   // Update search input placeholder based on language
   var searchInput = document.getElementById('blogSearchInput');
   if (searchInput) {
@@ -56,7 +57,7 @@ function renderSearchCard(item) {
   var title = currentLang === 'vi' ? item.titleVi : item.titleEn;
   var tagText = '';
   var tagClass = '';
-  
+
   var series = item.parentSeries || item.url;
   if (series.indexOf('cpp') !== -1) {
     tagText = currentLang === 'vi' ? 'C++ Lập trình' : 'C++ Programming';
@@ -95,29 +96,52 @@ function renderSearchCard(item) {
 
   var isLesson = !!item.parentSeries;
   var subTag = isLesson ? (currentLang === 'vi' ? ' • Bài học' : ' • Lesson') : '';
-  var metaText = isLesson ? (currentLang === 'vi' ? 'Trong khóa học' : 'In course') : (currentLang === 'vi' ? 'Bài viết' : 'Article');
+  var metaText = isLesson
+    ? currentLang === 'vi'
+      ? 'Trong khóa học'
+      : 'In course'
+    : currentLang === 'vi'
+      ? 'Bài viết'
+      : 'Article';
   var readMoreText = currentLang === 'vi' ? 'Đọc bài học →' : 'Read lesson →';
   if (!isLesson) {
     readMoreText = currentLang === 'vi' ? 'Đọc bài viết →' : 'Read article →';
   }
 
-  return '<a href="' + item.url + '" class="blog-card">' +
-           '<span class="blog-card__tag ' + tagClass + '">' + tagText + subTag + '</span>' +
-           '<h2 class="blog-card__title">' + title + '</h2>' +
-           '<p class="blog-card__excerpt">' + (item.desc || '') + '</p>' +
-           '<div class="blog-card__meta">' +
-             '<span>' + metaText + '</span>' +
-           '</div>' +
-           '<span class="blog-card__read-more">' + readMoreText + '</span>' +
-         '</a>';
+  return (
+    '<a href="' +
+    item.url +
+    '" class="blog-card">' +
+    '<span class="blog-card__tag ' +
+    tagClass +
+    '">' +
+    tagText +
+    subTag +
+    '</span>' +
+    '<h2 class="blog-card__title">' +
+    title +
+    '</h2>' +
+    '<p class="blog-card__excerpt">' +
+    (item.desc || '') +
+    '</p>' +
+    '<div class="blog-card__meta">' +
+    '<span>' +
+    metaText +
+    '</span>' +
+    '</div>' +
+    '<span class="blog-card__read-more">' +
+    readMoreText +
+    '</span>' +
+    '</a>'
+  );
 }
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
   // 1. Language Toggle Handler
   var btn = document.getElementById('langToggle');
   if (btn) {
-    btn.addEventListener('click', function() {
-      requestAnimationFrame(function() {
+    btn.addEventListener('click', function () {
+      requestAnimationFrame(function () {
         var newLang = localStorage.getItem('lang') || 'en';
         applyLangContent(newLang);
         // Trigger search rerun if search input is active
@@ -142,19 +166,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Fetch search-index.json only on listing page
     fetch('search-index.json')
-      .then(function(res) { return res.json(); })
-      .then(function(data) {
+      .then(function (res) {
+        return res.json();
+      })
+      .then(function (data) {
         blogSearchIndex = data;
         // In case they typed something before loading completes
         if (searchInput.value.trim().length > 0) {
           searchInput.dispatchEvent(new Event('input'));
         }
       })
-      .catch(function(err) {
+      .catch(function (err) {
         console.error('Failed to load search index:', err);
       });
 
-    searchInput.addEventListener('input', function() {
+    searchInput.addEventListener('input', function () {
       var query = removeDiacritics(searchInput.value.trim());
 
       // Toggle clear button visibility
@@ -171,20 +197,18 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       // Filter from index
-      var matches = blogSearchIndex.filter(function(item) {
+      var matches = blogSearchIndex.filter(function (item) {
         var title = removeDiacritics(currentLang === 'vi' ? item.titleVi : item.titleEn);
         var desc = removeDiacritics(item.desc || '');
         var headings = removeDiacritics(currentLang === 'vi' ? item.headingsVi : item.headingsEn);
-        
-        return title.indexOf(query) !== -1 ||
-               desc.indexOf(query) !== -1 ||
-               headings.indexOf(query) !== -1;
+
+        return title.indexOf(query) !== -1 || desc.indexOf(query) !== -1 || headings.indexOf(query) !== -1;
       });
 
       // Render matches
       if (resultsGrid) {
         resultsGrid.innerHTML = '';
-        matches.forEach(function(item) {
+        matches.forEach(function (item) {
           resultsGrid.innerHTML += renderSearchCard(item);
         });
       }
@@ -204,7 +228,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Clear search handler
   if (clearBtn && searchInput) {
-    clearBtn.addEventListener('click', function() {
+    clearBtn.addEventListener('click', function () {
       searchInput.value = '';
       searchInput.focus();
       searchInput.dispatchEvent(new Event('input'));

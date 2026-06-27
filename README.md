@@ -4,10 +4,10 @@ Static landing page for [js-tools.org](https://js-tools.org) — experience, spe
 
 ## Tools
 
-| Tool | URL | Description |
-|------|-----|-------------|
+| Tool            | URL                                                                  | Description                                             |
+| --------------- | -------------------------------------------------------------------- | ------------------------------------------------------- |
 | Image Optimizer | [image-optimizer.js-tools.org](https://image-optimizer.js-tools.org) | Compress JPEG, PNG, WebP, HEIC entirely in your browser |
-| Snapcast | [snapcast.js-tools.org](https://snapcast.js-tools.org) | Real-time photo slideshow for live events |
+| Snapcast        | [snapcast.js-tools.org](https://snapcast.js-tools.org)               | Real-time photo slideshow for live events               |
 
 ## Stack
 

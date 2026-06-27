@@ -5,39 +5,83 @@ document.getElementById('year').textContent = new Date().getFullYear();
 (function () {
   const canvas = document.getElementById('heroCanvas');
   const ctx = canvas.getContext('2d');
-  let W, H, particles = [], clouds = [];
+  let W,
+    H,
+    particles = [],
+    clouds = [];
   const mouse = { x: -9999, y: -9999 };
   let mouseInside = false; // Track if mouse is over canvas
-  const ATTRACT_FORCE  = 0.003; // Very light attraction applied to all particles
-  const REPEL_RADIUS   = 30;    // Smaller zone — particles can get closer to mouse
-  const REPEL_FORCE    = 0.15;  // Very strong repulsion to enforce boundary
+  const ATTRACT_FORCE = 0.003; // Very light attraction applied to all particles
+  const REPEL_RADIUS = 30; // Smaller zone — particles can get closer to mouse
+  const REPEL_FORCE = 0.15; // Very strong repulsion to enforce boundary
 
   // ── Color palettes per mode ──
   const PALETTES = {
-    dawn:  { bg: '#0e0a04', bgCard: '#1a1008', bgCardHover: '#251808', accent: '#f59e0b', accent2: '#fb923c', border: 'rgba(245,158,11,0.2)',  hero: 'rgba(245,158,11,0.18)' },
-    day:   { bg: '#0a0f1e', bgCard: '#111827', bgCardHover: '#1a2235', accent: '#4f8ef7', accent2: '#a78bfa', border: 'rgba(79,142,247,0.18)', hero: 'rgba(79,142,247,0.18)'  },
-    dusk:  { bg: '#0e0608', bgCard: '#1a0e10', bgCardHover: '#251418', accent: '#f97316', accent2: '#c026d3', border: 'rgba(249,115,22,0.2)',  hero: 'rgba(249,115,22,0.18)'  },
-    rain:  { bg: '#060c14', bgCard: '#0d1520', bgCardHover: '#131e2d', accent: '#60a5fa', accent2: '#93c5fd', border: 'rgba(96,165,250,0.2)',  hero: 'rgba(96,165,250,0.12)'  },
-    night: { bg: '#050510', bgCard: '#0c0c1e', bgCardHover: '#13132a', accent: '#a78bfa', accent2: '#818cf8', border: 'rgba(167,139,250,0.2)', hero: 'rgba(167,139,250,0.15)' },
+    dawn: {
+      bg: '#0e0a04',
+      bgCard: '#1a1008',
+      bgCardHover: '#251808',
+      accent: '#f59e0b',
+      accent2: '#fb923c',
+      border: 'rgba(245,158,11,0.2)',
+      hero: 'rgba(245,158,11,0.18)',
+    },
+    day: {
+      bg: '#0a0f1e',
+      bgCard: '#111827',
+      bgCardHover: '#1a2235',
+      accent: '#4f8ef7',
+      accent2: '#a78bfa',
+      border: 'rgba(79,142,247,0.18)',
+      hero: 'rgba(79,142,247,0.18)',
+    },
+    dusk: {
+      bg: '#0e0608',
+      bgCard: '#1a0e10',
+      bgCardHover: '#251418',
+      accent: '#f97316',
+      accent2: '#c026d3',
+      border: 'rgba(249,115,22,0.2)',
+      hero: 'rgba(249,115,22,0.18)',
+    },
+    rain: {
+      bg: '#060c14',
+      bgCard: '#0d1520',
+      bgCardHover: '#131e2d',
+      accent: '#60a5fa',
+      accent2: '#93c5fd',
+      border: 'rgba(96,165,250,0.2)',
+      hero: 'rgba(96,165,250,0.12)',
+    },
+    night: {
+      bg: '#050510',
+      bgCard: '#0c0c1e',
+      bgCardHover: '#13132a',
+      accent: '#a78bfa',
+      accent2: '#818cf8',
+      border: 'rgba(167,139,250,0.2)',
+      hero: 'rgba(167,139,250,0.15)',
+    },
   };
 
   function applyPalette(m) {
     const p = PALETTES[m];
     const root = document.documentElement.style;
-    root.setProperty('--bg',           p.bg);
-    root.setProperty('--bg-card',      p.bgCard);
-    root.setProperty('--bg-card-hover',p.bgCardHover);
-    root.setProperty('--accent',       p.accent);
-    root.setProperty('--accent-2',     p.accent2);
-    root.setProperty('--border',       p.border);
+    root.setProperty('--bg', p.bg);
+    root.setProperty('--bg-card', p.bgCard);
+    root.setProperty('--bg-card-hover', p.bgCardHover);
+    root.setProperty('--accent', p.accent);
+    root.setProperty('--accent-2', p.accent2);
+    root.setProperty('--border', p.border);
     // Update hero gradient
     const hero = document.querySelector('.hero');
-    if (hero) hero.style.background = `
+    if (hero)
+      hero.style.background = `
       radial-gradient(ellipse 60% 50% at 50% 40%, ${p.hero.replace(')', ', 0.12)').replace('rgba(', 'rgba(')} 0%, transparent 65%),
       radial-gradient(ellipse 80% 40% at 50% -10%, ${p.hero} 0%, transparent 70%)
     `;
     // Update active button
-    document.querySelectorAll('.mode-btn').forEach(b => {
+    document.querySelectorAll('.mode-btn').forEach((b) => {
       b.classList.toggle('active', b.dataset.mode === m);
     });
   }
@@ -45,21 +89,20 @@ document.getElementById('year').textContent = new Date().getFullYear();
   // ── Detect time of day ──
   const hour = new Date().getHours();
   let mode;
-  if      (hour >= 5  && hour < 8)  mode = 'dawn';
-  else if (hour >= 8  && hour < 17) mode = 'day';
+  if (hour >= 5 && hour < 8) mode = 'dawn';
+  else if (hour >= 8 && hour < 17) mode = 'day';
   else if (hour >= 17 && hour < 20) mode = 'dusk';
   else if (hour >= 20 && hour < 23) mode = 'rain';
-  else                               mode = 'night';
+  else mode = 'night';
 
   // ── Mode switcher buttons ──
-  document.querySelectorAll('.mode-btn').forEach(btn => {
+  document.querySelectorAll('.mode-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       mode = btn.dataset.mode;
       applyPalette(mode);
       init();
     });
   });
-
 
   // ── Mouse ──
   let canvasRect = canvas.getBoundingClientRect();
@@ -68,10 +111,14 @@ document.getElementById('year').textContent = new Date().getFullYear();
   }
   window.addEventListener('scroll', updateRect, { passive: true });
 
-  window.addEventListener('mousemove', e => {
-    mouse.x = e.clientX - canvasRect.left;
-    mouse.y = e.clientY - canvasRect.top;
-  }, { passive: true });
+  window.addEventListener(
+    'mousemove',
+    (e) => {
+      mouse.x = e.clientX - canvasRect.left;
+      mouse.y = e.clientY - canvasRect.top;
+    },
+    { passive: true }
+  );
 
   // Track mouse enter/leave to enable/disable attraction
   canvas.addEventListener('mouseenter', () => {
@@ -83,11 +130,13 @@ document.getElementById('year').textContent = new Date().getFullYear();
   });
 
   function resize() {
-    W = canvas.width  = canvas.offsetWidth;
+    W = canvas.width = canvas.offsetWidth;
     H = canvas.height = canvas.offsetHeight;
   }
 
-  function rand(a, b) { return a + Math.random() * (b - a); }
+  function rand(a, b) {
+    return a + Math.random() * (b - a);
+  }
 
   // ──────────────────────────────────────────────────────
   // PARTICLE FACTORY per mode
@@ -169,9 +218,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
 
   function init() {
     resize();
-    const count = (window.innerWidth < 768)
-      ? 35
-      : ((mode === 'night') ? 120 : (mode === 'rain') ? 140 : 100);
+    const count = window.innerWidth < 768 ? 35 : mode === 'night' ? 120 : mode === 'rain' ? 140 : 100;
     particles = Array.from({ length: count }, createParticle);
     if (mode === 'day' || mode === 'dawn' || mode === 'dusk') {
       clouds = Array.from({ length: 5 }, createCloud);
@@ -195,7 +242,10 @@ document.getElementById('year').textContent = new Date().getFullYear();
       ctx.restore();
 
       c.x += c.speed;
-      if (c.x > W + 300) { c.x = -300; c.y = rand(H * 0.05, H * 0.45); }
+      if (c.x > W + 300) {
+        c.x = -300;
+        c.y = rand(H * 0.05, H * 0.45);
+      }
     }
   }
 
@@ -348,20 +398,23 @@ document.getElementById('year').textContent = new Date().getFullYear();
   // IntersectionObserver to pause/resume canvas animations when hero is out of view
   if ('IntersectionObserver' in window) {
     const heroSection = document.querySelector('.hero');
-    const heroObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          if (!animFrameId) {
-            animFrameId = requestAnimationFrame(draw);
+    const heroObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            if (!animFrameId) {
+              animFrameId = requestAnimationFrame(draw);
+            }
+          } else {
+            if (animFrameId) {
+              cancelAnimationFrame(animFrameId);
+              animFrameId = null;
+            }
           }
-        } else {
-          if (animFrameId) {
-            cancelAnimationFrame(animFrameId);
-            animFrameId = null;
-          }
-        }
-      });
-    }, { threshold: 0 });
+        });
+      },
+      { threshold: 0 }
+    );
 
     if (heroSection) {
       heroObserver.observe(heroSection);
@@ -384,27 +437,30 @@ document.getElementById('year').textContent = new Date().getFullYear();
 (function () {
   const iframes = document.querySelectorAll('.sc-demo iframe');
   if ('IntersectionObserver' in window) {
-    const iframeObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          const iframe = entry.target;
-          const src = iframe.dataset.src;
-          if (src) {
-            iframe.src = src;
-            iframe.removeAttribute('data-src');
+    const iframeObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const iframe = entry.target;
+            const src = iframe.dataset.src;
+            if (src) {
+              iframe.src = src;
+              iframe.removeAttribute('data-src');
+            }
+            iframeObserver.unobserve(iframe);
           }
-          iframeObserver.unobserve(iframe);
-        }
-      });
-    }, { rootMargin: '200px' });
+        });
+      },
+      { rootMargin: '200px' }
+    );
 
-    iframes.forEach(iframe => {
+    iframes.forEach((iframe) => {
       if (iframe.dataset.src) {
         iframeObserver.observe(iframe);
       }
     });
   } else {
-    iframes.forEach(iframe => {
+    iframes.forEach((iframe) => {
       const src = iframe.dataset.src;
       if (src) {
         iframe.src = src;
@@ -422,12 +478,12 @@ document.getElementById('year').textContent = new Date().getFullYear();
     adSenseLoaded = true;
     const script = document.createElement('script');
     script.async = true;
-    script.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3175971990265774";
-    script.crossOrigin = "anonymous";
+    script.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3175971990265774';
+    script.crossOrigin = 'anonymous';
     document.head.appendChild(script);
-    events.forEach(e => window.removeEventListener(e, loadAdSense, { passive: true }));
+    events.forEach((e) => window.removeEventListener(e, loadAdSense, { passive: true }));
   }
   const events = ['scroll', 'touchstart', 'mousemove', 'click'];
-  events.forEach(e => window.addEventListener(e, loadAdSense, { passive: true, once: true }));
+  events.forEach((e) => window.addEventListener(e, loadAdSense, { passive: true, once: true }));
   setTimeout(loadAdSense, 3500);
 })();
