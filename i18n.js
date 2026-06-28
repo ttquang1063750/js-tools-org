@@ -136,6 +136,19 @@ const TRANSLATIONS = {
     'cq.demo.desc':
       'This is a real, live ColorQuarium display. Scan the QR code with your phone to open the remote control and change what appears on screen in real time.',
     'cq.demo.qr.note': 'Opens the remote control screen on your phone',
+    'nav.donate': 'Donate',
+    'donate.title': 'Donate — js-tools',
+    'donate.h1': 'Support js-tools',
+    'donate.intro':
+      'js-tools is free, open-source, and does not collect your data. If you find these tools useful, please consider supporting the project to help cover server and development costs. Thank you so much!',
+    'donate.paypal.title': 'PayPal',
+    'donate.paypal.desc': 'Support via PayPal for international donors.',
+    'donate.paypal.btn': 'Donate via PayPal',
+    'donate.momo.title': 'MoMo E-Wallet',
+    'donate.momo.desc': 'Scan the QR code using MoMo app to send your support instantly.',
+    'donate.mb.title': 'MB Bank Transfer',
+    'donate.mb.desc': 'Transfer to MB Bank account by scanning the QR code.',
+    'donate.qr.scan': 'Scan to donate',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -276,6 +289,19 @@ const TRANSLATIONS = {
     'cq.demo.desc':
       'Đây là một màn hình ColorQuarium thật, đang chạy trực tiếp. Quét mã QR bằng điện thoại để mở remote điều khiển và thay đổi nội dung hiển thị theo thời gian thực.',
     'cq.demo.qr.note': 'Mở màn hình remote điều khiển dành cho điện thoại',
+    'nav.donate': 'Ủng hộ',
+    'donate.title': 'Ủng hộ — js-tools',
+    'donate.h1': 'Ủng hộ dự án js-tools',
+    'donate.intro':
+      'js-tools là dự án miễn phí, mã nguồn mở và không thu thập dữ liệu người dùng. Nếu bạn thấy các công cụ này hữu ích, hãy cân nhắc ủng hộ dự án để giúp chúng tôi duy trì chi phí máy chủ và phát triển. Xin chân thành cảm ơn!',
+    'donate.paypal.title': 'PayPal',
+    'donate.paypal.desc': 'Ủng hộ qua PayPal đối với các nhà hảo tâm quốc tế.',
+    'donate.paypal.btn': 'Ủng hộ qua PayPal',
+    'donate.momo.title': 'Ví Điện Tử MoMo',
+    'donate.momo.desc': 'Quét mã QR bằng ứng dụng MoMo để gửi tiền ủng hộ nhanh chóng.',
+    'donate.mb.title': 'Chuyển Khoản MB Bank',
+    'donate.mb.desc': 'Chuyển khoản vào tài khoản MB Bank bằng cách quét mã QR.',
+    'donate.qr.scan': 'Quét mã để ủng hộ',
   },
 };
 
