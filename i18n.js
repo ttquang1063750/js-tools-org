@@ -79,29 +79,42 @@ const TRANSLATIONS = {
     'privacy.title': 'Privacy Policy — js-tools',
     'privacy.h1': 'Privacy Policy',
     'privacy.intro':
-      'Last updated: June 9, 2026. At js-tools, accessible from js-tools.org, one of our main priorities is the privacy of our visitors. This Privacy Policy document contains types of information that is collected and recorded by js-tools and how we use it.',
-    'privacy.local.title': '1. Local Processing (Zero Data Collection)',
+      'Last updated: June 28, 2026. At js-tools (js-tools.org), protecting your privacy is a core priority. We build free, privacy-first tools that run entirely in your browser, alongside an educational programming blog. This policy explains what limited information is involved when you use the site and how it is handled.',
+    'privacy.local.title': '1. Local Processing (Zero File Collection)',
     'privacy.local.desc':
-      'None of the files you upload or process using our tools (such as Image Optimizer) are ever sent to a server. All operations, conversions, and compressions are processed locally within your web browser using client-side technologies like WebAssembly and HTML5 Canvas. We do not store, view, or collect your files.',
-    'privacy.cookies.title': '2. Cookies and Web Beacons',
+      'Every file you open in our tools — including the Image Optimizer, the RemoveBG background remover, the QR Code Generator, ColorQuarium and others — is processed entirely inside your web browser using client-side technologies such as WebAssembly, HTML5 Canvas and WebGL. Your images and files are never uploaded to, stored on, or viewed by any server. Some AI-powered tools (for example RemoveBG) download a one-time model file from a content delivery network so the computation can run on your own device; the file you process still never leaves your computer.',
+    'privacy.cookies.title': '2. Cookies & Local Storage',
     'privacy.cookies.desc':
-      "Like any other website, js-tools uses cookies. These cookies are used to store information including visitors' preferences, and the pages on the website that the visitor accessed or visited. The information is used to optimize the users' experience by customizing our web page content based on visitors' browser type and/or other information.",
-    'privacy.ads.title': '3. Google DoubleClick DART Cookie',
+      'js-tools uses a small amount of browser storage (cookies and local storage) to remember your preferences — such as your chosen language and light/dark theme — so the site behaves the way you expect on your next visit. These preferences stay on your device. The third-party services described below may set their own cookies.',
+    'privacy.ads.title': '3. Advertising (Google AdSense)',
     'privacy.ads.desc':
-      'Google is one of the third-party vendors on our site. It also uses cookies, known as DART cookies, to serve ads to our site visitors based upon their visit to js-tools.org and other sites on the internet. However, visitors may choose to decline the use of DART cookies by visiting the Google ad and content network Privacy Policy at: <a href="https://policies.google.com/technologies/ads" target="_blank" rel="noopener">https://policies.google.com/technologies/ads</a>',
-    'privacy.consent.title': '4. Consent',
-    'privacy.consent.desc': 'By using our website, you hereby consent to our Privacy Policy and agree to its terms.',
+      'Some pages display ads served by Google AdSense, a third-party vendor. Google and its partners may use cookies to serve ads based on your prior visits to this and other websites. You can review and control how Google uses data for ads, and opt out of personalized advertising, via Google Ads Settings and the Google Privacy &amp; Terms page at: <a href="https://policies.google.com/technologies/ads" target="_blank" rel="noopener">https://policies.google.com/technologies/ads</a>',
+    'privacy.comments.title': '4. Blog Comments (giscus & GitHub)',
+    'privacy.comments.desc':
+      'Our blog comments are powered by giscus, which stores discussions in GitHub Discussions. To post a comment you sign in with a GitHub account, and anything you post is public and handled under GitHub’s own privacy policy. If you never comment, no account or personal data is required to read the blog.',
+    'privacy.thirdparty.title': '5. Third-Party Links & Services',
+    'privacy.thirdparty.desc':
+      'The site links to companion tools on separate subdomains (such as SnapCast and ColorQuarium) and to external resources referenced in our articles. Once you follow a link to a third party — including Google, GitHub or any site cited in the blog — that party’s own privacy policy and terms apply. We are not responsible for the practices of external sites.',
+    'privacy.consent.title': '6. Consent & Changes',
+    'privacy.consent.desc':
+      'By using js-tools, you consent to this Privacy Policy. We may update it from time to time to reflect new tools or services; the "last updated" date above always indicates the current version.',
     'terms.title': 'Terms of Service — js-tools',
     'terms.h1': 'Terms of Service',
     'terms.intro':
-      "Welcome to js-tools! These terms and conditions outline the rules and regulations for the use of js-tools' website, located at js-tools.org.",
+      "Welcome to js-tools! These terms and conditions outline the rules and regulations for the use of js-tools' website, located at js-tools.org, including its browser-based tools and educational blog.",
     'terms.license.title': '1. Intellectual Property & Usage License',
     'terms.license.desc':
       'Unless otherwise stated, js-tools and/or its licensors own the intellectual property rights for all material on js-tools. All intellectual property rights are reserved. You may access this from js-tools for your own personal or business use subjected to restrictions set in these terms and conditions.',
-    'terms.local.title': '2. No-Server Client-Side Guarantee',
+    'terms.local.title': '2. No-Server, Client-Side Guarantee',
     'terms.local.desc':
-      'Our tools operate fully client-side. We do not provide file storage or backup services. You are solely responsible for saving and maintaining copies of the files processed through our utilities.',
-    'terms.disclaimer.title': '3. Disclaimer & Limitation of Liability',
+      'Our utilities — including the Image Optimizer, RemoveBG, QR Code Generator and ColorQuarium — run fully client-side in your browser. We do not provide file storage, hosting or backup services, and processed files are not retained anywhere. You are solely responsible for saving and keeping copies of any output you create.',
+    'terms.content.title': '3. Educational Content & User Comments',
+    'terms.content.desc':
+      'The articles and programming courses on our blog are provided for educational purposes "as is", without warranty of accuracy or fitness for a particular purpose. Code samples are offered as-is — please test them before using them in production. Comments are powered by giscus/GitHub and reflect the views of their authors, not js-tools. You agree not to post unlawful, infringing, abusive or spam content, and we may remove any comment at our discretion.',
+    'terms.thirdparty.title': '4. Third-Party Services & Advertising',
+    'terms.thirdparty.desc':
+      'The site integrates third-party services including Google AdSense (advertising) and giscus/GitHub (comments), and links to companion tools on separate subdomains. Your use of those services is also governed by their respective terms. js-tools is not responsible for third-party content, advertisements, or external websites.',
+    'terms.disclaimer.title': '5. Disclaimer & Limitation of Liability',
     'terms.disclaimer.desc':
       'To the maximum extent permitted by applicable law, we exclude all representations, warranties, and conditions relating to our website and the use of this website. js-tools is provided "as is" and we are not liable for any data loss, quality reduction, or event interruption resulting from the use of our browser tools.',
     'faq.title': 'Frequently Asked Questions',
@@ -231,30 +244,42 @@ const TRANSLATIONS = {
     'privacy.title': 'Chính sách bảo mật — js-tools',
     'privacy.h1': 'Chính sách bảo mật',
     'privacy.intro':
-      'Cập nhật lần cuối: 9 tháng 6, 2026. Tại js-tools, có thể truy cập tại js-tools.org, một trong những ưu tiên hàng đầu của chúng tôi là quyền riêng tư của khách truy cập. Tài liệu Chính sách bảo mật này chứa các loại thông tin được thu thập và ghi lại bởi js-tools và cách chúng tôi sử dụng chúng.',
-    'privacy.local.title': '1. Xử lý cục bộ (Không thu thập dữ liệu)',
+      'Cập nhật lần cuối: 28 tháng 6, 2026. Tại js-tools (js-tools.org), bảo vệ quyền riêng tư của bạn là ưu tiên cốt lõi. Chúng tôi xây dựng các công cụ miễn phí, ưu tiên quyền riêng tư, chạy hoàn toàn trong trình duyệt, cùng với một blog lập trình mang tính giáo dục. Chính sách này giải thích những thông tin hạn chế nào có liên quan khi bạn sử dụng trang web và cách chúng được xử lý.',
+    'privacy.local.title': '1. Xử lý cục bộ (Không thu thập tệp)',
     'privacy.local.desc':
-      'Không có tệp nào bạn tải lên hoặc xử lý bằng các công cụ của chúng tôi (như Image Optimizer) được gửi đến máy chủ. Tất cả các thao tác, chuyển đổi và nén được xử lý cục bộ trong trình duyệt web của bạn bằng các công nghệ phía client như WebAssembly và HTML5 Canvas. Chúng tôi không lưu trữ, xem hoặc thu thập tệp của bạn.',
-    'privacy.cookies.title': '2. Cookie và Web Beacon',
+      'Mọi tệp bạn mở trong các công cụ của chúng tôi — bao gồm Image Optimizer, công cụ tách nền RemoveBG, QR Code Generator, ColorQuarium và các công cụ khác — đều được xử lý hoàn toàn bên trong trình duyệt web của bạn bằng các công nghệ phía client như WebAssembly, HTML5 Canvas và WebGL. Hình ảnh và tệp của bạn không bao giờ được tải lên, lưu trữ hay xem bởi bất kỳ máy chủ nào. Một số công cụ dùng AI (ví dụ RemoveBG) tải về một tệp mô hình một lần từ mạng phân phối nội dung (CDN) để việc tính toán chạy trên chính thiết bị của bạn; tệp bạn xử lý vẫn không bao giờ rời khỏi máy tính của bạn.',
+    'privacy.cookies.title': '2. Cookie & Bộ nhớ cục bộ',
     'privacy.cookies.desc':
-      'Giống như các trang web khác, js-tools sử dụng cookie. Các cookie này được dùng để lưu trữ thông tin bao gồm tùy chọn của khách truy cập và các trang trên website mà khách truy cập đã xem. Thông tin được dùng để tối ưu hóa trải nghiệm người dùng bằng cách tùy chỉnh nội dung trang web dựa trên loại trình duyệt và/hoặc thông tin khác của khách truy cập.',
-    'privacy.ads.title': '3. Cookie DART của Google DoubleClick',
+      'js-tools sử dụng một lượng nhỏ bộ nhớ trình duyệt (cookie và local storage) để ghi nhớ tùy chọn của bạn — như ngôn ngữ đã chọn và giao diện sáng/tối — để trang web hoạt động đúng như bạn mong đợi trong lần truy cập tiếp theo. Các tùy chọn này nằm trên thiết bị của bạn. Các dịch vụ bên thứ ba mô tả bên dưới có thể đặt cookie riêng của họ.',
+    'privacy.ads.title': '3. Quảng cáo (Google AdSense)',
     'privacy.ads.desc':
-      'Google là một trong các nhà cung cấp bên thứ ba trên trang web của chúng tôi. Google cũng sử dụng cookie, được gọi là cookie DART, để phục vụ quảng cáo cho khách truy cập dựa trên lượt ghé thăm js-tools.org và các trang web khác. Tuy nhiên, khách truy cập có thể từ chối sử dụng cookie DART bằng cách truy cập Chính sách bảo mật của mạng quảng cáo Google tại: <a href="https://policies.google.com/technologies/ads" target="_blank" rel="noopener">https://policies.google.com/technologies/ads</a>',
-    'privacy.consent.title': '4. Sự đồng ý',
+      'Một số trang hiển thị quảng cáo do Google AdSense — một nhà cung cấp bên thứ ba — phục vụ. Google và các đối tác có thể sử dụng cookie để phục vụ quảng cáo dựa trên các lượt truy cập trước của bạn vào trang này và các trang khác. Bạn có thể xem và kiểm soát cách Google sử dụng dữ liệu cho quảng cáo, cũng như từ chối quảng cáo cá nhân hóa, qua phần Cài đặt quảng cáo của Google và trang Chính sách quyền riêng tư &amp; Điều khoản của Google tại: <a href="https://policies.google.com/technologies/ads" target="_blank" rel="noopener">https://policies.google.com/technologies/ads</a>',
+    'privacy.comments.title': '4. Bình luận trên blog (giscus & GitHub)',
+    'privacy.comments.desc':
+      'Phần bình luận trên blog của chúng tôi được cung cấp bởi giscus, lưu các thảo luận trong GitHub Discussions. Để đăng bình luận, bạn đăng nhập bằng tài khoản GitHub, và mọi nội dung bạn đăng đều công khai và được xử lý theo chính sách quyền riêng tư của riêng GitHub. Nếu bạn không bao giờ bình luận, bạn không cần tài khoản hay dữ liệu cá nhân nào để đọc blog.',
+    'privacy.thirdparty.title': '5. Liên kết & Dịch vụ bên thứ ba',
+    'privacy.thirdparty.desc':
+      'Trang web liên kết tới các công cụ đồng hành trên các tên miền phụ riêng (như SnapCast và ColorQuarium) và tới các tài nguyên bên ngoài được trích dẫn trong các bài viết. Khi bạn theo một liên kết tới bên thứ ba — bao gồm Google, GitHub hay bất kỳ trang nào được trích dẫn trong blog — chính sách quyền riêng tư và điều khoản của bên đó sẽ được áp dụng. Chúng tôi không chịu trách nhiệm về cách hoạt động của các trang bên ngoài.',
+    'privacy.consent.title': '6. Sự đồng ý & Thay đổi',
     'privacy.consent.desc':
-      'Bằng cách sử dụng trang web của chúng tôi, bạn đồng ý với Chính sách bảo mật này và chấp nhận các điều khoản của nó.',
+      'Bằng cách sử dụng js-tools, bạn đồng ý với Chính sách bảo mật này. Chúng tôi có thể cập nhật chính sách theo thời gian để phản ánh các công cụ hoặc dịch vụ mới; ngày "cập nhật lần cuối" ở trên luôn cho biết phiên bản hiện hành.',
     'terms.title': 'Điều khoản dịch vụ — js-tools',
     'terms.h1': 'Điều khoản dịch vụ',
     'terms.intro':
-      'Chào mừng đến với js-tools! Các điều khoản và điều kiện này phác thảo các quy tắc và quy định cho việc sử dụng trang web js-tools tại js-tools.org.',
+      'Chào mừng đến với js-tools! Các điều khoản và điều kiện này phác thảo các quy tắc và quy định cho việc sử dụng trang web js-tools tại js-tools.org, bao gồm các công cụ chạy trên trình duyệt và blog giáo dục.',
     'terms.license.title': '1. Sở hữu trí tuệ & Giấy phép sử dụng',
     'terms.license.desc':
       'Trừ khi có quy định khác, js-tools và/hoặc người cấp phép của nó sở hữu quyền sở hữu trí tuệ đối với tất cả tài liệu trên js-tools. Tất cả quyền sở hữu trí tuệ được bảo lưu. Bạn có thể truy cập tài liệu này từ js-tools cho mục đích sử dụng cá nhân hoặc kinh doanh của riêng bạn, tuân theo các hạn chế được đặt ra trong các điều khoản và điều kiện này.',
-    'terms.local.title': '2. Đảm bảo xử lý phía client không có máy chủ',
+    'terms.local.title': '2. Đảm bảo xử lý phía client, không có máy chủ',
     'terms.local.desc':
-      'Các công cụ của chúng tôi hoạt động hoàn toàn phía client. Chúng tôi không cung cấp dịch vụ lưu trữ hoặc sao lưu tệp. Bạn hoàn toàn chịu trách nhiệm lưu và duy trì bản sao các tệp được xử lý qua các tiện ích của chúng tôi.',
-    'terms.disclaimer.title': '3. Tuyên bố từ chối trách nhiệm & Giới hạn trách nhiệm pháp lý',
+      'Các tiện ích của chúng tôi — bao gồm Image Optimizer, RemoveBG, QR Code Generator và ColorQuarium — chạy hoàn toàn phía client trong trình duyệt của bạn. Chúng tôi không cung cấp dịch vụ lưu trữ, hosting hay sao lưu tệp, và các tệp đã xử lý không được giữ lại ở bất kỳ đâu. Bạn hoàn toàn chịu trách nhiệm lưu và giữ bản sao của mọi kết quả bạn tạo ra.',
+    'terms.content.title': '3. Nội dung giáo dục & Bình luận của người dùng',
+    'terms.content.desc':
+      'Các bài viết và khóa học lập trình trên blog của chúng tôi được cung cấp cho mục đích giáo dục theo nguyên trạng ("as is"), không bảo đảm về tính chính xác hay phù hợp cho một mục đích cụ thể. Các đoạn mã mẫu được cung cấp nguyên trạng — vui lòng kiểm thử trước khi dùng trong môi trường thực tế. Bình luận được cung cấp bởi giscus/GitHub và phản ánh quan điểm của tác giả, không phải của js-tools. Bạn đồng ý không đăng nội dung trái pháp luật, vi phạm bản quyền, lăng mạ hoặc spam, và chúng tôi có quyền gỡ bất kỳ bình luận nào tùy theo quyết định của mình.',
+    'terms.thirdparty.title': '4. Dịch vụ bên thứ ba & Quảng cáo',
+    'terms.thirdparty.desc':
+      'Trang web tích hợp các dịch vụ bên thứ ba bao gồm Google AdSense (quảng cáo) và giscus/GitHub (bình luận), và liên kết tới các công cụ đồng hành trên các tên miền phụ riêng. Việc bạn sử dụng các dịch vụ đó cũng tuân theo điều khoản riêng của chúng. js-tools không chịu trách nhiệm về nội dung bên thứ ba, quảng cáo hay các trang web bên ngoài.',
+    'terms.disclaimer.title': '5. Tuyên bố từ chối trách nhiệm & Giới hạn trách nhiệm pháp lý',
     'terms.disclaimer.desc':
       'Trong phạm vi tối đa được pháp luật hiện hành cho phép, chúng tôi loại trừ tất cả các tuyên bố, bảo đảm và điều kiện liên quan đến trang web của chúng tôi và việc sử dụng trang web này. js-tools được cung cấp "nguyên trạng" và chúng tôi không chịu trách nhiệm về bất kỳ mất mát dữ liệu, giảm chất lượng hoặc gián đoạn sự kiện nào do sử dụng các công cụ trình duyệt của chúng tôi.',
     'faq.title': 'Các câu hỏi thường gặp',
