@@ -471,4 +471,21 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     }
   });
+
+  // 5. Tabbed code viewer (Xem trước | HTML | CSS)
+  document.querySelectorAll('.code-tabs').forEach(function (tabs) {
+    var btns = tabs.querySelectorAll('.code-tabs__tab');
+    var panels = tabs.querySelectorAll('.code-tabs__panel');
+    btns.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var target = btn.getAttribute('data-tab');
+        btns.forEach(function (b) {
+          b.classList.toggle('is-active', b === btn);
+        });
+        panels.forEach(function (p) {
+          p.classList.toggle('is-active', p.getAttribute('data-panel') === target);
+        });
+      });
+    });
+  });
 });

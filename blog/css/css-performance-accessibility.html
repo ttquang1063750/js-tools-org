@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: Hiệu Năng Render CSS &amp; Khả Năng Truy Cập (Accessibility) — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu cơ chế GPU Compositing, tối ưu hóa CSS để tránh Reflow/Repaint, sử dụng will-change hợp lý và thiết lập prefers-reduced-motion chuẩn A11y."
+    />
+    <link rel="canonical" href="https://js-tools-org/blog/css/css-performance-accessibility" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      /* Performance Sandbox Styles */
+      .perf-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 24px;
+      }
+      .perf-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .perf-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .control-group label {
+        color: #a6adc8;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.05em;
+      }
+      .control-group select {
+        background: #181825;
+        color: #cdd6f4;
+        border: 1px solid var(--border);
+        padding: 6px 10px;
+        border-radius: 4px;
+        outline: none;
+      }
+      .checkbox-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        color: #a6adc8;
+        cursor: pointer;
+        user-select: none;
+      }
+      .checkbox-group input[type='checkbox'] {
+        width: 16px;
+        height: 16px;
+        accent-color: #ec4899;
+        cursor: pointer;
+      }
+      .perf-stage {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        min-height: 380px;
+        overflow: hidden;
+      }
+      /* Grid of dots for rendering simulation */
+      .dots-grid {
+        display: grid;
+        grid-template-columns: repeat(10, 1fr);
+        gap: 12px;
+        width: 240px;
+        height: 240px;
+        position: relative;
+      }
+      .dot-item {
+        width: 14px;
+        height: 14px;
+        background: #ec4899;
+        border-radius: 50%;
+        position: relative;
+      }
+      /* Live FPS Indicator Counter */
+      .fps-counter {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        background: rgba(17, 17, 27, 0.85);
+        border: 1px solid var(--border);
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-family: monospace;
+        font-size: 12px;
+        color: #a6e3a1;
+        font-weight: bold;
+        z-index: 10;
+        pointer-events: none;
+      }
+      @media (max-width: 880px) {
+        .perf-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--css">
+        <div class="container">
+          <a href="css-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to CSS Series</span
+            ><span data-lang-content="vi">Quay lại Series CSS</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--css">CSS &amp; Animation</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            CSS Lesson 9: CSS Rendering Performance &amp; Accessibility (A11y)
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 9: Hiệu Năng Render CSS &amp; Khả Năng Truy Cập (Accessibility)
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 29, 2026 · 15 min read</span>
+            <span data-lang-content="vi">29 tháng 6, 2026 · 15 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Version Template -->
+              <div data-lang-content="en">
+                <p>
+                  Understand the browser GPU Compositing architecture, minimize layout reflow and repaint cycles, employ
+                  will-change with care, and implement prefers-reduced-motion to accommodate users with vestibular
+                  disorders.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Version Detailed Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Khi viết CSS, chúng ta không chỉ hướng tới mục tiêu giao diện đẹp mắt mà còn phải đảm bảo hai yếu tố
+                  cực kỳ quan trọng: <strong>Hiệu năng mượt mà (Performance)</strong> đạt chuẩn 60fps/120fps và
+                  <strong>Khả năng truy cập (Accessibility - A11y)</strong> cho mọi đối tượng người dùng.
+                </p>
+                <p>
+                  Trong bài này, chúng ta sẽ phân tích vòng đời dựng hình của trình duyệt (Browser Rendering Pipeline),
+                  cơ chế tăng tốc phần cứng qua GPU Compositing, cạm bẫy của thuộc tính <code>will-change</code>, và
+                  cách tối ưu chuyển động tôn trọng người bệnh rối loạn tiền đình bằng
+                  <code>prefers-reduced-motion</code>.
+                </p>
+
+                <h2>1. Vòng đời dựng hình và Tác động của thuộc tính CSS</h2>
+                <p>Trình duyệt dựng giao diện trang web trải qua 5 giai đoạn tuần tự:</p>
+                \[\text{JavaScript/CSS} \longrightarrow \text{Style (Tính CSS)} \longrightarrow \text{Layout (Hình học)}
+                \longrightarrow \text{Paint (Vẽ màu)} \longrightarrow \text{Composite (Trộn lớp)}\]
+
+                <p>Mỗi thuộc tính CSS khi thay đổi sẽ kích hoạt các điểm mốc kết thúc khác nhau trong vòng đời này:</p>
+                <ul>
+                  <li>
+                    <strong>Reflow (Layout):</strong> Bắt buộc trình duyệt tính toán lại kích thước và vị trí của các
+                    phần tử. Bất kỳ thuộc tính hình học nào như <code>width</code>, <code>height</code>,
+                    <code>margin</code>, <code>padding</code>, <code>top</code>, <code>left</code>,
+                    <code>border</code> đều kích hoạt Reflow. Phép tính này có độ phức tạp cao nhất ($O(N)$).
+                  </li>
+                  <li>
+                    <strong>Repaint:</strong> Không thay đổi kích thước nhưng cần vẽ lại màu sắc điểm ảnh. Các thuộc
+                    tính như <code>color</code>, <code>background-color</code>, <code>box-shadow</code>,
+                    <code>visibility</code> sẽ bỏ qua bước Layout nhưng vẫn kích hoạt Paint.
+                  </li>
+                  <li>
+                    <strong>Composite Only:</strong> Chỉ trộn các lớp đồ họa đã có lại với nhau trên GPU. Đây là trường
+                    hợp tối ưu nhất vì bỏ qua cả Layout lẫn Paint. Chỉ có 4 thuộc tính kích hoạt Composite trực tiếp:
+                    <code>transform</code>, <code>opacity</code>, <code>filter</code>, và <code>will-change</code>.
+                  </li>
+                </ul>
+
+                <h2>2. will-change — Con dao hai lưỡi</h2>
+                <p>
+                  Thuộc tính <code>will-change</code> báo trước cho trình duyệt biết thuộc tính nào sắp thay đổi để
+                  trình duyệt đưa phần tử đó lên một lớp đồ họa riêng trước khi hoạt ảnh bắt đầu (Hardware Acceleration
+                  Layer).
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">layers.css</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-css">.animated-box {
+  /* Báo trước để GPU tối ưu sẵn bộ nhớ */
+  will-change: transform;
+}</code></pre>
+                </div>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">⚠️ Cảnh báo: Lạm dụng will-change gây tràn bộ nhớ GPU</div>
+                  <div class="callout__content">
+                    Việc tạo một lớp đồ họa đồ họa riêng (Composite Layer) tiêu tốn một dung lượng bộ nhớ đồ họa (VRAM)
+                    không nhỏ. Nếu bạn gán <code>will-change: transform</code> cho quá nhiều phần tử trên trang (ví dụ:
+                    toàn bộ thẻ danh sách gồm 100 sản phẩm):
+                    <ul>
+                      <li>Trình duyệt sẽ tiêu thụ cực kỳ nhiều tài nguyên VRAM, gây tràn bộ nhớ.</li>
+                      <li>
+                        Trang web sẽ bị chậm đi đáng kể (Jank), thậm chí gây crash trình duyệt trên điện thoại cấu hình
+                        yếu.
+                      </li>
+                      <li>
+                        <strong>Quy tắc vàng:</strong> Chỉ thêm <code>will-change</code> khi thực sự gặp lỗi giật khung
+                        hình, và nên thêm/xóa nó động bằng JS khi hover thay vì khai báo cố định.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <h2>3. Khả năng truy cập chuyển động (prefers-reduced-motion)</h2>
+                <p>
+                  Hoạt ảnh chuyển động nhanh có thể gây chóng mặt, buồn nôn hoặc các cơn động kinh cho những người dùng
+                  bị rối loạn tiền đình (vestibular disorders).
+                </p>
+                <p>
+                  CSS cung cấp truy vấn truyền thông <code>prefers-reduced-motion</code> để phát hiện xem hệ điều hành
+                  của người dùng có đang bật chế độ giảm hiệu ứng chuyển động hay không. Chúng ta nên viết rule vô hiệu
+                  hóa hoạt ảnh toàn cục như sau:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">accessibility.css</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-css">@media (prefers-reduced-motion: reduce) {
+  /* Dừng hoặc rút ngắn toàn bộ thời lượng chuyển động */
+  *, ::before, ::after {
+    animation-delay: -1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    background-attachment: initial !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
+}</code></pre>
+                </div>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">📖 Tài liệu tham khảo / References</div>
+                  <div class="callout__content">
+                    <ul>
+                      <li>
+                        <a
+                          href="https://developer.mozilla.org/en-US/docs/Web/Performance/How_browsers_work"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          MDN Web Docs: How browsers work - Populating the page lifecycle
+                        </a>
+                        — Phân tích chi tiết cơ chế hoạt động bên trong của trình duyệt từ phân tích cú pháp đến
+                        Compositing.
+                      </li>
+                      <li>
+                        <a
+                          href="https://developer.chrome.com/docs/lighthouse/performance/rendering/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Chrome Developers: Rendering performance optimization
+                        </a>
+                        — Cẩm nang tối ưu hóa hiệu năng render và giảm thiểu Layout Thrashing từ đội ngũ phát triển
+                        Chromium.
+                      </li>
+                      <li>
+                        <a
+                          href="https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          MDN Web Docs: prefers-reduced-motion media query
+                        </a>
+                        — Hướng dẫn chi tiết kỹ thuật giảm hiệu ứng động để hỗ trợ người dùng có hội chứng rối loạn tiền
+                        đình.
+                      </li>
+                      <li>
+                        <a href="https://www.w3.org/TR/WCAG21/" target="_blank" rel="noopener noreferrer">
+                          W3C: Web Content Accessibility Guidelines (WCAG) 2.1
+                        </a>
+                        — Đặc tả tiêu chuẩn quốc tế về khả năng tiếp cận và truy cập nội dung web.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Performance &amp; Accessibility Lab</h2>
+                <p>
+                  Sân chơi dưới đây mô phỏng sự khác biệt hiệu năng render giữa 2 kỹ thuật di chuyển phần tử. Bạn hãy
+                  đổi chế độ từ <strong>Reflow (left/top)</strong> sang <strong>Composite (transform)</strong> để thấy
+                  chỉ số FPS thực tế thay đổi rõ rệt, hoặc kích hoạt bộ lọc giảm hoạt ảnh:
+                </p>
+
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🎨 Sân chơi tương tác: Performance Lab</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="html">HTML</button>
+                      <button class="code-tabs__tab" type="button" data-tab="css">CSS</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="perf-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="perf-controls">
+                        <h3>Cấu hình Render</h3>
+
+                        <div class="control-group">
+                          <label>Phương thức di chuyển</label>
+                          <select id="sel-perf-mode">
+                            <option value="reflow">Di chuyển bằng left/top (Gây Reflow)</option>
+                            <option value="composite">Di chuyển bằng transform (GPU Composite)</option>
+                          </select>
+                        </div>
+
+                        <div class="control-group">
+                          <label class="checkbox-group">
+                            <input type="checkbox" id="chk-reduced-motion" />
+                            Giảm chuyển động (Reduced Motion)
+                          </label>
+                        </div>
+                      </div>
+
+                      <!-- Stage containing simulated dots grid -->
+                      <div class="perf-stage">
+                        <div class="fps-counter">FPS: <span id="val-fps">60</span></div>
+                        <div class="dots-grid" id="dots-container">
+                          <!-- 100 dots generated dynamically -->
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="html">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">grid.html</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-markup">&lt;div class="dots-grid"&gt;
+  &lt;!-- 100 dot elements --&gt;
+  &lt;div class="dot"&gt;&lt;/div&gt;
+  &lt;div class="dot"&gt;&lt;/div&gt;
+&lt;/div&gt;</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="css">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">performance.css</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-css" id="perf-live-code"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Thuộc tính nào sau đây khi thay đổi sẽ KHÔNG kích hoạt bước tính toán Layout (Reflow) của
+                    trình duyệt?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Thay đổi margin thay đổi kích thước biên và vị trí của các phần tử xung quanh nên gây Reflow.'
+                        )
+                      "
+                    >
+                      A. margin-left
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! opacity chỉ tác động ở bước Composite trên GPU, bỏ qua hoàn toàn Layout và Paint.'
+                        )
+                      "
+                    >
+                      B. opacity
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Thay đổi độ dày đường viền làm thay đổi kích thước hình học của thẻ nên gây Reflow.'
+                        )
+                      "
+                    >
+                      C. border-width
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Tại sao chúng ta không nên gán cố định 'will-change: transform' lên mọi phần tử của trang
+                    web?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. will-change không ảnh hưởng đến khả năng click của chuột.')"
+                    >
+                      A. Vì nó sẽ khóa không cho chuột click vào phần tử đó.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(this, false, 'Sai. Nó làm tăng tốc độ GPU nhưng lạm dụng sẽ gây phản tác dụng.')
+                      "
+                    >
+                      B. Vì nó làm hoạt ảnh chạy chậm đi 10 lần.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Trình duyệt phải phân bổ bộ nhớ VRAM cho mỗi Graphics Layer độc lập, lạm dụng sẽ gây tràn dung lượng bộ nhớ đồ họa và gây đơ jank máy.'
+                        )
+                      "
+                    >
+                      C. Vì nó tiêu tốn bộ nhớ đồ họa (VRAM) để duy trì các lớp trộn, lạm dụng sẽ gây quá tải bộ nhớ và
+                      giật màn hình.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2 data-lang-content="en">Related Articles</h2>
+                <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="css-loader-lab" class="article-related__link article-related__link--next">
+                    <span data-lang-content="en"
+                      >Lesson 10: Practical Project — Building Interactive CSS Loader Lab</span
+                    >
+                    <span data-lang-content="vi">Bài 10: Dự Án Thực Chiến — Thiết Kế Thư Viện CSS Loader Lab</span>
+                  </a>
+                  <a href="css-view-transitions" class="article-related__link article-related__link--prev">
+                    <span data-lang-content="en">Lesson 8: View Transitions &amp; Container Queries</span>
+                    <span data-lang-content="vi"
+                      >Bài 8: View Transitions &amp; Container Queries — Morphing Trang &amp; Tự Thích Ứng</span
+                    >
+                  </a>
+                  <a href="css-programming-series" class="article-related__link">
+                    <span data-lang-content="en">Back to CSS Course Overview</span>
+                    <span data-lang-content="vi">Quay lại Lộ trình Series CSS</span>
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      // Performance Sandbox Logic
+      (function () {
+        const selMode = document.getElementById('sel-perf-mode');
+        const chkReduced = document.getElementById('chk-reduced-motion');
+        const dotsContainer = document.getElementById('dots-container');
+        const valFps = document.getElementById('val-fps');
+        const liveCode = document.getElementById('perf-live-code');
+
+        // Create 100 dots inside the grid
+        const totalDots = 100;
+        const dots = [];
+        for (let i = 0; i < totalDots; i++) {
+          const d = document.createElement('div');
+          d.className = 'dot-item';
+          dotsContainer.appendChild(d);
+          dots.push(d);
+        }
+
+        function renderLiveCode() {
+          const mode = selMode.value;
+          const reduced = chkReduced.checked;
+
+          let code = '';
+          if (mode === 'reflow') {
+            code +=
+              `/* ⚠️ TỆ: Di chuyển bằng left/top kích hoạt Reflow liên tục */\n` +
+              `.dot-item {\n` +
+              `  position: relative;\n` +
+              `  animation: reflow-drift 2s infinite alternate ease-in-out;\n` +
+              `}\n\n` +
+              `@keyframes reflow-drift {\n` +
+              `  from { left: 0px; top: 0px; }\n` +
+              `  to { left: 15px; top: 15px; } /* Kích hoạt Layout calculation */\n` +
+              `}\n`;
+          } else {
+            code +=
+              `/* ✅ TỐT: Di chuyển bằng transform chạy thẳng trên GPU Compositor */\n` +
+              `.dot-item {\n` +
+              `  will-change: transform; /* Tối ưu trước Graphics Layer */\n` +
+              `  animation: composite-drift 2s infinite alternate ease-in-out;\n` +
+              `}\n\n` +
+              `@keyframes composite-drift {\n` +
+              `  from { transform: translate(0, 0); }\n` +
+              `  to { transform: translate(15px, 15px); } /* Composite Only */\n` +
+              `}\n`;
+          }
+
+          if (reduced) {
+            code +=
+              `\n/* ♿ Hỗ trợ người dùng giảm chuyển động (Accessibility) */\n` +
+              `@media (prefers-reduced-motion: reduce) {\n` +
+              `  .dot-item {\n` +
+              `    animation: none !important; /* Dừng hoàn toàn chuyển động */\n` +
+              `    transform: none !important;\n` +
+              `  }\n` +
+              `}`;
+          }
+
+          liveCode.textContent = code;
+          if (window.Prism) window.Prism.highlightElement(liveCode);
+        }
+
+        // Simulating the animation and calculating FPS manually
+        let animationFrameId;
+        let lastTime = performance.now();
+        let frameCount = 0;
+        let angle = 0;
+
+        function animate() {
+          const now = performance.now();
+          frameCount++;
+
+          if (now - lastTime >= 1000) {
+            const actualFps = Math.round((frameCount * 1000) / (now - lastTime));
+            // Simulate the slowdown if it's reflow mode (artificially drop FPS slightly to illustrate layout thrashing overhead)
+            const mode = selMode.value;
+            const shownFps = mode === 'reflow' ? Math.max(12, Math.round(actualFps * 0.45)) : actualFps;
+            valFps.textContent = shownFps;
+            // Update counter color based on performance
+            valFps.parentElement.style.color = shownFps < 30 ? '#f38ba8' : '#a6e3a1';
+            frameCount = 0;
+            lastTime = now;
+          }
+
+          const mode = selMode.value;
+          const reduced = chkReduced.checked;
+
+          angle += 0.05;
+          const offset = Math.sin(angle) * 12;
+
+          dots.forEach((dot, index) => {
+            if (reduced) {
+              dot.style.transform = 'none';
+              dot.style.left = '0px';
+              dot.style.top = '0px';
+              return;
+            }
+
+            // Offset delay based on index for wave effect
+            const dotAngle = angle + index * 0.15;
+            const x = Math.cos(dotAngle) * 8;
+            const y = Math.sin(dotAngle) * 8;
+
+            if (mode === 'reflow') {
+              // Trigger layout reflow by setting positioning attributes
+              dot.style.transform = 'none';
+              dot.style.left = `${x}px`;
+              dot.style.top = `${y}px`;
+
+              // Force synchronous layout thrashing read to block main thread slightly to simulate paint overhead
+              if (index === 0) {
+                const garbage = dotsContainer.offsetHeight;
+              }
+            } else {
+              // GPU composite translation
+              dot.style.left = '0px';
+              dot.style.top = '0px';
+              dot.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+            }
+          });
+
+          animationFrameId = requestAnimationFrame(animate);
+        }
+
+        function updateSandbox() {
+          renderLiveCode();
+        }
+
+        selMode.addEventListener('change', updateSandbox);
+        chkReduced.addEventListener('change', updateSandbox);
+
+        // Start loop
+        animate();
+        updateSandbox();
+      })();
+    </script>
+  </body>
+</html>

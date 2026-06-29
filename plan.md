@@ -498,16 +498,16 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 
 ## Series 6 — CSS & Animation
 
-- **Bài 1 — Box Model & Cơ chế dàn trang:** 1.1 content/padding/border/margin & `box-sizing` · 1.2 Margin collapsing · 1.3 Block/inline/inline-block flow · 1.4 Stacking context & `z-index`.
-- **Bài 2 — Flexbox toàn tập:** 2.1 Trục chính/phụ & `flex-direction` · 2.2 `grow/shrink/basis` · 2.3 `justify`/`align`/`gap` · 2.4 `wrap` & `order`.
-- **Bài 3 — CSS Grid 2 chiều:** 3.1 `grid-template-rows/cols` & `fr` · 3.2 `minmax`/`repeat`/`auto-fit` · 3.3 Named lines & areas · 3.4 Auto-placement & dense.
-- **Bài 4 — Transition & Easing:** 4.1 Thuộc tính transition & timing · 4.2 `cubic-bezier` & steps · 4.3 Reflow vs compositor-only props · 4.4 Trigger & `transition-delay`.
-- **Bài 5 — Keyframes & Hoạt ảnh phức:** 5.1 `@keyframes` & phần trăm · 5.2 `animation-*` shorthand & `fill-mode` · 5.3 Chaining/delay nhiều animation · 5.4 `steps()` cho sprite.
-- **Bài 6 — Transform 2D/3D & Perspective:** 6.1 translate/rotate/scale/skew · 6.2 `transform-origin` & order · 6.3 `perspective` & `preserve-3d` · 6.4 `backface-visibility` (card lật).
-- **Bài 7 — Scroll-Driven Animation:** 7.1 `animation-timeline: scroll()` · 7.2 `view()` & ranges · 7.3 Parallax không JS · 7.4 Hiệu năng & fallback.
-- **Bài 8 — View Transitions & Container Queries:** 8.1 `view-transition-name` & morph · 8.2 `::view-transition` pseudo · 8.3 `@container` & container-type · 8.4 Component tự thích ứng.
-- **Bài 9 — Hiệu năng & Accessibility:** 9.1 Compositor layers & `will-change` · 9.2 Tránh layout thrashing · 9.3 Repaint/reflow đo bằng DevTools · 9.4 `prefers-reduced-motion`.
-- **Bài 10 — Dự án: CSS Loader Lab:** 10.1 Spinner bằng keyframe+transform · 10.2 Skeleton bằng gradient động · 10.3 `clip-path` illustration · 10.4 Nút copy CSS từng mẫu.
+- [x] **Bài 1 — Box Model & Cơ chế dàn trang:** 1.1 content/padding/border/margin & `box-sizing` · 1.2 Margin collapsing · 1.3 Block/inline/inline-block flow · 1.4 Stacking context & `z-index`.
+- [x] **Bài 2 — Flexbox toàn tập:** 2.1 Trục chính/phụ & `flex-direction` · 2.2 `grow/shrink/basis` · 2.3 `justify`/`align`/`gap` · 2.4 `wrap` & `order`.
+- [x] **Bài 3 — CSS Grid 2 chiều:** 3.1 `grid-template-rows/cols` & `fr` · 3.2 `minmax`/`repeat`/`auto-fit` · 3.3 Named lines & areas · 3.4 Auto-placement & dense.
+- [x] **Bài 4 — Transition & Easing:** 4.1 Thuộc tính transition & timing · 4.2 `cubic-bezier` & steps · 4.3 Reflow vs compositor-only props · 4.4 Trigger & `transition-delay`.
+- [x] **Bài 5 — Keyframes & Hoạt ảnh phức:** 5.1 `@keyframes` & phần trăm · 5.2 `animation-*` shorthand & `fill-mode` · 5.3 Chaining/delay nhiều animation · 5.4 `steps()` cho sprite.
+- [x] **Bài 6 — Transform 2D/3D & Perspective:** 6.1 translate/rotate/scale/skew · 6.2 `transform-origin` & order · 6.3 `perspective` & `preserve-3d` · 6.4 `backface-visibility` (card lật).
+- [x] **Bài 7 — Scroll-Driven Animation:** 7.1 `animation-timeline: scroll()` · 7.2 `view()` & ranges · 7.3 Parallax không JS · 7.4 Hiệu năng & fallback.
+- [x] **Bài 8 — View Transitions & Container Queries:** 8.1 `view-transition-name` & morph · 8.2 `::view-transition` pseudo · 8.3 `@container` & container-type · 8.4 Component tự thích ứng.
+- [x] **Bài 9 — Hiệu năng & Accessibility:** 9.1 Compositor layers & `will-change` · 9.2 Tránh layout thrashing · 9.3 Repaint/reflow đo bằng DevTools · 9.4 `prefers-reduced-motion`.
+- [x] **Bài 10 — Dự án: CSS Loader Lab:** 10.1 Spinner bằng keyframe+transform · 10.2 Skeleton bằng gradient động · 10.3 `clip-path` illustration · 10.4 Nút copy CSS từng mẫu.
 
 ## Series 7 — SQL (SQLite-WASM)
 

@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 7: Scroll-Driven Animation — Hoạt Ảnh Theo Trục Cuộn Trang — js-tools</title>
+    <meta
+      name="description"
+      content="Làm chủ CSS Scroll-Driven Animations thế hệ mới: Sử dụng scroll() và view(), thiết lập animation-timeline và animation-range chạy mượt mà trên GPU."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/css/css-scroll-driven-animation" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      /* Scroll Sandbox Styles */
+      .scroll-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 24px;
+      }
+      .scroll-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .scroll-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .control-group label {
+        color: #a6adc8;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.05em;
+      }
+      .control-group select {
+        background: #181825;
+        color: #cdd6f4;
+        border: 1px solid var(--border);
+        padding: 6px 10px;
+        border-radius: 4px;
+        outline: none;
+      }
+      .scroll-stage {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        height: 380px;
+      }
+      /* Mock Phone Frame */
+      .phone-frame {
+        width: 100%;
+        height: 100%;
+        border: 2px solid var(--border);
+        border-radius: 12px;
+        background: #11111b;
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+      }
+      /* Phone Scroll viewport */
+      .phone-content {
+        flex: 1;
+        overflow-y: scroll;
+        position: relative;
+        padding: 16px;
+        scroll-behavior: smooth;
+      }
+      /* Scrollbar Indicator (Pure CSS scroll-timeline simulated) */
+      .scroll-progress-bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 4px;
+        background: #ec4899;
+        width: 0%;
+        z-index: 10;
+        transform-origin: left;
+      }
+      /* Parallax Hero header */
+      .parallax-hero {
+        height: 120px;
+        background: linear-gradient(135deg, #89b4fa 0%, #cba6f7 100%);
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #11111b;
+        font-weight: bold;
+        font-size: 20px;
+        transform-origin: center;
+      }
+      .scroll-card-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .scroll-card {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        min-height: 80px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        opacity: 0.3;
+        transform: scale(0.85);
+        transition:
+          opacity 0.2s,
+          transform 0.2s;
+      }
+      /* Highlighting when in viewport range */
+      .scroll-card.is-visible {
+        opacity: 1;
+        transform: scale(1);
+      }
+      @media (max-width: 880px) {
+        .scroll-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--css">
+        <div class="container">
+          <a href="css-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to CSS Series</span
+            ><span data-lang-content="vi">Quay lại Series CSS</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--css">CSS &amp; Animation</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            CSS Lesson 7: Scroll-Driven Animation — Timeline Control based on Scroll Position
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 7: Scroll-Driven Animation — Hoạt Ảnh Theo Trục Cuộn Trang
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 29, 2026 · 15 min read</span>
+            <span data-lang-content="vi">29 tháng 6, 2026 · 15 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Version Template -->
+              <div data-lang-content="en">
+                <p>
+                  Explore CSS Scroll-Driven Animations, the scroll() and view() timeline functions, binding animations
+                  to scrollport boundaries, and building high-performance 60fps parallax structures without JavaScript.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Version Detailed Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Trước đây, để tạo nên các hiệu ứng hoạt ảnh chạy theo trục cuộn (như thanh tiến trình đọc bài viết
+                  dài, parallax background, hoặc các hộp nội dung fade-in khi cuộn màn hình tới), lập trình viên bắt
+                  buộc phải sử dụng JavaScript bằng cách lắng nghe sự kiện
+                  <code>window.addEventListener('scroll')</code>.
+                </p>
+                <p>
+                  Cách làm truyền thống này là tác nhân cực kỳ nguy hiểm gây ra hiện tượng
+                  <strong>Layout Thrashing</strong>
+                  (tính toán lại bố cục liên tục) vì JavaScript chạy trên luồng chính (Main Thread), làm đứt gãy fps
+                  dưới 60fps. Để giải quyết triệt để, CSS hiện đại đã giới thiệu đặc tả đột phá:
+                  <strong>CSS Scroll-Driven Animations API</strong>, cho phép tạo các hoạt ảnh cuộn trang chạy trực tiếp
+                  ở mức phần cứng đồ họa (GPU Compositor Thread) vô cùng mượt mà.
+                </p>
+
+                <h2>1. Khái niệm Timeline mới: Time-based vs Scroll-based</h2>
+                <p>
+                  Mặc định, các hoạt ảnh CSS truyền thống chạy trên một trục thời gian (Document Timeline). Thời gian
+                  trôi bao nhiêu giây thì hoạt ảnh chạy bấy nhiêu phần trăm.
+                </p>
+                <p>
+                  Scroll-Driven Animation thay đổi trục thời gian này thành
+                  <strong>Scroll Progress Timeline</strong> (Trục tiến trình cuộn). Điểm bắt đầu cuộn tương ứng với
+                  <code>0%</code> của hoạt ảnh, và điểm cuộn dưới cùng tương ứng với <code>100%</code>. Hoạt ảnh sẽ tiến
+                  triển nhanh hay chậm hoàn toàn phụ thuộc vào tốc độ cuộn chuột của người dùng.
+                </p>
+
+                <h2>2. Hàm scroll(): Trục tiến trình cuộn của container</h2>
+                <p>
+                  Hàm <code>scroll()</code> dùng để liên kết hoạt ảnh của phần tử với vị trí cuộn của một hộp chứa
+                  (scroll container).
+                </p>
+                <p>Cú pháp khai báo cơ bản:</p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">scroll.css</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-css">.progress-bar {
+  width: 100%;
+  transform-origin: left;
+  animation: scale-x auto linear;
+  /* Liên kết hoạt ảnh với hộp cuộn gần nhất theo trục dọc (Y) */
+  animation-timeline: scroll(nearest y);
+}
+@keyframes scale-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}</code></pre>
+                </div>
+                <p>Các tham số trong hàm <code>scroll(scroller axis)</code>:</p>
+                <ul>
+                  <li>
+                    <strong>scroller:</strong> Đối tượng cuộn. Nhận <code>nearest</code> (hộp cuộn gần nhất),
+                    <code>root</code> (toàn bộ trang web), hoặc <code>self</code> (chính phần tử đó).
+                  </li>
+                  <li>
+                    <strong>axis:</strong> Trục cuộn. Nhận <code>y</code> (cuộn dọc) hoặc <code>x</code> (cuộn ngang).
+                  </li>
+                </ul>
+
+                <h2>3. Hàm view() và Dải hoạt ảnh (Animation Range)</h2>
+                <p>
+                  Nếu hàm <code>scroll()</code> liên kết với tiến trình cuộn của toàn bộ hộp chứa, thì hàm
+                  <code>view()</code>
+                  lại liên kết hoạt ảnh với <strong>độ hiển thị (visibility)</strong> của một phần tử cụ thể khi nó đi
+                  vào và đi ra khỏi vùng nhìn thấy của hộp cuộn (View Progress Timeline).
+                </p>
+                <p>Cú pháp liên kết hoạt ảnh view:</p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">view.css</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-css">.reveal-card {
+  animation: fade-in-scale auto linear;
+  animation-timeline: view(y);
+  /* Điều khiển thời điểm kích hoạt hoạt ảnh */
+  animation-range: entry 10% cover 50%;
+}</code></pre>
+                </div>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Giải thích các khoảng phạm vi Animation Range</div>
+                  <div class="callout__content">
+                    Thuộc tính <code>animation-range</code> cực kỳ quan trọng để quy định thời điểm bắt đầu và kết thúc
+                    hoạt ảnh. Nó nhận các giá trị mốc phạm vi sau:
+                    <ul>
+                      <li>
+                        <code>cover</code>: Đại diện cho toàn bộ tiến trình từ khi mép trên của thẻ con bắt đầu chạm mép
+                        dưới của viewport (0%), cho đến khi mép dưới của thẻ con rời hẳn mép trên của viewport (100%).
+                      </li>
+                      <li>
+                        <code>contain</code>: Đại diện cho tiến trình từ khi thẻ con lọt hoàn toàn vào trong viewport
+                        (0%), cho đến khi thẻ con bắt đầu chạm mép trên để rời đi (100%).
+                      </li>
+                      <li>
+                        <code>entry</code>: Chỉ tính tiến trình thẻ con đi từ lúc chạm mép dưới của viewport cho đến khi
+                        lọt hẳn vào trong (thường dùng để làm hiệu ứng xuất hiện - Reveal).
+                      </li>
+                      <li>
+                        <code>exit</code>: Chỉ tính tiến trình thẻ con bắt đầu chạm mép trên cho đến khi rời hẳn ra
+                        ngoài viewport (dùng để làm hiệu ứng biến mất).
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div class="callout callout--deep" style="margin-top: 20px">
+                  <div class="callout__title">📖 Tài liệu tham khảo &amp; Hướng dẫn Scroll-Driven API</div>
+                  <div class="callout__content">
+                    Để cập nhật đặc tả kỹ thuật và xem khả năng tương thích của Scroll-Driven Animations trên các trình
+                    duyệt, bạn có thể truy cập:
+                    <ul>
+                      <li>
+                        <a
+                          href="https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_scroll-driven_animations"
+                          target="_blank"
+                          rel="noopener"
+                        >
+                          <strong>MDN Web Docs - CSS Scroll-driven Animations</strong> </a
+                        >: Tài liệu hướng dẫn chi tiết của Mozilla về Scroll Progress Timelines và View Progress
+                        Timelines.
+                      </li>
+                      <li>
+                        <a
+                          href="https://developer.chrome.com/docs/css-ui/scroll-driven-animations"
+                          target="_blank"
+                          rel="noopener"
+                        >
+                          <strong>Chrome Developers - Animate elements on scroll</strong> </a
+                        >: Hướng dẫn minh họa trực quan từ các kỹ sư Chrome về cách tối ưu hoạt ảnh cuộn chạy trên GPU.
+                      </li>
+                      <li>
+                        <a href="https://caniuse.com/css-scroll-driven-animations" target="_blank" rel="noopener">
+                          <strong>Can I use - CSS Scroll-Driven Animations</strong> </a
+                        >: Bảng theo dõi khả năng hỗ trợ thực tế của tính năng này trên các nhân trình duyệt phổ biến
+                        (Chrome, Safari, Firefox).
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Scroll-Driven Lab</h2>
+                <p>
+                  Dưới đây là một mô hình giả lập thiết bị cuộn. Bạn có thể chọn loại hiệu ứng và
+                  <strong>cuộn chuột bên trong khung điện thoại</strong> để quan sát các hiệu ứng hoạt họa cuộn được
+                  tính toán mượt mà:
+                </p>
+
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🎨 Sân chơi tương tác: Scroll-Driven Lab</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="html">HTML</button>
+                      <button class="code-tabs__tab" type="button" data-tab="css">CSS</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="scroll-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="scroll-controls">
+                        <h3>Cấu hình Hoạt Ảnh</h3>
+
+                        <div class="control-group">
+                          <label>Hiệu ứng muốn thử</label>
+                          <select id="sel-scroll-effect">
+                            <option value="progress">Thanh tiến độ (Scroll Progress)</option>
+                            <option value="reveal">Hiện thẻ dần (View Reveal)</option>
+                            <option value="parallax">Ảnh Parallax (Parallax Hero)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <!-- Stage containing simulated phone container -->
+                      <div class="scroll-stage">
+                        <div class="phone-frame">
+                          <!-- Scroll Progress Bar -->
+                          <div class="scroll-progress-bar" id="bar-progress"></div>
+
+                          <!-- Scrollable Viewport -->
+                          <div class="phone-content" id="phone-scroller">
+                            <!-- Parallax Hero header -->
+                            <div class="parallax-hero" id="hero-header">HERO PIC</div>
+
+                            <!-- Cards layout for scrolling -->
+                            <div class="scroll-card-list">
+                              <div class="scroll-card">
+                                <h4>Thẻ nội dung 1</h4>
+                                <p>Cuộn xuống để xem hiệu ứng...</p>
+                              </div>
+                              <div class="scroll-card">
+                                <h4>Thẻ nội dung 2</h4>
+                                <p>CSS đang tự tính toán opacity.</p>
+                              </div>
+                              <div class="scroll-card">
+                                <h4>Thẻ nội dung 3</h4>
+                                <p>Hoàn toàn không tốn CPU luồng chính.</p>
+                              </div>
+                              <div class="scroll-card">
+                                <h4>Thẻ nội dung 4</h4>
+                                <p>GPU Composite xử lý hình học cực nhanh.</p>
+                              </div>
+                              <div class="scroll-card">
+                                <h4>Thẻ nội dung 5</h4>
+                                <p>Cuộn ngược lên để đảo ngược hoạt ảnh.</p>
+                              </div>
+                              <div class="scroll-card">
+                                <h4>Thẻ nội dung 6</h4>
+                                <p>Hộp nội dung cuối cùng.</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="html">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">scroll.html</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-markup">&lt;div class="viewport"&gt;
+  &lt;!-- Thanh tiến trình cuộn dọc --&gt;
+  &lt;div class="progress-bar"&gt;&lt;/div&gt;
+
+  &lt;div class="scroll-content"&gt;
+    &lt;!-- Ảnh Parallax đầu trang --&gt;
+    &lt;div class="hero-header"&gt;&lt;/div&gt;
+
+    &lt;!-- Các thẻ xuất hiện dần --&gt;
+    &lt;div class="card"&gt;Thẻ 1&lt;/div&gt;
+    &lt;div class="card"&gt;Thẻ 2&lt;/div&gt;
+  &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="css">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">scroll.css</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-css" id="scroll-live-code"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Lợi thế cốt lõi lớn nhất khi sử dụng CSS Scroll-Driven Animations thay thế cho JS scroll
+                    listener là gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cả hai cách đều có thể viết code ngắn, nhưng hiệu năng là khác biệt quyết định.'
+                        )
+                      "
+                    >
+                      A. Viết code ngắn hơn và không cần định nghĩa keyframes.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Hoạt ảnh chạy hoàn toàn trên Compositor Thread (GPU), không chặn luồng xử lý chính (Main Thread) của JavaScript.'
+                        )
+                      "
+                    >
+                      B. Chạy mượt mà trên GPU Compositor Thread, tránh giật hình do Layout Thrashing trên Main Thread.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Scroll-Driven CSS chỉ điều khiển các hiệu ứng giao diện, không thể thay thế JS xử lý data logic.'
+                        )
+                      "
+                    >
+                      C. Tự động tương thích ngược trên 100% các phiên bản trình duyệt IE cũ.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Khoảng phạm vi (Animation Range) nào chỉ bắt đầu hoạt ảnh khi mép trên của phần tử con chạm
+                    mép dưới của viewport, và kết thúc khi con lọt hoàn toàn vào trong viewport?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! entry chỉ đo khoảng thời gian từ lúc chạm mép dưới (bắt đầu lộ diện) đến khi lọt hẳn vào trong khung nhìn.'
+                        )
+                      "
+                    >
+                      A. entry
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. cover đo toàn bộ hành trình từ lúc xuất hiện đến lúc biến mất hoàn toàn ở đầu bên kia.'
+                        )
+                      "
+                    >
+                      B. cover
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. exit đo hành trình đi ra khỏi viewport ở mép trên.')"
+                    >
+                      C. exit
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2 data-lang-content="en">Related Articles</h2>
+                <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="css-view-transitions" class="article-related__link article-related__link--next">
+                    <span data-lang-content="en">Lesson 8: View Transitions &amp; Container Queries</span>
+                    <span data-lang-content="vi"
+                      >Bài 8: View Transitions &amp; Container Queries — Morphing Trang &amp; Tự Thích Ứng</span
+                    >
+                  </a>
+                  <a href="css-transform-3d" class="article-related__link article-related__link--prev">
+                    <span data-lang-content="en">Lesson 6: Transform 2D/3D &amp; Perspective — Graphics Space</span>
+                    <span data-lang-content="vi"
+                      >Bài 6: Transform 2D/3D &amp; Perspective — Không Gian Đồ Họa 3 Chiều</span
+                    >
+                  </a>
+                  <a href="css-programming-series" class="article-related__link">
+                    <span data-lang-content="en">Back to CSS Course Overview</span>
+                    <span data-lang-content="vi">Quay lại Lộ trình Series CSS</span>
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      // Scroll-Driven Animation Sandbox Logic
+      (function () {
+        const selEffect = document.getElementById('sel-scroll-effect');
+        const phoneScroller = document.getElementById('phone-scroller');
+        const barProgress = document.getElementById('bar-progress');
+        const heroHeader = document.getElementById('hero-header');
+        const cards = document.querySelectorAll('.scroll-card');
+        const liveCode = document.getElementById('scroll-live-code');
+
+        function renderLiveCode() {
+          const effect = selEffect.value;
+
+          if (effect === 'progress') {
+            liveCode.textContent =
+              `/* 1. Thanh tiến trình đọc bài viết (Scroll Progress) */\n` +
+              `.progress-bar {\n` +
+              `  position: absolute;\n` +
+              `  top: 0;\n` +
+              `  left: 0;\n` +
+              `  height: 4px;\n` +
+              `  background: #ec4899;\n` +
+              `  width: 100%;\n` +
+              `  transform-origin: left;\n` +
+              `  animation: grow-progress auto linear;\n` +
+              `  /* Kết nối hoạt ảnh với trục dọc của container */\n` +
+              `  animation-timeline: scroll(nearest y);\n` +
+              `}\n\n` +
+              `@keyframes grow-progress {\n` +
+              `  from { transform: scaleX(0); }\n` +
+              `  to { transform: scaleX(1); }\n` +
+              `}`;
+          } else if (effect === 'reveal') {
+            liveCode.textContent =
+              `/* 2. Hiện thẻ dần khi lọt vào viewport (View Progress) */\n` +
+              `.scroll-card {\n` +
+              `  animation: reveal-fade auto linear;\n` +
+              `  /* Kết nối với độ lộ diện của chính phần tử */\n` +
+              `  animation-timeline: view(y);\n` +
+              `  /* Bắt đầu hiển thị từ 10% entry, rõ hẳn tại 40% cover */\n` +
+              `  animation-range: entry 10% cover 40%;\n` +
+              `}\n\n` +
+              `@keyframes reveal-fade {\n` +
+              `  from {\n` +
+              `    opacity: 0.3;\n` +
+              `    transform: scale(0.85);\n` +
+              `  }\n` +
+              `  to {\n` +
+              `    opacity: 1;\n` +
+              `    transform: scale(1);\n` +
+              `  }\n` +
+              `}`;
+          } else if (effect === 'parallax') {
+            liveCode.textContent =
+              `/* 3. Hiệu ứng cuộn Parallax cho Header */\n` +
+              `.parallax-hero {\n` +
+              `  animation: parallax-zoom auto linear;\n` +
+              `  animation-timeline: scroll(nearest y);\n` +
+              `  /* Chỉ chạy trong khoảng chiều cao của chính header */\n` +
+              `  animation-range: 0px 120px;\n` +
+              `}\n\n` +
+              `@keyframes parallax-zoom {\n` +
+              `  from {\n` +
+              `    transform: scale(1) translateY(0);\n` +
+              `  }\n` +
+              `  to {\n` +
+              `    transform: scale(1.15) translateY(20px);\n` +
+              `    opacity: 0.4;\n` +
+              `  }\n` +
+              `}`;
+          }
+          if (window.Prism) window.Prism.highlightElement(liveCode);
+        }
+
+        // Simulating the Scroll-Driven Animation using JS custom properties to support older browsers/sandboxes
+        function onScroll() {
+          const scrollTop = phoneScroller.scrollTop;
+          const scrollHeight = phoneScroller.scrollHeight;
+          const clientHeight = phoneScroller.clientHeight;
+          const maxScroll = scrollHeight - clientHeight;
+          const pct = maxScroll > 0 ? scrollTop / maxScroll : 0;
+
+          const effect = selEffect.value;
+
+          // 1. Reset all indicators by default
+          barProgress.style.transform = 'none';
+          barProgress.style.width = '0%';
+          heroHeader.style.transform = 'none';
+          heroHeader.style.opacity = '1';
+          cards.forEach((c) => c.classList.add('is-visible'));
+
+          if (effect === 'progress') {
+            // Apply scaleX progress bar dynamically
+            barProgress.style.width = '100%';
+            barProgress.style.transform = `scaleX(${pct})`;
+          } else if (effect === 'reveal') {
+            // Check card intersections inside phone container manually for emulated View Timeline
+            const containerRect = phoneScroller.getBoundingClientRect();
+
+            cards.forEach((card) => {
+              const cardRect = card.getBoundingClientRect();
+
+              // Calculate intersection relative to mock phone viewport
+              const cardTopRel = cardRect.top - containerRect.top;
+              const cardBottomRel = cardRect.bottom - containerRect.top;
+
+              // If card is inside middle/top area of viewport
+              if (cardTopRel < containerRect.height - 40 && cardBottomRel > 10) {
+                card.classList.add('is-visible');
+              } else {
+                card.classList.remove('is-visible');
+              }
+            });
+          } else if (effect === 'parallax') {
+            // Apply scroll scale and translation to hero header
+            const offset = Math.min(scrollTop, 120);
+            const scale = 1 + (offset / 120) * 0.15;
+            const yTranslate = (offset / 120) * 20;
+            const opacity = 1 - (offset / 120) * 0.6;
+
+            heroHeader.style.transform = `scale(${scale}) translateY(${yTranslate}px)`;
+            heroHeader.style.opacity = opacity;
+          }
+        }
+
+        function updateEffect() {
+          // Force scroll triggers to refresh visual states
+          onScroll();
+          renderLiveCode();
+        }
+
+        // Listen to scroll events on simulated viewport
+        phoneScroller.addEventListener('scroll', onScroll);
+        selEffect.addEventListener('change', updateEffect);
+
+        // Init values
+        updateEffect();
+        // Support lazy load check
+        setTimeout(updateEffect, 100);
+        document.addEventListener('DOMContentLoaded', updateEffect);
+      })();
+    </script>
+  </body>
+</html>

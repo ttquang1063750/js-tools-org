@@ -1,0 +1,1057 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 4: Transition &amp; Easing — Nghệ Thuật Chuyển Tiếp — js-tools</title>
+    <meta
+      name="description"
+      content="Làm chủ CSS Transition và các hàm toán học Easing Curve (Cubic-bezier). So sánh hiệu năng dựng hình giữa luồng CPU Reflow và Compositor Thread trên GPU."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/css/css-transition-and-easing" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      /* Transition Sandbox Styles */
+      .transition-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 24px;
+      }
+      .transition-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .transition-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .control-group label {
+        color: #a6adc8;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.05em;
+      }
+      .control-group select,
+      .control-group input[type='range'] {
+        background: #181825;
+        color: #cdd6f4;
+        border: 1px solid var(--border);
+        padding: 6px 10px;
+        border-radius: 4px;
+        outline: none;
+      }
+      .bezier-custom-group {
+        border-top: 1px dashed var(--border);
+        padding-top: 12px;
+        margin-top: 4px;
+        display: none;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .bezier-canvas-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 8px;
+        margin-bottom: 4px;
+      }
+      .bezier-canvas-title {
+        font-size: 10px;
+        color: #a6adc8;
+        margin-bottom: 4px;
+        font-weight: bold;
+        text-transform: uppercase;
+      }
+      .transition-stage {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        justify-content: center;
+        position: relative;
+        min-height: 280px;
+      }
+      .demo-track {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 16px;
+        position: relative;
+      }
+      .track-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        font-weight: bold;
+        color: #a6adc8;
+        margin-bottom: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .pipeline-badge {
+        font-size: 9px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: bold;
+      }
+      .pipeline-badge--heavy {
+        background: rgba(239, 68, 68, 0.2);
+        color: #f87171;
+        border: 1px solid rgba(239, 68, 68, 0.4);
+      }
+      .pipeline-badge--gpu {
+        background: rgba(34, 197, 94, 0.2);
+        color: #4ade80;
+        border: 1px solid rgba(34, 197, 94, 0.4);
+      }
+      .track-area {
+        height: 60px;
+        position: relative;
+        border-left: 2px dashed var(--border);
+        border-right: 2px dashed var(--border);
+        background: #0d0d16;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .anim-box {
+        width: 50px;
+        height: 50px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 14px;
+        color: white;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        position: absolute;
+        top: 5px;
+        transition-property: all;
+      }
+      .anim-box--heavy {
+        background: linear-gradient(135deg, #f43f5e 0%, #fb7185 100%);
+        left: 0;
+      }
+      .anim-box--gpu {
+        background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+        transform: translateX(0);
+        left: 0;
+      }
+      .btn-play {
+        background: #ec4899;
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: bold;
+        font-size: 13px;
+        transition: all 0.2s;
+        text-align: center;
+      }
+      .btn-play:hover {
+        background: #db2777;
+        box-shadow: 0 0 12px rgba(236, 72, 153, 0.4);
+      }
+      @media (max-width: 880px) {
+        .transition-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--css">
+        <div class="container">
+          <a href="css-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to CSS Series</span
+            ><span data-lang-content="vi">Quay lại Series CSS</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--css">CSS &amp; Animation</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            CSS Lesson 4: Transitions &amp; Easings — The Art of Smooth State Changes
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 4: Transition &amp; Easing — Nghệ Thuật Của Sự Chuyển Tiếp
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 29, 2026 · 15 min read</span>
+            <span data-lang-content="vi">29 tháng 6, 2026 · 15 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Version Template -->
+              <div data-lang-content="en">
+                <p>
+                  Explore CSS Transitions, the mathematics of timing functions (Cubic-bezier curves), and how to
+                  optimize animation performance using compositor-only rendering properties.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Version Detailed Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Trong thiết kế giao diện hiện đại (UI/UX), sự chuyển tiếp mượt mà giữa các trạng thái (như khi rê
+                  chuột vào nút bấm, mở rộng menu, ẩn hiện modal) chính là yếu tố phân biệt một sản phẩm chuyên nghiệp
+                  với một giao diện chắp vá thô cứng.
+                </p>
+                <p>
+                  CSS cung cấp thuộc tính <code>transition</code> để giải quyết bài toán này một cách cực kỳ đơn giản.
+                  Tuy nhiên, đằng sau sự đơn giản đó là một loạt các khái niệm toán học về đường cong gia tốc (Easing
+                  Curves) và các cơ chế tối ưu hóa render phần cứng (GPU Compositing) mà mọi kỹ sư frontend cần phải làm
+                  chủ để đạt hiệu năng mượt mà 60fps.
+                </p>
+
+                <h2>1. Thuộc tính CSS Transition &amp; Cách hoạt động</h2>
+                <p>
+                  Cơ chế hoạt động của Transition dựa trên việc lắng nghe sự thay đổi của các thuộc tính CSS (thường
+                  được kích hoạt bởi pseudo-class như <code>:hover</code>, <code>:focus</code>, hoặc qua việc JavaScript
+                  gán class mới) và tự động tính toán bù suy hao (interpolate) để thay đổi giá trị đó tăng/giảm dần theo
+                  thời gian thay vì nhảy số lập tức.
+                </p>
+                <p>Một khai báo đầy đủ bao gồm 4 thuộc tính cấu thành:</p>
+                <ul>
+                  <li>
+                    <strong>transition-property:</strong> Chỉ định tên thuộc tính muốn tạo hiệu ứng chuyển tiếp (ví dụ:
+                    <code>background-color</code>, <code>transform</code>).
+                  </li>
+                  <li>
+                    <strong>transition-duration:</strong> Thời gian diễn ra hiệu ứng chuyển tiếp, nhận đơn vị giây
+                    (<code>s</code>) hoặc mili-giây (<code>ms</code>).
+                  </li>
+                  <li>
+                    <strong>transition-timing-function:</strong> Quy định đường cong gia tốc (tốc độ chuyển động nhanh
+                    hay chậm theo thời gian).
+                  </li>
+                  <li>
+                    <strong>transition-delay:</strong> Khoảng thời gian chờ đợi trước khi bắt đầu thực hiện hiệu ứng
+                    chuyển tiếp.
+                  </li>
+                </ul>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy hiệu năng: Lạm dụng transition: all</div>
+                  <div class="callout__content">
+                    Rất nhiều lập trình viên thường viết tắt <code>transition: all 0.3s</code>. Điều này cực kỳ có hại
+                    cho hiệu năng. Trình duyệt sẽ buộc phải theo dõi sự thay đổi của <strong>tất cả</strong> mọi thuộc
+                    tính CSS của phần tử đó. Nếu có các thuộc tính kích hoạt Reflow (như <code>margin</code>,
+                    <code>padding</code>), trang web sẽ lập tức bị giật lag nghiêm trọng, đặc biệt trên thiết bị di động
+                    cấu hình yếu. Hãy luôn chỉ định chính xác thuộc tính cần chuyển tiếp (như
+                    <code>transition: transform 0.3s, opacity 0.3s</code>).
+                  </div>
+                </div>
+
+                <h2>2. Bản chất toán học của Easing Curves: Cubic Bezier</h2>
+                <p>
+                  Đường cong gia tốc (Easing Curve) định nghĩa cách giá trị CSS thay đổi dọc theo dòng thời gian của
+                  hiệu ứng. Nó được mô tả toán học bằng một đường cong <strong>Bézier bậc 3 (Cubic Bézier)</strong>.
+                </p>
+                <p>
+                  Đường cong Cubic Bézier được định nghĩa bởi 4 điểm kiểm soát: $P_0, P_1, P_2, P_3$. Trong đó, $P_0
+                  (0,0)$ là thời điểm bắt đầu và $P_3 (1,1)$ là thời điểm kết thúc. Chúng cố định. Hai điểm còn lại,
+                  $P_1 (x_1, y_1)$ và $P_2 (x_2, y_2)$, là các điểm neo điều hướng lực kéo giúp bạn tự do tùy biến đường
+                  cong.
+                </p>
+                <p>Hàm toán học mô tả đường cong Bézier bậc 3 theo tham số $t \in [0, 1]$:</p>
+                \[B(t) = (1-t)^3 P_0 + 3(1-t)^2 t P_1 + 3(1-t) t^2 P_2 + t^3 P_3\]
+                <p>
+                  Trong CSS, chúng ta khai báo đường cong này qua cú pháp: <code>cubic-bezier(x1, y1, x2, y2)</code>.
+                </p>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Các hàm gia tốc tích hợp sẵn (Presets)</div>
+                  <div class="callout__content">
+                    CSS cung cấp một số từ khóa rút gọn cho các đường cong tiêu chuẩn:
+                    <ul>
+                      <li>
+                        <code>linear</code>: Vận tốc không đổi suốt quá trình. Tương đương
+                        <code>cubic-bezier(0, 0, 1, 1)</code>.
+                      </li>
+                      <li>
+                        <code>ease</code>: Bắt đầu chậm, tăng tốc nhanh ở giữa và giảm tốc chậm ở cuối. Tương đương
+                        <code>cubic-bezier(0.25, 0.1, 0.25, 1)</code>.
+                      </li>
+                      <li>
+                        <code>ease-in</code>: Bắt đầu chậm và tăng tốc dần đến cuối. Tương đương
+                        <code>cubic-bezier(0.42, 0, 1, 1)</code>.
+                      </li>
+                      <li>
+                        <code>ease-out</code>: Bắt đầu nhanh và giảm tốc chậm dần về cuối. Tương đương
+                        <code>cubic-bezier(0, 0, 0.58, 1)</code>.
+                      </li>
+                      <li>
+                        <code>ease-in-out</code>: Bắt đầu chậm, tăng tốc ở giữa và giảm tốc dần ở cuối. Tương đương
+                        <code>cubic-bezier(0.42, 0, 0.58, 1)</code>.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <h2>3. Hiệu năng dựng hình: CPU Reflow vs GPU Compositing</h2>
+                <p>
+                  Khi viết transition, lựa chọn thuộc tính nào để thay đổi sẽ quyết định trực tiếp hiệu năng mượt mà của
+                  giao diện. Trình duyệt dựng hình (rendering pipeline) trải qua 3 giai đoạn chính ảnh hưởng bởi CSS:
+                </p>
+                <ol>
+                  <li>
+                    <strong>Layout (Reflow):</strong> Tính toán lại hình học, kích thước và vị trí của các khối. Tác vụ
+                    này cực kỳ tốn CPU vì thay đổi một phần tử có thể kéo theo tính toán lại toàn bộ trang (Layout Tree
+                    Rebuild).
+                  </li>
+                  <li>
+                    <strong>Paint (Repaint):</strong> Tô màu pixel, vẽ chữ, viền, đổ bóng của các hộp. Tốn tài nguyên vì
+                    phải vẽ lại giao diện.
+                  </li>
+                  <li>
+                    <strong>Composite (Dàn dựng):</strong> Gửi các lớp ảnh (Layers) đã vẽ lên GPU để sắp lớp và hiển
+                    thị. Cực kỳ nhanh vì GPU được thiết kế cho việc dịch chuyển, biến đổi hình học phẳng siêu tốc.
+                  </li>
+                </ol>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Tại sao transform mượt mà hơn left/top?</div>
+                  <div class="callout__content">
+                    Khi bạn thay đổi <code>left</code> hoặc <code>top</code>, trình duyệt bắt buộc phải chạy lại cả 3
+                    giai đoạn <strong>Layout -> Paint -> Composite</strong> ở mỗi khung hình (frame). Điều này làm CPU
+                    quá tải và gây ra hiện tượng giật lag.<br />
+                    Ngược lại, khi sử dụng <code>transform: translateX()</code>, trình duyệt sẽ đưa phần tử đó lên một
+                    lớp đồ họa riêng (Graphics Layer). Khi dịch chuyển, trình duyệt bỏ qua hoàn toàn bước Layout và
+                    Paint, GPU chỉ việc thao tác di chuyển lớp ảnh đó ở giai đoạn <strong>Composite Only</strong>. Tốc
+                    độ render đạt tối đa 60fps hoặc 120fps.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Easing &amp; Performance Lab</h2>
+                <p>
+                  Dưới đây là công cụ so sánh trực quan hiệu năng dựng hình. Bạn có thể thay đổi thời gian, đường cong
+                  gia tốc để quan sát đường cong Bézier được vẽ trên Canvas, đồng thời nhấn
+                  <strong>"Chạy thử hiệu ứng"</strong> để xem sự khác biệt giữa hai kỹ thuật dịch chuyển:
+                </p>
+
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🎨 Sân chơi tương tác: Easing &amp; Performance Lab</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="html">HTML</button>
+                      <button class="code-tabs__tab" type="button" data-tab="css">CSS</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="transition-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="transition-controls">
+                        <h3>Thiết lập cấu hình</h3>
+
+                        <div class="control-group">
+                          <label>Thời gian (Duration - giây)</label>
+                          <input type="range" id="rng-dur" min="0.1" max="3" step="0.1" value="1" />
+                        </div>
+
+                        <div class="control-group">
+                          <label>Đường cong Easing</label>
+                          <select id="sel-easing">
+                            <option value="ease">ease</option>
+                            <option value="linear">linear</option>
+                            <option value="ease-in">ease-in</option>
+                            <option value="ease-out">ease-out</option>
+                            <option value="ease-in-out">ease-in-out</option>
+                            <option value="custom">Tự tùy biến (Custom)</option>
+                          </select>
+                        </div>
+
+                        <!-- Custom Cubic Bezier settings and canvas preview -->
+                        <div class="bezier-custom-group" id="custom-bezier-controls">
+                          <div class="bezier-canvas-wrapper">
+                            <span class="bezier-canvas-title">Đường cong Bézier</span>
+                            <canvas id="bezier-canvas" width="120" height="120"></canvas>
+                          </div>
+
+                          <div class="control-group">
+                            <label>X1 (điểm neo 1): <span id="val-x1">0.25</span></label>
+                            <input type="range" id="rng-x1" min="0" max="1" step="0.01" value="0.25" />
+                          </div>
+                          <div class="control-group">
+                            <label>Y1 (điểm neo 1): <span id="val-y1">0.1</span></label>
+                            <input type="range" id="rng-y1" min="-0.5" max="1.5" step="0.01" value="0.1" />
+                          </div>
+                          <div class="control-group">
+                            <label>X2 (điểm neo 2): <span id="val-x2">0.25</span></label>
+                            <input type="range" id="rng-x2" min="0" max="1" step="0.01" value="0.25" />
+                          </div>
+                          <div class="control-group">
+                            <label>Y2 (điểm neo 2): <span id="val-y2">1.0</span></label>
+                            <input type="range" id="rng-y2" min="-0.5" max="1.5" step="0.01" value="1.0" />
+                          </div>
+                        </div>
+
+                        <button class="btn-play" id="btn-animate" type="button">Chạy thử hiệu ứng</button>
+                      </div>
+
+                      <!-- Stage comparing performance -->
+                      <div class="transition-stage">
+                        <!-- Track A: Left Animation -->
+                        <div class="demo-track">
+                          <div class="track-title">
+                            <span>Cách 1: Di chuyển bằng <code>left</code> (Layout-heavy)</span>
+                            <span class="pipeline-badge pipeline-badge--heavy">CPU Reflow -> Paint</span>
+                          </div>
+                          <div class="track-area">
+                            <div class="anim-box anim-box--heavy" id="box-left">Left</div>
+                          </div>
+                        </div>
+
+                        <!-- Track B: Transform Animation -->
+                        <div class="demo-track">
+                          <div class="track-title">
+                            <span>Cách 2: Di chuyển bằng <code>transform</code> (Compositor)</span>
+                            <span class="pipeline-badge pipeline-badge--gpu">Composite Only (GPU)</span>
+                          </div>
+                          <div class="track-area">
+                            <div class="anim-box anim-box--gpu" id="box-transform">GPU</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="html">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">transition.html</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-markup">&lt;div class="container"&gt;
+  &lt;!-- Cách 1: Kém hiệu năng do gây Reflow liên tục --&gt;
+  &lt;div class="box box-left"&gt;Left&lt;/div&gt;
+
+  &lt;!-- Cách 2: Tối ưu, mượt mà nhờ chạy trên GPU --&gt;
+  &lt;div class="box box-transform"&gt;GPU&lt;/div&gt;
+&lt;/div&gt;</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="css">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">transition.css</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-css" id="transition-live-code"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <h2>4. Kỹ thuật nâng cao: Bouncing Effect &amp; Hardware Acceleration</h2>
+                <p>
+                  Bằng cách đẩy điểm tọa độ dọc của $P_1$ hoặc $P_2$ ra ngoài khoảng giới hạn $[0, 1]$ (ví dụ: gán $y_1$
+                  hoặc $y_2$ lớn hơn 1 hoặc nhỏ hơn 0), bạn có thể tạo nên các hiệu ứng nảy (Bouncing/Elastic) cực kỳ
+                  sống động mà không cần tới JavaScript hay Keyframe phức tạp.
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">bounce.css</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-css">.button-pop {
+  transition: transform 0.4s cubic-bezier(0.68, -0.6, 0.32, 1.6);
+}
+.button-pop:hover {
+  transform: scale(1.15); /* Phần tử sẽ hơi co rúm lại trước khi phình to nảy ra ngoài */
+}</code></pre>
+                </div>
+                <p>
+                  Để ép buộc trình duyệt gán một phần tử vào một Graphics Layer riêng ngay từ đầu nhằm tăng tốc phần
+                  cứng, bạn có thể sử dụng thuộc tính <code>will-change</code>:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">acceleration.css</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-css">.gpu-accelerated-layer {
+  will-change: transform, opacity; /* Báo trước cho GPU chuẩn bị tài nguyên */
+}</code></pre>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Thuộc tính nào sau đây khi thay đổi trạng thái sẽ có hiệu năng cao nhất (chỉ kích hoạt
+                    Composite Only)?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Thuộc tính width thay đổi kích thước hình học, gây ra Layout (Reflow) rất nặng cho CPU.'
+                        )
+                      "
+                    >
+                      A. width
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Thuộc tính top thay đổi vị trí tương đối, bắt buộc trình duyệt tính toán lại Layout.'
+                        )
+                      "
+                    >
+                      B. top
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! transform được tách thành một layer đồ họa riêng và chạy trực tiếp trên GPU ở Composite stage.'
+                        )
+                      "
+                    >
+                      C. transform
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. background-color không làm đổi vị trí nhưng gây ra Repaint (vẽ lại màu sắc).'
+                        )
+                      "
+                    >
+                      D. background-color
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Trong hàm cubic-bezier(x1, y1, x2, y2), giá trị nào sau đây bị giới hạn bắt buộc từ 0 đến 1?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. y1 và y2 có thể nằm ngoài [0, 1] để tạo hiệu ứng nảy (elastic/bounce).'
+                        )
+                      "
+                    >
+                      A. y1 và y2
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Trục hoành x đại diện cho dòng thời gian từ 0% đến 100%, do đó x1 và x2 bắt buộc phải nằm trong khoảng [0, 1].'
+                        )
+                      "
+                    >
+                      B. x1 và x2
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. x1 và x2 bị giới hạn, còn y1 và y2 không bị giới hạn.')"
+                    >
+                      C. Cả bốn tọa độ x1, y1, x2, y2
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2 data-lang-content="en">Related Articles</h2>
+                <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="css-keyframes-and-animation" class="article-related__link article-related__link--next">
+                    <span data-lang-content="en">Lesson 5: Keyframes &amp; Animation — Multi-state motion control</span>
+                    <span data-lang-content="vi"
+                      >Bài 5: Keyframes &amp; Hoạt Ảnh Phức Tạp — Kiểm Soát Chuyển Động Đa Trạng Thái</span
+                    >
+                  </a>
+                  <a href="css-grid-2d" class="article-related__link article-related__link--prev">
+                    <span data-lang-content="en">Lesson 3: CSS Grid — Designing Complex Layouts</span>
+                    <span data-lang-content="vi">Bài 3: CSS Grid 2 Chiều — Thiết Kế Bố Cục Phức Tạp</span>
+                  </a>
+                  <a href="css-programming-series" class="article-related__link">
+                    <span data-lang-content="en">Back to CSS Course Overview</span>
+                    <span data-lang-content="vi">Quay lại Lộ trình Series CSS</span>
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      // Easing & Performance Sandbox Logic
+      (function () {
+        const rngDur = document.getElementById('rng-dur');
+        const selEasing = document.getElementById('sel-easing');
+        const customBezierControls = document.getElementById('custom-bezier-controls');
+
+        const rngX1 = document.getElementById('rng-x1');
+        const rngY1 = document.getElementById('rng-y1');
+        const rngX2 = document.getElementById('rng-x2');
+        const rngY2 = document.getElementById('rng-y2');
+
+        const valX1 = document.getElementById('val-x1');
+        const valY1 = document.getElementById('val-y1');
+        const valX2 = document.getElementById('val-x2');
+        const valY2 = document.getElementById('val-y2');
+
+        const canvas = document.getElementById('bezier-canvas');
+        const ctx = canvas.getContext('2d');
+
+        const btnAnimate = document.getElementById('btn-animate');
+        const boxLeft = document.getElementById('box-left');
+        const boxTransform = document.getElementById('box-transform');
+        const liveCode = document.getElementById('transition-live-code');
+
+        const easings = {
+          ease: { x1: 0.25, y1: 0.1, x2: 0.25, y2: 1.0 },
+          linear: { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+          'ease-in': { x1: 0.42, y1: 0.0, x2: 1.0, y2: 1.0 },
+          'ease-out': { x1: 0.0, y1: 0.0, x2: 0.58, y2: 1.0 },
+          'ease-in-out': { x1: 0.42, y1: 0.0, x2: 0.58, y2: 1.0 },
+        };
+
+        function getBezierString() {
+          if (selEasing.value === 'custom') {
+            return `cubic-bezier(${rngX1.value}, ${rngY1.value}, ${rngX2.value}, ${rngY2.value})`;
+          }
+          return selEasing.value;
+        }
+
+        function drawBezierCurve() {
+          const w = canvas.width;
+          const h = canvas.height;
+          ctx.clearRect(0, 0, w, h);
+
+          // Grid coordinates
+          ctx.strokeStyle = '#1e1e2e';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let i = 1; i < 4; i++) {
+            ctx.moveTo(i * (w / 4), 0);
+            ctx.lineTo(i * (w / 4), h);
+            ctx.moveTo(0, i * (h / 4));
+            ctx.lineTo(w, i * (h / 4));
+          }
+          ctx.stroke();
+
+          // Control coordinates mappings
+          // Canvas coordinates: (0,0) is top-left, we want (0, h) to be start, (w, 0) to be end.
+          // y values can exceed [0, 1] (meaning values outside 0 to h in canvas).
+          const scaleY = h * 0.6; // Scale down to fit y coordinates out of range [-0.5, 1.5]
+          const offsetY = h * 0.8; // Offset bottom to accommodate negative values
+
+          const getX = (val) => val * w;
+          const getY = (val) => offsetY - val * scaleY;
+
+          let x1, y1, x2, y2;
+          if (selEasing.value === 'custom') {
+            x1 = parseFloat(rngX1.value);
+            y1 = parseFloat(rngY1.value);
+            x2 = parseFloat(rngX2.value);
+            y2 = parseFloat(rngY2.value);
+          } else {
+            const vals = easings[selEasing.value];
+            x1 = vals.x1;
+            y1 = vals.y1;
+            x2 = vals.x2;
+            y2 = vals.y2;
+          }
+
+          // Draw guide lines
+          ctx.strokeStyle = '#a6adc8';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 2]);
+          ctx.beginPath();
+          ctx.moveTo(getX(0), getY(0));
+          ctx.lineTo(getX(x1), getY(y1));
+          ctx.moveTo(getX(1), getY(1));
+          ctx.lineTo(getX(x2), getY(y2));
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Draw curve
+          ctx.strokeStyle = '#ec4899';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(getX(0), getY(0));
+          ctx.bezierCurveTo(getX(x1), getY(y1), getX(x2), getY(y2), getX(1), getY(1));
+          ctx.stroke();
+
+          // Draw start and end points
+          ctx.fillStyle = '#f5c2e7';
+          ctx.beginPath();
+          ctx.arc(getX(0), getY(0), 4, 0, 2 * Math.PI);
+          ctx.arc(getX(1), getY(1), 4, 0, 2 * Math.PI);
+          ctx.fill();
+
+          // Draw control point handles
+          ctx.fillStyle = '#89b4fa';
+          ctx.beginPath();
+          ctx.arc(getX(x1), getY(y1), 4, 0, 2 * Math.PI);
+          ctx.fill();
+
+          ctx.fillStyle = '#a6e3a1';
+          ctx.beginPath();
+          ctx.arc(getX(x2), getY(y2), 4, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+
+        function renderLiveCode() {
+          const timing = getBezierString();
+          const duration = rngDur.value;
+          liveCode.textContent =
+            `/* Cách 1: Hoạt ảnh Left (Kích hoạt CPU Reflow) */\n` +
+            `.box-left {\n` +
+            `  position: absolute;\n` +
+            `  left: 0;\n` +
+            `  transition-property: left;\n` +
+            `  transition-duration: ${duration}s;\n` +
+            `  transition-timing-function: ${timing};\n` +
+            `}\n` +
+            `.box-left.is-active {\n` +
+            `  left: calc(100% - 50px); /* Kích hoạt Layout calculation */\n` +
+            `}\n\n` +
+            `/* Cách 2: Hoạt ảnh Transform (GPU Compositor Only) */\n` +
+            `.box-transform {\n` +
+            `  position: absolute;\n` +
+            `  transform: translateX(0);\n` +
+            `  transition-property: transform;\n` +
+            `  transition-duration: ${duration}s;\n` +
+            `  transition-timing-function: ${timing};\n` +
+            `  will-change: transform; /* hardware acceleration */\n` +
+            `}\n` +
+            `.box-transform.is-active {\n` +
+            `  transform: translateX(calc(100% - 50px)); /* Không đổi layout */\n` +
+            `}`;
+          if (window.Prism) window.Prism.highlightElement(liveCode);
+        }
+
+        function updateSandbox() {
+          if (selEasing.value === 'custom') {
+            customBezierControls.style.display = 'flex';
+            valX1.textContent = rngX1.value;
+            valY1.textContent = rngY1.value;
+            valX2.textContent = rngX2.value;
+            valY2.textContent = rngY2.value;
+          } else {
+            customBezierControls.style.display = 'none';
+          }
+
+          drawBezierCurve();
+          renderLiveCode();
+        }
+
+        // Toggle simulation animation
+        btnAnimate.addEventListener('click', function () {
+          const duration = parseFloat(rngDur.value);
+          const timing = getBezierString();
+
+          // Reset transitions and positions first
+          boxLeft.style.transition = 'none';
+          boxTransform.style.transition = 'none';
+          boxLeft.classList.remove('is-active');
+          boxTransform.classList.remove('is-active');
+          boxLeft.style.left = '0';
+          boxTransform.style.transform = 'translateX(0)';
+
+          // Force repaint/reflow to apply resets instantly
+          void boxLeft.offsetWidth;
+
+          // Apply new user configured transition properties
+          boxLeft.style.transition = `left ${duration}s ${timing}`;
+          boxTransform.style.transition = `transform ${duration}s ${timing}`;
+
+          // Start the transition
+          setTimeout(() => {
+            boxLeft.classList.add('is-active');
+            boxTransform.classList.add('is-active');
+
+            // Set final properties to trigger transition target
+            const trackWidth = boxLeft.parentElement.clientWidth;
+            boxLeft.style.left = `${trackWidth - 50}px`;
+            boxTransform.style.transform = `translateX(${trackWidth - 50}px)`;
+          }, 20);
+        });
+
+        // Event listeners
+        selEasing.addEventListener('change', updateSandbox);
+        [rngDur, rngX1, rngY1, rngX2, rngY2].forEach((ctrl) => {
+          ctrl.addEventListener('input', updateSandbox);
+          ctrl.addEventListener('change', updateSandbox);
+        });
+
+        // Init settings
+        updateSandbox();
+        // Wait for page load logic
+        document.addEventListener('DOMContentLoaded', () => {
+          updateSandbox();
+        });
+      })();
+    </script>
+  </body>
+</html>

@@ -150,6 +150,13 @@ js-tools-org/
 │       │   ├── bash-real-world-scripts.html
 │       │   ├── bash-devops-automation.html
 │       │   └── ... Bash script samples (.sh) ...
+│       │
+│   └── # ── CSS & Animation Series (Vietnamese, HTML & code samples co-located) ──
+│       ├── css/
+│       │   ├── css-programming-series.html   # Curriculum hub
+│       │   ├── css-playground.html           # Interactive CSS Playground
+│       │   ├── css-box-model-and-flow.html   # Lesson 1
+│       │   └── ... CSS code samples (.css) ...
 └── README.md
 ```
 
@@ -194,7 +201,7 @@ js-tools-org/
 ### 6. Blog Section
 
 - **Tool articles**: 8 bilingual EN/VI articles about SnapCast, Image Optimizer, QR Generator, ColorQuarium, Remove BG
-- **Programming series**: C (8 lessons), C++ (8 lessons), JavaScript (12 lessons), HTML5 Canvas (14 lessons), WebGL & 3D (10 lessons) — all in Vietnamese
+- **Programming series**: C (11 lessons), C++ (15 lessons), JavaScript (12 lessons), HTML5 Canvas (17 lessons), WebGL & 3D (18 lessons), Bash (11 lessons), CSS & Animation (2 lessons) — all in Vietnamese
   - **Academic Rigor**: The lessons feature high-quality computer science concepts. For example:
     - _C Series (Lesson 7)_: Formal Big O Time & Space complexity analysis, C examples for $O(1)$ to $O(N!)$, and recursion Call Stack depth analysis.
     - _C++ Series_: Name mangling, SSO (Small String Optimization), Vector dynamic array structures, RAII, Vptr/Vtable dynamic dispatch, and smart pointer atomic control blocks.
@@ -202,10 +209,10 @@ js-tools-org/
     - _WebGL Series_: GPU hardware massively parallel ALU architecture, Graphics pipeline rasterization stage, affine matrices, perspective projection math formulas, GLSL shader compiler pipelines, and live Barycentric color interpolation visualizers.
 - **Interactive JS Playgrounds**: Custom `js-playground` boxes (textarea source input + standard console capture log output) allowing code execution directly inside the browser.
 - **Dynamic Code Viewer**: Interactive canvas demos and visualizer iframes include a toggleable `⟨⟩ Xem Code` button that displays their formatted, dedented, syntax-highlighted source code inline (and lazy-fetches external visualizer source files).
-- **Client-Side Search & Static Index**: Real-time search engine on `blog/index.html` utilizing a pre-built static `search-index.json`. It performs deep searches across all 62 articles, mapping matched lesson titles and subheadings to direct URLs with diacritics-insensitive matching in both English and Vietnamese.
+- **Client-Side Search & Static Index**: Real-time search engine on `blog/index.html` utilizing a pre-built static `search-index.json`. It performs deep searches across all 93 articles, mapping matched lesson titles and subheadings to direct URLs with diacritics-insensitive matching in both English and Vietnamese.
 - **Giscus Comments**: GitHub Discussions-backed `giscus` widget (loaded centrally by `blog.js` via a `<div class="giscus">` placeholder) at the bottom of all detail pages, mapped to each page by `pathname` for consistent per-article threads.
 - **Article template structure**: `.article-hero` (tag, title, meta) → `.article-body` (EN/VI sections) → `.article-cta` → `.article-related` → `.article-comments` (giscus). Some legacy pages also include an `.article-discuss` link-out CTA.
-- **Tag color classes**: `--sc` (purple), `--io` (green), `--qr` (cyan), `--cq` (teal), `--c` (C), `--cpp` (C++), `--js` (JS), `--canvas` (Canvas), `--webgl` (violet)
+- **Tag color classes**: `--sc` (purple), `--io` (green), `--qr` (cyan), `--cq` (teal), `--c` (C), `--cpp` (C++), `--js` (JS), `--canvas` (Canvas), `--webgl` (violet), `--css` (pink)
 - **VS Code Light Theme**: White background, dark code blocks, Prism syntax highlighting
 - **Interactive quizzes**: `ide.js` + `ide.css` for programming lessons
 
@@ -245,6 +252,9 @@ No build step required. Edit HTML/CSS/JS directly and refresh.
 3. Add bilingual content in `data-lang-content="en"|"vi"` sections
 4. Add card to `blog/index.html` grid with appropriate tag class
 5. Add URL to `sitemap.xml`
+6. Do NOT use markdown bold syntax (`**`) in HTML files; always use `<strong>` tags instead.
+7. Always provide an academic references/citation callout block (`.callout--deep`) linking to official MDN, W3C, Can I Use, or Khan Academy pages when introducing new programming concepts.
+8. Write mathematical formulas (e.g. coordinates, projection math, matrices) in KaTeX syntax using delimiters like `$$...$$` or `$...$` or `\[...\]`, and ensure KaTeX CSS/JS libraries are loaded in the page header.
 
 ### Add a Translation String
 
@@ -290,8 +300,11 @@ No build step required. Edit HTML/CSS/JS directly and refresh.
 - Use CSS variables for theming
 - Lazy-load iframes with IntersectionObserver
 - Follow naming: kebab-case CSS classes, camelCase JS
+- Do NOT use markdown bold syntax (`**`) in HTML text (use `<strong>`).
+- Include official educational citation links (MDN, W3C, Khan Academy) for new technologies.
+- Render mathematical equations and matrices using KaTeX with appropriate page header libraries.
 
 ---
 
-**Last Updated**: 2026-06-27
+**Last Updated**: 2026-06-29
 **Maintained by**: Quang (support@js-tools.org)
