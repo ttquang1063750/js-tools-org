@@ -191,18 +191,18 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học | Nội dung chuyên sâu | Dự án/Demo đi kèm |
-| --- | ----------- | ------------------- | ----------------- |
-| 1 | **Box Model & Cơ chế dàn trang** | Block/inline, margin collapsing, `box-sizing`, stacking context và `z-index`. | Inspector trực quan hoá Box Model + margin collapse động. |
-| 2 | **Flexbox toàn tập** | Trục chính/phụ, `flex-grow/shrink/basis`, `align`/`justify`, thứ tự và wrap. | Playground kéo slider thuộc tính Flex, hiển thị đường trục. |
-| 3 | **CSS Grid 2 chiều** | `grid-template`, `fr`, `minmax`, auto-placement, named lines & areas. | Trình dựng layout Grid kéo-thả, xem `grid-line` overlay. |
-| 4 | **Transition & Easing** | Hàm timing, `cubic-bezier`, reflow vs compositor, thuộc tính animate rẻ (transform/opacity). | Bezier editor tương tác so sánh đường cong easing. |
-| 5 | **Keyframes & Hoạt ảnh phức** | `@keyframes`, chaining, `animation-fill-mode`, steps() cho sprite. | Timeline scrub từng keyframe của một loader phức tạp. |
-| 6 | **Transform 2D/3D & Perspective** | `translate/rotate/scale`, `transform-style: preserve-3d`, `perspective`, backface. | Card lật 3D + khối lập phương xoay thuần CSS. |
-| 7 | **Scroll-Driven Animation** | `animation-timeline: scroll()/view()`, parallax không cần JS, hiệu năng. | Trang landing parallax cuộn mượt 60fps thuần CSS. |
-| 8 | **View Transitions & Container Queries** | `view-transition-name`, morph giữa trạng thái, `@container` cho component responsive. | Gallery chuyển ảnh morph mượt + card tự thích ứng container. |
-| 9 | **Hiệu năng & Accessibility** | Compositor layers, `will-change`, tránh layout thrashing, `prefers-reduced-motion`. | Bảng đo lại/repaint, demo tôn trọng reduce-motion. |
-| 10 | **Dự án: CSS Loader Lab** | Tổng hợp keyframe, transform, clip-path tạo bộ loader/illustration thuần CSS. | Bộ sưu tập spinner/skeleton + nút copy CSS từng cái. |
+| Bài | Tên bài học                              | Nội dung chuyên sâu                                                                          | Dự án/Demo đi kèm                                            |
+| --- | ---------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 1   | **Box Model & Cơ chế dàn trang**         | Block/inline, margin collapsing, `box-sizing`, stacking context và `z-index`.                | Inspector trực quan hoá Box Model + margin collapse động.    |
+| 2   | **Flexbox toàn tập**                     | Trục chính/phụ, `flex-grow/shrink/basis`, `align`/`justify`, thứ tự và wrap.                 | Playground kéo slider thuộc tính Flex, hiển thị đường trục.  |
+| 3   | **CSS Grid 2 chiều**                     | `grid-template`, `fr`, `minmax`, auto-placement, named lines & areas.                        | Trình dựng layout Grid kéo-thả, xem `grid-line` overlay.     |
+| 4   | **Transition & Easing**                  | Hàm timing, `cubic-bezier`, reflow vs compositor, thuộc tính animate rẻ (transform/opacity). | Bezier editor tương tác so sánh đường cong easing.           |
+| 5   | **Keyframes & Hoạt ảnh phức**            | `@keyframes`, chaining, `animation-fill-mode`, steps() cho sprite.                           | Timeline scrub từng keyframe của một loader phức tạp.        |
+| 6   | **Transform 2D/3D & Perspective**        | `translate/rotate/scale`, `transform-style: preserve-3d`, `perspective`, backface.           | Card lật 3D + khối lập phương xoay thuần CSS.                |
+| 7   | **Scroll-Driven Animation**              | `animation-timeline: scroll()/view()`, parallax không cần JS, hiệu năng.                     | Trang landing parallax cuộn mượt 60fps thuần CSS.            |
+| 8   | **View Transitions & Container Queries** | `view-transition-name`, morph giữa trạng thái, `@container` cho component responsive.        | Gallery chuyển ảnh morph mượt + card tự thích ứng container. |
+| 9   | **Hiệu năng & Accessibility**            | Compositor layers, `will-change`, tránh layout thrashing, `prefers-reduced-motion`.          | Bảng đo lại/repaint, demo tôn trọng reduce-motion.           |
+| 10  | **Dự án: CSS Loader Lab**                | Tổng hợp keyframe, transform, clip-path tạo bộ loader/illustration thuần CSS.                | Bộ sưu tập spinner/skeleton + nút copy CSS từng cái.         |
 
 ---
 
@@ -224,16 +224,16 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học | Nội dung chuyên sâu | Dự án/Demo đi kèm |
-| --- | ----------- | ------------------- | ----------------- |
-| 1 | **Mô hình quan hệ & SELECT** | Bảng/hàng/cột, `WHERE`, `ORDER BY`, `LIMIT`, kiểu dữ liệu SQLite. | Chạy query đầu tiên trên dataset mẫu trong browser. |
-| 2 | **JOIN toàn tập** | INNER/LEFT/RIGHT/FULL/CROSS, khoá ngoại, lỗi tích Descartes. | Visualizer Venn minh hoạ từng loại JOIN trên dữ liệu thật. |
-| 3 | **Aggregate & GROUP BY** | `COUNT/SUM/AVG`, `GROUP BY`, `HAVING` vs `WHERE`. | Bảng tổng hợp doanh thu + biểu đồ cột từ kết quả query. |
-| 4 | **Subquery & CTE** | Subquery tương quan, `WITH`, đệ quy CTE (cây phả hệ). | Demo CTE đệ quy duyệt cây danh mục lồng nhau. |
-| 5 | **Index & Query Plan** | B-Tree index, `EXPLAIN QUERY PLAN`, full scan vs index seek. | So sánh thời gian query trước/sau khi tạo index. |
-| 6 | **Window Functions** | `ROW_NUMBER`, `RANK`, `LAG/LEAD`, `OVER(PARTITION BY)`. | Bảng xếp hạng & running total trực quan. |
-| 7 | **Transaction & ACID** | `BEGIN/COMMIT/ROLLBACK`, tính nguyên tử, ràng buộc toàn vẹn. | Demo mô phỏng rollback khi vi phạm ràng buộc. |
-| 8 | **Dự án: Mini Analytics Dashboard** | Ghép query + render chart, lưu DB vào IndexedDB, export `.sqlite`. | Dashboard phân tích dữ liệu chạy 100% offline trong browser. |
+| Bài | Tên bài học                         | Nội dung chuyên sâu                                                | Dự án/Demo đi kèm                                            |
+| --- | ----------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------ |
+| 1   | **Mô hình quan hệ & SELECT**        | Bảng/hàng/cột, `WHERE`, `ORDER BY`, `LIMIT`, kiểu dữ liệu SQLite.  | Chạy query đầu tiên trên dataset mẫu trong browser.          |
+| 2   | **JOIN toàn tập**                   | INNER/LEFT/RIGHT/FULL/CROSS, khoá ngoại, lỗi tích Descartes.       | Visualizer Venn minh hoạ từng loại JOIN trên dữ liệu thật.   |
+| 3   | **Aggregate & GROUP BY**            | `COUNT/SUM/AVG`, `GROUP BY`, `HAVING` vs `WHERE`.                  | Bảng tổng hợp doanh thu + biểu đồ cột từ kết quả query.      |
+| 4   | **Subquery & CTE**                  | Subquery tương quan, `WITH`, đệ quy CTE (cây phả hệ).              | Demo CTE đệ quy duyệt cây danh mục lồng nhau.                |
+| 5   | **Index & Query Plan**              | B-Tree index, `EXPLAIN QUERY PLAN`, full scan vs index seek.       | So sánh thời gian query trước/sau khi tạo index.             |
+| 6   | **Window Functions**                | `ROW_NUMBER`, `RANK`, `LAG/LEAD`, `OVER(PARTITION BY)`.            | Bảng xếp hạng & running total trực quan.                     |
+| 7   | **Transaction & ACID**              | `BEGIN/COMMIT/ROLLBACK`, tính nguyên tử, ràng buộc toàn vẹn.       | Demo mô phỏng rollback khi vi phạm ràng buộc.                |
+| 8   | **Dự án: Mini Analytics Dashboard** | Ghép query + render chart, lưu DB vào IndexedDB, export `.sqlite`. | Dashboard phân tích dữ liệu chạy 100% offline trong browser. |
 
 ---
 
@@ -254,16 +254,16 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học | Nội dung chuyên sâu | Dự án/Demo đi kèm |
-| --- | ----------- | ------------------- | ----------------- |
-| 1 | **AudioContext & Đồ thị âm thanh** | Mô hình node graph, lifecycle context, autoplay policy & user gesture. | Phát một tone bằng OscillatorNode khi bấm nút. |
-| 2 | **Oscillator & Synthesis** | Sóng sine/square/saw/triangle, tần số, detune, ADSR envelope qua GainNode. | Mini synth chơi được bằng bàn phím máy tính. |
-| 3 | **Gain, Filter & Hiệu ứng** | BiquadFilter (lowpass/highpass), `DelayNode`, `ConvolverNode` (reverb). | Bàn trộn hiệu ứng kéo slider nghe thay đổi tức thì. |
-| 4 | **AnalyserNode & FFT** | Biến đổi Fourier, `getByteFrequencyData`, `getByteTimeDomainData`. | Spectrum analyzer + waveform vẽ trên Canvas. |
-| 5 | **Phát & xử lý file/Mic** | `decodeAudioData`, `MediaElementSource`, `getUserMedia` input mic. | Visualizer nhạc upload + đo âm lượng từ micro. |
-| 6 | **Spatial & Stereo Audio** | `PannerNode`, `StereoPannerNode`, âm thanh không gian 3D cơ bản. | Demo nguồn âm di chuyển quanh người nghe. |
-| 7 | **AudioWorklet & DSP tuỳ biến** | Xử lý mẫu âm trên luồng audio riêng, viết processor tuỳ biến. | Bộ tạo nhiễu/bitcrusher chạy bằng AudioWorklet. |
-| 8 | **Dự án: Music Visualizer** | Ghép FFT + Canvas particle tạo visualizer phản ứng theo nhạc. | Trình visualizer nhạc đầy màu sắc reactive theo beat. |
+| Bài | Tên bài học                        | Nội dung chuyên sâu                                                        | Dự án/Demo đi kèm                                     |
+| --- | ---------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------- |
+| 1   | **AudioContext & Đồ thị âm thanh** | Mô hình node graph, lifecycle context, autoplay policy & user gesture.     | Phát một tone bằng OscillatorNode khi bấm nút.        |
+| 2   | **Oscillator & Synthesis**         | Sóng sine/square/saw/triangle, tần số, detune, ADSR envelope qua GainNode. | Mini synth chơi được bằng bàn phím máy tính.          |
+| 3   | **Gain, Filter & Hiệu ứng**        | BiquadFilter (lowpass/highpass), `DelayNode`, `ConvolverNode` (reverb).    | Bàn trộn hiệu ứng kéo slider nghe thay đổi tức thì.   |
+| 4   | **AnalyserNode & FFT**             | Biến đổi Fourier, `getByteFrequencyData`, `getByteTimeDomainData`.         | Spectrum analyzer + waveform vẽ trên Canvas.          |
+| 5   | **Phát & xử lý file/Mic**          | `decodeAudioData`, `MediaElementSource`, `getUserMedia` input mic.         | Visualizer nhạc upload + đo âm lượng từ micro.        |
+| 6   | **Spatial & Stereo Audio**         | `PannerNode`, `StereoPannerNode`, âm thanh không gian 3D cơ bản.           | Demo nguồn âm di chuyển quanh người nghe.             |
+| 7   | **AudioWorklet & DSP tuỳ biến**    | Xử lý mẫu âm trên luồng audio riêng, viết processor tuỳ biến.              | Bộ tạo nhiễu/bitcrusher chạy bằng AudioWorklet.       |
+| 8   | **Dự án: Music Visualizer**        | Ghép FFT + Canvas particle tạo visualizer phản ứng theo nhạc.              | Trình visualizer nhạc đầy màu sắc reactive theo beat. |
 
 ---
 
@@ -284,18 +284,19 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học | Nội dung chuyên sâu | Dự án/Demo đi kèm |
-| --- | ----------- | ------------------- | ----------------- |
-| 1 | **Mô hình đối tượng Git** | Blob/Tree/Commit, content-addressable SHA-1/256, vì sao Git là snapshot không phải diff. | Trình xem cấu trúc `.git/objects` của một commit mẫu. |
-| 2 | **Three Trees & Staging** | Working Directory, Index (staging), HEAD; vòng đời `add`/`commit`. | Visualizer file di chuyển qua 3 cây khi add/commit. |
-| 3 | **Branch & HEAD** | Branch chỉ là con trỏ, HEAD tách rời (detached), fast-forward. | Graph tạo nhánh, di chuyển HEAD trực quan. |
-| 4 | **Merge & Conflict** | Three-way merge, merge base, cơ chế phát sinh & giải xung đột. | Demo merge tạo commit hợp nhất + tô vùng conflict. |
-| 5 | **Rebase & History viết lại** | Rebase vs merge, `--onto`, interactive rebase (squash/fixup/reorder). | So sánh graph trước/sau rebase cùng kịch bản. |
-| 6 | **Undo & Phục hồi** | `reset --soft/mixed/hard`, `revert`, `reflog` cứu commit mất. | Demo "làm hỏng rồi cứu" bằng reflog. |
-| 7 | **Remote & Collaboration** | `fetch`/`pull`/`push`, tracking branch, mô hình PR, rebase vs merge khi team work. | Mô phỏng 2 remote đồng bộ, minh hoạ diverge & sync. |
-| 8 | **Dự án: Git Kata Trainer** | Bộ thử thách: cho trạng thái graph đích, người học gõ lệnh để đạt được. | Trò chơi luyện Git chấm điểm tự động theo graph kết quả. |
+| Bài | Tên bài học                   | Nội dung chuyên sâu                                                                      | Dự án/Demo đi kèm                                        |
+| --- | ----------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| 1   | **Mô hình đối tượng Git**     | Blob/Tree/Commit, content-addressable SHA-1/256, vì sao Git là snapshot không phải diff. | Trình xem cấu trúc `.git/objects` của một commit mẫu.    |
+| 2   | **Three Trees & Staging**     | Working Directory, Index (staging), HEAD; vòng đời `add`/`commit`.                       | Visualizer file di chuyển qua 3 cây khi add/commit.      |
+| 3   | **Branch & HEAD**             | Branch chỉ là con trỏ, HEAD tách rời (detached), fast-forward.                           | Graph tạo nhánh, di chuyển HEAD trực quan.               |
+| 4   | **Merge & Conflict**          | Three-way merge, merge base, cơ chế phát sinh & giải xung đột.                           | Demo merge tạo commit hợp nhất + tô vùng conflict.       |
+| 5   | **Rebase & History viết lại** | Rebase vs merge, `--onto`, interactive rebase (squash/fixup/reorder).                    | So sánh graph trước/sau rebase cùng kịch bản.            |
+| 6   | **Undo & Phục hồi**           | `reset --soft/mixed/hard`, `revert`, `reflog` cứu commit mất.                            | Demo "làm hỏng rồi cứu" bằng reflog.                     |
+| 7   | **Remote & Collaboration**    | `fetch`/`pull`/`push`, tracking branch, mô hình PR, rebase vs merge khi team work.       | Mô phỏng 2 remote đồng bộ, minh hoạ diverge & sync.      |
+| 8   | **Dự án: Git Kata Trainer**   | Bộ thử thách: cho trạng thái graph đích, người học gõ lệnh để đạt được.                  | Trò chơi luyện Git chấm điểm tự động theo graph kết quả. |
 
 ---
+
 ---
 
 # 🧱 PHẦN II — CÔNG VIỆC TRIỂN KHAI (Implementation Tasks)
@@ -317,17 +318,17 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 
 ## 0. Quy ước slug thư mục & ID series
 
-| # | Series | Thư mục | File hub | Tag class CSS | Số bài |
-| - | ------ | ------- | -------- | ------------- | ------ |
-| 1 | WebAssembly & Rust | `blog/wasm/` | `wasm-programming-series.html` | `--wasm` | 10 |
-| 2 | WebGPU | `blog/webgpu/` | `webgpu-programming-series.html` | `--webgpu` | 10 |
-| 3 | DS & Giải Thuật Trực Quan | `blog/algo/` | `algo-programming-series.html` | `--algo` | 8 |
-| 4 | WebRTC & WebSocket | `blog/realtime/` | `realtime-programming-series.html` | `--rtc` | 8 |
-| 5 | Toy JS Engine | `blog/toyjs/` | `toyjs-programming-series.html` | `--toyjs` | 8 |
-| 6 | CSS & Animation | `blog/css/` | `css-programming-series.html` | `--css` | 10 |
-| 7 | SQL (SQLite-WASM) | `blog/sql/` | `sql-programming-series.html` | `--sql` | 8 |
-| 8 | Web Audio API | `blog/audio/` | `audio-programming-series.html` | `--audio` | 8 |
-| 9 | Git | `blog/git/` | `git-programming-series.html` | `--git` | 8 |
+| #   | Series                    | Thư mục          | File hub                           | Tag class CSS | Số bài |
+| --- | ------------------------- | ---------------- | ---------------------------------- | ------------- | ------ |
+| 1   | WebAssembly & Rust        | `blog/wasm/`     | `wasm-programming-series.html`     | `--wasm`      | 10     |
+| 2   | WebGPU                    | `blog/webgpu/`   | `webgpu-programming-series.html`   | `--webgpu`    | 10     |
+| 3   | DS & Giải Thuật Trực Quan | `blog/algo/`     | `algo-programming-series.html`     | `--algo`      | 8      |
+| 4   | WebRTC & WebSocket        | `blog/realtime/` | `realtime-programming-series.html` | `--rtc`       | 8      |
+| 5   | Toy JS Engine             | `blog/toyjs/`    | `toyjs-programming-series.html`    | `--toyjs`     | 8      |
+| 6   | CSS & Animation           | `blog/css/`      | `css-programming-series.html`      | `--css`       | 10     |
+| 7   | SQL (SQLite-WASM)         | `blog/sql/`      | `sql-programming-series.html`      | `--sql`       | 8      |
+| 8   | Web Audio API             | `blog/audio/`    | `audio-programming-series.html`    | `--audio`     | 8      |
+| 9   | Git                       | `blog/git/`      | `git-programming-series.html`      | `--git`       | 8      |
 
 > Slug từng bài đặt theo mẫu sẵn có: `<series>-<chu-de>.html` (vd `wasm-linear-memory.html`, `webgpu-compute-shaders.html`). Đặt tên kebab-case, không dấu.
 
@@ -341,7 +342,7 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 - [ ] **⭐ Component "Tài liệu tham khảo" MỚI.** Cuối mỗi bài thêm khối `.article-refs` (📖 Tài liệu tham khảo / References) liệt kê link ngoài (MDN, W3C/WHATWG spec, caniuse, paper gốc). Link ngoài BẮT BUỘC `target="_blank" rel="noopener noreferrer"`. Series cũ không có link ngoài → đây là nâng cấp "đủ liên kết".
 - [ ] **⭐ Glossary thuật ngữ MỚI.** Mỗi trang hub có khối `.glossary` (Bảng thuật ngữ EN–VI) định nghĩa ngắn gọn các thuật ngữ chuyên ngành của series; trong bài dùng `<abbr title="…">` cho lần xuất hiện đầu. Phục vụ "đủ chú thích" cho người đọc Việt.
 - [ ] **✅ Math rendering = KaTeX local (ĐÃ CHỐT).** Thêm `katex.min.css` + `katex.min.js` + `auto-render.min.js` vào `blog/` (bản tĩnh, **không CDN, không build**). Mọi công thức toán dùng KaTeX (`$…$` inline, `$$…$$` block) qua auto-render khi `DOMContentLoaded`. Áp cho mọi bài có công thức (đặc biệt WebGPU, WASM SIMD, DSA); chỉ nạp script ở trang có công thức để khỏi nặng trang khác. Test render trên 1 bài mẫu.
-- [ ] **✅ Widget bình luận = chỉ giscus, BỎ Facebook (ĐÃ CHỐT).** Mọi bài MỚI chỉ nhúng **giscus**, không dùng `fb-comments`/SDK Facebook. **Đồng thời migrate trang cũ:** gỡ `fb-comments` + `fb-root` + script `connect.facebook.net` ở các trang đang dùng (toàn bộ `webgl/*` và các bài khác còn FB) và thay bằng block giscus giống `c/c-data-structures.html`. Kiểm tra không còn request tới `facebook.net` sau khi dọn.
+- [x] **✅ Widget bình luận = chỉ giscus (ĐÃ HOÀN THÀNH).** Đã gỡ bỏ hoàn toàn Facebook comments/SDK và chuyển đổi sang Giscus trên toàn bộ trang bài viết.
 
 ## 2. Checklist cho MỖI series (lặp lại 9 lần)
 
@@ -369,7 +370,7 @@ Mỗi file `<series>-<topic>.html` phải có đủ:
 - [ ] **Quiz**: 2–3 câu trắc nghiệm dùng `ide.js`/`ide.css` (pattern "Trắc nghiệm N").
 - [ ] **Link tải code**: "Tải file code thực hành" trỏ tới file co-located.
 - [ ] **`.article-related`**: link bài trước/sau + về hub (song ngữ).
-- [ ] **`.article-discuss`** + widget **giscus** (map đúng repo/category; KHÔNG dùng Facebook).
+- [ ] **`.article-discuss`** + widget **giscus** (map đúng repo/category).
 - [ ] Chạy Prettier (`npx prettier --write`) trước khi commit.
 
 ## 4. Visualizer cốt lõi cần dựng (1 demo/series — phần nặng nhất)
@@ -411,7 +412,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - [ ] Responsive: mobile <600px, hamburger <880px, desktop.
 - [ ] Nút "⟨⟩ Xem Code" fetch & highlight đúng; quiz chấm đúng; link tải code trả 200.
 - [ ] Tìm kiếm trên `blog/index.html` ra được bài mới (đã có trong search-index).
-- [ ] **giscus** load đúng (không lỗi console), KHÔNG còn request `facebook.net`; sitemap không trùng/sai URL.
+- [x] **giscus** load đúng (không lỗi console), không còn request `facebook.net` (ĐÃ HOÀN THÀNH); sitemap không trùng/sai URL.
 - [ ] Prettier sạch toàn bộ file mới.
 
 ## 7. Thứ tự ưu tiên đề xuất
@@ -429,6 +430,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 > Gợi ý cho agent thực thi: làm **trọn 1 series hoàn chỉnh (hub + visualizer + 1–2 bài mẫu)** trước, để chủ dự án duyệt khung & văn phong, rồi mới nhân ra các bài còn lại.
 
 ---
+
 ---
 
 # 📚 PHẦN III — ĐỀ CƯƠNG CHI TIẾT MỤC H2 TỪNG BÀI
@@ -464,7 +466,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 ## Series 3 — DS & Giải Thuật Trực Quan
 
 - **Bài 1 — Xoay cây AVL & Red-Black:** 1.1 BST & bài toán mất cân bằng · 1.2 Hệ số cân bằng & xoay đơn/kép · 1.3 Luật tô màu & xoay của Red-Black · 1.4 Hoạt ảnh xoay từng bước.
-- **Bài 2 — Pathfinding Dijkstra & A\*:** 2.1 Biểu diễn đồ thị & priority queue · 2.2 Dijkstra lan vùng theo trọng số · 2.3 Heuristic Manhattan/Euclid của A* · 2.4 So sánh số ô duyệt trên mê cung.
+- **Bài 2 — Pathfinding Dijkstra & A\*:** 2.1 Biểu diễn đồ thị & priority queue · 2.2 Dijkstra lan vùng theo trọng số · 2.3 Heuristic Manhattan/Euclid của A\* · 2.4 So sánh số ô duyệt trên mê cung.
 - **Bài 3 — Quy Hoạch Động Trực Quan:** 3.1 Bài toán con trùng & memoization · 3.2 Bottom-up & bảng trạng thái · 3.3 Truy vết nghiệm (backtracking path) · 3.4 Edit Distance / Knapsack động.
 - **Bài 4 — B-Tree Database Index:** 4.1 Vì sao DB dùng B-Tree (đọc/ghi đĩa) · 4.2 Bậc cây & quy tắc khoá/con · 4.3 Tách (split) & gộp (merge) node · 4.4 Hoạt ảnh chèn/xoá theo trang.
 - **Bài 5 — Memory Allocator Visualizer:** 5.1 Heap & free list · 5.2 First-fit/Best-fit · 5.3 Phân mảnh trong/ngoài · 5.4 Mô phỏng `malloc`/`free` trực quan.
@@ -541,6 +543,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - **Bài 8 — Dự án: Git Kata Trainer:** 8.1 Định nghĩa graph đích · 8.2 Parser lệnh giả lập · 8.3 Chấm điểm theo graph kết quả · 8.4 Bộ thử thách tăng dần.
 
 ---
+
 ---
 
 # 🏅 PHẦN IV — TIÊU CHUẨN CHẤT LƯỢNG NỘI DUNG (Content Quality Contract)
@@ -558,19 +561,19 @@ Mỗi mục H2 KHÔNG chỉ mô tả "cái gì". Phải bao trùm:
 
 ## 2. Rubric định lượng tối thiểu / 1 bài học
 
-| Hạng mục | Mức tối thiểu | Ghi chú |
-| -------- | ------------- | ------- |
-| Mục H2 chuyên sâu | **≥ 4** (bài nền tảng), **≥ 5** (bài chính/dự án) | Theo đề cương Phần III; được phép nhiều hơn. |
-| Độ dài nội dung/bài | **≥ 1.200 từ mỗi ngôn ngữ** (EN & VI tương đương) | Không nhồi chữ — sâu thật. |
-| Ví dụ code chạy được | **≥ 4 `.code-window`** | Mỗi mục cốt lõi ≥1 ví dụ; xem §3. |
-| Visualizer / sơ đồ | **≥ 1** demo tương tác **hoặc** sơ đồ SVG/canvas | Bài dự án bắt buộc demo tương tác. |
-| Callout chú thích | **≥ 3** (tối thiểu 1 `--pitfall`) | Xem §5. |
-| Bảng so sánh | **≥ 1** khi có khái niệm đối lập | vd merge vs rebase, Euler vs Verlet. |
-| Liên kết nội bộ (cross-link) | **≥ 3** inline + prev/next + related | Xem §4. |
-| Tài liệu tham khảo ngoài | **≥ 3** link (MDN/spec/caniuse/paper) | Khối `.article-refs`. |
-| Thuật ngữ glossary | Mọi thuật ngữ mới có `<abbr>` lần đầu | Định nghĩa đầy đủ ở hub. |
-| Quiz | **≥ 3 câu** (`ide.js`) + giải thích đáp án | Có feedback đúng/sai. |
-| File code tải về | **≥ 1** file co-located | Link "Tải file code thực hành". |
+| Hạng mục                     | Mức tối thiểu                                     | Ghi chú                                      |
+| ---------------------------- | ------------------------------------------------- | -------------------------------------------- |
+| Mục H2 chuyên sâu            | **≥ 4** (bài nền tảng), **≥ 5** (bài chính/dự án) | Theo đề cương Phần III; được phép nhiều hơn. |
+| Độ dài nội dung/bài          | **≥ 1.200 từ mỗi ngôn ngữ** (EN & VI tương đương) | Không nhồi chữ — sâu thật.                   |
+| Ví dụ code chạy được         | **≥ 4 `.code-window`**                            | Mỗi mục cốt lõi ≥1 ví dụ; xem §3.            |
+| Visualizer / sơ đồ           | **≥ 1** demo tương tác **hoặc** sơ đồ SVG/canvas  | Bài dự án bắt buộc demo tương tác.           |
+| Callout chú thích            | **≥ 3** (tối thiểu 1 `--pitfall`)                 | Xem §5.                                      |
+| Bảng so sánh                 | **≥ 1** khi có khái niệm đối lập                  | vd merge vs rebase, Euler vs Verlet.         |
+| Liên kết nội bộ (cross-link) | **≥ 3** inline + prev/next + related              | Xem §4.                                      |
+| Tài liệu tham khảo ngoài     | **≥ 3** link (MDN/spec/caniuse/paper)             | Khối `.article-refs`.                        |
+| Thuật ngữ glossary           | Mọi thuật ngữ mới có `<abbr>` lần đầu             | Định nghĩa đầy đủ ở hub.                     |
+| Quiz                         | **≥ 3 câu** (`ide.js`) + giải thích đáp án        | Có feedback đúng/sai.                        |
+| File code tải về             | **≥ 1** file co-located                           | Link "Tải file code thực hành".              |
 
 ## 3. "Đủ ví dụ" — quy tắc ví dụ
 
@@ -583,18 +586,19 @@ Mỗi mục H2 KHÔNG chỉ mô tả "cái gì". Phải bao trùm:
 ## 4. "Đủ liên kết" — chiến lược liên kết
 
 **Nội bộ (bắt buộc):**
+
 - `prev`/`next` + khối `.article-related` (đã có sẵn).
 - **Cross-link inline** tới bài liên quan trong **cùng** và **khác** series, ngay tại đoạn nhắc khái niệm. Bản đồ liên kết chéo gợi ý:
 
-| Từ series | Liên kết tới | Vì khái niệm chung |
-| --------- | ------------ | ------------------ |
-| WebGPU · Compute Shader | WASM · Đa luồng; DSA · Pathfinding | Song song hoá / GPGPU |
-| WASM · SIMD/Threading | Canvas · Pixel; WebGL · Performance | Tối ưu pixel/vector |
-| Toy JS Engine | JS · Engine & Execution; JS · Scope | Call stack, closure, AST |
-| DSA · Hash/B-Tree | SQL · Index & Query Plan; C · Data Structures | B-Tree, hashing |
-| Web Audio · FFT | Canvas · Data Visualization; WebGPU · Particles | Vẽ phổ, reactive |
-| CSS · Transform 3D | WebGL · Coordinate & Math | Ma trận biến đổi |
-| Git · Object Model | C · Pointers; DSA · Huffman | DAG, content-address, nén |
+| Từ series               | Liên kết tới                                    | Vì khái niệm chung        |
+| ----------------------- | ----------------------------------------------- | ------------------------- |
+| WebGPU · Compute Shader | WASM · Đa luồng; DSA · Pathfinding              | Song song hoá / GPGPU     |
+| WASM · SIMD/Threading   | Canvas · Pixel; WebGL · Performance             | Tối ưu pixel/vector       |
+| Toy JS Engine           | JS · Engine & Execution; JS · Scope             | Call stack, closure, AST  |
+| DSA · Hash/B-Tree       | SQL · Index & Query Plan; C · Data Structures   | B-Tree, hashing           |
+| Web Audio · FFT         | Canvas · Data Visualization; WebGPU · Particles | Vẽ phổ, reactive          |
+| CSS · Transform 3D      | WebGL · Coordinate & Math                       | Ma trận biến đổi          |
+| Git · Object Model      | C · Pointers; DSA · Huffman                     | DAG, content-address, nén |
 
 **Ngoài (nâng cấp mới):** khối `.article-refs` cuối bài, **≥ 3** nguồn uy tín (MDN, WHATWG/W3C spec, caniuse, paper gốc như SPH/Huffman). Bắt buộc `target="_blank" rel="noopener noreferrer"`; ghi rõ tên nguồn, không dán URL trần.
 

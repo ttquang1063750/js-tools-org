@@ -95,20 +95,20 @@ live in one document. If the user prefers a standalone file, write
 
 Lock these before writing content. Present as a small table and get a thumbs-up.
 
-| Field | Example | Notes |
-| ----- | ------- | ----- |
-| Series name (EN/VI) | "WebGPU & Modern GPU Compute" | |
-| Folder slug | `webgpu/` | kebab-case, no diacritics |
-| Hub file | `webgpu-programming-series.html` | the curriculum page |
-| Lesson slug pattern | `webgpu-<topic>.html` | e.g. `webgpu-compute-shaders.html` |
-| Tag class | `--webgpu` | adds `.blog-card__tag--webgpu` in `blog.css` |
-| Accent color | hex | follows existing `--sc/--io/...` palette |
-| Prism language(s) | `wgsl`, `rust` | flag any not yet in `blog/prism.js` |
+| Field               | Example                          | Notes                                        |
+| ------------------- | -------------------------------- | -------------------------------------------- |
+| Series name (EN/VI) | "WebGPU & Modern GPU Compute"    |                                              |
+| Folder slug         | `webgpu/`                        | kebab-case, no diacritics                    |
+| Hub file            | `webgpu-programming-series.html` | the curriculum page                          |
+| Lesson slug pattern | `webgpu-<topic>.html`            | e.g. `webgpu-compute-shaders.html`           |
+| Tag class           | `--webgpu`                       | adds `.blog-card__tag--webgpu` in `blog.css` |
+| Accent color        | hex                              | follows existing `--sc/--io/...` palette     |
+| Prism language(s)   | `wgsl`, `rust`                   | flag any not yet in `blog/prism.js`          |
 
 ### Step 2 — Tech stack & the core visualizer
 
 Every series has ONE flagship interactive demo — the thing that makes the topic
-*felt*, not just read (e.g. WebGL's barycentric interpolation visualizer, the
+_felt_, not just read (e.g. WebGL's barycentric interpolation visualizer, the
 event-loop visualizer). Specify:
 
 - **Tech stack**: languages, browser APIs, any local libraries (must be
@@ -122,7 +122,7 @@ Write this the way Part I of `plan.md` does (see existing Series 1–9 for tone)
 ### Step 3 — Lesson syllabus (two layers of depth)
 
 **Layer A — overview table** (Part I style): one row per lesson with columns
-*Lesson · Deep CS content · Companion demo/project*. Order from foundations →
+_Lesson · Deep CS content · Companion demo/project_. Order from foundations →
 advanced → a capstone project lesson.
 
 **Layer B — per-lesson H2 breakdown** (Part III style): expand EACH lesson into
@@ -153,6 +153,7 @@ questions, and downloadable code. Encode these expectations into the spec so the
 implementer can't accidentally ship something thinner than the existing series.
 
 Pay special attention to the three "breadth" levers the user cares about:
+
 - **Examples**: ≥1 runnable example per core concept, anti-pattern (❌/✅) for
   error-prone topics, complexity that escalates gradually.
 - **Links**: internal cross-links between lessons AND across series (use the
@@ -175,6 +176,7 @@ in `sitemap.xml`, entries in `blog/search-index.json`, and updates to
 A finished design is **assembled incrementally** — each step appends its piece to
 the file and is confirmed at a checkpoint before the next. When complete, the
 document contains, in order:
+
 1. Series identity table (Step 1).
 2. Tech stack + core visualizer (Step 2).
 3. Overview syllabus table (Step 3, Layer A).

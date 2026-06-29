@@ -162,6 +162,61 @@ const TRANSLATIONS = {
     'donate.mb.title': 'MB Bank Transfer',
     'donate.mb.desc': 'Transfer to MB Bank account by scanning the QR code.',
     'donate.qr.scan': 'Scan to donate',
+    'nav.about': 'About',
+    'nav.contact': 'Contact',
+    'about.title': 'About js-tools — Free Browser Tools & Programming Tutorials',
+    'about.h1': 'About js-tools',
+    'about.intro':
+      'js-tools.org is an independent project with a simple goal: make genuinely useful software free, fast, and private by running it entirely in your web browser — no installs, no sign-ups, and no files ever leaving your device. Alongside the tools, we publish an in-depth, bilingual (English & Vietnamese) programming blog so the techniques behind these tools are open for anyone to learn.',
+    'about.mission.title': 'Our Mission',
+    'about.mission.desc':
+      'Most online tools ask you to upload your files to a stranger’s server, wait, and hope your data is deleted afterwards. We believe that is unnecessary. Modern browsers ship with powerful technologies — WebAssembly, WebGL, the Canvas API, Web Audio and more — that can do real work directly on your machine. Every js-tools utility is built on this principle: your data stays with you, the result is instant, and the tool is free to use.',
+    'about.what.title': 'What We Build',
+    'about.what.desc':
+      'Our suite includes the Image Optimizer (compress and convert JPEG, PNG, WebP and HEIC), RemoveBG (AI background removal), a QR Code Generator, SnapCast (a real-time photo slideshow for live events), and ColorQuarium (a generative ambient display you control from your phone). Each runs 100% client-side, so it works offline, respects your privacy, and never sees your files.',
+    'about.blog.title': 'The Learning Blog',
+    'about.blog.desc':
+      'We write long-form, carefully edited tutorials that explain how this kind of software actually works — from C, C++ and JavaScript fundamentals to HTML5 Canvas, WebGL graphics and shell scripting. Each series is hands-on, with runnable code, interactive visualizers and quizzes, and every article is written in both English and Vietnamese to make deep technical material accessible to more readers.',
+    'about.who.title': 'Who Builds This',
+    'about.who.desc':
+      'js-tools is created and maintained by Quang Tang, an independent software engineer who builds open web tools and writes about programming. The project is self-funded; optional advertising and donations help cover hosting and development so the tools can stay free for everyone. You can follow the work or get in touch through the links on our Contact page.',
+    'about.contact.title': 'Get in Touch',
+    'about.contact.desc':
+      'Questions, bug reports, feature ideas, or just want to say hello? We genuinely read every message. Visit the Contact page or email support@js-tools.org — feedback from people who use the tools is what shapes what we build next.',
+    'contact.title': 'Contact js-tools — Support, Feedback & Bug Reports',
+    'contact.h1': 'Contact Us',
+    'contact.intro':
+      'We’d love to hear from you. Whether you’ve found a bug, have an idea for a new tool, want to suggest a blog topic, or have a question about how something works, the best way to reach us is below. Messages are read and answered by the person who actually builds js-tools.',
+    'contact.email.title': 'Email',
+    'contact.email.desc':
+      'For support, partnership, or general questions, email us at support@js-tools.org. We aim to reply within a few business days. When reporting a bug, telling us your browser and what you were doing helps us fix it faster.',
+    'contact.phone.title': 'Phone',
+    'contact.phone.desc':
+      'Prefer to talk? You can reach us by phone or messaging apps (Zalo) at +84 938 829 401, during Vietnam business hours (GMT+7). For technical issues, email is usually faster because you can attach screenshots and details.',
+    'contact.github.title': 'GitHub',
+    'contact.github.desc':
+      'js-tools is built in the open. Browse the code, report issues, or open a discussion on GitHub — it’s also where our blog comments live, via giscus and GitHub Discussions.',
+    'contact.linkedin.title': 'LinkedIn',
+    'contact.linkedin.desc': 'Want to connect professionally or talk about a collaboration? Reach out on LinkedIn.',
+    'contact.feedback.title': 'Feedback Shapes the Roadmap',
+    'contact.feedback.desc':
+      'This is an independent project, so real feedback matters more than anything. Tell us which tool you use most, what’s missing, or which programming topic you’d like a tutorial on — it directly influences what gets built and written next.',
+    'learn.title': 'Learn How These Tools Work',
+    'learn.desc':
+      'Our tools are built on open web technology — and we explain exactly how on our blog. Each series is a hands-on, in-depth course with runnable code, interactive visualizers and quizzes, written in both English and Vietnamese. Pick a track and start building.',
+    'learn.cta': 'Browse all articles →',
+    'learn.c.title': 'C Programming',
+    'learn.c.desc': 'Pointers, memory management, data structures and Big-O — the foundations every programmer needs.',
+    'learn.cpp.title': 'Modern C++',
+    'learn.cpp.desc': 'RAII, move semantics, templates, the STL and smart pointers, explained from the ground up.',
+    'learn.js.title': 'JavaScript Deep Dive',
+    'learn.js.desc': 'The engine, the event loop, closures, prototypes and async — how JavaScript really runs.',
+    'learn.canvas.title': 'HTML5 Canvas',
+    'learn.canvas.desc': '2D graphics, animation, physics and particles — build interactive visuals from scratch.',
+    'learn.webgl.title': 'WebGL & 3D Graphics',
+    'learn.webgl.desc': 'Shaders, the GPU pipeline, lighting and 3D math — real graphics programming in the browser.',
+    'learn.bash.title': 'Bash & Shell',
+    'learn.bash.desc': 'Scripting, text processing, automation and defensive shell techniques for real-world work.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -327,6 +382,61 @@ const TRANSLATIONS = {
     'donate.mb.title': 'Chuyển Khoản MB Bank',
     'donate.mb.desc': 'Chuyển khoản vào tài khoản MB Bank bằng cách quét mã QR.',
     'donate.qr.scan': 'Quét mã để ủng hộ',
+    'nav.about': 'Giới thiệu',
+    'nav.contact': 'Liên hệ',
+    'about.title': 'Giới thiệu js-tools — Công cụ trình duyệt miễn phí & Blog lập trình',
+    'about.h1': 'Giới thiệu js-tools',
+    'about.intro':
+      'js-tools.org là một dự án độc lập với mục tiêu đơn giản: mang đến phần mềm thực sự hữu ích — miễn phí, nhanh và riêng tư — bằng cách chạy hoàn toàn trong trình duyệt của bạn: không cài đặt, không đăng ký, và tệp của bạn không bao giờ rời khỏi máy. Bên cạnh các công cụ, chúng tôi xuất bản một blog lập trình chuyên sâu, song ngữ (Anh & Việt), để các kỹ thuật đằng sau những công cụ này được chia sẻ công khai cho mọi người cùng học.',
+    'about.mission.title': 'Sứ Mệnh',
+    'about.mission.desc':
+      'Hầu hết công cụ trực tuyến đều bắt bạn tải tệp lên máy chủ của một bên lạ, chờ đợi, rồi hy vọng dữ liệu được xoá sau đó. Chúng tôi tin điều đó là không cần thiết. Trình duyệt hiện đại đã tích hợp những công nghệ mạnh mẽ — WebAssembly, WebGL, Canvas API, Web Audio và nhiều hơn nữa — đủ sức xử lý thật ngay trên máy bạn. Mọi công cụ js-tools đều dựa trên nguyên tắc này: dữ liệu của bạn ở lại với bạn, kết quả tức thì, và công cụ thì miễn phí.',
+    'about.what.title': 'Chúng Tôi Xây Dựng Gì',
+    'about.what.desc':
+      'Bộ công cụ gồm Image Optimizer (nén và chuyển đổi JPEG, PNG, WebP và HEIC), RemoveBG (xoá nền bằng AI), QR Code Generator, SnapCast (trình chiếu ảnh thời gian thực cho sự kiện trực tiếp) và ColorQuarium (màn hình nghệ thuật sinh động điều khiển từ điện thoại). Tất cả chạy 100% phía trình duyệt, nên hoạt động được ngoại tuyến, tôn trọng quyền riêng tư và không bao giờ nhìn thấy tệp của bạn.',
+    'about.blog.title': 'Blog Học Lập Trình',
+    'about.blog.desc':
+      'Chúng tôi viết những bài hướng dẫn dài, biên tập kỹ lưỡng, giải thích cách loại phần mềm này thực sự vận hành — từ nền tảng C, C++ và JavaScript cho tới HTML5 Canvas, đồ hoạ WebGL và lập trình shell. Mỗi series đều thực hành trực tiếp, có code chạy được, visualizer tương tác và câu hỏi ôn tập; mọi bài viết đều song ngữ Anh–Việt để kiến thức kỹ thuật chuyên sâu đến được với nhiều người hơn.',
+    'about.who.title': 'Người Đứng Sau Dự Án',
+    'about.who.desc':
+      'js-tools được tạo và duy trì bởi Quang Tang, một kỹ sư phần mềm độc lập chuyên xây dựng công cụ web mở và viết về lập trình. Dự án tự tài trợ; quảng cáo và ủng hộ (tuỳ tâm) giúp trang trải chi phí lưu trữ và phát triển để các công cụ luôn miễn phí cho mọi người. Bạn có thể theo dõi công việc hoặc liên hệ qua các liên kết trên trang Liên hệ.',
+    'about.contact.title': 'Kết Nối Với Chúng Tôi',
+    'about.contact.desc':
+      'Có câu hỏi, báo lỗi, ý tưởng tính năng, hay chỉ muốn chào một câu? Chúng tôi thật sự đọc mọi tin nhắn. Hãy ghé trang Liên hệ hoặc gửi email tới support@js-tools.org — phản hồi từ người dùng chính là điều định hình những gì chúng tôi làm tiếp theo.',
+    'contact.title': 'Liên hệ js-tools — Hỗ trợ, Góp ý & Báo lỗi',
+    'contact.h1': 'Liên Hệ',
+    'contact.intro':
+      'Chúng tôi rất mong nhận được tin từ bạn. Dù bạn phát hiện lỗi, có ý tưởng cho công cụ mới, muốn đề xuất chủ đề blog, hay thắc mắc về cách một thứ gì đó hoạt động, cách tốt nhất để liên hệ nằm bên dưới. Tin nhắn được đọc và trả lời bởi chính người xây dựng js-tools.',
+    'contact.email.title': 'Email',
+    'contact.email.desc':
+      'Để được hỗ trợ, hợp tác hoặc hỏi đáp chung, hãy gửi email tới support@js-tools.org. Chúng tôi cố gắng phản hồi trong vài ngày làm việc. Khi báo lỗi, hãy cho biết trình duyệt và thao tác bạn đang làm để chúng tôi sửa nhanh hơn.',
+    'contact.phone.title': 'Điện thoại',
+    'contact.phone.desc':
+      'Muốn trao đổi trực tiếp? Bạn có thể gọi điện hoặc nhắn qua Zalo theo số 0938 829 401, trong giờ làm việc (GMT+7). Với các vấn đề kỹ thuật, email thường nhanh hơn vì bạn có thể đính kèm ảnh chụp màn hình và chi tiết.',
+    'contact.github.title': 'GitHub',
+    'contact.github.desc':
+      'js-tools được phát triển công khai. Hãy xem mã nguồn, báo lỗi hoặc mở thảo luận trên GitHub — đây cũng là nơi lưu phần bình luận của blog, thông qua giscus và GitHub Discussions.',
+    'contact.linkedin.title': 'LinkedIn',
+    'contact.linkedin.desc': 'Muốn kết nối công việc hoặc trao đổi về một dự án hợp tác? Hãy liên hệ qua LinkedIn.',
+    'contact.feedback.title': 'Phản Hồi Định Hình Lộ Trình',
+    'contact.feedback.desc':
+      'Đây là một dự án độc lập, nên phản hồi thật sự quan trọng hơn bất cứ điều gì. Hãy cho chúng tôi biết bạn dùng công cụ nào nhiều nhất, thiếu gì, hay muốn có bài hướng dẫn về chủ đề lập trình nào — điều đó ảnh hưởng trực tiếp tới những gì được xây dựng và viết tiếp theo.',
+    'learn.title': 'Học Cách Những Công Cụ Này Vận Hành',
+    'learn.desc':
+      'Các công cụ của chúng tôi được xây trên công nghệ web mở — và chúng tôi giải thích chính xác cách làm ngay trên blog. Mỗi series là một khóa học chuyên sâu, thực hành trực tiếp, có code chạy được, visualizer tương tác và câu hỏi ôn tập, viết song ngữ Anh–Việt. Hãy chọn một lộ trình và bắt đầu.',
+    'learn.cta': 'Xem tất cả bài viết →',
+    'learn.c.title': 'Lập trình C',
+    'learn.c.desc': 'Con trỏ, quản lý bộ nhớ, cấu trúc dữ liệu và Big-O — nền tảng mọi lập trình viên cần nắm.',
+    'learn.cpp.title': 'C++ Hiện Đại',
+    'learn.cpp.desc': 'RAII, move semantics, template, STL và smart pointer, giải thích từ gốc rễ.',
+    'learn.js.title': 'JavaScript Chuyên Sâu',
+    'learn.js.desc': 'Engine, event loop, closure, prototype và bất đồng bộ — cách JavaScript thực sự chạy.',
+    'learn.canvas.title': 'HTML5 Canvas',
+    'learn.canvas.desc': 'Đồ họa 2D, hoạt ảnh, vật lý và hạt — dựng hình ảnh tương tác từ con số 0.',
+    'learn.webgl.title': 'WebGL & Đồ Họa 3D',
+    'learn.webgl.desc': 'Shader, pipeline GPU, ánh sáng và toán 3D — lập trình đồ họa thật trong trình duyệt.',
+    'learn.bash.title': 'Bash & Shell',
+    'learn.bash.desc': 'Scripting, xử lý văn bản, tự động hóa và kỹ thuật shell phòng thủ cho công việc thực tế.',
   },
 };
 

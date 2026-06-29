@@ -9,19 +9,19 @@ lesson must not be shallower than those.
 
 ## 1. Per-lesson minimum rubric
 
-| Item | Minimum | Notes |
-| ---- | ------- | ----- |
-| Deep H2 sections | ≥ 4 (foundational), ≥ 5 (core/capstone) | Per the Part III breakdown; more is fine. |
-| Body length | ≥ 1,200 words PER language | EN and VI equivalent. Depth, not filler. |
-| Runnable code examples | ≥ 4 `.code-window` blocks | Each core concept needs ≥1; see §2. |
-| Visualizer / diagram | ≥ 1 interactive demo OR inline SVG/canvas diagram | Capstone lessons require an interactive demo. |
-| Callouts | ≥ 3 (at least one `--pitfall`) | See §4. |
-| Comparison table | ≥ 1 when opposing concepts exist | e.g. merge vs rebase, Euler vs Verlet, INNER vs LEFT join. |
-| Internal cross-links | ≥ 3 inline + prev/next + related block | See §3 + the cross-link map. |
-| External references | ≥ 3 (MDN / W3C-WHATWG spec / caniuse / source paper) | In an `.article-refs` block, new tab + `rel="noopener noreferrer"`. |
-| Glossary coverage | every new term wrapped in `<abbr>` on first use | Full definitions live on the hub's glossary. |
-| Quiz | ≥ 3 questions via `ide.js` + answer explanations | The closing "Câu hỏi trắc nghiệm ôn tập" section. |
-| Downloadable code | ≥ 1 co-located file | "Tải file code thực hành" link. |
+| Item                   | Minimum                                              | Notes                                                               |
+| ---------------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| Deep H2 sections       | ≥ 4 (foundational), ≥ 5 (core/capstone)              | Per the Part III breakdown; more is fine.                           |
+| Body length            | ≥ 1,200 words PER language                           | EN and VI equivalent. Depth, not filler.                            |
+| Runnable code examples | ≥ 4 `.code-window` blocks                            | Each core concept needs ≥1; see §2.                                 |
+| Visualizer / diagram   | ≥ 1 interactive demo OR inline SVG/canvas diagram    | Capstone lessons require an interactive demo.                       |
+| Callouts               | ≥ 3 (at least one `--pitfall`)                       | See §4.                                                             |
+| Comparison table       | ≥ 1 when opposing concepts exist                     | e.g. merge vs rebase, Euler vs Verlet, INNER vs LEFT join.          |
+| Internal cross-links   | ≥ 3 inline + prev/next + related block               | See §3 + the cross-link map.                                        |
+| External references    | ≥ 3 (MDN / W3C-WHATWG spec / caniuse / source paper) | In an `.article-refs` block, new tab + `rel="noopener noreferrer"`. |
+| Glossary coverage      | every new term wrapped in `<abbr>` on first use      | Full definitions live on the hub's glossary.                        |
+| Quiz                   | ≥ 3 questions via `ide.js` + answer explanations     | The closing "Câu hỏi trắc nghiệm ôn tập" section.                   |
+| Downloadable code      | ≥ 1 co-located file                                  | "Tải file code thực hành" link.                                     |
 
 ## 2. "Enough examples"
 
@@ -40,15 +40,15 @@ lesson must not be shallower than those.
 cross-links right where a shared concept is mentioned. Link within the series and
 to other series. Suggested cross-link map:
 
-| From | Links to | Shared concept |
-| ---- | -------- | -------------- |
-| WebGPU · Compute Shader | WASM · Threading; DSA · Pathfinding | Parallelism / GPGPU |
-| WASM · SIMD/Threading | Canvas · Pixel; WebGL · Performance | Pixel/vector optimization |
-| Toy JS Engine | JS · Engine & Execution; JS · Scope | Call stack, closures, AST |
-| DSA · Hash/B-Tree | SQL · Index & Query Plan; C · Data Structures | B-Tree, hashing |
-| Web Audio · FFT | Canvas · Data Visualization; WebGPU · Particles | Spectrum / reactive |
-| CSS · Transform 3D | WebGL · Coordinate & Math | Transformation matrices |
-| Git · Object Model | C · Pointers; DSA · Huffman | DAG, content-addressing, compression |
+| From                    | Links to                                        | Shared concept                       |
+| ----------------------- | ----------------------------------------------- | ------------------------------------ |
+| WebGPU · Compute Shader | WASM · Threading; DSA · Pathfinding             | Parallelism / GPGPU                  |
+| WASM · SIMD/Threading   | Canvas · Pixel; WebGL · Performance             | Pixel/vector optimization            |
+| Toy JS Engine           | JS · Engine & Execution; JS · Scope             | Call stack, closures, AST            |
+| DSA · Hash/B-Tree       | SQL · Index & Query Plan; C · Data Structures   | B-Tree, hashing                      |
+| Web Audio · FFT         | Canvas · Data Visualization; WebGPU · Particles | Spectrum / reactive                  |
+| CSS · Transform 3D      | WebGL · Coordinate & Math                       | Transformation matrices              |
+| Git · Object Model      | C · Pointers; DSA · Huffman                     | DAG, content-addressing, compression |
 
 Extend this map when adding a new series — wire it into the existing web.
 
