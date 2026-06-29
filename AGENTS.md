@@ -50,8 +50,8 @@ js-tools-org/
 │   └── event-qr.png     # SnapCast event QR code
 ├── blog/                # Blog section: tool articles + programming series
 │   ├── index.html       # Blog list index (bilingual EN/VI)
-│   ├── blog.css         # Blog typography, article styles, card tags, Facebook CTA
-│   ├── blog.js          # Language toggle for blog data-lang-content sections
+│   ├── blog.css         # Blog typography, article styles, card tags, comment section
+│   ├── blog.js          # Language toggle + giscus comments loader for blog pages
 │   ├── ide.css          # VS Code Light Theme code window + quiz styles
 │   ├── ide.js           # Code copy + quiz verification logic
 │   ├── prism.css        # Local Prism syntax highlight (Tomorrow Night theme)
@@ -203,8 +203,8 @@ js-tools-org/
 - **Interactive JS Playgrounds**: Custom `js-playground` boxes (textarea source input + standard console capture log output) allowing code execution directly inside the browser.
 - **Dynamic Code Viewer**: Interactive canvas demos and visualizer iframes include a toggleable `⟨⟩ Xem Code` button that displays their formatted, dedented, syntax-highlighted source code inline (and lazy-fetches external visualizer source files).
 - **Client-Side Search & Static Index**: Real-time search engine on `blog/index.html` utilizing a pre-built static `search-index.json`. It performs deep searches across all 62 articles, mapping matched lesson titles and subheadings to direct URLs with diacritics-insensitive matching in both English and Vietnamese.
-- **Facebook Comments**: Native `fb-comments` comments widget integrated at the bottom of all 50+ detail pages mapped to canonical URLs for social media discussions.
-- **Article template structure**: `.article-hero` (tag, title, meta) → `.article-body` (EN/VI sections) → `.article-cta` → `.article-discuss` (Facebook CTA) → `.article-related`
+- **Giscus Comments**: GitHub Discussions-backed `giscus` widget (loaded centrally by `blog.js` via a `<div class="giscus">` placeholder) at the bottom of all detail pages, mapped to each page by `pathname` for consistent per-article threads.
+- **Article template structure**: `.article-hero` (tag, title, meta) → `.article-body` (EN/VI sections) → `.article-cta` → `.article-related` → `.article-comments` (giscus). Some legacy pages also include an `.article-discuss` link-out CTA.
 - **Tag color classes**: `--sc` (purple), `--io` (green), `--qr` (cyan), `--cq` (teal), `--c` (C), `--cpp` (C++), `--js` (JS), `--canvas` (Canvas), `--webgl` (violet)
 - **VS Code Light Theme**: White background, dark code blocks, Prism syntax highlighting
 - **Interactive quizzes**: `ide.js` + `ide.css` for programming lessons
