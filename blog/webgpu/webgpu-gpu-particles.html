@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 7: Mô phỏng 100k Hạt trên GPU — Instanced Rendering — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu cách lập trình mô phỏng hàng vạn hạt động học hoàn toàn trên GPU bằng Compute Shader, sử dụng Storage Buffer và tối ưu hóa hiển thị với Instanced Rendering."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgpu/webgpu-gpu-particles" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      .hidden {
+        display: none !important;
+      }
+      .particles-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 24px;
+      }
+      .particles-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .particles-controls h3 {
+        color: #cdd6f4;
+        margin: 0;
+        font-size: 14px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 8px;
+      }
+      .particles-controls label {
+        color: #a6adc8;
+        font-weight: 600;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .particles-controls select,
+      .particles-controls input[type='range'] {
+        background: #1e1e2e;
+        color: #cdd6f4;
+        border: 1px solid var(--border);
+        padding: 6px;
+        border-radius: 6px;
+        outline: none;
+      }
+      .particles-controls input[type='range'] {
+        padding: 2px;
+        cursor: pointer;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .particles-viewport {
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 480px;
+        position: relative;
+        overflow: hidden;
+      }
+      .particles-canvas {
+        width: 100%;
+        height: 100%;
+        max-width: 460px;
+        max-height: 460px;
+        background: #000;
+        border-radius: 6px;
+      }
+      .particles-fallback {
+        color: #f38ba8;
+        padding: 24px;
+        text-align: center;
+        font-size: 14px;
+      }
+      .fps-counter {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: rgba(17, 17, 27, 0.85);
+        border: 1px solid var(--border);
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-family: monospace;
+        font-size: 12px;
+        font-weight: bold;
+        color: #a6e3a1;
+      }
+      @media (max-width: 880px) {
+        .particles-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgpu">
+        <div class="container">
+          <a href="webgpu-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGPU Series</span
+            ><span data-lang-content="vi">Quay lại Lộ trình WebGPU</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgpu">WebGPU &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGPU Lesson 7: 100k GPU Particles Simulation — Instanced Rendering
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 7: Mô Phỏng 100k Hạt Trên GPU — Instanced Rendering Cực Đỉnh
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 30, 2026 · 15 min read</span>
+            <span data-lang-content="vi">30 tháng 6, 2026 · 15 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Content -->
+              <div data-lang-content="en">
+                <p>
+                  Explore particle systems simulated entirely on the GPU. Learn about compute update cycles, storage
+                  buffer layouts, eliminating PCIe bus bottlenecks, and drawing millions of vertices efficiently using
+                  Instanced Rendering in WebGPU.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Mô phỏng hệ thống hạt (<strong>Particle Systems</strong>) là một kỹ thuật kinh điển để tạo ra các hiệu
+                  ứng hình ảnh động như khói, lửa, bụi bặm, vụ nổ hoặc bão cát. Tuy nhiên, nếu chúng ta tính toán tọa độ
+                  vật lý của hàng vạn hạt trên CPU bằng JavaScript rồi đẩy dữ liệu đó lên card đồ họa ở mỗi khung hình,
+                  chương trình sẽ nhanh chóng bị nghẽn và sụt giảm FPS trầm trọng.
+                </p>
+
+                <p>
+                  Nguyên nhân chính là do <strong>nghẽn băng thông truyền tải PCIe (PCIe Bus Bottleneck)</strong>. Giải
+                  pháp tối ưu nhất là giữ toàn bộ dữ liệu trạng thái hạt trực tiếp trên bộ nhớ video (VRAM) của GPU
+                  thông qua Storage Buffer, sử dụng Compute Shader để cập nhật trạng thái vật lý của hạt và Render
+                  Pipeline vẽ chúng tức thời bằng kỹ thuật <strong>Instanced Rendering</strong>.
+                </p>
+
+                <h2>1. Khắc phục điểm nghẽn PCIe bằng Zero-Copy</h2>
+                <p>
+                  Trong kiến trúc máy tính truyền thống, CPU và GPU sở hữu các vùng bộ nhớ độc lập. Khi CPU cập nhật vị
+                  trí hạt, nó phải đóng gói dữ liệu và gửi thông qua giao tiếp Bus PCIe lên GPU. Khi số lượng hạt tăng
+                  từ $1,000$ lên $100,000$, dung lượng dữ liệu truyền tải tăng vọt gây quá tải băng thông PCIe, khiến
+                  GPU phải liên tục nhàn rỗi chờ đợi CPU (CPU-bound).
+                </p>
+                <p>
+                  Bằng cách ứng dụng <strong>Zero-Copy Simulation</strong> trên WebGPU, ta khởi tạo các hạt một lần duy
+                  nhất trên VRAM. Ở mỗi khung hình:
+                </p>
+                <ol>
+                  <li>
+                    Compute Shader đọc tọa độ cũ từ Storage Buffer, cập nhật chuyển động vật lý mới và ghi đè trực tiếp
+                    kết quả vào Storage Buffer đó.
+                  </li>
+                  <li>Render Shader đọc thẳng dữ liệu từ Storage Buffer đó để vẽ ra màn hình.</li>
+                </ol>
+                <p>
+                  Dữ liệu được duy trì hoàn toàn trên GPU mà không cần bất kỳ chuyến hành trình khứ hồi (round-trip) nào
+                  qua CPU, giúp giải phóng băng thông tối đa và đạt tốc độ render lên tới hàng trăm ngàn hạt mượt mà.
+                </p>
+
+                <h2>2. Khai báo hạt trong Storage Buffer</h2>
+                <p>
+                  Mỗi hạt (Particle) thường có các thuộc tính: Vị trí (Position), Vận tốc (Velocity), Màu sắc (Color),
+                  và Tuổi thọ (Life). Ta định nghĩa cấu trúc hạt trong WGSL như sau:
+                </p>
+                <pre><code class="language-wgsl">struct Particle {
+  pos : vec2&lt;f32&gt;,
+  vel : vec2&lt;f32&gt;,
+  color : vec4&lt;f32&gt;,
+  life : f32,
+}
+
+@group(0) @binding(1) var&lt;storage, read_write&gt; particles : array&lt;Particle&gt;;</code></pre>
+
+                <h2>3. Vẽ hàng loạt bằng Instanced Rendering</h2>
+                <p>
+                  <strong>Instanced Rendering</strong> (Vẽ hàng loạt đối tượng) cho phép chúng ta vẽ cùng một mô hình
+                  lưới cơ sở (Mesh) nhiều lần bằng cách chỉ gửi 1 lệnh vẽ duy nhất lên GPU, nhưng mỗi phiên bản
+                  (Instance) lại sở hữu một biến đổi riêng (như vị trí, màu sắc).
+                </p>
+                <p>
+                  Để vẽ hàng vạn hạt hình vuông, ta không cần nạp 6 đỉnh cho mỗi hạt vuông đó vào Vertex Buffer. Thay
+                  vào đó, ta chỉ cần định nghĩa 1 hình vuông mẫu 6 đỉnh duy nhất (Quad). Trong Vertex Shader, ta sử dụng
+                  biến hệ thống:
+                </p>
+                <ul>
+                  <li>
+                    <code>@builtin(vertex_index)</code>: Để xác định đỉnh nào của hình vuông mẫu đang được xử lý (từ 0
+                    đến 5) nhằm tạo ra tọa độ cục bộ của hình vuông.
+                  </li>
+                  <li>
+                    <code>@builtin(instance_index)</code>: Để xác định ID của hạt đang vẽ, dùng ID này truy cập vào
+                    Storage Buffer lấy vị trí trung tâm thực tế của hạt đó.
+                  </li>
+                </ul>
+
+                \[\text{vị trí đỉnh tuyệt đối} = \text{tọa độ trung tâm hạt} + (\text{tọa độ đỉnh cục bộ} \times
+                \text{kích thước hạt})\]
+
+                <h2>Sân chơi tương tác: 100k GPU Particles Sandbox</h2>
+                <p>
+                  Hãy chạy thử nghiệm mô phỏng hạt WebGPU dưới đây. Bạn có thể chọn số lượng hạt lên tới 100,000, điều
+                  chỉnh các thông số trọng lực, gió xoáy và di chuột trực tiếp trên khung vẽ để cuốn các hạt chuyển động
+                  theo con trỏ chuột:
+                </p>
+
+                <!-- Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">✨ Mô Phỏng Hạt Bằng Compute Shader</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="wgsl">WGSL (Shaders)</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="particles-sandbox">
+                      <div class="particles-controls">
+                        <h3>Cấu hình mô phỏng</h3>
+                        <div class="control-group">
+                          <label
+                            >Số lượng hạt
+                            <select id="sel-particle-count">
+                              <option value="10000">10,000 hạt</option>
+                              <option value="50000" selected>50,000 hạt</option>
+                              <option value="100000">100,000 hạt</option>
+                            </select>
+                          </label>
+
+                          <label
+                            >Trọng lực (Gravity)
+                            <input type="range" id="range-gravity" min="-2.0" max="2.0" step="0.1" value="0.5" />
+                          </label>
+
+                          <label
+                            >Lực gió xoáy (Vortex)
+                            <input type="range" id="range-wind" min="0" max="5" step="0.5" value="2.0" />
+                          </label>
+
+                          <label
+                            >Tương tác chuột
+                            <select id="sel-mouse-mode">
+                              <option value="attract">Hút hạt (Attract)</option>
+                              <option value="repel">Đẩy hạt (Repel)</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div class="particles-viewport">
+                        <div id="particles-fallback" class="particles-fallback hidden">
+                          <p>Trình duyệt của bạn chưa hỗ trợ WebGPU. Hãy sử dụng Chrome/Edge phiên bản mới nhất.</p>
+                        </div>
+                        <div class="fps-counter" id="fps-val">60 FPS</div>
+                        <canvas class="particles-canvas" id="canvas-particles" width="460" height="460"></canvas>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="wgsl">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">particles.wgsl</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-wgsl">struct Particle {
+  pos : vec2&lt;f32&gt;,
+  vel : vec2&lt;f32&gt;,
+  color : vec4&lt;f32&gt;,
+  life : f32,
+};
+
+struct Params {
+  gravity : f32,
+  wind : f32,
+  mousePos : vec2&lt;f32&gt;,
+  mouseActive : u32,
+  deltaTime : f32,
+  particleSize : f32,
+};
+
+@group(0) @binding(0) var&lt;uniform&gt; u : Params;
+@group(0) @binding(1) var&lt;storage, read_write&gt; particles : array&lt;Particle&gt;;
+
+// Compute Shader: Cập nhật vị trí hạt
+@compute @workgroup_size(64)
+fn compMain(@builtin(global_invocation_id) id : vec3&lt;u32&gt;) {
+  let idx = id.x;
+  if (idx &gt;= arrayLength(&amp;particles)) {
+    return;
+  }
+
+  var p = particles[idx];
+
+  // Giảm tuổi thọ hạt
+  p.life = p.life - u.deltaTime;
+
+  // Hồi sinh hạt khi hết tuổi thọ
+  if (p.life &lt;= 0.0) {
+    p.pos = vec2&lt;f32&gt;(0.0, 0.0);
+    p.life = 1.0 + fract(sin(f32(idx)) * 43758.5453);
+    p.vel = vec2&lt;f32&gt;(
+      (fract(sin(f32(idx) * 1.5) * 43758.5453) - 0.5) * 1.5,
+      (fract(cos(f32(idx) * 2.3) * 43758.5453) - 0.5) * 1.5
+    );
+  } else {
+    // Áp dụng trọng lực hướng xuống
+    p.vel.y = p.vel.y - u.gravity * u.deltaTime;
+
+    // Áp dụng gió xoáy tâm
+    let toCenter = -p.pos;
+    let dist = length(toCenter);
+    if (dist &gt; 0.01) {
+      let dir = toCenter / dist;
+      let tangent = vec2&lt;f32&gt;(-dir.y, dir.x);
+      p.vel = p.vel + tangent * u.wind * u.deltaTime;
+    }
+
+    // Tương tác với chuột
+    if (u.mouseActive == 1u) {
+      let toMouse = u.mousePos - p.pos;
+      let mouseDist = length(toMouse);
+      if (mouseDist &lt; 0.8 &amp;&amp; mouseDist &gt; 0.01) {
+        let mouseDir = toMouse / mouseDist;
+        p.vel = p.vel + mouseDir * (0.8 - mouseDist) * u.deltaTime * 3.0;
+      }
+    }
+
+    // Cập nhật vị trí theo vận tốc
+    p.pos = p.pos + p.vel * u.deltaTime;
+    
+    // Ma sát chậm hạt lại nhẹ
+    p.vel = p.vel * 0.99;
+  }
+
+  particles[idx] = p;
+}</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">particles-setup.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js">// Khai báo lệnh vẽ Instanced Rendering
+const commandEncoder = device.createCommandEncoder();
+
+// 1. Chạy Compute Shader cập nhật hạt
+const compPass = commandEncoder.beginComputePass();
+compPass.setPipeline(computePipeline);
+compPass.setBindGroup(0, bindGroup);
+compPass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+compPass.end();
+
+// 2. Chạy Render Shader vẽ hạt
+const renderPass = commandEncoder.beginRenderPass(renderPassDesc);
+renderPass.setPipeline(renderPipeline);
+renderPass.setBindGroup(0, bindGroup);
+// Vẽ 6 đỉnh cho mỗi hạt, lặp lại particleCount lần
+renderPass.draw(6, particleCount, 0, 0);
+renderPass.end();
+
+device.queue.submit([commandEncoder.finish()]);</code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="callout callout--deep">
+                  <p><strong>Tài liệu tham khảo chuyên sâu &amp; Trích dẫn Học thuật:</strong></p>
+                  <ul>
+                    <li>
+                      Tối ưu hóa bộ đệm và vẽ Instanced hiệu năng cao:
+                      <a
+                        href="https://developer.apple.com/documentation/metal/gpu_devices/maximizing_gpu_performance"
+                        target="_blank"
+                        rel="noopener"
+                        >Apple Developer - Maximizing GPU Performance</a
+                      >.
+                    </li>
+                    <li>
+                      Đọc thêm về cơ chế Binding và GPU Memory layout trong WebGPU:
+                      <a href="https://www.w3.org/TR/webgpu/#gpu-programming-model" target="_blank" rel="noopener"
+                        >W3C WebGPU - Programming Model</a
+                      >.
+                    </li>
+                  </ul>
+                </div>
+
+                <!-- Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Tại sao việc cập nhật vị trí của 100,000 hạt trên CPU rồi đẩy lên GPU lại gây giảm FPS nghiêm
+                    trọng?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. GPU vẽ cực kỳ nhanh, nút thắt không nằm ở tốc độ xử lý đỉnh của GPU.'
+                        )
+                      "
+                    >
+                      A. Vì GPU không đủ khả năng xử lý vẽ 100,000 hạt cùng lúc.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! CPU gửi lượng dữ liệu lớn qua bus PCIe ở mỗi khung hình tạo ra độ trễ truyền dữ liệu (PCIe Overhead), gây nghẽn băng thông kết nối CPU-GPU.'
+                        )
+                      "
+                    >
+                      B. Vì băng thông PCIe bị quá tải do CPU liên tục gửi mảng dữ liệu tọa độ mới lên GPU ở mỗi khung
+                      hình.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. CPU tính toán 100k phép cộng rất nhanh, vấn đề là ở băng thông truyền dữ liệu.'
+                        )
+                      "
+                    >
+                      C. Vì CPU chạy quá chậm khi tính toán vị trí cộng trừ cho 100,000 hạt.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Trong Vertex Shader của Instanced Rendering, biến `@builtin(instance_index)` có vai trò gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. `@builtin(vertex_index)` mới là ID xác định tọa độ đỉnh của hình mẫu cơ bản.'
+                        )
+                      "
+                    >
+                      A. Xác định ID đỉnh của hình vuông mẫu.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! `@builtin(instance_index)` cung cấp ID độc nhất của đối tượng (hạt) đang được vẽ, giúp ta truy cập Storage Buffer lấy dữ liệu riêng biệt của hạt đó.'
+                        )
+                      "
+                    >
+                      B. Cung cấp chỉ số định danh của hạt đang vẽ để truy cập lấy tọa độ tương ứng trong Storage
+                      Buffer.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. Nó không liên quan đến thứ tự hiển thị pixel.')"
+                    >
+                      C. Xác định thứ tự lớp vẽ của hạt đè lên nhau.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Related Articles -->
+            <div class="article-related">
+              <h2 data-lang-content="en">Related Articles</h2>
+              <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="webgpu-compute-matrix" class="article-related__link article-related__link--prev">
+                  <span data-lang-content="en">Lesson 6: Compute Shader &amp; Threading — Matrix Multiplication</span>
+                  <span data-lang-content="vi">Bài 6: Compute Shader &amp; Threading — Nhân Ma Trận Siêu Tốc Độ</span>
+                </a>
+                <a href="webgpu-fluid-simulation" class="article-related__link article-related__link--next">
+                  <span data-lang-content="en">Lesson 8: SPH Fluid Simulation — Physics and Spatial Hashing</span>
+                  <span data-lang-content="vi">Bài 8: SPH Fluid Simulation — Động Học Chất Lỏng &amp; Phân Vùng</span>
+                </a>
+                <a href="webgpu-programming-series" class="article-related__link">
+                  <span data-lang-content="en">Back to WebGPU Course Overview</span>
+                  <span data-lang-content="vi">Quay lại Lộ trình Series WebGPU</span>
+                </a>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      (async function () {
+        const fallback = document.getElementById('particles-fallback');
+        const canvas = document.getElementById('canvas-particles');
+        const selCount = document.getElementById('sel-particle-count');
+        const rangeGravity = document.getElementById('range-gravity');
+        const rangeWind = document.getElementById('range-wind');
+        const selMouseMode = document.getElementById('sel-mouse-mode');
+        const fpsVal = document.getElementById('fps-val');
+
+        if (!navigator.gpu) {
+          fallback.classList.remove('hidden');
+          canvas.classList.add('hidden');
+          return;
+        }
+
+        try {
+          const adapter = await navigator.gpu.requestAdapter();
+          if (!adapter) {
+            fallback.innerHTML = `<p><strong>Lỗi WebGPU:</strong> Không tìm thấy adapter phù hợp.</p>`;
+            fallback.classList.remove('hidden');
+            canvas.classList.add('hidden');
+            return;
+          }
+          const device = await adapter.requestDevice();
+          const context = canvas.getContext('webgpu');
+
+          const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+          context.configure({
+            device,
+            format: presentationFormat,
+            alphaMode: 'opaque',
+          });
+
+          device.addEventListener('uncaughterror', (event) => {
+            console.error('WebGPU uncaught error:', event.error.message);
+            fallback.innerHTML = `<p><strong>Lỗi WebGPU:</strong> ${event.error.message}</p>`;
+            fallback.classList.remove('hidden');
+            canvas.classList.add('hidden');
+          });
+
+          // Compute Shader
+          const compShaderCode = `
+            struct Particle {
+              pos : vec2<f32>,
+              vel : vec2<f32>,
+              color : vec4<f32>,
+              life : f32,
+            };
+
+            struct Params {
+              gravity : f32,
+              wind : f32,
+              mousePos : vec2<f32>,
+              mouseActive : u32,
+              deltaTime : f32,
+              particleSize : f32,
+              mouseMode : u32, // 0 = attract, 1 = repel
+            };
+
+            @group(0) @binding(0) var<uniform> u : Params;
+            @group(0) @binding(1) var<storage, read_write> particles : array<Particle>;
+
+            // LCG Random Helper
+            fn hash(x : u32) -> f32 {
+              var a = x;
+              a = (a ^ 61u) ^ (a >> 16u);
+              a = a + (a << 3u);
+              a = a ^ (a >> 4u);
+              a = a * 0x27d4eb2du;
+              a = a ^ (a >> 15u);
+              return f32(a) / 4294967296.0;
+            }
+
+            @compute @workgroup_size(64)
+            fn main(@builtin(global_invocation_id) id : vec3<u32>) {
+              let idx = id.x;
+              if (idx >= arrayLength(&particles)) {
+                return;
+              }
+
+              var p = particles[idx];
+              p.life = p.life - u.deltaTime;
+
+              if (p.life <= 0.0) {
+                // Reset particle to random starting point
+                let r1 = hash(idx * 3u);
+                let r2 = hash(idx * 7u);
+                let angle = r1 * 6.28318;
+                let radius = r2 * 0.1;
+                p.pos = vec2<f32>(cos(angle) * radius, sin(angle) * radius);
+                p.life = 0.5 + hash(idx * 11u) * 1.5;
+                p.vel = vec2<f32>(cos(angle) * 0.8, sin(angle) * 0.8);
+              } else {
+                // Apply gravity
+                p.vel.y = p.vel.y - u.gravity * u.deltaTime;
+
+                // Apply central vortex wind
+                let toCenter = -p.pos;
+                let dist = length(toCenter);
+                if (dist > 0.01) {
+                  let dir = toCenter / dist;
+                  let tangent = vec2<f32>(-dir.y, dir.x);
+                  p.vel = p.vel + tangent * u.wind * u.deltaTime;
+                }
+
+                // Apply Mouse force
+                if (u.mouseActive == 1u) {
+                  let toMouse = u.mousePos - p.pos;
+                  let mouseDist = length(toMouse);
+                  if (mouseDist < 0.8 && mouseDist > 0.01) {
+                    let mouseDir = toMouse / mouseDist;
+                    let forceFactor = (0.8 - mouseDist) * u.deltaTime * 6.0;
+                    if (u.mouseMode == 0u) {
+                      p.vel = p.vel + mouseDir * forceFactor;
+                    } else {
+                      p.vel = p.vel - mouseDir * forceFactor * 1.5;
+                    }
+                  }
+                }
+
+                // Apply velocity
+                p.pos = p.pos + p.vel * u.deltaTime;
+
+                // Soft boundary bounce
+                if (abs(p.pos.x) > 1.0) {
+                  p.pos.x = sign(p.pos.x) * 1.0;
+                  p.vel.x = -p.vel.x * 0.5;
+                }
+                if (abs(p.pos.y) > 1.0) {
+                  p.pos.y = sign(p.pos.y) * 1.0;
+                  p.vel.y = -p.vel.y * 0.5;
+                }
+
+                // Friction
+                p.vel = p.vel * 0.985;
+              }
+
+              particles[idx] = p;
+            }
+          `;
+
+          // Render Shader (Vertex & Fragment)
+          const renderShaderCode = `
+            struct Particle {
+              pos : vec2<f32>,
+              vel : vec2<f32>,
+              color : vec4<f32>,
+              life : f32,
+            };
+
+            struct Params {
+              gravity : f32,
+              wind : f32,
+              mousePos : vec2<f32>,
+              mouseActive : u32,
+              deltaTime : f32,
+              particleSize : f32,
+              mouseMode : u32,
+            };
+
+            @group(0) @binding(0) var<uniform> u : Params;
+            @group(0) @binding(1) var<storage, read> particles : array<Particle>;
+
+            struct VertexOutput {
+              @builtin(position) pos : vec4<f32>,
+              @location(0) color : vec4<f32>,
+            };
+
+            @vertex
+            fn vsMain(
+              @builtin(vertex_index) vertexIdx : u32,
+              @builtin(instance_index) instanceIdx : u32
+            ) -> VertexOutput {
+              let p = particles[instanceIdx];
+              
+              // local quad coordinates relative to particle center
+              var quadOffsets = array<vec2<f32>, 6>(
+                vec2<f32>(-1.0, -1.0),
+                vec2<f32>(1.0, -1.0),
+                vec2<f32>(-1.0, 1.0),
+                vec2<f32>(-1.0, 1.0),
+                vec2<f32>(1.0, -1.0),
+                vec2<f32>(1.0, 1.0)
+              );
+
+              let offset = quadOffsets[vertexIdx] * u.particleSize;
+              let finalPos = p.pos + offset;
+
+              var out : VertexOutput;
+              out.pos = vec4<f32>(finalPos, 0.0, 1.0);
+              
+              // Dynamic color based on velocity magnitude and remaining life
+              let speed = length(p.vel);
+              let heatColor = mix(vec3<f32>(0.2, 0.5, 1.0), vec3<f32>(1.0, 0.3, 0.1), min(speed * 0.7, 1.0));
+              out.color = vec4<f32>(heatColor, p.life * 0.8);
+              return out;
+            }
+
+            @fragment
+            fn fsMain(in : VertexOutput) -> @location(0) vec4<f32> {
+              return in.color;
+            }
+          `;
+
+          // Initialize WebGPU pipelines
+          const compMod = device.createShaderModule({ code: compShaderCode });
+          const renderMod = device.createShaderModule({ code: renderShaderCode });
+
+          const computePipeline = device.createComputePipeline({
+            layout: 'auto',
+            compute: { module: compMod, entryPoint: 'main' },
+          });
+
+          const renderPipeline = device.createRenderPipeline({
+            layout: 'auto',
+            vertex: {
+              module: renderMod,
+              entryPoint: 'vsMain',
+            },
+            fragment: {
+              module: renderMod,
+              entryPoint: 'fsMain',
+              targets: [
+                {
+                  format: presentationFormat,
+                  // Add additive blending for beautiful glowing overlay effect
+                  blend: {
+                    color: {
+                      srcFactor: 'src-alpha',
+                      dstFactor: 'one',
+                      operation: 'add',
+                    },
+                    alpha: {
+                      srcFactor: 'zero',
+                      dstFactor: 'one',
+                      operation: 'add',
+                    },
+                  },
+                },
+              ],
+            },
+            primitive: {
+              topology: 'triangle-list',
+            },
+          });
+
+          // Simulation parameters structure
+          // Size: 7 float/uint values * 4 = 28 padded to 32 bytes
+          const paramData = new ArrayBuffer(32);
+          const paramViewF = new Float32Array(paramData);
+          const paramViewU = new Uint32Array(paramData);
+
+          const paramBuf = device.createBuffer({
+            size: 32,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          });
+
+          // Initialize particle array values on GPU
+          let particleCount = parseInt(selCount.value);
+          let particleBuf;
+          let computeBindGroup;
+          let renderBindGroup;
+
+          function initParticles(count) {
+            if (particleBuf) {
+              particleBuf.destroy();
+            }
+
+            particleCount = count;
+            const byteSize = particleCount * 36; // Struct Particle size is 9 * 4 = 36 bytes
+
+            const initData = new Float32Array(particleCount * 9);
+            for (let i = 0; i < particleCount; i++) {
+              const idx = i * 9;
+              const angle = Math.random() * Math.PI * 2;
+              const r = Math.random() * 0.2;
+              initData[idx] = Math.cos(angle) * r; // pos.x
+              initData[idx + 1] = Math.sin(angle) * r; // pos.y
+              initData[idx + 2] = (Math.random() - 0.5) * 0.8; // vel.x
+              initData[idx + 3] = (Math.random() - 0.5) * 0.8; // vel.y
+              initData[idx + 4] = 0.5 + Math.random() * 0.5; // color.r
+              initData[idx + 5] = 0.7; // color.g
+              initData[idx + 6] = 1.0; // color.b
+              initData[idx + 7] = 1.0; // color.a
+              initData[idx + 8] = Math.random() * 2.0; // life
+            }
+
+            particleBuf = device.createBuffer({
+              size: byteSize,
+              usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(particleBuf, 0, initData);
+
+            computeBindGroup = device.createBindGroup({
+              layout: computePipeline.getBindGroupLayout(0),
+              entries: [
+                { binding: 0, resource: { buffer: paramBuf } },
+                { binding: 1, resource: { buffer: particleBuf } },
+              ],
+            });
+
+            renderBindGroup = device.createBindGroup({
+              layout: renderPipeline.getBindGroupLayout(0),
+              entries: [
+                { binding: 0, resource: { buffer: paramBuf } },
+                { binding: 1, resource: { buffer: particleBuf } },
+              ],
+            });
+          }
+
+          initParticles(particleCount);
+
+          selCount.addEventListener('change', () => {
+            initParticles(parseInt(selCount.value));
+          });
+
+          // Mouse tracking helper
+          let mouseX = 0;
+          let mouseY = 0;
+          let mouseActive = 0;
+
+          canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            // Transform window canvas coords [0, 460] to Clip space [-1.0, 1.0]
+            mouseX = (cx / canvas.width) * 2 - 1;
+            mouseY = -((cy / canvas.height) * 2 - 1);
+            mouseActive = 1;
+          });
+
+          canvas.addEventListener('mouseleave', () => {
+            mouseActive = 0;
+          });
+
+          // FPS benchmark helper variables
+          let lastTime = performance.now();
+          let frameCount = 0;
+          let fps = 60;
+
+          // Main rendering cycle loop
+          function frame() {
+            const now = performance.now();
+            const dt = Math.min((now - lastTime) / 1000, 0.05); // Cap delta to prevent teleporting
+            lastTime = now;
+
+            // FPS counter update
+            frameCount++;
+            if (frameCount >= 15) {
+              fps = frameCount / (dt * frameCount);
+              fpsVal.textContent = `${Math.round(1 / dt)} FPS`;
+              frameCount = 0;
+            }
+
+            // Pack parameters into ArrayBuffer
+            // struct Params: gravity, wind, mousePos.x, mousePos.y, mouseActive, deltaTime, particleSize, mouseMode
+            paramViewF[0] = parseFloat(rangeGravity.value);
+            paramViewF[1] = parseFloat(rangeWind.value);
+            paramViewF[2] = mouseX;
+            paramViewF[3] = mouseY;
+            paramViewU[4] = mouseActive;
+            paramViewF[5] = dt;
+            paramViewF[6] = 0.006; // Particle size
+            paramViewU[7] = selMouseMode.value === 'attract' ? 0 : 1;
+
+            device.queue.writeBuffer(paramBuf, 0, paramData);
+
+            const commandEncoder = device.createCommandEncoder();
+
+            // 1. Dispatch Compute Pass
+            const compPass = commandEncoder.beginComputePass();
+            compPass.setPipeline(computePipeline);
+            compPass.setBindGroup(0, computeBindGroup);
+            compPass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+            compPass.end();
+
+            // 2. Draw Render Pass
+            const renderPassDesc = {
+              colorAttachments: [
+                {
+                  view: context.getCurrentTexture().createView(),
+                  clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+                  loadOp: 'clear',
+                  storeOp: 'store',
+                },
+              ],
+            };
+
+            const renderPass = commandEncoder.beginRenderPass(renderPassDesc);
+            renderPass.setPipeline(renderPipeline);
+            renderPass.setBindGroup(0, renderBindGroup);
+            renderPass.draw(6, particleCount, 0, 0); // 6 vertices per quad, particleCount instances
+            renderPass.end();
+
+            device.queue.submit([commandEncoder.finish()]);
+
+            requestAnimationFrame(frame);
+          }
+
+          requestAnimationFrame(frame);
+        } catch (err) {
+          console.error('Lỗi thiết lập WebGPU:', err);
+          fallback.innerHTML = `<p><strong>Lỗi khởi tạo WebGPU:</strong> ${err.message}</p>`;
+          fallback.classList.remove('hidden');
+          canvas.classList.add('hidden');
+        }
+      })();
+    </script>
+  </body>
+</html>

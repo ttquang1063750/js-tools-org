@@ -1,0 +1,1080 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 4: Pipeline State &amp; Depth Testing — Khối Rubik 3D — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu rasterizer state, primitive topology, cơ chế depth testing, z-fighting và kỹ thuật khử răng cưa đa mẫu MSAA trong WebGPU. Demo khối Rubik 3D tương tác."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgpu/webgpu-pipeline-depth" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      .hidden {
+        display: none !important;
+      }
+      .pipeline-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 24px;
+      }
+      .pipeline-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .pipeline-controls h3 {
+        color: #cdd6f4;
+        margin: 0;
+        font-size: 14px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 8px;
+      }
+      .pipeline-controls label {
+        color: #a6adc8;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .pipeline-viewport {
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 380px;
+        position: relative;
+        overflow: hidden;
+      }
+      .pipeline-canvas {
+        width: 100%;
+        height: 100%;
+        max-width: 360px;
+        max-height: 360px;
+        border-radius: 4px;
+      }
+      .pipeline-fallback {
+        color: #f38ba8;
+        padding: 24px;
+        text-align: center;
+        font-size: 14px;
+      }
+      @media (max-width: 880px) {
+        .pipeline-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgpu">
+        <div class="container">
+          <a href="webgpu-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGPU Series</span
+            ><span data-lang-content="vi">Quay lại Lộ trình WebGPU</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgpu">WebGPU &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGPU Lesson 4: Pipeline State &amp; Depth Testing — 3D Rubik's Cube
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 4: Pipeline State &amp; Depth Testing — Khối Rubik 3D
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 30, 2026 · 15 min read</span>
+            <span data-lang-content="vi">30 tháng 6, 2026 · 15 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Content -->
+              <div data-lang-content="en">
+                <p>
+                  Explore primitive topologies, depth stencil configuration, the causes and solutions for z-fighting,
+                  and multisample anti-aliasing (MSAA) setup in WebGPU pipelines.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Trong lập trình đồ họa 3D, việc định hình cách các mảnh đa giác được hiển thị trên màn hình 2D phụ
+                  thuộc chặt chẽ vào <strong>Pipeline State (Trạng thái Pipeline)</strong>. Bài học này sẽ mổ xẻ cơ chế
+                  hoạt động của Rasterizer, giải quyết triệt để lỗi chồng lấn hình ảnh bằng
+                  <strong>Depth Testing (Kiểm thử độ sâu)</strong> và làm mượt các đường viền bằng
+                  <strong>MSAA (Khử răng cưa đa mẫu)</strong>.
+                </p>
+
+                <h2>1. Rasterizer State &amp; Primitive Topology</h2>
+                <p>
+                  Giai đoạn <strong>Rasterizer</strong> trên GPU nhận nhiệm vụ biến các đỉnh toán học của Vertex Shader
+                  thành các mảnh điểm ảnh (Fragments). Có hai thuộc tính cốt lõi điều khiển quá trình này:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Primitive Topology:</strong> Xác định cách GPU liên kết các đỉnh với nhau. Các loại hình cơ
+                    bản bao gồm <code>'triangle-list'</code> (mỗi 3 đỉnh tạo 1 tam giác độc lập),
+                    <code>'triangle-strip'</code> (đỉnh tiếp theo ghép với 2 đỉnh trước), <code>'line-list'</code>, và
+                    <code>'point-list'</code>.
+                  </li>
+                  <li>
+                    <strong>Cull Mode:</strong> Cơ chế loại bỏ các mặt không hướng về phía camera để tối ưu hiệu năng.
+                    Thường dùng <code>'back'</code> (loại bỏ mặt sau) kết hợp với thứ tự đỉnh ngược chiều kim đồng hồ
+                    (Counter-Clockwise) làm mặt trước.
+                  </li>
+                </ul>
+
+                <h2>2. Bộ đệm độ sâu (Depth Buffer / Z-Buffer) &amp; Z-Fighting</h2>
+                <p>
+                  Mặc định, GPU sẽ vẽ các tam giác theo thứ tự lệnh gọi trong mã nguồn. Nếu đối tượng ở xa được vẽ sau
+                  đối tượng ở gần, nó sẽ đè lên đối tượng gần, tạo ra lỗi hiển thị sai lệch nghiêm trọng.
+                </p>
+                <p>
+                  Để xử lý vấn đề này, ta sử dụng <strong>Depth Buffer</strong>. Đây là một kết cấu texture phụ trợ lưu
+                  trữ giá trị độ sâu $Z$ chạy từ $0.0$ (gần camera nhất) đến $1.0$ (xa camera nhất).
+                </p>
+                \[Z_{\text{normalized}} = \frac{f + n}{f - n} + \frac{2fn}{d \cdot (n - f)}\]
+                <p>
+                  Trong đó $n$ là Near plane, $f$ là Far plane, và $d$ là khoảng cách thực tế từ đỉnh đến camera. Trước
+                  khi vẽ một pixel, GPU sẽ so sánh độ sâu hiện tại của nó với giá trị đang lưu trong Z-Buffer. Nếu độ
+                  sâu mới nhỏ hơn (tức là gần camera hơn), pixel đó được vẽ và Z-Buffer được cập nhật.
+                </p>
+
+                <div class="callout callout--warning">
+                  <div class="callout__title">⚠️ Hiện tượng Z-Fighting</div>
+                  <div class="callout__content">
+                    Khi hai đa giác nằm quá gần nhau, do độ chính xác giới hạn của bộ nhớ đệm (ví dụ 24-bit float), GPU
+                    không thể phân biệt đa giác nào nằm trước. Kết quả là hình ảnh bị nhấp nháy, xước vân chéo liên tục.
+                    Để khắc phục, hãy giữ khoảng cách giữa các đa giác hợp lý, hoặc kéo gần tỉ lệ giữa Near plane và Far
+                    plane.
+                  </div>
+                </div>
+
+                <h2>3. Khử răng cưa đa mẫu (MSAA - Multisample Anti-Aliasing)</h2>
+                <p>
+                  Do màn hình cấu tạo từ mạng lưới ô vuông (pixels), các đường viền nghiêng của vật thể 3D sẽ xuất hiện
+                  răng cưa (aliasing). <strong>MSAA</strong> giải quyết vấn đề này bằng cách lấy mẫu tại nhiều điểm phụ
+                  (sub-pixels) bên trong mỗi pixel:
+                </p>
+                <ol>
+                  <li>Ta tạo một render target đa mẫu (ví dụ 4x MSAA texture).</li>
+                  <li>GPU vẽ hình và tính toán màu sắc khử răng cưa trên texture đa mẫu này.</li>
+                  <li>
+                    Tại bước kết thúc render pass, ta thực hiện thao tác <strong>Resolve</strong> để gộp mẫu màu sắc về
+                    texture đơn mẫu (Canvas hiển thị).
+                  </li>
+                </ol>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">msaa-setup.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">// Khai báo pipeline hỗ trợ 4x MSAA
+const pipeline = device.createRenderPipeline({
+  layout: 'auto',
+  multisample: {
+    count: 4, // Bật 4 mẫu cho mỗi pixel
+  },
+  // ...
+});</code></pre>
+                </div>
+
+                <h2>Sân chơi tương tác: Mô phỏng Rubik 3D</h2>
+                <p>
+                  Bên dưới là mô phỏng khối Rubik 3D chuyển động cấu tạo từ 27 khối sub-cubes nhỏ. Hãy thử tương tác
+                  bật/tắt chức năng <strong>Depth Testing</strong> và <strong>MSAA</strong> để trực quan hóa sự khác
+                  biệt vô cùng rõ rệt:
+                </p>
+
+                <!-- Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🎨 Khối Rubik 3D — Pipeline State Demo</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="wgsl">WGSL</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="pipeline-sandbox">
+                      <div class="pipeline-controls">
+                        <h3>Cấu hình Pipeline</h3>
+                        <div class="control-group">
+                          <label>
+                            <input type="checkbox" id="chk-depth" checked />
+                            Bật Depth Testing
+                          </label>
+                        </div>
+                        <div class="control-group">
+                          <label>
+                            <input type="checkbox" id="chk-msaa" checked />
+                            Bật Khử răng cưa (4x MSAA)
+                          </label>
+                        </div>
+                        <div class="control-group">
+                          <label>Tốc độ tự quay</label>
+                          <input type="range" id="slider-rot-speed" min="0" max="3" step="0.1" value="1" />
+                        </div>
+                      </div>
+
+                      <div class="pipeline-viewport">
+                        <canvas id="canvas-rubik" class="pipeline-canvas hidden" width="360" height="360"></canvas>
+                        <div id="rubik-fallback" class="pipeline-fallback">
+                          <p>Trình duyệt chưa hỗ trợ WebGPU. Hãy sử dụng phiên bản Chrome/Edge mới nhất.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="wgsl">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">rubik-shader.wgsl</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-wgsl">struct Uniforms { mvp: mat4x4&lt;f32&gt; };
+@group(0) @binding(0) var&lt;uniform&gt; u: Uniforms;
+
+struct VSIn {
+  @location(0) pos: vec3&lt;f32&gt;,
+  @location(1) normal: vec3&lt;f32&gt;,
+  @location(2) color: vec3&lt;f32&gt;,
+};
+
+struct VSOut {
+  @builtin(position) pos: vec4&lt;f32&gt;,
+  @location(0) color: vec3&lt;f32&gt;,
+};
+
+@vertex
+fn vs(in: VSIn) -&gt; VSOut {
+  var o: VSOut;
+  o.pos = u.mvp * vec4&lt;f32&gt;(in.pos, 1.0);
+  
+  let lightDir = normalize(vec3&lt;f32&gt;(0.5, 1.0, 2.0));
+  let diffuse = max(dot(in.normal, lightDir), 0.0) * 0.4 + 0.6;
+  o.color = in.color * diffuse;
+  return o;
+}
+
+@fragment
+fn fs(in: VSOut) -&gt; @location(0) vec4&lt;f32&gt; {
+  return vec4&lt;f32&gt;(in.color, 1.0);
+}</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">rubik-pipeline.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js">// 1. Khai báo Render Pipeline hỗ trợ Depth Stencil và MSAA
+const pipeline = device.createRenderPipeline({
+  layout: device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+  vertex: {
+    module,
+    entryPoint: 'vs',
+    buffers: [{
+      arrayStride: 36,
+      attributes: [
+        { format: 'float32x3', offset: 0, shaderLocation: 0 },
+        { format: 'float32x3', offset: 12, shaderLocation: 1 },
+        { format: 'float32x3', offset: 24, shaderLocation: 2 },
+      ]
+    }]
+  },
+  fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+  primitive: { topology: 'triangle-list', cullMode: 'none' },
+  // Cấu hình kiểm thử chiều sâu Depth Stencil
+  depthStencil: useDepth ? {
+    format: 'depth24plus',
+    depthWriteEnabled: true,
+    depthCompare: 'less',
+  } : undefined,
+  // Cấu hình khử răng cưa đa mẫu (MSAA 4x)
+  multisample: { count: 4 }
+});</code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">Câu 1: Hiện tượng Z-fighting xảy ra khi nào?</p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(this, false, 'Sai. Culling liên quan đến việc hướng mặt đa giác ra xa camera.')
+                      "
+                    >
+                      A. Mặt trước và mặt sau của mô hình 3D bị culling sai cách.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Khi các bề mặt quá sát nhau, độ chính xác số học của Z-Buffer không đủ phân biệt khoảng cách, dẫn đến hiện tượng tranh chấp hiển thị tạo vệt nhấp nháy.'
+                        )
+                      "
+                    >
+                      B. Hai bề mặt đa giác nằm quá sát nhau khiến GPU không đủ độ chính xác phân biệt giá trị trong
+                      Depth Buffer.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. MSAA dùng để giải quyết răng cưa cạnh biên, không liên quan đến Z-fighting.'
+                        )
+                      "
+                    >
+                      C. Khi bạn tắt hoàn toàn tính năng khử răng cưa MSAA.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Thao tác "Resolve" trong cấu hình Render Pipeline đa mẫu MSAA thực hiện nhiệm vụ gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. Z-Buffer không tham gia vào bước gộp mẫu màu sắc.')"
+                    >
+                      A. Xóa bộ đệm Z-Buffer về giá trị mặc định ban đầu là 1.0.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Resolve gộp 4 mẫu màu sắc trung gian trong multisampled texture thành 1 pixel màu duy nhất để kết xuất và hiển thị lên màn hình canvas.'
+                        )
+                      "
+                    >
+                      B. Gộp (Downsample) nhiều mẫu màu sắc từ texture đa mẫu về texture đơn mẫu của canvas hiển thị.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. Quá trình biên dịch shader diễn ra trước khi dựng hình.')"
+                    >
+                      C. Biên dịch mã nguồn shader từ WGSL thành mã máy nhị phân.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <!-- References/Citations Block -->
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Tài liệu tham khảo học thuật (Academic References)</div>
+                  <div class="callout__content">
+                    Để tìm hiểu kỹ hơn về toán học Z-Buffer và các cấu hình pipeline nâng cao:
+                    <ul>
+                      <li>
+                        <strong>W3C WebGPU specification - Depth/Stencil State:</strong>
+                        <a href="https://www.w3.org/TR/webgpu/#depth-stencil-state" target="_blank" rel="noopener"
+                          >w3.org/TR/webgpu/#depth-stencil-state</a
+                        >
+                        - Đặc tả cấu hình bộ đệm.
+                      </li>
+                      <li>
+                        <strong>Scratchapixel - The Depth Buffer:</strong>
+                        <a
+                          href="https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/perspective-correct-interpolation-vertex-attributes"
+                          target="_blank"
+                          rel="noopener"
+                          >scratchapixel.com</a
+                        >
+                        - Phân tích chi tiết về phép toán nội suy độ sâu chính xác phối cảnh.
+                      </li>
+                      <li>
+                        <strong>MSAA rendering patterns in WebGPU:</strong>
+                        <a
+                          href="https://webgpu.github.io/webgpu-samples/?sample=multisampling"
+                          target="_blank"
+                          rel="noopener"
+                          >webgpu.github.io/samples</a
+                        >
+                        - Các mã mẫu về kết cấu đa mẫu trong WebGPU.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2 data-lang-content="en">Related Articles</h2>
+                <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="webgpu-buffers-bindgroup" class="article-related__link article-related__link--prev">
+                    <span data-lang-content="en">Lesson 3: Uniform &amp; Storage Buffers — Struct Alignment</span>
+                    <span data-lang-content="vi">Bài 3: Uniform &amp; Storage Buffers — Quy Tắc Căn Chỉnh Dữ Liệu</span>
+                  </a>
+                  <a href="webgpu-lighting-shadow" class="article-related__link article-related__link--next">
+                    <span data-lang-content="en">Lesson 5: Phong Lighting &amp; Shadow Maps — Real-time Shadows</span>
+                    <span data-lang-content="vi"
+                      >Bài 5: Phong Lighting &amp; Shadow Maps — Bóng Đổ Động Thời Gian Thực</span
+                    >
+                  </a>
+                  <a href="webgpu-programming-series" class="article-related__link">
+                    <span data-lang-content="en">Back to WebGPU Course Overview</span>
+                    <span data-lang-content="vi">Quay lại Lộ trình Series WebGPU</span>
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      // 3D Rubik's Cube WebGPU Sandbox
+      (function () {
+        const canvas = document.getElementById('canvas-rubik');
+        const fallback = document.getElementById('rubik-fallback');
+        const chkDepth = document.getElementById('chk-depth');
+        const chkMsaa = document.getElementById('chk-msaa');
+        const sliderSpeed = document.getElementById('slider-rot-speed');
+
+        if (!navigator.gpu) return;
+
+        // Simplified 3D Subcube data generator
+        // Each cube has 36 vertices (6 faces * 2 triangles * 3 vertices)
+        // Format: px, py, pz, nx, ny, nz, r, g, b
+        // Size: 36 * 9 floats = 324 floats = 1296 bytes per subcube
+        const subcubeVertices = [];
+
+        // Helper to add a quad face
+        function face(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3, nx, ny, nz, r, g, b) {
+          // Tri 1: 0, 1, 2
+          subcubeVertices.push(x0, y0, z0, nx, ny, nz, r, g, b);
+          subcubeVertices.push(x1, y1, z1, nx, ny, nz, r, g, b);
+          subcubeVertices.push(x2, y2, z2, nx, ny, nz, r, g, b);
+          // Tri 2: 0, 2, 3
+          subcubeVertices.push(x0, y0, z0, nx, ny, nz, r, g, b);
+          subcubeVertices.push(x2, y2, z2, nx, ny, nz, r, g, b);
+          subcubeVertices.push(x3, y3, z3, nx, ny, nz, r, g, b);
+        }
+
+        function createCube(cx, cy, cz, size) {
+          const s = size / 2;
+          const xmin = cx - s,
+            xmax = cx + s;
+          const ymin = cy - s,
+            ymax = cy + s;
+          const zmin = cz - s,
+            zmax = cz + s;
+
+          // Rubik colors: White, Yellow, Orange, Red, Green, Blue
+          // We assign different colors to different faces
+          const cF = [1, 1, 1]; // Front: White
+          const cB = [1, 1, 0]; // Back: Yellow
+          const cL = [1, 0.5, 0]; // Left: Orange
+          const cR = [1, 0, 0]; // Right: Red
+          const cU = [0, 1, 0]; // Top: Green
+          const cD = [0, 0, 1]; // Bottom: Blue
+
+          // Front face
+          face(xmin, ymin, zmax, xmax, ymin, zmax, xmax, ymax, zmax, xmin, ymax, zmax, 0, 0, 1, ...cF);
+          // Back face
+          face(xmax, ymin, zmin, xmin, ymin, zmin, xmin, ymax, zmin, xmax, ymax, zmin, 0, 0, -1, ...cB);
+          // Left face
+          face(xmin, ymin, zmin, xmin, ymin, zmax, xmin, ymax, zmax, xmin, ymax, zmin, -1, 0, 0, ...cL);
+          // Right face
+          face(xmax, ymin, zmax, xmax, ymin, zmin, xmax, ymax, zmin, xmax, ymax, zmax, 1, 0, 0, ...cR);
+          // Top face
+          face(xmin, ymax, zmax, xmax, ymax, zmax, xmax, ymax, zmin, xmin, ymax, zmin, 0, 1, 0, ...cU);
+          // Bottom face
+          face(xmin, ymin, zmin, xmax, ymin, zmin, xmax, ymin, zmax, xmin, ymin, zmax, 0, -1, 0, ...cD);
+        }
+
+        // Generate Rubik 3x3 grid = 27 subcubes
+        const spacing = 1.05;
+        const subSize = 0.95;
+        for (let x = -1; x <= 1; x++) {
+          for (let y = -1; y <= 1; y++) {
+            for (let z = -1; z <= 1; z++) {
+              createCube(x * spacing, y * spacing, z * spacing, subSize);
+            }
+          }
+        }
+
+        const rubikVerts = new Float32Array(subcubeVertices);
+
+        // Matrix Math Helpers (column-major)
+        function mat4Identity(out) {
+          out.fill(0);
+          out[0] = 1;
+          out[5] = 1;
+          out[10] = 1;
+          out[15] = 1;
+        }
+        function mat4RotX(out, rad) {
+          mat4Identity(out);
+          const s = Math.sin(rad),
+            c = Math.cos(rad);
+          out[5] = c;
+          out[6] = s;
+          out[9] = -s;
+          out[10] = c;
+        }
+        function mat4RotY(out, rad) {
+          mat4Identity(out);
+          const s = Math.sin(rad),
+            c = Math.cos(rad);
+          out[0] = c;
+          out[2] = -s;
+          out[8] = s;
+          out[10] = c;
+        }
+        function mat4RotZ(out, rad) {
+          mat4Identity(out);
+          const s = Math.sin(rad),
+            c = Math.cos(rad);
+          out[0] = c;
+          out[1] = s;
+          out[4] = -s;
+          out[5] = c;
+        }
+        function mat4Mul(out, a, b) {
+          const temp = new Float32Array(16);
+          for (let c = 0; c < 4; ++c) {
+            for (let r = 0; r < 4; ++r) {
+              temp[c * 4 + r] =
+                a[0 * 4 + r] * b[c * 4 + 0] +
+                a[1 * 4 + r] * b[c * 4 + 1] +
+                a[2 * 4 + r] * b[c * 4 + 2] +
+                a[3 * 4 + r] * b[c * 4 + 3];
+            }
+          }
+          out.set(temp);
+        }
+        function mat4Persp(out, fov, aspect, near, far) {
+          const f = 1 / Math.tan(fov / 2),
+            nf = 1 / (near - far);
+          out.fill(0);
+          out[0] = f / aspect;
+          out[5] = f;
+          out[10] = (far + near) * nf;
+          out[11] = -1;
+          out[14] = 2 * far * near * nf;
+        }
+
+        const shaderCode = `
+          struct Uniforms { mvp: mat4x4<f32> };
+          @group(0) @binding(0) var<uniform> u: Uniforms;
+
+          struct VSIn {
+            @location(0) pos: vec3<f32>,
+            @location(1) normal: vec3<f32>,
+            @location(2) color: vec3<f32>,
+          };
+
+          struct VSOut {
+            @builtin(position) pos: vec4<f32>,
+            @location(0) color: vec3<f32>,
+          };
+
+          @vertex
+          fn vs(in: VSIn) -> VSOut {
+            var o: VSOut;
+            o.pos = u.mvp * vec4<f32>(in.pos, 1.0);
+            
+            // Simple lighting calculation based on normals
+            let lightDir = normalize(vec3<f32>(0.5, 1.0, 2.0));
+            let diffuse = max(dot(in.normal, lightDir), 0.0) * 0.4 + 0.6;
+            o.color = in.color * diffuse;
+
+            return o;
+          }
+
+          @fragment
+          fn fs(in: VSOut) -> @location(0) vec4<f32> {
+            return vec4<f32>(in.color, 1.0);
+          }
+        `;
+
+        (async function () {
+          try {
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+              fallback.innerHTML = '<p>Không tìm thấy GPU Adapter vật lý.</p>';
+              return;
+            }
+            const device = await adapter.requestDevice();
+            const ctx = canvas.getContext('webgpu');
+            const format = navigator.gpu.getPreferredCanvasFormat();
+
+            canvas.classList.remove('hidden');
+            fallback.classList.add('hidden');
+
+            const vertBuf = device.createBuffer({
+              size: rubikVerts.byteLength,
+              usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(vertBuf, 0, rubikVerts);
+
+            const uniformBuf = device.createBuffer({
+              size: 64,
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            const module = device.createShaderModule({ code: shaderCode });
+
+            // Set up configurations that toggle dynamically
+            let currentMsaa = chkMsaa.checked;
+            let currentDepth = chkDepth.checked;
+
+            let pipelineMSAA_Depth, pipelineMSAA_NoDepth;
+            let pipelineNoMSAA_Depth, pipelineNoMSAA_NoDepth;
+
+            // Helper to build a pipeline
+            function buildPipeline(sampleCount, useDepth) {
+              const bgl = device.createBindGroupLayout({
+                entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }],
+              });
+
+              const depthStencilDesc = useDepth
+                ? {
+                    format: 'depth24plus',
+                    depthWriteEnabled: true,
+                    depthCompare: 'less',
+                  }
+                : undefined;
+
+              return device.createRenderPipeline({
+                layout: device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+                vertex: {
+                  module,
+                  entryPoint: 'vs',
+                  buffers: [
+                    {
+                      arrayStride: 36, // 9 floats * 4 bytes
+                      attributes: [
+                        { format: 'float32x3', offset: 0, shaderLocation: 0 }, // position
+                        { format: 'float32x3', offset: 12, shaderLocation: 1 }, // normal
+                        { format: 'float32x3', offset: 24, shaderLocation: 2 }, // color
+                      ],
+                    },
+                  ],
+                },
+                fragment: {
+                  module,
+                  entryPoint: 'fs',
+                  targets: [{ format }],
+                },
+                primitive: { topology: 'triangle-list', cullMode: 'back' },
+                depthStencil: depthStencilDesc,
+                multisample: { count: sampleCount },
+              });
+            }
+
+            // Build all permutations for live toggling
+            pipelineMSAA_Depth = buildPipeline(4, true);
+            pipelineMSAA_NoDepth = buildPipeline(4, false);
+            pipelineNoMSAA_Depth = buildPipeline(1, true);
+            pipelineNoMSAA_NoDepth = buildPipeline(1, false);
+
+            const bgLayout = pipelineMSAA_Depth.getBindGroupLayout(0);
+            const bg = device.createBindGroup({
+              layout: bgLayout,
+              entries: [{ binding: 0, resource: { buffer: uniformBuf } }],
+            });
+
+            // Target Textures for MSAA and Depth Stencil
+            let msaaTexture = null;
+            let depthTexture = null;
+
+            function configureTextures() {
+              const dpr = window.devicePixelRatio || 1;
+              const w = Math.round(360 * dpr);
+              const h = Math.round(360 * dpr);
+              canvas.width = w;
+              canvas.height = h;
+              ctx.configure({ device, format, alphaMode: 'opaque' });
+
+              if (msaaTexture) msaaTexture.destroy();
+              if (depthTexture) depthTexture.destroy();
+
+              msaaTexture = device.createTexture({
+                size: [w, h],
+                sampleCount: 4,
+                format: format,
+                usage: GPUTextureUsage.RENDER_ATTACHMENT,
+              });
+
+              depthTexture = device.createTexture({
+                size: [w, h],
+                sampleCount: currentMsaa ? 4 : 1,
+                format: 'depth24plus',
+                usage: GPUTextureUsage.RENDER_ATTACHMENT,
+              });
+            }
+
+            configureTextures();
+
+            // Handle DPI changes and canvas resize
+            window.addEventListener('resize', () => {
+              configureTextures();
+            });
+
+            // Model variables
+            const proj = new Float32Array(16);
+            const view = new Float32Array(16);
+            const model = new Float32Array(16);
+            const temp = new Float32Array(16);
+            const mvp = new Float32Array(16);
+
+            const rotX = new Float32Array(16);
+            const rotY = new Float32Array(16);
+            const rotZ = new Float32Array(16);
+
+            mat4Persp(proj, Math.PI / 4, 1, 0.1, 100);
+            mat4Identity(view);
+            // Move camera back to see the entire Rubik cube
+            view[14] = -7.5;
+
+            let lastTime = performance.now();
+            let angle = 0;
+
+            function frame(t) {
+              const dt = t - lastTime;
+              lastTime = t;
+
+              // Check toggles
+              if (currentMsaa !== chkMsaa.checked || currentDepth !== chkDepth.checked) {
+                currentMsaa = chkMsaa.checked;
+                currentDepth = chkDepth.checked;
+                configureTextures();
+              }
+
+              // Update rotations
+              const speed = parseFloat(sliderSpeed.value);
+              angle += speed * 0.0005 * dt;
+
+              mat4RotX(rotX, angle * 0.7);
+              mat4RotY(rotY, angle);
+              mat4RotZ(rotZ, angle * 0.3);
+
+              mat4Mul(temp, rotX, rotY);
+              mat4Mul(model, temp, rotZ);
+
+              mat4Mul(temp, proj, view);
+              mat4Mul(mvp, temp, model);
+
+              device.queue.writeBuffer(uniformBuf, 0, mvp);
+
+              const colorView = ctx.getCurrentTexture().createView();
+              const msaaView = msaaTexture.createView();
+              const depthView = depthTexture.createView();
+
+              const enc = device.createCommandEncoder();
+
+              // Setup attachments depending on MSAA
+              const colorAttachmentDesc = currentMsaa
+                ? {
+                    view: msaaView,
+                    resolveTarget: colorView,
+                    clearValue: { r: 0.05, g: 0.05, b: 0.1, a: 1.0 },
+                    loadOp: 'clear',
+                    storeOp: 'store',
+                  }
+                : {
+                    view: colorView,
+                    clearValue: { r: 0.05, g: 0.05, b: 0.1, a: 1.0 },
+                    loadOp: 'clear',
+                    storeOp: 'store',
+                  };
+
+              const depthAttachmentDesc = currentDepth
+                ? {
+                    view: depthView,
+                    depthClearValue: 1.0,
+                    depthLoadOp: 'clear',
+                    depthStoreOp: 'store',
+                  }
+                : undefined;
+
+              const pass = enc.beginRenderPass({
+                colorAttachments: [colorAttachmentDesc],
+                depthStencilAttachment: depthAttachmentDesc,
+              });
+
+              // Select active pipeline permutation
+              let activePipeline;
+              if (currentMsaa) {
+                activePipeline = currentDepth ? pipelineMSAA_Depth : pipelineMSAA_NoDepth;
+              } else {
+                activePipeline = currentDepth ? pipelineNoMSAA_Depth : pipelineNoMSAA_NoDepth;
+              }
+
+              pass.setPipeline(activePipeline);
+              pass.setBindGroup(0, bg);
+              pass.setVertexBuffer(0, vertBuf);
+              pass.draw(36 * 27); // Draw all 27 subcubes
+              pass.end();
+
+              device.queue.submit([enc.finish()]);
+              requestAnimationFrame(frame);
+            }
+            requestAnimationFrame(frame);
+          } catch (e) {
+            console.error('WebGPU setup failed:', e);
+            canvas.classList.add('hidden');
+            fallback.classList.remove('hidden');
+            fallback.innerHTML = `<p><strong>Lỗi khởi tạo WebGPU:</strong> ${e.message || e}</p>`;
+          }
+        })();
+      })();
+    </script>
+  </body>
+</html>

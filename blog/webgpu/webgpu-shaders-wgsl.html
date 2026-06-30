@@ -1,0 +1,1016 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 2: Lập Trình Shaders Với WGSL — Biến Đổi Màu Sắc Dynamic — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu sâu cú pháp WGSL, luồng truyền dữ liệu vertex-fragment, built-ins, cơ chế nội suy màu và cách lập trình shader gradient động theo thời gian."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgpu/webgpu-shaders-wgsl" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      /* WGSL Editor Sandbox Styles */
+      .shader-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+      }
+      .editor-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .shader-textarea {
+        width: 100%;
+        height: 300px;
+        background: #0f0f1b;
+        color: #a6e3a1;
+        font-family: Consolas, 'Liberation Mono', Menlo, monospace;
+        font-size: 13px;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        resize: vertical;
+        line-height: 1.5;
+        outline: none;
+      }
+      .shader-textarea:focus {
+        border-color: #6366f1;
+      }
+      .editor-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .btn-compile {
+        background: #6366f1;
+        color: #fff;
+        border: none;
+        padding: 10px 20px;
+        font-weight: bold;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: background 0.2s;
+      }
+      .btn-compile:hover {
+        background: #4f46e5;
+      }
+      .compiler-log {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 12px;
+        font-family: monospace;
+        font-size: 12px;
+        min-height: 48px;
+        max-height: 120px;
+        overflow-y: auto;
+        color: #a6adc8;
+      }
+      .compiler-log.success {
+        border-color: rgba(166, 227, 161, 0.4);
+        color: #a6e3a1;
+      }
+      .compiler-log.error {
+        border-color: rgba(243, 139, 168, 0.4);
+        color: #f38ba8;
+      }
+      .viewport-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .viewport-stage {
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        flex: 1;
+        min-height: 320px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        overflow: hidden;
+      }
+      .shader-canvas {
+        width: 100%;
+        height: 100%;
+        max-width: 320px;
+        max-height: 320px;
+        border-radius: 4px;
+      }
+      .fallback-stage {
+        color: #f38ba8;
+        padding: 24px;
+        text-align: center;
+        font-size: 14px;
+      }
+      .control-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 13px;
+      }
+      .control-row label {
+        color: #a6adc8;
+        flex-shrink: 0;
+      }
+      .control-row input[type='range'] {
+        flex: 1;
+      }
+      .hidden {
+        display: none !important;
+      }
+      @media (max-width: 880px) {
+        .shader-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgpu">
+        <div class="container">
+          <a href="webgpu-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGPU Series</span
+            ><span data-lang-content="vi">Quay lại Lộ trình WebGPU</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgpu">WebGPU &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGPU Lesson 2: WGSL Shader Programming &amp; Dynamic Time-Based Gradients
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 2: Lập trình Shaders với WGSL — Biến Đổi Màu Sắc Dynamic
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 29, 2026 · 14 min read</span>
+            <span data-lang-content="vi">29 tháng 6, 2026 · 14 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Content -->
+              <div data-lang-content="en">
+                <p>
+                  Understand WGSL syntax, struct alignment, Vertex-to-Fragment shader location bindings, system
+                  builtins, and how to use Uniform Buffers to animate colors dynamically over time.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Ở bài học trước, chúng ta đã cấu hình thành công Logical Device và vẽ một hình tam giác thô. Tuy
+                  nhiên, mã nguồn Shader WGSL vẫn còn rất sơ sài. Bài học này sẽ giúp bạn hiểu sâu về ngôn ngữ
+                  <strong>WGSL (WebGPU Shading Language)</strong> và cách truyền dữ liệu động để tạo ra các hiệu ứng
+                  biến đổi màu sắc chuyển động mượt mà (Dynamic Gradients).
+                </p>
+
+                <h2>1. Khái quát về cú pháp WGSL &amp; Kiểu dữ liệu cơ bản</h2>
+                <p>
+                  WGSL là ngôn ngữ lập trình shader chính thức của WebGPU. Cú pháp của WGSL có nhiều nét tương đồng với
+                  Rust và TypeScript, chú trọng tính an toàn kiểu dữ liệu chặt chẽ (strictly typed). Các kiểu dữ liệu cơ
+                  bản bao gồm:
+                </p>
+                <ul>
+                  <li>
+                    Kiểu vô hướng: <code>f32</code> (số thực 32-bit), <code>i32</code> (số nguyên), <code>u32</code> (số
+                    nguyên không dấu).
+                  </li>
+                  <li>
+                    Vector: <code>vec2&lt;f32&gt;</code>, <code>vec3&lt;f32&gt;</code>,
+                    <code>vec4&lt;f32&gt;</code> (hoặc viết tắt là <code>vec2f</code>, <code>vec3f</code>,
+                    <code>vec4f</code> trong WebGPU mới).
+                  </li>
+                  <li>
+                    Ma trận: <code>mat2x2&lt;f32&gt;</code>, <code>mat4x4&lt;f32&gt;</code> (dành cho biến đổi 3D).
+                  </li>
+                </ul>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">types.wgsl</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-wgsl">// Số nguyên &amp; thực
+var&lt;private&gt; a: i32 = 42;
+var&lt;private&gt; b: u32 = 7u;
+var&lt;private&gt; c: f32 = 3.14;
+
+// Vector — nhóm 2/3/4 số thành một đơn vị
+var&lt;private&gt; pos: vec2&lt;f32&gt; = vec2&lt;f32&gt;(0.5, -0.3);
+var&lt;private&gt; color: vec4&lt;f32&gt; = vec4&lt;f32&gt;(1.0, 0.0, 0.0, 1.0); // RGBA đỏ
+
+// Ma trận 2×2 đơn vị (identity)
+var&lt;private&gt; identity: mat2x2&lt;f32&gt; = mat2x2&lt;f32&gt;(
+  1.0, 0.0,
+  0.0, 1.0
+);</code></pre>
+                </div>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">💡 Mẹo: Viết tắt kiểu vector trong WGSL mới</div>
+                  <div class="callout__content">
+                    Từ phiên bản WGSL gần đây, bạn có thể viết <code>vec2f</code> thay cho <code>vec2&lt;f32&gt;</code>,
+                    <code>vec4u</code> thay cho <code>vec4&lt;u32&gt;</code>. Tuy nhiên dạng đầy đủ vẫn phổ biến hơn
+                    trong tài liệu và ví dụ hiện tại.
+                  </div>
+                </div>
+
+                <h2>2. Luồng truyền dữ liệu: Vertex Shader sang Fragment Shader</h2>
+                <p>
+                  Mọi pipeline dựng hình luôn bắt đầu ở <strong>Vertex Shader</strong> (tính tọa độ các đỉnh) và kết
+                  thúc ở <strong>Fragment Shader</strong> (tô màu cho từng điểm ảnh). Để chuyển dữ liệu từ đỉnh sang
+                  pixel, ta sử dụng cấu trúc location bindings:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">bindings.wgsl</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-wgsl">struct VertexOutput {
+  @builtin(position) pos: vec4&lt;f32&gt;,
+  @location(0) color: vec4&lt;f32&gt;, // Truyền sang Fragment ở location 0
+  @location(1) uv: vec2&lt;f32&gt;,    // Truyền tọa độ UV ở location 1
+};</code></pre>
+                </div>
+
+                <h2>3. Cơ chế Nội suy Đồ họa (Rasterization &amp; Interpolation)</h2>
+                <p>
+                  Khi dữ liệu đi từ Vertex Shader ra ngoài, GPU sẽ thực hiện bước <strong>Rasterization</strong> (Số hóa
+                  lưới). Trong bước này, các thuộc tính đỉnh (như màu sắc, UV) sẽ được
+                  <strong>nội suy tuyến tính (Linear Interpolation)</strong> qua bề mặt tam giác.
+                </p>
+                <p>
+                  Ví dụ: Nếu đỉnh $A$ có màu đỏ ($1.0, 0.0, 0.0$) và đỉnh $B$ có màu xanh dương ($0.0, 0.0, 1.0$), điểm
+                  ảnh nằm chính giữa cạnh $AB$ sẽ được GPU tự động tính toán nội suy ra màu tím ($0.5, 0.0, 0.5$).
+                </p>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">interpolation.wgsl</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-wgsl">@vertex
+fn vs_main(@builtin(vertex_index) idx: u32) -&gt; VertexOutput {
+  // Gán màu khác nhau cho 3 đỉnh tam giác
+  var colors = array&lt;vec4&lt;f32&gt;, 3&gt;(
+    vec4&lt;f32&gt;(1.0, 0.0, 0.0, 1.0), // đỉnh 0: đỏ
+    vec4&lt;f32&gt;(0.0, 1.0, 0.0, 1.0), // đỉnh 1: xanh lá
+    vec4&lt;f32&gt;(0.0, 0.0, 1.0, 1.0), // đỉnh 2: xanh dương
+  );
+  var out: VertexOutput;
+  out.pos = vec4&lt;f32&gt;(positions[idx], 0.0, 1.0);
+  out.color = colors[idx]; // GPU tự nội suy giữa các đỉnh
+  return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -&gt; @location(0) vec4&lt;f32&gt; {
+  return in.color; // mỗi pixel nhận màu nội suy tuyến tính
+}</code></pre>
+                </div>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Lưu ý: Nội suy phối cảnh (Perspective-Correct Interpolation)</div>
+                  <div class="callout__content">
+                    Mặc định GPU thực hiện nội suy <strong>hiệu chỉnh phối cảnh</strong> — không phải chia đều khoảng
+                    cách trên màn hình mà tính theo chiều sâu thật trong không gian 3D. Nếu muốn nội suy phẳng (không
+                    hiệu chỉnh), dùng chỉ thị <code>@interpolate(linear, center)</code> hoặc
+                    <code>@interpolate(flat)</code> để tắt nội suy hoàn toàn (mọi pixel dùng giá trị của đỉnh đầu tiên).
+                  </div>
+                </div>
+
+                <h2>4. Cập nhật Gradient động theo thời gian qua Uniform Buffer</h2>
+                <p>
+                  Để tạo ra hoạt ảnh chuyển động, ta cần gửi một biến thời gian trôi qua (elapsed time) từ JavaScript
+                  lên Fragment Shader mỗi frame. Ta thiết lập một Uniform Buffer nhỏ 4-bytes chứa 1 số thực đơn lẻ:
+                </p>
+
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">renderer.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">// 1. Khởi tạo Uniform Buffer (dung lượng 4 bytes cho 1 float32)
+const timeBuffer = device.createBuffer({
+  size: 4,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+});
+
+// 2. Ghi và gửi dữ liệu mỗi khung hình
+function render(currentTime) {
+  const timeSeconds = currentTime / 1000.0;
+  device.queue.writeBuffer(timeBuffer, 0, new Float32Array([timeSeconds]));
+  
+  // Thực hiện draw calls...
+  requestAnimationFrame(render);
+}</code></pre>
+                </div>
+
+                <h2>Sân chơi tương tác: WGSL Shader Live Editor</h2>
+                <p>
+                  Chào mừng bạn đến với trình soạn thảo Shader thời gian thực. Phía dưới là mã nguồn của Fragment Shader
+                  nhận dữ liệu tọa độ UV đã nội suy (<code>@location(0) uv</code>) và thời gian trôi qua
+                  (<code>u_time.time</code>). Hãy thay đổi công thức toán học tính màu sắc trực tiếp trong trình soạn
+                  thảo bên dưới và bấm <strong>Biên dịch</strong> để cập nhật tức thì:
+                </p>
+
+                <!-- WGSL Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🎨 WGSL Shader Live Editor</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="wgsl">Vertex Shader</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="shader-sandbox">
+                      <!-- Editor Panel -->
+                      <div class="editor-panel">
+                        <h3>Trình soạn Fragment Shader WGSL</h3>
+                        <textarea id="wgsl-editor" class="shader-textarea" spellcheck="false">
+struct TimeUniform {
+  time: f32,
+};
+@group(0) @binding(0) var<uniform> u_time: TimeUniform;
+
+@fragment
+fn fs_main(
+  @location(0) uv: vec2<f32>
+) -> @location(0) vec4<f32> {
+  // Tạo hiệu ứng sóng gradient tuyệt đẹp
+  let r = 0.5 + 0.5 * sin(uv.x * 4.0 + u_time.time);
+  let g = 0.5 + 0.5 * cos(uv.y * 3.0 - u_time.time * 1.5);
+  let b = 0.5 + 0.5 * sin(uv.x * 2.0 + uv.y * 2.0 + u_time.time * 2.0);
+
+  return vec4<f32>(r, g, b, 1.0);
+}</textarea
+                        >
+                        <div class="editor-actions">
+                          <div class="control-row">
+                            <label for="slider-speed">Tốc độ:</label>
+                            <input type="range" id="slider-speed" min="0" max="4" step="0.1" value="1" />
+                          </div>
+                          <button id="btn-run-shader" class="btn-compile" type="button">▶ Biên dịch</button>
+                        </div>
+                        <div id="compile-log" class="compiler-log success">Shader đã biên dịch thành công.</div>
+                      </div>
+
+                      <!-- Viewport Panel -->
+                      <div class="viewport-panel">
+                        <h3>Kết quả Render (WebGPU Preview)</h3>
+                        <div class="viewport-stage">
+                          <canvas id="canvas-shader" class="shader-canvas hidden"></canvas>
+                          <div id="shader-fallback" class="fallback-stage">
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="48"
+                              height="48"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                              <line x1="12" y1="9" x2="12" y2="13" />
+                              <line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                            <p>Trình duyệt của bạn chưa hỗ trợ WebGPU để kích hoạt Live Shader Preview.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="wgsl">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">vertex-shader.wgsl</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-wgsl">struct VertexOutput {
+  @builtin(position) pos: vec4&lt;f32&gt;,
+  @location(0) uv: vec2&lt;f32&gt;,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) idx: u32) -&gt; VertexOutput {
+  // Screen-space Quad: 2 tam giác phủ toàn màn hình
+  var pos = array&lt;vec2&lt;f32&gt;, 6&gt;(
+    vec2&lt;f32&gt;(-1.0, -1.0), vec2&lt;f32&gt;(1.0, -1.0), vec2&lt;f32&gt;(-1.0, 1.0),
+    vec2&lt;f32&gt;(-1.0,  1.0), vec2&lt;f32&gt;(1.0, -1.0), vec2&lt;f32&gt;( 1.0, 1.0)
+  );
+  var uv = array&lt;vec2&lt;f32&gt;, 6&gt;(
+    vec2&lt;f32&gt;(0.0, 0.0), vec2&lt;f32&gt;(1.0, 0.0), vec2&lt;f32&gt;(0.0, 1.0),
+    vec2&lt;f32&gt;(0.0, 1.0), vec2&lt;f32&gt;(1.0, 0.0), vec2&lt;f32&gt;(1.0, 1.0)
+  );
+
+  var out: VertexOutput;
+  out.pos = vec4&lt;f32&gt;(pos[idx], 0.0, 1.0);
+  out.uv = uv[idx];  // tọa độ UV nội suy sang fragment
+  return out;
+}</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">shader-setup.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js">// 1. Khởi tạo WebGPU
+const adapter = await navigator.gpu.requestAdapter();
+const device = await adapter.requestDevice();
+const ctx = canvas.getContext('webgpu');
+const format = navigator.gpu.getPreferredCanvasFormat();
+ctx.configure({ device, format, alphaMode: 'premultiplied' });
+
+// 2. Uniform Buffer cho biến thời gian (4 bytes = 1 float32)
+const timeBuffer = device.createBuffer({
+  size: 16, // bội 16 (alignment rule!)
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+// 3. Biên dịch shader từ textarea editor
+const vsModule = device.createShaderModule({ code: vertexShaderSource });
+const fsModule = device.createShaderModule({ code: editor.value });
+
+// 4. Render loop: ghi thời gian vào buffer mỗi frame
+function render() {
+  const elapsed = (performance.now() - startTime) / 1000;
+  device.queue.writeBuffer(timeBuffer, 0, new Float32Array([elapsed]));
+  // ... begin render pass, draw, end ...
+  requestAnimationFrame(render);
+}
+render();</code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Ký hiệu <code>@location(n)</code> trong cấu trúc struct của WGSL có nhiệm vụ gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Địa chỉ vùng nhớ CPU được định nghĩa qua BindGroup, không dùng location.'
+                        )
+                      "
+                    >
+                      A. Định nghĩa địa chỉ vùng nhớ RAM trên CPU để truyền dữ liệu.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! @location(n) định nghĩa cổng giao tiếp logic giữa các pipeline stage (ví dụ liên kết output của Vertex với input tương ứng của Fragment).'
+                        )
+                      "
+                    >
+                      B. Liên kết luồng dữ liệu truyền giữa các giai đoạn của Render Pipeline (như từ Vertex sang
+                      Fragment).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(this, false, 'Sai. Tọa độ ba chiều của vật thể được tính toán bằng ma trận biến đổi.')
+                      "
+                    >
+                      C. Xác định tọa độ ba chiều X, Y, Z của vật thể trong không gian.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Cơ chế nội suy tuyến tính (Linear Interpolation) hoạt động ở giai đoạn nào của pipeline đồ
+                    họa?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Vertex Shader chỉ chạy độc lập cho từng đỉnh đơn lẻ, không thực hiện nội suy.'
+                        )
+                      "
+                    >
+                      A. Chạy trong Vertex Shader khi tính tọa độ đỉnh.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Rasterization là giai đoạn số hóa lưới tam giác thành các pixel mảnh (fragments), tại đây GPU tự động nội suy giá trị thuộc tính của các đỉnh để truyền vào Fragment Shader.'
+                        )
+                      "
+                    >
+                      B. Chạy tự động bởi phần cứng GPU trong giai đoạn Rasterization giữa Vertex và Fragment Shader.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. Giai đoạn ghi command chỉ đóng gói lệnh để gửi lên GPU.')"
+                    >
+                      C. Chạy trong Command Encoder trên CPU khi ghi lệnh vẽ.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div style="margin-top: 40px">
+                  <a
+                    href="webgpu-shaders-wgsl.wgsl"
+                    download
+                    class="about-cta"
+                    style="background: linear-gradient(130deg, #10b981 0%, #059669 100%)"
+                  >
+                    📥 Tải file code thực hành mẫu
+                  </a>
+                </div>
+
+                <div class="article-refs">
+                  <h3>📖 Tài liệu tham khảo / References</h3>
+                  <ul>
+                    <li>
+                      <a href="https://www.w3.org/TR/WGSL/" target="_blank" rel="noopener noreferrer"
+                        >W3C — WGSL Specification Draft</a
+                      >
+                    </li>
+                    <li>
+                      <a href="https://tour-of-wgsl.org/" target="_blank" rel="noopener noreferrer"
+                        >Tour of WGSL — Interactive WGSL Tutorial</a
+                      >
+                    </li>
+                    <li>
+                      <a
+                        href="https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >MDN Web Docs — WebGPU API</a
+                      >
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2 data-lang-content="en">Related Articles</h2>
+                <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="webgpu-basics-setup" class="article-related__link article-related__link--prev">
+                    <span data-lang-content="en">Lesson 1: GPU Architecture &amp; WebGPU Context Setup</span>
+                    <span data-lang-content="vi">Bài 1: Kiến trúc GPU &amp; WebGPU Setup — Vẽ Tam Giác Đầu Tiên</span>
+                  </a>
+                  <a href="webgpu-buffers-bindgroup" class="article-related__link article-related__link--next">
+                    <span data-lang-content="en">Lesson 3: Uniform &amp; Storage Buffers — Struct Alignment</span>
+                    <span data-lang-content="vi">Bài 3: Uniform &amp; Storage Buffers — Quy Tắc Căn Chỉnh Dữ Liệu</span>
+                  </a>
+                  <a href="webgpu-programming-series" class="article-related__link">
+                    <span data-lang-content="en">Back to WebGPU Course Overview</span>
+                    <span data-lang-content="vi">Quay lại Lộ trình Series WebGPU</span>
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      // WGSL Live Shader Sandbox implementation
+      (function () {
+        const canvas = document.getElementById('canvas-shader');
+        const fallback = document.getElementById('shader-fallback');
+        const editor = document.getElementById('wgsl-editor');
+        const btnRun = document.getElementById('btn-run-shader');
+        const log = document.getElementById('compile-log');
+        const sliderSpeed = document.getElementById('slider-speed');
+
+        if (!navigator.gpu) {
+          return;
+        }
+
+        let device, context, format, renderPipeline, timeBuffer, bindGroup;
+        let animationFrameId;
+        let startTime = performance.now();
+        let elapsed = 0;
+
+        const vertexShaderSource = `
+          struct VertexOutput {
+            @builtin(position) pos: vec4<f32>,
+            @location(0) uv: vec2<f32>,
+          };
+
+          @vertex
+          fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
+            // Vẽ hình chữ nhật phủ toàn màn hình (Screen-space Quad) sử dụng 2 tam giác
+            var pos = array<vec2<f32>, 6>(
+              vec2<f32>(-1.0, -1.0),
+              vec2<f32>(1.0, -1.0),
+              vec2<f32>(-1.0, 1.0),
+              vec2<f32>(-1.0, 1.0),
+              vec2<f32>(1.0, -1.0),
+              vec2<f32>(1.0, 1.0)
+            );
+
+            var uv = array<vec2<f32>, 6>(
+              vec2<f32>(0.0, 0.0),
+              vec2<f32>(1.0, 0.0),
+              vec2<f32>(0.0, 1.0),
+              vec2<f32>(0.0, 1.0),
+              vec2<f32>(1.0, 0.0),
+              vec2<f32>(1.0, 1.0)
+            );
+
+            var out: VertexOutput;
+            out.pos = vec4<f32>(pos[in_vertex_index], 0.0, 1.0);
+            out.uv = uv[in_vertex_index];
+            return out;
+          }
+        `;
+
+        async function initWebGPU() {
+          try {
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+              log.textContent = 'Không tìm thấy GPU Adapter vật lý.';
+              log.className = 'compiler-log error';
+              return;
+            }
+            device = await adapter.requestDevice();
+            format = navigator.gpu.getPreferredCanvasFormat();
+
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = 320 * dpr;
+            canvas.height = 320 * dpr;
+
+            context = canvas.getContext('webgpu');
+            context.configure({
+              device: device,
+              format: format,
+              alphaMode: 'opaque',
+            });
+
+            // WebGPU successfully configured, show canvas!
+            canvas.classList.remove('hidden');
+            fallback.classList.add('hidden');
+
+            // Create time uniform buffer (4 bytes = 1 float32)
+            timeBuffer = device.createBuffer({
+              size: 4,
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            compileShader();
+          } catch (e) {
+            console.error('WebGPU initialization failed:', e);
+            log.textContent = 'Lỗi khởi tạo WebGPU: ' + (e.message || e);
+            log.className = 'compiler-log error';
+          }
+        }
+
+        async function compileShader() {
+          if (!device) return;
+
+          log.textContent = 'Đang biên dịch shader...';
+          log.className = 'compiler-log';
+
+          const fragmentCode = editor.value;
+
+          try {
+            // Compile vertex shader (fixed)
+            const vsModule = device.createShaderModule({ code: vertexShaderSource });
+
+            // Compile fragment shader (from user input)
+            const fsModule = device.createShaderModule({ code: fragmentCode });
+
+            // Pipeline compilation
+            const pipeline = device.createRenderPipeline({
+              layout: 'auto',
+              vertex: {
+                module: vsModule,
+                entryPoint: 'vs_main',
+              },
+              fragment: {
+                module: fsModule,
+                entryPoint: 'fs_main',
+                targets: [{ format: format }],
+              },
+              primitive: {
+                topology: 'triangle-list',
+              },
+            });
+
+            // If compilation succeeded
+            renderPipeline = pipeline;
+            bindGroup = device.createBindGroup({
+              layout: renderPipeline.getBindGroupLayout(0),
+              entries: [
+                {
+                  binding: 0,
+                  resource: { buffer: timeBuffer },
+                },
+              ],
+            });
+
+            log.textContent = 'Biên dịch thành công! Shader đang chạy.';
+            log.className = 'compiler-log success';
+
+            // Restart animation loop if not running
+            if (!animationFrameId) {
+              startTime = performance.now() - elapsed * 1000;
+              tick();
+            }
+          } catch (e) {
+            log.textContent = '⛔ Lỗi biên dịch: ' + e.message;
+            log.className = 'compiler-log error';
+          }
+        }
+
+        function tick() {
+          animationFrameId = requestAnimationFrame(tick);
+          if (!device || !renderPipeline || !bindGroup) return;
+
+          // Calculate time
+          const now = performance.now();
+          const speed = parseFloat(sliderSpeed.value);
+          elapsed += ((now - startTime) / 1000.0) * speed;
+          startTime = now;
+
+          // Write elapsed time to Uniform Buffer
+          device.queue.writeBuffer(timeBuffer, 0, new Float32Array([elapsed]));
+
+          // Render
+          const encoder = device.createCommandEncoder();
+          const pass = encoder.beginRenderPass({
+            colorAttachments: [
+              {
+                view: context.getCurrentTexture().createView(),
+                clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                loadOp: 'clear',
+                storeOp: 'store',
+              },
+            ],
+          });
+
+          pass.setPipeline(renderPipeline);
+          pass.setBindGroup(0, bindGroup);
+          pass.draw(6); // Draw 6 vertices (2 triangles for screen quad)
+          pass.end();
+
+          device.queue.submit([encoder.finish()]);
+        }
+
+        btnRun.addEventListener('click', compileShader);
+
+        initWebGPU();
+      })();
+    </script>
+  </body>
+</html>

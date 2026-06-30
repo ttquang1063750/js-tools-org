@@ -1,0 +1,1328 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: glTF 3D Model Loading — Đọc Cấu Trúc Khung Lưới — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu cấu trúc đặc tả nhị phân glTF 2.0 (buffers, bufferViews, accessors) và cách phân tích và nạp trực tiếp mô hình 3D vào bộ nhớ GPU."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgpu/webgpu-gltf-loading" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      .hidden {
+        display: none !important;
+      }
+      .gltf-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 24px;
+      }
+      .gltf-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .gltf-controls h3 {
+        color: #cdd6f4;
+        margin: 0;
+        font-size: 14px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 8px;
+      }
+      .gltf-controls label {
+        color: #a6adc8;
+        font-weight: 600;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .gltf-controls select,
+      .gltf-controls input[type='range'] {
+        background: #1e1e2e;
+        color: #cdd6f4;
+        border: 1px solid var(--border);
+        padding: 6px;
+        border-radius: 6px;
+        outline: none;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .gltf-viewport {
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 480px;
+        position: relative;
+        overflow: hidden;
+      }
+      .gltf-canvas {
+        width: 100%;
+        height: 100%;
+        max-width: 460px;
+        max-height: 460px;
+        background: #000;
+        border-radius: 6px;
+        cursor: grab;
+      }
+      .gltf-canvas:active {
+        cursor: grabbing;
+      }
+      .gltf-fallback {
+        color: #f38ba8;
+        padding: 24px;
+        text-align: center;
+        font-size: 14px;
+      }
+      .instruction-tip {
+        position: absolute;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(17, 17, 27, 0.85);
+        border: 1px solid var(--border);
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 11px;
+        color: #a6adc8;
+        pointer-events: none;
+      }
+      @media (max-width: 880px) {
+        .gltf-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgpu">
+        <div class="container">
+          <a href="webgpu-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGPU Series</span
+            ><span data-lang-content="vi">Quay lại Lộ trình WebGPU</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgpu">WebGPU &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGPU Lesson 9: glTF 3D Model Loading — Parser &amp; Vertex Buffers
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 9: glTF 3D Model Loading — Đọc Cấu Trúc Khung Lưới
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 30, 2026 · 14 min read</span>
+            <span data-lang-content="vi">30 tháng 6, 2026 · 14 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Content -->
+              <div data-lang-content="en">
+                <p>
+                  Learn how to read and render standard 3D meshes using the glTF 2.0 format specification. Understand
+                  how binary buffers, bufferviews, and accessors translate into GPU vertex buffers in WebGPU.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Trong tất cả các bài học trước, chúng ta đều tự xây dựng thủ công các tọa độ đỉnh của hình tam giác,
+                  hình lập phương hoặc sinh vị trí hạt ngẫu nhiên trong bộ nhớ. Tuy nhiên, trong các dự án thực tế, các
+                  lập trình viên 3D không viết tọa độ bằng code; họ sử dụng các mô hình được thiết kế tinh xảo từ
+                  Blender hoặc Maya và xuất ra các tệp tin lưu trữ chuẩn đồ họa như
+                  <strong>glTF (GL Transmission Format)</strong>.
+                </p>
+                <p>
+                  Bài học này sẽ bóc tách cấu trúc lưu trữ dữ liệu nhị phân của glTF 2.0 – định dạng 3D chuẩn mở của
+                  Khronos Group, cách thức phân tích dữ liệu (parsing) và nạp trực tiếp các đệm nhị phân này vào GPU để
+                  dựng hình.
+                </p>
+
+                <h2>1. Cấu trúc đặc tả tệp glTF 2.0</h2>
+                <p>
+                  glTF 2.0 được thiết kế để nạp tải mô hình 3D cực nhanh lên card đồ họa mà không cần xử lý phân tích
+                  chuỗi văn bản phức tạp ở runtime. Một tệp glTF thường bao gồm hai phần chính: một cấu trúc điều hướng
+                  dạng JSON và các tệp đệm nhị phân thô chứa thông tin toạ độ đỉnh có phần mở rộng `.bin`.
+                </p>
+
+                <div class="carousel">
+                  <!-- slide -->
+                  <div>
+                    <h4>1.1 Accessors (Bộ truy cập định kiểu)</h4>
+                    <p>
+                      Accessor liên kết một `bufferView` với kiểu dữ liệu lập trình cụ thể để GPU hiểu được cách đọc
+                      đỉnh.
+                    </p>
+                    <pre><code class="language-json">"accessors": [
+  {
+    "bufferView": 0,
+    "componentType": 5126, // 5126 tương đương với Float32
+    "count": 3612,         // Số lượng phần tử (đỉnh)
+    "type": "VEC3"         // Kiểu dữ liệu vec3 (x, y, z)
+  }
+]</code></pre>
+                  </div>
+                  <!-- slide -->
+                  <div>
+                    <h4>1.2 BufferViews (Phân đoạn đệm nhị phân)</h4>
+                    <p>
+                      BufferView chỉ ra vị trí và độ dài của một thuộc tính (như vị trí đỉnh, pháp tuyến) nằm ở đâu
+                      trong mảng nhị phân thô.
+                    </p>
+                    <pre><code class="language-json">"bufferViews": [
+  {
+    "buffer": 0,
+    "byteOffset": 0,
+    "byteLength": 43344
+  }
+]</code></pre>
+                  </div>
+                </div>
+
+                <h2>2. Nạp dữ liệu nhị phân thô trực tiếp vào GPU Buffer</h2>
+                <p>
+                  Để hiển thị mô hình 3D, chúng ta trích xuất dữ liệu ArrayBuffer từ tệp nhị phân dựa trên các tham số
+                  `byteOffset` và `byteLength` đã khai báo trong `bufferView`, sau đó tạo `GPUBuffer` tương ứng và nạp
+                  thẳng dữ liệu đó bằng hàng đợi ghi:
+                </p>
+                <pre><code class="language-js">// Trích xuất phân khúc nhị phân vị trí đỉnh (POSITION)
+const posAccessor = gltf.accessors[0];
+const posView = gltf.bufferViews[posAccessor.bufferView];
+
+const posBuffer = device.createBuffer({
+  size: posView.byteLength,
+  usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+});
+
+// Nạp thẳng dữ liệu nhị phân thô vào GPU Buffer (Zero Parsing)
+device.queue.writeBuffer(
+  posBuffer,
+  0,
+  gltfBinaryBuffer, // Buffer nhị phân thô của file .bin
+  posView.byteOffset,
+  posView.byteLength
+);</code></pre>
+
+                <h2>3. Đổ bóng chất liệu phong cách Phong &amp; Phủ vân Texture</h2>
+                <p>
+                  Để mô hình 3D chân thực, ta kết hợp ánh xạ toạ độ UV (`TEXCOORD_0`) từ accessor glTF để mẫu vân bề mặt
+                  (texture) quấn quanh lưới đa giác. Trong WebGPU, ta dùng `textureSample(texture, sampler, uv)` để đọc
+                  màu vân ảnh tại tọa độ UV tương ứng và áp dụng mô hình chiếu sáng Phong để đổ bóng khối 3D.
+                </p>
+
+                <h2>Sân chơi tương tác: glTF 3D Parser &amp; Renderer</h2>
+                <p>
+                  Mô phỏng dưới đây mô tả chính xác cơ chế của một bộ phân tích glTF hoạt động. Một mô hình
+                  <strong>3D Torus Knot</strong> phức tạp được đóng gói nhị phân thô vào một đệm ArrayBuffer duy nhất.
+                  WebGPU Parser đọc JSON metadata để phân khúc dữ liệu nhị phân này, nạp vào GPU đệm đỉnh và hiển thị mô
+                  hình kèm ánh sáng Phong.
+                </p>
+                <p>*Hãy nhấn chuột và kéo rê trên Canvas để xoay mô hình 3D, hoặc lăn chuột để Zoom xa/gần.*</p>
+
+                <!-- Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">📦 glTF 3D Model Sandbox</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="wgsl">
+                        WGSL (Lighting &amp; Texture)
+                      </button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript (glTF Parser)</button>
+                    </div>
+                  </div>
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="gltf-sandbox">
+                      <div class="gltf-controls">
+                        <h3>Cấu hình Hiển thị 3D</h3>
+                        <div class="control-group">
+                          <label
+                            >Chất liệu vân bề mặt
+                            <select id="sel-texture">
+                              <option value="checker">Lưới caro neon</option>
+                              <option value="solid">Đồng màu ánh kim</option>
+                            </select>
+                          </label>
+
+                          <label
+                            >Độ bóng Specular
+                            <input type="range" id="range-specular" min="8" max="128" step="4" value="32" />
+                          </label>
+
+                          <button
+                            class="btn btn-run btn-run--cpu"
+                            id="btn-reset-view"
+                            style="background: #89b4fa; color: #11111b; margin-top: 10px"
+                          >
+                            ↻ Reset Góc nhìn
+                          </button>
+                        </div>
+                      </div>
+
+                      <div class="gltf-viewport">
+                        <div id="gltf-fallback" class="gltf-fallback hidden">
+                          <p>Trình duyệt của bạn chưa hỗ trợ WebGPU. Hãy sử dụng Chrome/Edge phiên bản mới nhất.</p>
+                        </div>
+                        <div class="instruction-tip">Nhấp chuột kéo rê để xoay 3D • Cuộn chuột để Zoom</div>
+                        <canvas class="gltf-canvas" id="canvas-gltf" width="460" height="460"></canvas>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="wgsl">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">gltf-render.wgsl</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-wgsl">struct Uniforms {
+  modelMatrix : mat4x4&lt;f32&gt;,
+  viewMatrix : mat4x4&lt;f32&gt;,
+  projectionMatrix : mat4x4&lt;f32&gt;,
+  normalMatrix : mat4x4&lt;f32&gt;,
+  specularPower : f32,
+};
+
+@group(0) @binding(0) var&lt;uniform&gt; u : Uniforms;
+@group(0) @binding(1) var s : sampler;
+@group(0) @binding(2) var t : texture_2d&lt;f32&gt;;
+
+struct VertexInput {
+  @location(0) position : vec3&lt;f32&gt;,
+  @location(1) normal : vec3&lt;f32&gt;,
+  @location(2) uv : vec2&lt;f32&gt;,
+};
+
+struct VertexOutput {
+  @builtin(position) pos : vec4&lt;f32&gt;,
+  @location(0) fragNormal : vec3&lt;f32&gt;,
+  @location(1) fragPosition : vec3&lt;f32&gt;,
+  @location(2) fragUv : vec2&lt;f32&gt;,
+};
+
+@vertex
+fn vsMain(in : VertexInput) -> VertexOutput {
+  var out : VertexOutput;
+  let worldPos = u.modelMatrix * vec4&lt;f32&gt;(in.position, 1.0);
+  out.pos = u.projectionMatrix * u.viewMatrix * worldPos;
+  out.fragPosition = worldPos.xyz;
+  out.fragNormal = (u.normalMatrix * vec4&lt;f32&gt;(in.normal, 0.0)).xyz;
+  out.fragUv = in.uv;
+  return out;
+}
+
+@fragment
+fn fsMain(in : VertexOutput) -> @location(0) vec4&lt;f32&gt; {
+  let N = normalize(in.fragNormal);
+  let L = normalize(vec3&lt;f32&gt;(2.0, 5.0, 3.0) - in.fragPosition);
+  let V = normalize(vec3&lt;f32&gt;(0.0, 0.0, 4.0) - in.fragPosition);
+  let H = normalize(L + V);
+
+  // Mẫu vân bề mặt Texture ánh xạ qua UV
+  let texColor = textureSample(t, s, in.fragUv);
+
+  let ambient = 0.22 * texColor.rgb;
+  let diffuse = max(dot(N, L), 0.0) * texColor.rgb;
+  let specular = pow(max(dot(N, H), 0.0), u.specularPower) * vec3&lt;f32&gt;(0.4);
+
+  return vec4&lt;f32&gt;(ambient + diffuse + specular, 1.0);
+}</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">gltf-parser.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js">// Cú pháp đọc dữ liệu từ cấu trúc bufferViews và nạp trực tiếp vào GPU Buffer
+const posAccessor = gltfJson.accessors[0];
+const posView = gltfJson.bufferViews[posAccessor.bufferView];
+
+const posBuffer = device.createBuffer({
+  size: posView.byteLength,
+  usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+});
+
+// Chép nhị phân thô không qua bước parsing chậm chạp
+device.queue.writeBuffer(
+  posBuffer,
+  0,
+  gltfBinaryBuffer,
+  posView.byteOffset,
+  posView.byteLength
+);
+
+// Tương tự cho NORMAL, TEXCOORD_0 (UV) và INDEX buffers
+const indexAccessor = gltfJson.accessors[3];
+const indexView = gltfJson.bufferViews[indexAccessor.bufferView];
+
+const indexBuffer = device.createBuffer({
+  size: indexView.byteLength,
+  usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+});
+device.queue.writeBuffer(
+  indexBuffer,
+  0,
+  gltfBinaryBuffer,
+  indexView.byteOffset,
+  indexView.byteLength
+);</code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="callout callout--deep">
+                  <p><strong>Tài liệu tham khảo chuyên sâu &amp; Trích dẫn Học thuật:</strong></p>
+                  <ul>
+                    <li>
+                      Đặc tả kỹ thuật chính thức định dạng glTF 2.0 của tập đoàn Khronos Group:
+                      <a href="https://registry.khronos.org/glTF/specs/2.0/gltf-2.0.html" target="_blank" rel="noopener"
+                        >Khronos Group - glTF 2.0 Specification</a
+                      >.
+                    </li>
+                    <li>
+                      Hướng dẫn thiết kế kết cấu bề mặt đồ họa và nạp ảnh Texture trong WebGPU:
+                      <a href="https://www.w3.org/TR/webgpu/#textures" target="_blank" rel="noopener"
+                        >W3C WebGPU Specification - Textures and Samplers</a
+                      >.
+                    </li>
+                  </ul>
+                </div>
+
+                <!-- Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Tại sao định dạng glTF lại lưu dữ liệu hình học (đỉnh, pháp tuyến) dưới dạng các mảng nhị
+                    phân thô thay vì định dạng JSON text như OBJ?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Dữ liệu nhị phân thực tế khó chỉnh sửa trực tiếp hơn JSON rất nhiều.'
+                        )
+                      "
+                    >
+                      A. Để lập trình viên có thể mở tệp tin ra chỉnh sửa trực tiếp bằng tay dễ dàng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Đọc chuỗi văn bản (JSON text) đòi hỏi CPU xử lý phân tích (parsing) rất tốn CPU và RAM. Dữ liệu nhị phân thô cho phép CPU nạp trực tiếp vào GPU Buffer qua 1 lệnh copy nhị phân duy nhất (Zero Parsing), tăng tốc nạp cực nhanh.'
+                        )
+                      "
+                    >
+                      B. Để loại bỏ hoàn toàn độ trễ giải mã văn bản của CPU, giúp sao chép nhị phân thô trực tiếp vào
+                      GPU Buffer.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. WebGPU hỗ trợ cả hai loại dữ liệu, dữ liệu nhị phân dùng để tăng tốc độ nạp.'
+                        )
+                      "
+                    >
+                      C. Vì WebGPU không hỗ trợ nhận dữ liệu đỉnh truyền từ chuỗi JSON.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">Câu 2: Trong đặc tả JSON của glTF, mục accessor có vai trò gì?</p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(this, false, 'Sai. Bộ camera được quản lý ở thẻ nodes hoặc cameras riêng biệt.')
+                      "
+                    >
+                      A. Định nghĩa vị trí đặt camera và tiêu cự ống kính chiếu sáng mô hình.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Accessor đóng vai trò cầu nối định kiểu, giải thích cho chương trình hiểu mảng nhị phân trong bufferView biểu diễn kiểu dữ liệu gì (Float32, Uint16), số lượng bao nhiêu đỉnh và cấu trúc của từng phần tử (VEC3, VEC2, SCALAR).'
+                        )
+                      "
+                    >
+                      B. Giải thích kiểu dữ liệu lập trình của mảng nhị phân thô giúp GPU hiểu cách ánh xạ cấu trúc
+                      đỉnh.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. BufferView mới là thành phần khai báo byte offset và độ dài bytes.'
+                        )
+                      "
+                    >
+                      C. Khai báo độ dài byte và địa chỉ vật lý của đệm nhị phân thô.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Related Articles -->
+            <div class="article-related">
+              <h2 data-lang-content="en">Related Articles</h2>
+              <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="webgpu-fluid-simulation" class="article-related__link article-related__link--prev">
+                  <span data-lang-content="en"
+                    >Lesson 8: SPH Fluid Simulation — Physics &amp; Spatial Partitioning</span
+                  >
+                  <span data-lang-content="vi"
+                    >Bài 8: SPH Fluid Simulation — Động Học Chất Lỏng &amp; Phân Vùng Không Gian</span
+                  >
+                </a>
+                <a href="webgpu-coloraquarium-3d" class="article-related__link article-related__link--next">
+                  <span data-lang-content="en">Lesson 10: 3D ColorQuarium Project — Flock Animation &amp; Lights</span>
+                  <span data-lang-content="vi"
+                    >Bài 10: Dự Án 3D ColorQuarium — Đàn Cá Tự Nhiên &amp; Chiếu Sáng Đại Dương</span
+                  >
+                </a>
+                <a href="webgpu-programming-series" class="article-related__link">
+                  <span data-lang-content="en">Back to WebGPU Course Overview</span>
+                  <span data-lang-content="vi">Quay lại Lộ trình Series WebGPU</span>
+                </a>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      (async function () {
+        const fallback = document.getElementById('gltf-fallback');
+        const canvas = document.getElementById('canvas-gltf');
+        const selTexture = document.getElementById('sel-texture');
+        const rangeSpecular = document.getElementById('range-specular');
+        const btnReset = document.getElementById('btn-reset-view');
+
+        window.addEventListener('unhandledrejection', (event) => {
+          console.error('Unhandled rejection:', event.reason);
+          fallback.innerHTML += `<p><strong>Unhandled Rejection:</strong> ${event.reason.message || event.reason}</p>`;
+          fallback.classList.remove('hidden');
+        });
+
+        window.addEventListener('error', (event) => {
+          console.error('Global error:', event.message);
+          fallback.innerHTML += `<p><strong>Global JS Error:</strong> ${event.message}</p>`;
+          fallback.classList.remove('hidden');
+        });
+
+        if (!navigator.gpu) {
+          fallback.classList.remove('hidden');
+          canvas.classList.add('hidden');
+          return;
+        }
+
+        try {
+          const adapter = await navigator.gpu.requestAdapter();
+          if (!adapter) {
+            fallback.innerHTML = `<p><strong>Lỗi WebGPU:</strong> Không tìm thấy adapter phù hợp.</p>`;
+            fallback.classList.remove('hidden');
+            canvas.classList.add('hidden');
+            return;
+          }
+          const device = await adapter.requestDevice();
+          const context = canvas.getContext('webgpu');
+
+          const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+          context.configure({
+            device,
+            format: presentationFormat,
+            alphaMode: 'opaque',
+          });
+
+          device.addEventListener('uncaughterror', (event) => {
+            console.error('WebGPU uncaught error:', event.error.message);
+            fallback.innerHTML = `<p><strong>Lỗi WebGPU:</strong> ${event.error.message}</p>`;
+            fallback.classList.remove('hidden');
+            canvas.classList.add('hidden');
+          });
+
+          // WGSL Render Shader
+          const renderShaderCode = `
+            struct Uniforms {
+              modelMatrix : mat4x4<f32>,
+              viewMatrix : mat4x4<f32>,
+              projectionMatrix : mat4x4<f32>,
+              normalMatrix : mat4x4<f32>,
+              specularPower : f32,
+            };
+
+            @group(0) @binding(0) var<uniform> u : Uniforms;
+            @group(0) @binding(1) var s : sampler;
+            @group(0) @binding(2) var t : texture_2d<f32>;
+
+            struct VertexInput {
+              @location(0) position : vec3<f32>,
+              @location(1) normal : vec3<f32>,
+              @location(2) uv : vec2<f32>,
+            };
+
+            struct VertexOutput {
+              @builtin(position) pos : vec4<f32>,
+              @location(0) fragNormal : vec3<f32>,
+              @location(1) fragPosition : vec3<f32>,
+              @location(2) fragUv : vec2<f32>,
+            };
+
+            @vertex
+            fn vsMain(in : VertexInput) -> VertexOutput {
+              var out : VertexOutput;
+              let worldPos = u.modelMatrix * vec4<f32>(in.position, 1.0);
+              out.pos = u.projectionMatrix * u.viewMatrix * worldPos;
+              out.fragPosition = worldPos.xyz;
+              out.fragNormal = (u.normalMatrix * vec4<f32>(in.normal, 0.0)).xyz;
+              out.fragUv = in.uv;
+              return out;
+            }
+
+            @fragment
+            fn fsMain(in : VertexOutput) -> @location(0) vec4<f32> {
+              let N = normalize(in.fragNormal);
+              let L = normalize(vec3<f32>(2.0, 5.0, 3.0) - in.fragPosition);
+              let V = normalize(vec3<f32>(0.0, 0.0, 4.0) - in.fragPosition);
+              let H = normalize(L + V);
+
+              // Sample Diffuse texture
+              let texColor = textureSample(t, s, in.fragUv);
+
+              let ambient = 0.22 * texColor.rgb;
+              let diffuse = max(dot(N, L), 0.0) * texColor.rgb;
+              let specular = pow(max(dot(N, H), 0.0), u.specularPower) * vec3<f32>(0.4);
+
+              return vec4<f32>(ambient + diffuse + specular, 1.0);
+            }
+          `;
+
+          const renderMod = device.createShaderModule({ code: renderShaderCode });
+
+          renderMod.getCompilationInfo().then((info) => {
+            for (const message of info.messages) {
+              if (message.type === 'error') {
+                console.error('renderMod compile error:', message.message);
+                fallback.innerHTML += `<p><strong>Lỗi Shader Render:</strong> ${message.message} (Dòng ${message.lineNum}:${message.linePos})</p>`;
+                fallback.classList.remove('hidden');
+              }
+            }
+          });
+
+          // Procedural Torus Knot 3D Mesh Generation (generating positions, normals, uvs, indices)
+          const p = 3;
+          const q = 8;
+          const tubeSegments = 200;
+          const radialSegments = 16;
+          const tubeRadius = 0.22;
+
+          const positions = [];
+          const normals = [];
+          const uvs = [];
+          const indices = [];
+
+          function getKnotPosition(u, p, q) {
+            const phi = u * Math.PI * 2;
+            const r = 0.5 * (2.0 + Math.cos(q * phi));
+            return [r * Math.cos(p * phi), r * Math.sin(p * phi), 0.35 * Math.sin(q * phi)];
+          }
+
+          for (let i = 0; i <= tubeSegments; i++) {
+            const u = i / tubeSegments;
+            const p1 = getKnotPosition(u, p, q);
+            const p2 = getKnotPosition(u + 0.001, p, q);
+
+            const T = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+            const len = Math.sqrt(T[0] * T[0] + T[1] * T[1] + T[2] * T[2]);
+            T[0] /= len;
+            T[1] /= len;
+            T[2] /= len;
+
+            let N = [-p1[0], -p1[1], 0];
+            const lenN = Math.sqrt(N[0] * N[0] + N[1] * N[1] + N[2] * N[2]);
+            if (lenN > 0.001) {
+              N[0] /= lenN;
+              N[1] /= lenN;
+            } else {
+              N = [1, 0, 0];
+            }
+
+            const B = [T[1] * N[2] - T[2] * N[1], T[2] * N[0] - T[0] * N[2], T[0] * N[1] - T[1] * N[0]];
+
+            for (let j = 0; j <= radialSegments; j++) {
+              const v = j / radialSegments;
+              const theta = v * Math.PI * 2;
+              const cosTheta = Math.cos(theta);
+              const sinTheta = Math.sin(theta);
+
+              const x = p1[0] + tubeRadius * (cosTheta * N[0] + sinTheta * B[0]);
+              const y = p1[1] + tubeRadius * (cosTheta * N[1] + sinTheta * B[1]);
+              const z = p1[2] + tubeRadius * (cosTheta * N[2] + sinTheta * B[2]);
+              positions.push(x, y, z);
+
+              const nx = cosTheta * N[0] + sinTheta * B[0];
+              const ny = cosTheta * N[1] + sinTheta * B[1];
+              const nz = cosTheta * N[2] + sinTheta * B[2];
+              normals.push(nx, ny, nz);
+
+              uvs.push(u * 10.0, v * 3.0); // Tiling texture UVs
+            }
+          }
+
+          for (let i = 0; i < tubeSegments; i++) {
+            for (let j = 0; j < radialSegments; j++) {
+              const a = i * (radialSegments + 1) + j;
+              const b = i * (radialSegments + 1) + j + 1;
+              const c = (i + 1) * (radialSegments + 1) + j;
+              const d = (i + 1) * (radialSegments + 1) + j + 1;
+
+              indices.push(a, c, b);
+              indices.push(b, c, d);
+            }
+          }
+
+          // Pack geometry into a mock binary ArrayBuffer simulating a glTF bin file
+          const posArray = new Float32Array(positions);
+          const normArray = new Float32Array(normals);
+          const uvArray = new Float32Array(uvs);
+          const indexArray = new Uint16Array(indices);
+
+          const posByteLength = posArray.byteLength;
+          const normByteLength = normArray.byteLength;
+          const uvByteLength = uvArray.byteLength;
+          const indexByteLength = indexArray.byteLength;
+
+          const totalByteLength = posByteLength + normByteLength + uvByteLength + indexByteLength;
+          const gltfBinaryBuffer = new ArrayBuffer(totalByteLength);
+
+          // Copy arrays in order into glTF binary buffer
+          new Float32Array(gltfBinaryBuffer, 0, posArray.length).set(posArray);
+          new Float32Array(gltfBinaryBuffer, posByteLength, normArray.length).set(normArray);
+          new Float32Array(gltfBinaryBuffer, posByteLength + normByteLength, uvArray.length).set(uvArray);
+          new Uint16Array(gltfBinaryBuffer, posByteLength + normByteLength + uvByteLength, indexArray.length).set(
+            indexArray
+          );
+
+          // Mock glTF JSON structure pointing to buffer offsets
+          const gltfJson = {
+            asset: { version: '2.0' },
+            meshes: [
+              {
+                primitives: [
+                  {
+                    attributes: {
+                      POSITION: 0,
+                      NORMAL: 1,
+                      TEXCOORD_0: 2,
+                    },
+                    indices: 3,
+                  },
+                ],
+              },
+            ],
+            bufferViews: [
+              { byteOffset: 0, byteLength: posByteLength }, // POSITION
+              { byteOffset: posByteLength, byteLength: normByteLength }, // NORMAL
+              { byteOffset: posByteLength + normByteLength, byteLength: uvByteLength }, // TEXCOORD_0
+              { byteOffset: posByteLength + normByteLength + uvByteLength, byteLength: indexByteLength }, // INDICES
+            ],
+            accessors: [
+              { bufferView: 0, componentType: 5126, count: posArray.length / 3, type: 'VEC3' },
+              { bufferView: 1, componentType: 5126, count: normArray.length / 3, type: 'VEC3' },
+              { bufferView: 2, componentType: 5126, count: uvArray.length / 2, type: 'VEC2' },
+              { bufferView: 3, componentType: 5123, count: indexArray.length, type: 'SCALAR' },
+            ],
+          };
+
+          // Parse geometry accessors from mock glTF & create WebGPU vertex buffers
+          const geometry = gltfJson.meshes[0].primitives[0];
+
+          // 1. POSITION buffer
+          const posAcc = gltfJson.accessors[geometry.attributes.POSITION];
+          const posView = gltfJson.bufferViews[posAcc.bufferView];
+          const posBuffer = device.createBuffer({
+            size: posView.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(posBuffer, 0, gltfBinaryBuffer, posView.byteOffset, posView.byteLength);
+
+          // 2. NORMAL buffer
+          const normAcc = gltfJson.accessors[geometry.attributes.NORMAL];
+          const normView = gltfJson.bufferViews[normAcc.bufferView];
+          const normBuffer = device.createBuffer({
+            size: normView.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(normBuffer, 0, gltfBinaryBuffer, normView.byteOffset, normView.byteLength);
+
+          // 3. UV buffer
+          const uvAcc = gltfJson.accessors[geometry.attributes.TEXCOORD_0];
+          const uvView = gltfJson.bufferViews[uvAcc.bufferView];
+          const uvBuffer = device.createBuffer({
+            size: uvView.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(uvBuffer, 0, gltfBinaryBuffer, uvView.byteOffset, uvView.byteLength);
+
+          // 4. INDEX buffer
+          const indexAcc = gltfJson.accessors[geometry.indices];
+          const indexView = gltfJson.bufferViews[indexAcc.bufferView];
+          const indexBuffer = device.createBuffer({
+            size: indexView.byteLength,
+            usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(indexBuffer, 0, gltfBinaryBuffer, indexView.byteOffset, indexView.byteLength);
+
+          // Create pipelines
+          const renderPipeline = device.createRenderPipeline({
+            layout: 'auto',
+            vertex: {
+              module: renderMod,
+              entryPoint: 'vsMain',
+              buffers: [
+                {
+                  arrayStride: 12, // 3 floats * 4 bytes
+                  attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }],
+                },
+                {
+                  arrayStride: 12,
+                  attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }],
+                },
+                {
+                  arrayStride: 8, // 2 floats * 4 bytes
+                  attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }],
+                },
+              ],
+            },
+            fragment: {
+              module: renderMod,
+              entryPoint: 'fsMain',
+              targets: [
+                {
+                  format: presentationFormat,
+                },
+              ],
+            },
+            primitive: {
+              topology: 'triangle-list',
+              cullMode: 'back',
+            },
+            depthStencil: {
+              depthWriteEnabled: true,
+              depthCompare: 'less',
+              format: 'depth24plus',
+            },
+          });
+
+          // Generate procedurally diffuse checkerboard texture
+          const textureSize = 256;
+          const texChecker = device.createTexture({
+            size: [textureSize, textureSize, 1],
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+          });
+
+          const checkerData = new Uint8Array(textureSize * textureSize * 4);
+          for (let y = 0; y < textureSize; y++) {
+            for (let x = 0; x < textureSize; x++) {
+              const idx = (y * textureSize + x) * 4;
+              const cx = Math.floor(x / 16);
+              const cy = Math.floor(y / 16);
+              const isBlue = (cx + cy) % 2 === 0;
+              checkerData[idx] = isBlue ? 30 : 137; // R
+              checkerData[idx + 1] = isBlue ? 50 : 180; // G
+              checkerData[idx + 2] = isBlue ? 120 : 250; // B
+              checkerData[idx + 3] = 255; // A
+            }
+          }
+          device.queue.writeTexture({ texture: texChecker }, checkerData, { bytesPerRow: textureSize * 4 }, [
+            textureSize,
+            textureSize,
+            1,
+          ]);
+
+          // Generate solid metal texture
+          const texSolid = device.createTexture({
+            size: [1, 1, 1],
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+          });
+          const solidData = new Uint8Array([235, 160, 20, 255]); // golden metal base
+          device.queue.writeTexture({ texture: texSolid }, solidData, { bytesPerRow: 4 }, [1, 1, 1]);
+
+          // Sampler
+          const sampler = device.createSampler({
+            magFilter: 'linear',
+            minFilter: 'linear',
+            addressModeU: 'repeat',
+            addressModeV: 'repeat',
+          });
+
+          // Uniform matrix buffers packing: size 260 padded to 272 bytes (4 mat4 + 1 float)
+          const uniformData = new ArrayBuffer(272);
+          const uniformViewF = new Float32Array(uniformData);
+
+          const uniformBuf = device.createBuffer({
+            size: 272,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          });
+
+          // Bindgroups
+          const bindGroupChecker = device.createBindGroup({
+            layout: renderPipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: uniformBuf } },
+              { binding: 1, resource: sampler },
+              { binding: 2, resource: texChecker.createView() },
+            ],
+          });
+
+          const bindGroupSolid = device.createBindGroup({
+            layout: renderPipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: uniformBuf } },
+              { binding: 1, resource: sampler },
+              { binding: 2, resource: texSolid.createView() },
+            ],
+          });
+
+          // Depth buffer FBO depth stencil pass
+          const depthTexture = device.createTexture({
+            size: [canvas.width, canvas.height, 1],
+            format: 'depth24plus',
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+          });
+          const depthView = depthTexture.createView();
+
+          // 3D Matrix math helpers
+          function createPerspective(fov, aspect, near, far) {
+            const f = 1.0 / Math.tan(fov / 2);
+            const nf = 1.0 / (near - far);
+            return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
+          }
+
+          function createIdentity() {
+            return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+          }
+
+          function rotateY(m, angle) {
+            const c = Math.cos(angle);
+            const s = Math.sin(angle);
+            const r = [...m];
+            r[0] = m[0] * c - m[8] * s;
+            r[2] = m[2] * c - m[10] * s;
+            r[8] = m[0] * s + m[8] * c;
+            r[10] = m[2] * s + m[10] * c;
+            return r;
+          }
+
+          function rotateX(m, angle) {
+            const c = Math.cos(angle);
+            const s = Math.sin(angle);
+            const r = [...m];
+            r[5] = m[5] * c + m[9] * s;
+            r[6] = m[6] * c + m[10] * s;
+            r[9] = -m[5] * s + m[9] * c;
+            r[10] = -m[6] * s + m[10] * c;
+            return r;
+          }
+
+          function getNormalMatrix(m) {
+            // Simplified normal matrix for uniform scaling: upper 3x3 of model matrix
+            const r = createIdentity();
+            r[0] = m[0];
+            r[1] = m[1];
+            r[2] = m[2];
+            r[4] = m[4];
+            r[5] = m[5];
+            r[6] = m[6];
+            r[8] = m[8];
+            r[9] = m[9];
+            r[10] = m[10];
+            return r;
+          }
+
+          // Camera orbit state variables
+          let angleX = 0.3;
+          let angleY = 0.5;
+          let zoom = 2.4;
+
+          btnReset.addEventListener('click', () => {
+            angleX = 0.3;
+            angleY = 0.5;
+            zoom = 2.4;
+          });
+
+          // Mouse orbit & zoom control listeners
+          let isDragging = false;
+          let prevMouseX = 0;
+          let prevMouseY = 0;
+
+          canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            prevMouseX = e.clientX;
+            prevMouseY = e.clientY;
+          });
+
+          window.addEventListener('mouseup', () => {
+            isDragging = false;
+          });
+
+          canvas.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - prevMouseX;
+            const dy = e.clientY - prevMouseY;
+            prevMouseX = e.clientX;
+            prevMouseY = e.clientY;
+
+            angleY += dx * 0.01;
+            angleX += dy * 0.01;
+            angleX = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, angleX)); // cap polar angle
+          });
+
+          canvas.addEventListener(
+            'wheel',
+            (e) => {
+              e.preventDefault();
+              zoom += e.deltaY * 0.003;
+              zoom = Math.max(1.2, Math.min(6.0, zoom)); // cap zoom distance
+            },
+            { passive: false }
+          );
+
+          // Orbit rotation auto rotate speed helper
+          let lastTime = performance.now();
+
+          function frame() {
+            const now = performance.now();
+            const dt = (now - lastTime) / 1000;
+            lastTime = now;
+
+            // Auto rotation around Y axis if mouse drag is idle
+            if (!isDragging) {
+              angleY += dt * 0.15;
+            }
+
+            // Math transformations
+            let model = createIdentity();
+            model = rotateX(model, angleX);
+            model = rotateY(model, angleY);
+
+            const view = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -zoom, 1];
+
+            const projection = createPerspective(Math.PI / 4, canvas.width / canvas.height, 0.1, 10.0);
+            const normal = getNormalMatrix(model);
+
+            // Pack matrices into Float32Array: Float32Array(272 / 4 = 68 elements)
+            // model at offset 0 (0-15), view at offset 16 (16-31), proj at offset 32 (32-47), normal at offset 48 (48-63), specularPower at offset 64
+            uniformViewF.set(model, 0);
+            uniformViewF.set(view, 16);
+            uniformViewF.set(projection, 32);
+            uniformViewF.set(normal, 48);
+            uniformViewF[64] = parseFloat(rangeSpecular.value);
+
+            device.queue.writeBuffer(uniformBuf, 0, uniformData);
+
+            const commandEncoder = device.createCommandEncoder();
+
+            const renderPassDesc = {
+              colorAttachments: [
+                {
+                  view: context.getCurrentTexture().createView(),
+                  clearValue: { r: 0.08, g: 0.08, b: 0.12, a: 1.0 }, // dark background
+                  loadOp: 'clear',
+                  storeOp: 'store',
+                },
+              ],
+              depthStencilAttachment: {
+                view: depthView,
+                depthClearValue: 1.0,
+                depthLoadOp: 'clear',
+                depthStoreOp: 'store',
+              },
+            };
+
+            const renderPass = commandEncoder.beginRenderPass(renderPassDesc);
+            renderPass.setPipeline(renderPipeline);
+
+            // Bind vertices
+            renderPass.setVertexBuffer(0, posBuffer);
+            renderPass.setVertexBuffer(1, normBuffer);
+            renderPass.setVertexBuffer(2, uvBuffer);
+
+            // Bind indices
+            renderPass.setIndexBuffer(indexBuffer, 'uint16');
+
+            // Set uniform texture bind group
+            const activeBG = selTexture.value === 'checker' ? bindGroupChecker : bindGroupSolid;
+            renderPass.setBindGroup(0, activeBG);
+
+            // Draw
+            renderPass.drawIndexed(indices.length);
+            renderPass.end();
+
+            device.queue.submit([commandEncoder.finish()]);
+
+            requestAnimationFrame(frame);
+          }
+
+          requestAnimationFrame(frame);
+        } catch (err) {
+          console.error('Lỗi thiết lập mô hình glTF:', err);
+          fallback.innerHTML = `<p><strong>Lỗi khởi tạo WebGPU:</strong> ${err.message}</p>`;
+          fallback.classList.remove('hidden');
+          canvas.classList.add('hidden');
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1315 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 5: Phong Lighting &amp; Shadow Maps — Bóng Đổ Động Thời Gian Thực — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu mô hình phản chiếu ánh sáng Phong, biến đổi pháp tuyến thế giới, và kỹ thuật đổ bóng Shadow Map hai lượt (two-pass) trong WebGPU."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgpu/webgpu-lighting-shadow" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      .hidden {
+        display: none !important;
+      }
+      .lighting-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 24px;
+      }
+      .lighting-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .lighting-controls h3 {
+        color: #cdd6f4;
+        margin: 0;
+        font-size: 14px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 8px;
+      }
+      .lighting-controls label {
+        color: #a6adc8;
+        font-weight: 600;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .checkbox-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+      }
+      .checkbox-group input {
+        cursor: pointer;
+      }
+      .lighting-viewport {
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 400px;
+        position: relative;
+        overflow: hidden;
+      }
+      .lighting-canvas {
+        width: 100%;
+        height: 100%;
+        max-width: 380px;
+        max-height: 380px;
+        border-radius: 4px;
+      }
+      .lighting-fallback {
+        color: #f38ba8;
+        padding: 24px;
+        text-align: center;
+        font-size: 14px;
+      }
+      @media (max-width: 880px) {
+        .lighting-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgpu">
+        <div class="container">
+          <a href="webgpu-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGPU Series</span
+            ><span data-lang-content="vi">Quay lại Lộ trình WebGPU</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgpu">WebGPU &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGPU Lesson 5: Phong Lighting &amp; Shadow Maps — Dynamic Real-time Shadows
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 5: Phong Lighting &amp; Shadow Maps — Bóng Đổ Động Thời Gian Thực
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 30, 2026 · 16 min read</span>
+            <span data-lang-content="vi">30 tháng 6, 2026 · 16 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Content -->
+              <div data-lang-content="en">
+                <p>
+                  Learn the math and implementation behind the Phong lighting model, world normal matrices
+                  transformation, and two-pass shadow mapping technique using depth textures in WebGPU.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Một cảnh 3D không thể chân thực nếu thiếu đi ánh sáng và bóng đổ. Trong bài học này, chúng ta sẽ cùng
+                  nghiên cứu công thức toán học của
+                  <strong>Mô hình chiếu sáng Phong (Phong Reflection Model)</strong> và kỹ thuật kết xuất đổ bóng động
+                  thời gian thực bằng thuật toán <strong>Shadow Mapping hai lượt (Two-Pass)</strong> thông qua WebGPU.
+                </p>
+
+                <h2>1. Mô hình phản chiếu ánh sáng Phong (Phong Reflection Model)</h2>
+                <p>Mô hình Phong chia ánh sáng phản chiếu trên bề mặt vật thể thành 3 thành phần độc lập:</p>
+                \[I = I_{\text{ambient}} + I_{\text{diffuse}} + I_{\text{specular}}\]
+                <ul>
+                  <li>
+                    <strong>Ambient (Ánh sáng môi trường):</strong> Ánh sáng nền tán xạ mọi nơi trong không gian, có giá
+                    trị không đổi: \(I_{\text{ambient}} = K_a \cdot L_a\).
+                  </li>
+                  <li>
+                    <strong>Diffuse (Ánh sáng tán xạ):</strong> Ánh sáng phản chiếu đều theo mọi hướng từ bề mặt nhám,
+                    tuân theo Định luật Cosine của Lambert: \(I_{\text{diffuse}} = K_d \cdot L_d \cdot \max(\vec{N}
+                    \cdot \vec{L}, 0)\), với \(\vec{N}\) là vector pháp tuyến bề mặt và \(\vec{L}\) là vector hướng
+                    sáng.
+                  </li>
+                  <li>
+                    <strong>Specular (Ánh sáng phản chiếu gương):</strong> Tạo ra đốm sáng bóng loáng trên bề mặt kim
+                    loại/nhẵn, phụ thuộc góc nhìn của camera \(\vec{V}\) và vector phản xạ ánh sáng \(\vec{R}\):
+                    \(I_{\text{specular}} = K_s \cdot L_s \cdot \max(\vec{R} \cdot \vec{V}, 0)^p\), với \(p\) là hệ số
+                    bóng loáng (shininess).
+                  </li>
+                </ul>
+
+                <h2>2. Biến đổi pháp tuyến và Ma trận Pháp tuyến (Normal Matrix)</h2>
+                <p>
+                  Để tính toán hướng phản xạ chính xác, vector pháp tuyến của mô hình phải được chuyển từ Không gian Đối
+                  tượng (Object Space) sang Không gian Thế giới (World Space).
+                </p>
+                <p>
+                  Tuy nhiên, nếu ta sử dụng ma trận biến đổi mô hình (Model Matrix) chứa phép tỷ lệ không đồng đều
+                  (non-uniform scale), vector pháp tuyến sẽ không còn vuông góc với bề mặt. Để khắc phục điều này, ma
+                  trận pháp tuyến thế giới được định nghĩa là
+                  <strong>Ma trận nghịch đảo chuyển vị (Transpose of the Inverse)</strong> của ma trận mô hình:
+                </p>
+                \[N_{\text{world}} = (M_{\text{model}}^{-1})^T\]
+
+                <h2>3. Thuật toán Shadow Mapping hai lượt (Two-Pass)</h2>
+                <p>Kỹ thuật đổ bóng Shadow Map hoạt động theo hai lượt kết xuất riêng biệt trên GPU:</p>
+                <ol>
+                  <li>
+                    <strong>Lượt 1 (Shadow Pass):</strong> Đóng vai trò camera đặt tại vị trí của nguồn sáng, kết xuất
+                    cảnh vật vào một bộ đệm chiều sâu Depth Texture (gọi là Shadow Map). Lượt này chỉ ghi nhận khoảng
+                    cách gần nhất từ nguồn sáng đến vật thể che chắn đầu tiên.
+                  </li>
+                  <li>
+                    <strong>Lượt 2 (Forward Render Pass):</strong> Vẽ cảnh vật bình thường từ góc nhìn của camera chính.
+                    Với mỗi mảnh điểm ảnh (fragment), ta chiếu tọa độ 3D của nó sang không gian ánh sáng của nguồn sáng
+                    để tìm tọa độ UV tương ứng trên Shadow Map. So sánh độ sâu thực tế của điểm ảnh với giá trị lấy ra
+                    từ Shadow Map: nếu điểm ảnh xa hơn, nó nằm trong bóng tối.
+                  </li>
+                </ol>
+
+                <h2>Sân chơi tương tác: Phong Lighting &amp; Shadow Map</h2>
+                <p>
+                  Dưới đây là một mô phỏng tương tác kết xuất một hình cầu và một khối hộp đặt trên một tấm sàn phẳng.
+                  Nguồn sáng (quả cầu nhỏ màu vàng) tự động xoay tròn trên quỹ đạo phía trên. Hãy tương tác thay đổi các
+                  thông số phản xạ Phong và bật/tắt bóng đổ:
+                </p>
+
+                <!-- Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🎨 Phong Lighting &amp; Shadow Maps Demo</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="wgsl">WGSL</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="lighting-sandbox">
+                      <div class="lighting-controls">
+                        <h3>Cấu hình ánh sáng &amp; Bóng</h3>
+                        <div class="control-group">
+                          <label class="checkbox-group">
+                            <input type="checkbox" id="chk-enable-shadows" checked />
+                            Bật Shadow Map
+                          </label>
+                        </div>
+                        <div class="control-group">
+                          <label>Hệ số Ambient (Môi trường)</label>
+                          <input type="range" id="slider-ambient" min="0" max="0.5" step="0.05" value="0.15" />
+                        </div>
+                        <div class="control-group">
+                          <label>Hệ số Diffuse (Tán xạ)</label>
+                          <input type="range" id="slider-diffuse" min="0" max="1" step="0.05" value="0.7" />
+                        </div>
+                        <div class="control-group">
+                          <label>Hệ số Specular (Phản xạ bóng)</label>
+                          <input type="range" id="slider-specular" min="0" max="1" step="0.05" value="0.5" />
+                        </div>
+                        <div class="control-group">
+                          <label>Độ bóng loáng (Shininess)</label>
+                          <input type="range" id="slider-shininess" min="5" max="120" step="5" value="30" />
+                        </div>
+                        <div class="control-group">
+                          <label>Tốc độ di chuyển nguồn sáng</label>
+                          <input type="range" id="slider-light-speed" min="0" max="2" step="0.1" value="0.8" />
+                        </div>
+                      </div>
+
+                      <div class="lighting-viewport">
+                        <canvas id="canvas-lighting" class="lighting-canvas hidden" width="380" height="380"></canvas>
+                        <div id="lighting-fallback" class="lighting-fallback">
+                          <p>
+                            Trình duyệt của bạn chưa hỗ trợ WebGPU. Hãy sử dụng phiên bản trình duyệt Chrome/Edge mới
+                            nhất.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="wgsl">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">phong-shadow.wgsl</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-wgsl">struct Uniforms {
+  mvp: mat4x4&lt;f32&gt;,
+  model: mat4x4&lt;f32&gt;,
+  lightMvp: mat4x4&lt;f32&gt;,
+};
+struct LightingData {
+  lightPos: vec4&lt;f32&gt;,
+  cameraPos: vec4&lt;f32&gt;,
+  ambient: f32,
+  diffuse: f32,
+  specular: f32,
+  shininess: f32,
+};
+
+@group(0) @binding(0) var&lt;uniform&gt; u: Uniforms;
+@group(0) @binding(1) var&lt;uniform&gt; uLight: LightingData;
+@group(0) @binding(2) var shadowMap: texture_depth_2d;
+@group(0) @binding(3) var shadowSampler: sampler_comparison;
+
+@fragment
+fn fs(in: VSOut) -&gt; @location(0) vec4&lt;f32&gt; {
+  let N = normalize(in.normal);
+  let L = normalize(uLight.lightPos.xyz - in.worldPos);
+  let V = normalize(uLight.cameraPos.xyz - in.worldPos);
+  let H = normalize(L + V);
+
+  let ambient = uLight.ambient * in.color;
+  let diffuse = uLight.diffuse * max(dot(N, L), 0.0) * in.color;
+  let specular = uLight.specular * pow(max(dot(N, H), 0.0), uLight.shininess) * vec3&lt;f32&gt;(1.0, 1.0, 0.9);
+
+  // So sánh chiều sâu shadow map
+  let lightProjCoords = in.lightSpacePos.xyz / in.lightSpacePos.w;
+  let uv = vec2&lt;f32&gt;(lightProjCoords.x * 0.5 + 0.5, -lightProjCoords.y * 0.5 + 0.5);
+  let depth = lightProjCoords.z;
+
+  // Gọi textureSampleCompare vô điều kiện bên ngoài khối rẽ nhánh (uniform control flow)
+  let shadowMapValue = textureSampleCompare(shadowMap, shadowSampler, uv, depth - 0.003);
+
+  var shadow: f32 = 1.0;
+  if (uv.x &gt;= 0.0 && uv.x &lt;= 1.0 && uv.y &gt;= 0.0 && uv.y &lt;= 1.0 && depth &lt;= 1.0) {
+    shadow = shadowMapValue;
+  }
+
+  return vec4&lt;f32&gt;(ambient + shadow * (diffuse + specular), 1.0);
+}</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">shadow-setup.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js">// 1. Khởi tạo kết cấu Shadow Map Depth Texture
+const shadowSize = 1024;
+const shadowTexture = device.createTexture({
+  size: [shadowSize, shadowSize, 1],
+  format: 'depth24plus',
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+});
+
+// 2. Tạo bộ mẫu so sánh (Comparison Sampler)
+const shadowSampler = device.createSampler({
+  compare: 'less-equal',
+  minFilter: 'nearest',
+  magFilter: 'nearest',
+});
+
+// 3. Khởi tạo BindGroupLayout có shadow map & comparison sampler
+const bgl = device.createBindGroupLayout({
+  entries: [
+    { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+    { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+    { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
+    { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
+  ],
+});</code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Tại sao ta cần sử dụng Ma trận Pháp tuyến (Normal Matrix = Transpose of Inverse of Model)
+                    thay vì dùng trực tiếp Model Matrix để biến đổi vector pháp tuyến?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Phép dịch chuyển không ảnh hưởng đến hướng pháp tuyến vì ta đặt W = 0.'
+                        )
+                      "
+                    >
+                      A. Vì ma trận mô hình thông thường không thể dịch chuyển (translate) vector pháp tuyến.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Khi mô hình bị scale không đều (ví dụ dẹt theo trục Y), các pháp tuyến nguyên bản biến đổi theo Model Matrix sẽ bị lệch góc và không còn vuông góc với bề mặt đa giác. Nghịch đảo chuyển vị giải quyết triệt để vấn đề này.'
+                        )
+                      "
+                    >
+                      B. Để đảm bảo vector pháp tuyến vẫn vuông góc với bề mặt vật thể khi mô hình bị co giãn không đồng
+                      đều (non-uniform scale).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Nhân ma trận nghịch đảo chuyển vị chậm hơn so với nhân ma trận mô hình thông thường.'
+                        )
+                      "
+                    >
+                      C. Để tăng tốc độ tính toán của GPU ở giai đoạn Vertex Shader.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Trong kỹ thuật Shadow Mapping hai lượt (Two-Pass), lượt kết xuất thứ nhất (Shadow Pass) ghi
+                    thông tin gì vào kết cấu texture?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Màu sắc vật thể chỉ được vẽ ở lượt kết xuất thứ hai từ góc nhìn camera.'
+                        )
+                      "
+                    >
+                      A. Màu sắc khuếch tán (Diffuse) của vật thể khi nhận ánh sáng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Lượt vẽ thứ nhất kết xuất cảnh vật từ góc nhìn nguồn sáng và chỉ lưu giữ độ sâu (khoảng cách) của vật thể cản sáng gần nhất vào một depth texture (Shadow Map).'
+                        )
+                      "
+                    >
+                      B. Giá trị độ sâu (depth) của các vật thể gần nguồn sáng nhất.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Hướng phản xạ specular là thông tin tính động trong fragment shader ở lượt 2.'
+                        )
+                      "
+                    >
+                      C. Tọa độ hướng phản xạ Specular sáng bóng của vật thể.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <!-- References/Citations Block -->
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Tài liệu tham khảo học thuật (Academic References)</div>
+                  <div class="callout__content">
+                    Tìm hiểu thêm toán học ánh sáng và các kỹ thuật bóng đổ nâng cao:
+                    <ul>
+                      <li>
+                        <strong>Phong Reflection Model (Wikipedia):</strong>
+                        <a href="https://en.wikipedia.org/wiki/Phong_reflection_model" target="_blank" rel="noopener"
+                          >wikipedia.org/wiki/Phong_reflection_model</a
+                        >
+                        - Chi tiết nguồn gốc toán học.
+                      </li>
+                      <li>
+                        <strong>LearnOpenGL - Shadow Mapping:</strong>
+                        <a
+                          href="https://learnopengl.com/Advanced-Lighting/Shadows/Shadow-Mapping"
+                          target="_blank"
+                          rel="noopener"
+                          >learnopengl.com/Shadows/Shadow-Mapping</a
+                        >
+                        - Nguyên lý và giải quyết răng cưa bóng đổ (Shadow Acne).
+                      </li>
+                      <li>
+                        <strong>WebGPU Specification - Comparison Samplers:</strong>
+                        <a
+                          href="https://www.w3.org/TR/webgpu/#sampler-comparison-evaluation"
+                          target="_blank"
+                          rel="noopener"
+                          >w3.org/TR/webgpu/#sampler-comparison</a
+                        >
+                        - Cơ chế hoạt động của sampler so sánh trên GPU.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2 data-lang-content="en">Related Articles</h2>
+                <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="webgpu-pipeline-depth" class="article-related__link article-related__link--prev">
+                    <span data-lang-content="en">Lesson 4: Pipeline State &amp; Depth Testing — 3D Rubik's Cube</span>
+                    <span data-lang-content="vi">Bài 4: Pipeline State &amp; Depth Testing — Khối Rubik 3D</span>
+                  </a>
+                  <a href="webgpu-compute-matrix" class="article-related__link article-related__link--next">
+                    <span data-lang-content="en">Lesson 6: Compute Shaders &amp; GPU Parallel Threading</span>
+                    <span data-lang-content="vi">Bài 6: Compute Shader &amp; Lập Trình Song Song GPU</span>
+                  </a>
+                  <a href="webgpu-programming-series" class="article-related__link">
+                    <span data-lang-content="en">Back to WebGPU Course Overview</span>
+                    <span data-lang-content="vi">Quay lại Lộ trình Series WebGPU</span>
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      // WebGPU Phong Lighting & Shadow Mapping Interactive Sandbox
+      (function () {
+        const canvas = document.getElementById('canvas-lighting');
+        const fallback = document.getElementById('lighting-fallback');
+
+        const chkShadows = document.getElementById('chk-enable-shadows');
+        const sliderAmbient = document.getElementById('slider-ambient');
+        const sliderDiffuse = document.getElementById('slider-diffuse');
+        const sliderSpecular = document.getElementById('slider-specular');
+        const sliderShininess = document.getElementById('slider-shininess');
+        const sliderSpeed = document.getElementById('slider-light-speed');
+
+        if (!navigator.gpu) return;
+
+        // Shape Vertices Generator Helpers: Sphere & Floor Plane
+        const sceneVertices = [];
+
+        function addVertex(px, py, pz, nx, ny, nz, r, g, b) {
+          sceneVertices.push(px, py, pz, nx, ny, nz, r, g, b);
+        }
+
+        // 1. Sphere Generator
+        const sphereLat = 24,
+          sphereLon = 24;
+        const sphereRadius = 1.0;
+        const sphereCenter = [0, 1.0, 0]; // Sitting on floor (y=0)
+
+        for (let lat = 0; lat < sphereLat; lat++) {
+          const theta1 = (lat / sphereLat) * Math.PI;
+          const theta2 = ((lat + 1) / sphereLat) * Math.PI;
+
+          for (let lon = 0; lon < sphereLon; lon++) {
+            const phi1 = (lon / sphereLon) * 2 * Math.PI;
+            const phi2 = ((lon + 1) / sphereLon) * 2 * Math.PI;
+
+            // 4 points on sphere
+            const x00 = Math.sin(theta1) * Math.cos(phi1);
+            const y00 = Math.cos(theta1);
+            const z00 = Math.sin(theta1) * Math.sin(phi1);
+
+            const x10 = Math.sin(theta2) * Math.cos(phi1);
+            const y10 = Math.cos(theta2);
+            const z10 = Math.sin(theta2) * Math.sin(phi1);
+
+            const x01 = Math.sin(theta1) * Math.cos(phi2);
+            const y01 = Math.cos(theta1);
+            const z01 = Math.sin(theta1) * Math.sin(phi2);
+
+            const x11 = Math.sin(theta2) * Math.cos(phi2);
+            const y11 = Math.cos(theta2);
+            const z11 = Math.sin(theta2) * Math.sin(phi2);
+
+            // AddSphere triangles
+            const r = 0.3,
+              g = 0.5,
+              b = 0.9; // Blue sphere
+            // Triangle 1: 00 -> 10 -> 01
+            addVertex(
+              x00 * sphereRadius + sphereCenter[0],
+              y00 * sphereRadius + sphereCenter[1],
+              z00 * sphereRadius + sphereCenter[2],
+              x00,
+              y00,
+              z00,
+              r,
+              g,
+              b
+            );
+            addVertex(
+              x10 * sphereRadius + sphereCenter[0],
+              y10 * sphereRadius + sphereCenter[1],
+              z10 * sphereRadius + sphereCenter[2],
+              x10,
+              y10,
+              z10,
+              r,
+              g,
+              b
+            );
+            addVertex(
+              x01 * sphereRadius + sphereCenter[0],
+              y01 * sphereRadius + sphereCenter[1],
+              z01 * sphereRadius + sphereCenter[2],
+              x01,
+              y01,
+              z01,
+              r,
+              g,
+              b
+            );
+            // Triangle 2: 10 -> 11 -> 01
+            addVertex(
+              x10 * sphereRadius + sphereCenter[0],
+              y10 * sphereRadius + sphereCenter[1],
+              z10 * sphereRadius + sphereCenter[2],
+              x10,
+              y10,
+              z10,
+              r,
+              g,
+              b
+            );
+            addVertex(
+              x11 * sphereRadius + sphereCenter[0],
+              y11 * sphereRadius + sphereCenter[1],
+              z11 * sphereRadius + sphereCenter[2],
+              x11,
+              y11,
+              z11,
+              r,
+              g,
+              b
+            );
+            addVertex(
+              x01 * sphereRadius + sphereCenter[0],
+              y01 * sphereRadius + sphereCenter[1],
+              z01 * sphereRadius + sphereCenter[2],
+              x01,
+              y01,
+              z01,
+              r,
+              g,
+              b
+            );
+          }
+        }
+
+        // 2. Floor Plane
+        const fSize = 6.0;
+        const fr = 0.25,
+          fg = 0.25,
+          fb = 0.3; // Dark grey floor
+        addVertex(-fSize, 0, fSize, 0, 1, 0, fr, fg, fb);
+        addVertex(fSize, 0, fSize, 0, 1, 0, fr, fg, fb);
+        addVertex(fSize, 0, -fSize, 0, 1, 0, fr, fg, fb);
+        addVertex(-fSize, 0, fSize, 0, 1, 0, fr, fg, fb);
+        addVertex(fSize, 0, -fSize, 0, 1, 0, fr, fg, fb);
+        addVertex(-fSize, 0, -fSize, 0, 1, 0, fr, fg, fb);
+
+        const sceneVertData = new Float32Array(sceneVertices);
+
+        // Matrix Math Helpers
+        function mat4Identity(out) {
+          out.fill(0);
+          out[0] = 1;
+          out[5] = 1;
+          out[10] = 1;
+          out[15] = 1;
+        }
+        function mat4Mul(out, a, b) {
+          const temp = new Float32Array(16);
+          for (let c = 0; c < 4; ++c) {
+            for (let r = 0; r < 4; ++r) {
+              temp[c * 4 + r] =
+                a[0 * 4 + r] * b[c * 4 + 0] +
+                a[1 * 4 + r] * b[c * 4 + 1] +
+                a[2 * 4 + r] * b[c * 4 + 2] +
+                a[3 * 4 + r] * b[c * 4 + 3];
+            }
+          }
+          out.set(temp);
+        }
+        function mat4Persp(out, fov, aspect, near, far) {
+          const f = 1 / Math.tan(fov / 2),
+            nf = 1 / (near - far);
+          out.fill(0);
+          out[0] = f / aspect;
+          out[5] = f;
+          out[10] = far * nf;
+          out[11] = -1;
+          out[14] = far * near * nf;
+        }
+        function mat4LookAt(out, eye, center, up) {
+          const zx = eye[0] - center[0],
+            zy = eye[1] - center[1],
+            zz = eye[2] - center[2];
+          const len = Math.hypot(zx, zy, zz) || 1;
+          const z0 = zx / len,
+            z1 = zy / len,
+            z2 = zz / len;
+
+          const x0 = up[1] * z2 - up[2] * z1;
+          const x1 = up[2] * z0 - up[0] * z2;
+          const x2 = up[0] * z1 - up[1] * z0;
+          const xlen = Math.hypot(x0, x1, x2) || 1;
+          const x0n = x0 / xlen,
+            x1n = x1 / xlen,
+            x2n = x2 / xlen;
+
+          const y0 = z1 * x2n - z2 * x1n;
+          const y1 = z2 * x0n - z0 * x2n;
+          const y2 = z0 * x1n - z1 * x0n;
+
+          out[0] = x0n;
+          out[1] = y0;
+          out[2] = z0;
+          out[3] = 0;
+          out[4] = x1n;
+          out[5] = y1;
+          out[6] = z1;
+          out[7] = 0;
+          out[8] = x2n;
+          out[9] = y2;
+          out[10] = z2;
+          out[11] = 0;
+          out[12] = -(x0n * eye[0] + x1n * eye[1] + x2n * eye[2]);
+          out[13] = -(y0 * eye[0] + y1 * eye[1] + y2 * eye[2]);
+          out[14] = -(z0 * eye[0] + z1 * eye[1] + z2 * eye[2]);
+          out[15] = 1;
+        }
+        function mat4Ortho(out, left, right, bottom, top, near, far) {
+          const lr = 1 / (left - right),
+            bt = 1 / (bottom - top),
+            nf = 1 / (near - far);
+          out.fill(0);
+          out[0] = -2 * lr;
+          out[5] = -2 * bt;
+          out[10] = nf;
+          out[12] = (left + right) * lr;
+          out[13] = (top + bottom) * bt;
+          out[14] = near * nf;
+          out[15] = 1;
+        }
+
+        // WebGPU Two-Pass Shaders (Shadow Pass + Forward Render Pass)
+        const shadowVS = `
+          struct Uniforms { mvp: mat4x4<f32> };
+          @group(0) @binding(0) var<uniform> u: Uniforms;
+
+          struct ShadowVSOut {
+            @builtin(position) pos: vec4<f32>,
+          };
+
+          @vertex
+          fn vs(@location(0) pos: vec3<f32>) -> ShadowVSOut {
+            var o: ShadowVSOut;
+            o.pos = u.mvp * vec4<f32>(pos, 1.0);
+            return o;
+          }
+        `;
+
+        const forwardShader = `
+          struct Uniforms {
+            mvp: mat4x4<f32>,
+            model: mat4x4<f32>,
+            lightMvp: mat4x4<f32>,
+          };
+          struct LightingData {
+            lightPos: vec4<f32>,
+            cameraPos: vec4<f32>,
+            params: vec4<f32>, // x: ambient, y: diffuse, z: specular, w: shininess
+          };
+
+          @group(0) @binding(0) var<uniform> u: Uniforms;
+          @group(0) @binding(1) var<uniform> uLight: LightingData;
+          @group(0) @binding(2) var shadowMap: texture_depth_2d;
+          @group(0) @binding(3) var shadowSampler: sampler_comparison;
+
+          struct VSIn {
+            @location(0) pos: vec3<f32>,
+            @location(1) normal: vec3<f32>,
+            @location(2) color: vec3<f32>,
+          };
+
+          struct VSOut {
+            @builtin(position) pos: vec4<f32>,
+            @location(0) worldPos: vec3<f32>,
+            @location(1) normal: vec3<f32>,
+            @location(2) color: vec3<f32>,
+            @location(3) lightSpacePos: vec4<f32>,
+          };
+
+          @vertex
+          fn vs(in: VSIn) -> VSOut {
+            var o: VSOut;
+            let worldPosVec = u.model * vec4<f32>(in.pos, 1.0);
+            o.worldPos = worldPosVec.xyz;
+            o.pos = u.mvp * vec4<f32>(in.pos, 1.0);
+            o.normal = normalize((u.model * vec4<f32>(in.normal, 0.0)).xyz);
+            o.color = in.color;
+            o.lightSpacePos = u.lightMvp * vec4<f32>(in.pos, 1.0);
+            return o;
+          }
+
+          @fragment
+          fn fs(in: VSOut) -> @location(0) vec4<f32> {
+            let N = normalize(in.normal);
+            let L = normalize(uLight.lightPos.xyz - in.worldPos);
+            let V = normalize(uLight.cameraPos.xyz - in.worldPos);
+            let H = normalize(L + V); // Blinn-Phong half vector
+
+            // Ambient
+            let ambient = uLight.params.x * in.color;
+
+            // Diffuse
+            let diffCoef = max(dot(N, L), 0.0);
+            let diffuse = uLight.params.y * diffCoef * in.color;
+
+            // Specular (Blinn-Phong)
+            let specCoef = pow(max(dot(N, H), 0.0), uLight.params.w);
+            let specular = uLight.params.z * specCoef * vec3<f32>(1.0, 1.0, 0.9);
+
+            // Compute Shadow factor
+            // Transform homogenous projection coordinate to [0, 1] UV texture range
+            let lightProjCoords = in.lightSpacePos.xyz / in.lightSpacePos.w;
+            let uv = vec2<f32>(
+              lightProjCoords.x * 0.5 + 0.5,
+              -lightProjCoords.y * 0.5 + 0.5
+            );
+            let depth = lightProjCoords.z;
+
+            // Sample comparison on hardware GPU shadow texture (called unconditionally in uniform control flow)
+            let shadowMapValue = textureSampleCompare(shadowMap, shadowSampler, uv, depth - 0.003);
+
+            var shadow: f32 = 1.0;
+            if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && depth <= 1.0) {
+              shadow = shadowMapValue;
+            }
+
+            // Final Phong reflection composition with shadow multiplier
+            let finalColor = ambient + shadow * (diffuse + specular);
+
+            return vec4<f32>(finalColor, 1.0);
+          }
+        `;
+
+        (async function () {
+          try {
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+              fallback.innerHTML = '<p>Không tìm thấy GPU Adapter vật lý hỗ trợ WebGPU.</p>';
+              return;
+            }
+            const device = await adapter.requestDevice();
+            device.addEventListener('uncaughterror', (event) => {
+              console.error('WebGPU uncaught error:', event.error.message);
+              fallback.innerHTML = `<p><strong>Lỗi WebGPU:</strong> ${event.error.message}</p>`;
+              fallback.classList.remove('hidden');
+              canvas.classList.add('hidden');
+            });
+            const ctx = canvas.getContext('webgpu');
+            const format = navigator.gpu.getPreferredCanvasFormat();
+
+            canvas.classList.remove('hidden');
+            fallback.classList.add('hidden');
+
+            const vertBuf = device.createBuffer({
+              size: sceneVertData.byteLength,
+              usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(vertBuf, 0, sceneVertData);
+
+            // 64 bytes: MVP (16 floats), Model (16 floats), LightMVP (16 floats)
+            const uniformBuf = device.createBuffer({
+              size: 192,
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            // Shadow uniform buffer (only requires MVP for the shadow view rendering pass)
+            const shadowUniformBuf = device.createBuffer({
+              size: 64,
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            // Lighting variables uniform (ambient, diffuse, specular, shininess, lightPos, cameraPos)
+            // Padding aligned rules std140
+            const lightUniformBuf = device.createBuffer({
+              size: 48,
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            // Shadow Map Resolution size
+            const shadowSize = 1024;
+            const shadowTexture = device.createTexture({
+              size: [shadowSize, shadowSize, 1],
+              format: 'depth24plus',
+              usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+            });
+
+            const shadowSampler = device.createSampler({
+              compare: 'less-equal',
+              minFilter: 'nearest',
+              magFilter: 'nearest',
+            });
+
+            // Setup shaders modules
+            const shadowMod = device.createShaderModule({ code: shadowVS });
+            const forwardMod = device.createShaderModule({ code: forwardShader });
+
+            // 1. Shadow Pipeline Setup
+            const shadowPipeline = device.createRenderPipeline({
+              layout: 'auto',
+              vertex: {
+                module: shadowMod,
+                entryPoint: 'vs',
+                buffers: [
+                  {
+                    arrayStride: 36,
+                    attributes: [{ format: 'float32x3', offset: 0, shaderLocation: 0 }],
+                  },
+                ],
+              },
+              primitive: { topology: 'triangle-list', cullMode: 'none' },
+              depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+            });
+
+            const shadowBg = device.createBindGroup({
+              layout: shadowPipeline.getBindGroupLayout(0),
+              entries: [{ binding: 0, resource: { buffer: shadowUniformBuf } }],
+            });
+
+            // 2. Forward Render Pipeline Setup
+            const depthFormat = 'depth24plus';
+            const bgl = device.createBindGroupLayout({
+              entries: [
+                {
+                  binding: 0,
+                  visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                  buffer: { type: 'uniform' },
+                },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
+              ],
+            });
+
+            const forwardPipeline = device.createRenderPipeline({
+              layout: device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+              vertex: {
+                module: forwardMod,
+                entryPoint: 'vs',
+                buffers: [
+                  {
+                    arrayStride: 36,
+                    attributes: [
+                      { format: 'float32x3', offset: 0, shaderLocation: 0 }, // position
+                      { format: 'float32x3', offset: 12, shaderLocation: 1 }, // normal
+                      { format: 'float32x3', offset: 24, shaderLocation: 2 }, // color
+                    ],
+                  },
+                ],
+              },
+              fragment: {
+                module: forwardMod,
+                entryPoint: 'fs',
+                targets: [{ format }],
+              },
+              primitive: { topology: 'triangle-list', cullMode: 'none' },
+              depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
+            });
+
+            // Depth Texture for Forward Pass
+            let depthTexture = null;
+            function resizeTextures() {
+              const dpr = window.devicePixelRatio || 1;
+              const w = Math.round(380 * dpr);
+              const h = Math.round(380 * dpr);
+              canvas.width = w;
+              canvas.height = h;
+              ctx.configure({ device, format, alphaMode: 'opaque' });
+
+              if (depthTexture) depthTexture.destroy();
+              depthTexture = device.createTexture({
+                size: [w, h, 1],
+                format: depthFormat,
+                usage: GPUTextureUsage.RENDER_ATTACHMENT,
+              });
+            }
+            resizeTextures();
+
+            // Bind Group for Forward Render Pass
+            const bg = device.createBindGroup({
+              layout: bgl,
+              entries: [
+                { binding: 0, resource: { buffer: uniformBuf } },
+                { binding: 1, resource: { buffer: lightUniformBuf } },
+                { binding: 2, resource: shadowTexture.createView({ aspect: 'depth-only' }) },
+                { binding: 3, resource: shadowSampler },
+              ],
+            });
+
+            // Matrices and Orbit setup
+            const lightProj = new Float32Array(16);
+            const lightView = new Float32Array(16);
+            const lightMvp = new Float32Array(16);
+
+            const cameraProj = new Float32Array(16);
+            const cameraView = new Float32Array(16);
+            const cameraMvp = new Float32Array(16);
+
+            const modelMatrix = new Float32Array(16);
+            mat4Identity(modelMatrix); // Static object matrix
+
+            // Projection setup
+            mat4Persp(cameraProj, Math.PI / 4, 1, 0.1, 100);
+            mat4LookAt(cameraView, [3, 4, 6], [0, 0.7, 0], [0, 1, 0]); // High angle camera view
+
+            // Light Projection: orthographic for directional light simulation
+            mat4Ortho(lightProj, -3.5, 3.5, -3.5, 3.5, 1.0, 15);
+
+            let elapsedAngle = 0;
+            let lastTime = performance.now();
+
+            function frame(t) {
+              const dt = t - lastTime;
+              lastTime = t;
+
+              // Rotate light orbit source
+              const speed = parseFloat(sliderSpeed.value);
+              elapsedAngle += speed * 0.001 * dt;
+
+              const lightRadius = 3.5;
+              const lx = Math.cos(elapsedAngle) * lightRadius;
+              const lz = Math.sin(elapsedAngle) * lightRadius;
+              const ly = 4.0; // Fixed light height
+              const lightPos = [lx, ly, lz];
+
+              // 1. Light Matrix computations (Shadow Map matrix)
+              mat4LookAt(lightView, lightPos, [0, 0.5, 0], [0, 1, 0]);
+              mat4Mul(lightMvp, lightProj, lightView);
+
+              // Write to Shadow Uniform
+              device.queue.writeBuffer(shadowUniformBuf, 0, lightMvp);
+
+              // 2. Camera Matrix computations
+              mat4Mul(tempMat, cameraProj, cameraView);
+              mat4Mul(cameraMvp, tempMat, modelMatrix);
+
+              // Write Forward render uniforms (64 bytes MVP, 64 bytes Model, 64 bytes LightMVP)
+              const writeData = new Float32Array(48);
+              writeData.set(cameraMvp, 0);
+              writeData.set(modelMatrix, 16);
+              writeData.set(lightMvp, 32);
+              device.queue.writeBuffer(uniformBuf, 0, writeData);
+
+              // Write Lighting uniform parameters
+              const lightData = new Float32Array(12);
+              lightData.set([lightPos[0], lightPos[1], lightPos[2], 1.0], 0); // vec4 lightPos
+              lightData.set([3, 4, 6, 1.0], 4); // vec4 cameraPos
+              lightData[8] = parseFloat(sliderAmbient.value);
+              lightData[9] = parseFloat(sliderDiffuse.value);
+              lightData[10] = chkShadows.checked ? parseFloat(sliderSpecular.value) : 0.0; // Specular component
+              lightData[11] = parseFloat(sliderShininess.value);
+              device.queue.writeBuffer(lightUniformBuf, 0, lightData);
+
+              const commandEncoder = device.createCommandEncoder();
+
+              // ----------------------------------------------------
+              // LƯỢT 1: SHADOW PASS (Dựng bản đồ độ sâu từ nguồn sáng)
+              // ----------------------------------------------------
+              const shadowPassDesc = {
+                colorAttachments: [],
+                depthStencilAttachment: {
+                  view: shadowTexture.createView(),
+                  depthClearValue: 1.0,
+                  depthLoadOp: 'clear',
+                  depthStoreOp: 'store',
+                },
+              };
+
+              const sPass = commandEncoder.beginRenderPass(shadowPassDesc);
+              sPass.setPipeline(shadowPipeline);
+              sPass.setBindGroup(0, shadowBg);
+              sPass.setVertexBuffer(0, vertBuf);
+              sPass.draw(sceneVertData.length / 9);
+              sPass.end();
+
+              // ----------------------------------------------------
+              // LƯỢT 2: FORWARD RENDER PASS (Dựng hình có ánh sáng & đổ bóng)
+              // ----------------------------------------------------
+              const forwardPassDesc = {
+                colorAttachments: [
+                  {
+                    view: ctx.getCurrentTexture().createView(),
+                    clearValue: { r: 0.05, g: 0.05, b: 0.08, a: 1.0 },
+                    loadOp: 'clear',
+                    storeOp: 'store',
+                  },
+                ],
+                depthStencilAttachment: {
+                  view: depthTexture.createView(),
+                  depthClearValue: 1.0,
+                  depthLoadOp: 'clear',
+                  depthStoreOp: 'store',
+                },
+              };
+
+              const fPass = commandEncoder.beginRenderPass(forwardPassDesc);
+              fPass.setPipeline(forwardPipeline);
+              fPass.setBindGroup(0, bg);
+              fPass.setVertexBuffer(0, vertBuf);
+              fPass.draw(sceneVertData.length / 9);
+              fPass.end();
+
+              device.queue.submit([commandEncoder.finish()]);
+              requestAnimationFrame(frame);
+            }
+
+            const tempMat = new Float32Array(16);
+            requestAnimationFrame(frame);
+          } catch (e) {
+            console.error('WebGPU lighting setup failed:', e);
+            canvas.classList.add('hidden');
+            fallback.classList.remove('hidden');
+            fallback.innerHTML = `<p><strong>Lỗi khởi chạy WebGPU:</strong> ${e.message || e}</p>`;
+          }
+        })();
+      })();
+    </script>
+  </body>
+</html>

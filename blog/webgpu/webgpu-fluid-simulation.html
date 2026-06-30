@@ -1,0 +1,1301 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 8: SPH Fluid Simulation — Động Học Chất Lỏng &amp; Phân Vùng — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu thuật toán Smoothed Particle Hydrodynamics (SPH), cách lập trình tính mật độ, áp suất, lực nhớt và tối ưu lưới phân vùng không gian trên GPU."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgpu/webgpu-fluid-simulation" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      .hidden {
+        display: none !important;
+      }
+      .fluid-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 24px;
+      }
+      .fluid-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .fluid-controls h3 {
+        color: #cdd6f4;
+        margin: 0;
+        font-size: 14px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 8px;
+      }
+      .fluid-controls label {
+        color: #a6adc8;
+        font-weight: 600;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .fluid-controls select,
+      .fluid-controls input[type='range'] {
+        background: #1e1e2e;
+        color: #cdd6f4;
+        border: 1px solid var(--border);
+        padding: 6px;
+        border-radius: 6px;
+        outline: none;
+      }
+      .fluid-controls input[type='range'] {
+        padding: 2px;
+        cursor: pointer;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .fluid-viewport {
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 480px;
+        position: relative;
+        overflow: hidden;
+      }
+      .fluid-canvas {
+        width: 100%;
+        height: 100%;
+        max-width: 460px;
+        max-height: 460px;
+        background: #000;
+        border-radius: 6px;
+      }
+      .fluid-fallback {
+        color: #f38ba8;
+        padding: 24px;
+        text-align: center;
+        font-size: 14px;
+      }
+      .fps-counter {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: rgba(17, 17, 27, 0.85);
+        border: 1px solid var(--border);
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-family: monospace;
+        font-size: 12px;
+        font-weight: bold;
+        color: #89b4fa;
+      }
+      @media (max-width: 880px) {
+        .fluid-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgpu">
+        <div class="container">
+          <a href="webgpu-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGPU Series</span
+            ><span data-lang-content="vi">Quay lại Lộ trình WebGPU</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgpu">WebGPU &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGPU Lesson 8: SPH Fluid Simulation — Physics &amp; Spatial Partitioning
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 8: SPH Fluid Simulation — Động Học Chất Lỏng &amp; Phân Vùng Không Gian
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 30, 2026 · 16 min read</span>
+            <span data-lang-content="vi">30 tháng 6, 2026 · 16 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Content -->
+              <div data-lang-content="en">
+                <p>
+                  Explore real-time fluid solvers on the GPU using Smoothed Particle Hydrodynamics (SPH). Learn how to
+                  implement multi-pass compute pipelines for density, pressure, and viscosity force calculations, and
+                  understand spatial grid partition concepts.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Trong bài học trước, chúng ta đã xây dựng một hệ thống hạt độc lập tự do chịu tác động cơ bản của
+                  trọng lực. Để mô phỏng <strong>chất lỏng</strong> (như dòng nước chảy, dầu loang), các hạt không thể
+                  chỉ chuyển động riêng rẽ mà bắt buộc phải có sự tương tác vật lý liên tục với nhau để duy trì thể tích
+                  không đổi của khối chất lỏng.
+                </p>
+                <p>
+                  Bài học này sẽ hướng dẫn bạn thuật toán <strong>SPH (Smoothed Particle Hydrodynamics)</strong> – giải
+                  pháp mô phỏng chất lỏng dựa trên hạt Lagrange phổ biến nhất trong đồ họa thời gian thực, cách tổ chức
+                  hai lượt Compute Shader lồng nhau (Multi-pass Compute) và tối ưu hóa phân vùng lưới tìm lân cận.
+                </p>
+
+                <h2>1. Giải thuật Smoothed Particle Hydrodynamics (SPH)</h2>
+                <p>
+                  Ý tưởng cốt lõi của SPH là coi chất lỏng là một tập hợp các hạt rời rạc. Mỗi hạt mang một khối lượng
+                  nhất định, các đại lượng vật lý (như mật độ, áp suất) tại một điểm bất kỳ trong không gian sẽ được nội
+                  suy trơn tru từ các hạt xung quanh thông qua một
+                  <strong>hàm hạt nhân làm mịn (Smoothing Kernel Function - $W(r, h)$)</strong>.
+                </p>
+                <p>
+                  Khoảng cách ảnh hưởng tối đa của hạt nhân làm mịn được gọi là <strong>bán kính làm mịn ($h$)</strong>.
+                  Nếu khoảng cách $r$ giữa hai hạt vượt quá $h$, tương tác vật lý giữa chúng bằng 0.
+                </p>
+
+                <div class="callout callout--info">
+                  <p><strong>Quy trình tính toán SPH gồm 2 bước chính:</strong></p>
+                  <ol>
+                    <li>
+                      <strong>Bước 1: Tính Mật độ ($\rho_i$) và Áp suất ($p_i$) của từng hạt:</strong>
+                      Mật độ của hạt $i$ là tổng mật độ đóng góp từ các hạt $j$ lân cận: \[\rho_i = \sum_{j} m_j
+                      W(|\mathbf{x}_i - \mathbf{x}_j|, h)\] Áp suất $p_i$ được tính dựa trên độ lệch so với mật độ nghỉ
+                      lý tưởng ($\rho_0$): \[p_i = k (\rho_i - \rho_0)\] *(Trong đó $k$ là hệ số độ cứng của nước).*
+                    </li>
+                    <li>
+                      <strong>Bước 2: Tính toán Lực tác động và Cập nhật Vị trí:</strong>
+                      Tính toán các lực tương tác: Lực áp suất (đẩy các hạt ra xa nhau để chống nén) và lực nhớt (kéo
+                      ghì các hạt di chuyển cùng vận tốc để tạo cảm giác quánh dẻo). \[\mathbf{f}_i^{\text{press}} =
+                      -\sum_{j} m_j \frac{p_i + p_j}{2\rho_j} \nabla W(|\mathbf{x}_i - \mathbf{x}_j|, h)\]
+                      \[\mathbf{f}_i^{\text{visc}} = \mu \sum_{j} m_j \frac{\mathbf{v}_j - \mathbf{v}_i}{\rho_j}
+                      \nabla^2 W(|\mathbf{x}_i - \mathbf{x}_j|, h)\]
+                    </li>
+                  </ol>
+                </div>
+
+                <h2>2. Thiết lập Multi-pass Compute Pipeline</h2>
+                <p>
+                  Vì bước 2 (tính toán lực) yêu cầu giá trị áp suất của toàn bộ các hạt đã được tính toán xong ở bước 1,
+                  ta không thể viết chung cả hai bước này trong cùng một Compute Shader duy nhất nếu không có cơ chế
+                  đồng bộ hóa toàn cục.
+                </p>
+                <p>
+                  Giải pháp là thiết lập <strong>lượt chạy Compute đa pass (Multi-pass Compute)</strong> trong mã
+                  JavaScript điều phối:
+                </p>
+                <pre><code class="language-js">const commandEncoder = device.createCommandEncoder();
+
+// Lượt 1: Chạy pipeline tính mật độ và áp suất
+const pass1 = commandEncoder.beginComputePass();
+pass1.setPipeline(densityPipeline);
+pass1.setBindGroup(0, computeBindGroup);
+pass1.dispatchWorkgroups(Math.ceil(particleCount / 64));
+pass1.end();
+
+// Lượt 2: Chạy pipeline tính lực và cập nhật tọa độ
+const pass2 = commandEncoder.beginComputePass();
+pass2.setPipeline(forcePipeline);
+pass2.setBindGroup(0, computeBindGroup);
+pass2.dispatchWorkgroups(Math.ceil(particleCount / 64));
+pass2.end();</code></pre>
+
+                <h2>3. Khái niệm Spatial Hashing tối ưu hóa $O(N^2) \to O(N)$</h2>
+                <p>
+                  Nếu thực hiện duyệt trực tiếp vòng lặp lồng nhau (Double loop), mỗi hạt phải kiểm tra khoảng cách với
+                  $N-1$ hạt còn lại, tạo ra độ phức tạp tính toán rất lớn là \(O(N^2)\). Kỹ thuật
+                  <strong>Spatial Hashing (Phân vùng lưới không gian)</strong> chia toàn bộ không gian mô phỏng thành
+                  một lưới các ô có kích thước bằng bán kính làm mịn $h$.
+                </p>
+                <p>
+                  Mỗi hạt được ánh xạ (hash) vào một ô lưới dựa trên tọa độ vị trí. Khi cần tính toán mật độ hay lực của
+                  hạt $i$, ta chỉ cần duyệt qua các hạt nằm trong cùng ô lưới và 8 ô lưới lân cận xung quanh, giúp giảm
+                  số lượng phép tính khoảng cách thừa và hạ độ phức tạp trung bình xuống còn \(O(N)\).
+                </p>
+
+                <h2>Sân chơi tương tác: GPU SPH Fluid Lab</h2>
+                <p>
+                  Dưới đây là mô phỏng động lực học chất lỏng SPH chạy thực tế trên WebGPU. Hãy nhấn chuột kéo rê trực
+                  tiếp trên màn hình nước để tạo ra các cơn sóng, và thử thay đổi hệ số độ cứng (áp suất) hoặc độ nhớt
+                  để quan sát sự biến chuyển trạng thái từ nước lỏng sang dạng keo dẻo:
+                </p>
+
+                <!-- Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">💧 SPH Fluid Simulation Sandbox</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="wgsl">WGSL (Passes)</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="fluid-sandbox">
+                      <div class="fluid-controls">
+                        <h3>Cấu hình Vật lý Chất lỏng</h3>
+                        <div class="control-group">
+                          <label
+                            >Độ cứng áp suất
+                            <input type="range" id="range-pressure" min="10" max="150" step="5" value="60" />
+                          </label>
+
+                          <label
+                            >Độ nhớt dẻo (Viscosity)
+                            <input type="range" id="range-viscosity" min="0.05" max="1.5" step="0.05" value="0.3" />
+                          </label>
+
+                          <label
+                            >Bán kính làm mịn (h)
+                            <input type="range" id="range-h" min="0.06" max="0.2" step="0.01" value="0.1" />
+                          </label>
+
+                          <button
+                            class="btn btn-run btn-run--cpu"
+                            id="btn-reset-fluid"
+                            style="background: #89b4fa; color: #11111b; margin-top: 10px"
+                          >
+                            ↻ Khởi tạo lại nước
+                          </button>
+                        </div>
+                      </div>
+
+                      <div class="fluid-viewport">
+                        <div id="fluid-fallback" class="fluid-fallback hidden">
+                          <p>Trình duyệt của bạn chưa hỗ trợ WebGPU. Hãy sử dụng Chrome/Edge phiên bản mới nhất.</p>
+                        </div>
+                        <div class="fps-counter" id="fps-val">60 FPS</div>
+                        <canvas class="fluid-canvas" id="canvas-fluid" width="460" height="460"></canvas>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="wgsl">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">fluid-passes.wgsl</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-wgsl">struct Particle {
+  pos : vec2&lt;f32&gt;,
+  vel : vec2&lt;f32&gt;,
+  force : vec2&lt;f32&gt;,
+  density : f32,
+  pressure : f32,
+};
+
+struct Params {
+  gravity : f32,
+  viscosity : f32,
+  pressureCoeff : f32,
+  h : f32,
+  targetDensity : f32,
+  particleRadius : f32,
+  deltaTime : f32,
+  mousePos : vec2&lt;f32&gt;,
+  mouseActive : u32,
+};
+
+@group(0) @binding(0) var&lt;uniform&gt; u : Params;
+@group(0) @binding(1) var&lt;storage, read_write&gt; particles : array&lt;Particle&gt;;
+
+// LƯỢT 1 COMPUTE: Tính mật độ và áp suất của từng hạt
+@compute @workgroup_size(64)
+fn calcDensity(@builtin(global_invocation_id) id : vec3&lt;u32&gt;) {
+  let idx = id.x;
+  if (idx &gt;= arrayLength(&amp;particles)) { return; }
+
+  var p = particles[idx];
+  var density = 0.0;
+  let h2 = u.h * u.h;
+
+  for (var i = 0u; i &lt; arrayLength(&amp;particles); i = i + 1u) {
+    let p_j = particles[i];
+    let diff = p.pos - p_j.pos;
+    let r2 = dot(diff, diff);
+
+    if (r2 &lt; h2) {
+      // Smoothing kernel polynomial
+      let term = h2 - r2;
+      density = density + term * term * term;
+    }
+  }
+
+  // Chuẩn hóa mật độ dựa trên h9 kernel constant
+  p.density = density * (315.0 / (64.0 * 3.141592 * pow(u.h, 9.0)));
+  // Tait equation tính áp suất nước chống nén
+  p.pressure = u.pressureCoeff * (p.density - u.targetDensity);
+
+  particles[idx] = p;
+}
+
+// LƯỢT 2 COMPUTE: Tính lực tương tác và tích hợp tích lũy vị trí
+@compute @workgroup_size(64)
+fn calcForces(@builtin(global_invocation_id) id : vec3&lt;u32&gt;) {
+  let idx = id.x;
+  if (idx &gt;= arrayLength(&amp;particles)) { return; }
+
+  var p = particles[idx];
+  var force = vec2&lt;f32&gt;(0.0, -u.gravity * p.density);
+  let h = u.h;
+
+  for (var i = 0u; i &lt; arrayLength(&amp;particles); i = i + 1u) {
+    if (i == idx) { continue; }
+    let p_j = particles[i];
+    let diff = p.pos - p_j.pos;
+    let r = length(diff);
+
+    if (r &lt; h &amp;&amp; r &gt; 0.001) {
+      let dir = diff / r;
+      // Lực áp suất đẩy hạt ra xa nhau (Pressure Force)
+      let pForceVal = -(p.pressure + p_j.pressure) / (2.0 * p_j.density) * (45.0 / (3.141592 * pow(h, 6.0))) * pow(h - r, 2.0);
+      force = force + dir * pForceVal;
+
+      // Lực nhớt giữ hạt dính nhau (Viscosity Force)
+      let vForceVal = u.viscosity * (45.0 / (3.141592 * pow(h, 6.0))) * (h - r);
+      force = force + (p_j.vel - p.vel) * (vForceVal / p_j.density);
+    }
+  }
+
+  // Tương tác chuột tạo sóng nước đẩy hạt
+  if (u.mouseActive == 1u) {
+    let toMouse = u.mousePos - p.pos;
+    let mouseDist = length(toMouse);
+    if (mouseDist &lt; 0.6 &amp;&amp; mouseDist &gt; 0.01) {
+      force = force - (toMouse / mouseDist) * (0.6 - mouseDist) * 12.0 * p.density;
+    }
+  }
+
+  // Tích phân Euler cập nhật gia tốc, vận tốc, vị trí
+  let accel = force / p.density;
+  p.vel = p.vel + accel * u.deltaTime;
+  p.pos = p.pos + p.vel * u.deltaTime;
+
+  // Va chạm biên hộp mềm mại
+  let margin = 0.95;
+  if (abs(p.pos.x) &gt; margin) {
+    p.pos.x = sign(p.pos.x) * margin;
+    p.vel.x = -p.vel.x * 0.4;
+  }
+  if (abs(p.pos.y) &gt; margin) {
+    p.pos.y = sign(p.pos.y) * margin;
+    p.vel.y = -p.vel.y * 0.4;
+  }
+
+  particles[idx] = p;
+}</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">fluid-multi-pass.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js">// Chạy Compute Pass 1: Tính Mật độ &amp; Áp suất
+const compPass1 = commandEncoder.beginComputePass();
+compPass1.setPipeline(densityPipeline);
+compPass1.setBindGroup(0, computeBindGroup);
+compPass1.dispatchWorkgroups(Math.ceil(particleCount / 64));
+compPass1.end();
+
+// Chạy Compute Pass 2: Tính Lực &amp; Cập nhật Euler Integration
+const compPass2 = commandEncoder.beginComputePass();
+compPass2.setPipeline(forcePipeline);
+compPass2.setBindGroup(0, computeBindGroup);
+compPass2.dispatchWorkgroups(Math.ceil(particleCount / 64));
+compPass2.end();
+
+// Render Pass vẽ các giọt nước
+const renderPass = commandEncoder.beginRenderPass(renderPassDesc);
+renderPass.setPipeline(renderPipeline);
+renderPass.setBindGroup(0, renderBindGroup);
+renderPass.draw(6, particleCount, 0, 0); // Vẽ các instanced quads đại diện hạt
+renderPass.end();</code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="callout callout--deep">
+                  <p><strong>Tài liệu tham khảo chuyên sâu &amp; Trích dẫn Học thuật:</strong></p>
+                  <ul>
+                    <li>
+                      Nghiên cứu gốc đề xuất giải thuật SPH mô phỏng chất lỏng đồ họa:
+                      <a
+                        href="https://matthias-mueller-fischer.ch/publications/sca03.pdf"
+                        target="_blank"
+                        rel="noopener"
+                        >M. Müller et al. - Particle-Based Fluid Simulation for Real-Time Applications</a
+                      >.
+                    </li>
+                    <li>
+                      Giải pháp phân vùng lưới lưới không gian hiệu năng cao trên GPU:
+                      <a
+                        href="https://www.diva-portal.org/smash/get/diva2:1691238/FULLTEXT01.pdf"
+                        target="_blank"
+                        rel="noopener"
+                        >GPU Spatial Hashing Optimization and Sorting</a
+                      >.
+                    </li>
+                  </ul>
+                </div>
+
+                <!-- Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Tại sao mô phỏng chất lỏng SPH lại bắt buộc phải chia làm hai lượt chạy Compute Shader
+                    (calcDensity và calcForces)?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cả hai lượt chạy hoàn toàn có thể dùng chung cấu trúc dữ liệu mảng hạt.'
+                        )
+                      "
+                    >
+                      A. Vì bộ nhớ GPU không cho phép đọc và ghi dữ liệu hạt trong cùng một pipeline.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Lực áp suất tác động lên hạt i ở bước 2 phụ thuộc vào giá trị áp suất của cả hạt i và hạt j lân cận. Ta cần đảm bảo toàn bộ hạt trong không gian đã tính xong áp suất ở bước 1 trước khi bắt đầu tính lực đẩy ở bước 2.'
+                        )
+                      "
+                    >
+                      B. Vì lực áp suất của mỗi hạt ở bước hai phụ thuộc vào áp suất đã hoàn thành tính toán của các hạt
+                      lân cận xung quanh.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Lượt chạy Compute bổ sung không phải là điều kiện hiển thị render.'
+                        )
+                      "
+                    >
+                      C. Vì lượt chạy thứ hai là bắt buộc để nạp dữ liệu đỉnh vào canvas context.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Hệ thống Spatial Hashing giúp nâng cao hiệu suất mô phỏng chất lỏng trên GPU như thế nào?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. Nó không làm giảm dung lượng VRAM thực tế của dữ liệu.')"
+                    >
+                      A. Làm giảm dung lượng lưu trữ mảng hạt trên VRAM của GPU.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Bằng cách băm tọa độ hạt vào các ô lưới nhỏ kích cỡ h, ta giới hạn tìm kiếm lân cận chỉ trong ô hiện tại và 8 ô xung quanh, giảm độ phức tạp vòng lặp từ O(N^2) xuống O(N).'
+                        )
+                      "
+                    >
+                      B. Giới hạn phạm vi tìm kiếm hạt lân cận chỉ trong ô lưới chứa hạt đó và 8 ô xung quanh thay vì
+                      duyệt toàn bộ mảng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Nó là giải thuật tối ưu tìm kiếm lân cận, không ảnh hưởng đến thuật toán tích phân.'
+                        )
+                      "
+                    >
+                      C. Tự động hóa việc phân rã và hồi sinh hạt khi va chạm biên.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Related Articles -->
+            <div class="article-related">
+              <h2 data-lang-content="en">Related Articles</h2>
+              <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="webgpu-gpu-particles" class="article-related__link article-related__link--prev">
+                  <span data-lang-content="en">Lesson 7: 100k Particles Simulation — Instanced Rendering</span>
+                  <span data-lang-content="vi">Bài 7: Mô Phỏng 100k Hạt Trên GPU — Instanced Rendering Cực Đỉnh</span>
+                </a>
+                <a href="webgpu-gltf-loading" class="article-related__link article-related__link--next">
+                  <span data-lang-content="en">Lesson 9: glTF 3D Model Loading — Parser &amp; Vertex Buffers</span>
+                  <span data-lang-content="vi">Bài 9: glTF 3D Model Loading — Đọc Cấu Trúc Khung Lưới</span>
+                </a>
+                <a href="webgpu-programming-series" class="article-related__link">
+                  <span data-lang-content="en">Back to WebGPU Course Overview</span>
+                  <span data-lang-content="vi">Quay lại Lộ trình Series WebGPU</span>
+                </a>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      (async function () {
+        const fallback = document.getElementById('fluid-fallback');
+        const canvas = document.getElementById('canvas-fluid');
+        const rangePressure = document.getElementById('range-pressure');
+        const rangeViscosity = document.getElementById('range-viscosity');
+        const rangeH = document.getElementById('range-h');
+        const btnReset = document.getElementById('btn-reset-fluid');
+        const fpsVal = document.getElementById('fps-val');
+
+        window.addEventListener('unhandledrejection', (event) => {
+          console.error('Unhandled rejection:', event.reason);
+          fallback.innerHTML += `<p><strong>Unhandled Rejection:</strong> ${event.reason.message || event.reason}</p>`;
+          fallback.classList.remove('hidden');
+        });
+
+        window.addEventListener('error', (event) => {
+          console.error('Global error:', event.message);
+          fallback.innerHTML += `<p><strong>Global JS Error:</strong> ${event.message}</p>`;
+          fallback.classList.remove('hidden');
+        });
+
+        if (!navigator.gpu) {
+          fallback.classList.remove('hidden');
+          canvas.classList.add('hidden');
+          return;
+        }
+
+        try {
+          const adapter = await navigator.gpu.requestAdapter();
+          if (!adapter) {
+            fallback.innerHTML = `<p><strong>Lỗi WebGPU:</strong> Không tìm thấy adapter phù hợp.</p>`;
+            fallback.classList.remove('hidden');
+            canvas.classList.add('hidden');
+            return;
+          }
+          const device = await adapter.requestDevice();
+          const context = canvas.getContext('webgpu');
+
+          const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+          context.configure({
+            device,
+            format: presentationFormat,
+            alphaMode: 'opaque',
+          });
+
+          device.addEventListener('uncaughterror', (event) => {
+            console.error('WebGPU uncaught error:', event.error.message);
+            fallback.innerHTML = `<p><strong>Lỗi WebGPU:</strong> ${event.error.message}</p>`;
+            fallback.classList.remove('hidden');
+            canvas.classList.add('hidden');
+          });
+
+          // Multi-pass WGSL Compute Shaders
+          const compDensityShaderCode = `
+            struct Particle {
+              pos : vec2<f32>,
+              vel : vec2<f32>,
+              force : vec2<f32>,
+              density : f32,
+              pressure : f32,
+            };
+
+            struct Params {
+              gravity : f32,
+              viscosity : f32,
+              pressureCoeff : f32,
+              h : f32,
+              targetDensity : f32,
+              particleRadius : f32,
+              deltaTime : f32,
+              particleCount : u32,
+              mousePos : vec2<f32>,
+              mouseActive : u32,
+            };
+
+            @group(0) @binding(0) var<uniform> u : Params;
+            @group(0) @binding(1) var<storage, read_write> particles : array<Particle>;
+
+            @compute @workgroup_size(64)
+            fn main(@builtin(global_invocation_id) id : vec3<u32>) {
+              let idx = id.x;
+              if (idx >= u.particleCount) {
+                return;
+              }
+
+              var p = particles[idx];
+              var density = 0.0;
+              let h2 = u.h * u.h;
+
+              for (var i = 0u; i < u.particleCount; i = i + 1u) {
+                let p_j = particles[i];
+                let diff = p.pos - p_j.pos;
+                let r2 = dot(diff, diff);
+
+                if (r2 < h2) {
+                  // Normalized smoothing kernel so that self-contribution (r=0) is exactly 1.0
+                  let term = (h2 - r2) / h2;
+                  density = density + term * term * term;
+                }
+              }
+
+              p.density = density;
+              p.pressure = u.pressureCoeff * (p.density - u.targetDensity);
+
+              particles[idx] = p;
+            }
+          `;
+
+          const compForceShaderCode = `
+            struct Particle {
+              pos : vec2<f32>,
+              vel : vec2<f32>,
+              force : vec2<f32>,
+              density : f32,
+              pressure : f32,
+            };
+
+            struct Params {
+              gravity : f32,
+              viscosity : f32,
+              pressureCoeff : f32,
+              h : f32,
+              targetDensity : f32,
+              particleRadius : f32,
+              deltaTime : f32,
+              particleCount : u32,
+              mousePos : vec2<f32>,
+              mouseActive : u32,
+            };
+
+            @group(0) @binding(0) var<uniform> u : Params;
+            @group(0) @binding(1) var<storage, read_write> particles : array<Particle>;
+
+            @compute @workgroup_size(64)
+            fn main(@builtin(global_invocation_id) id : vec3<u32>) {
+              let idx = id.x;
+              if (idx >= u.particleCount) {
+                return;
+              }
+
+              var p = particles[idx];
+              var force = vec2<f32>(0.0, -u.gravity);
+              let h = u.h;
+
+              for (var i = 0u; i < u.particleCount; i = i + 1u) {
+                if (i == idx) { continue; }
+                let p_j = particles[i];
+                let diff = p.pos - p_j.pos;
+                let r = length(diff);
+
+                if (r < h && r > 0.001) {
+                  let dir = diff / r;
+                  let distRatio = (h - r) / h;
+                  
+                  // SPH Pressure force (push apart)
+                  let pForceVal = -(p.pressure + p_j.pressure) * distRatio * distRatio;
+                  force = force + dir * pForceVal;
+
+                  // SPH Viscosity force (drag velocities together)
+                  let vForceVal = u.viscosity * distRatio;
+                  force = force + (p_j.vel - p.vel) * vForceVal;
+                }
+              }
+
+              // Mouse interactive force pushing water drops
+              if (u.mouseActive == 1u) {
+                let toMouse = u.mousePos - p.pos;
+                let mouseDist = length(toMouse);
+                if (mouseDist < 0.6 && mouseDist > 0.01) {
+                  force = force - (toMouse / mouseDist) * (0.6 - mouseDist) * 15.0;
+                }
+              }
+
+              // Integration
+              p.vel = p.vel + force * u.deltaTime;
+              
+              // Cap speed for numerical stability
+              let maxSpeed = 3.5;
+              if (length(p.vel) > maxSpeed) {
+                p.vel = normalize(p.vel) * maxSpeed;
+              }
+              
+              p.pos = p.pos + p.vel * u.deltaTime;
+
+              // Soft boundary container collision response
+              let margin = 0.95;
+              if (abs(p.pos.x) > margin) {
+                p.pos.x = sign(p.pos.x) * margin;
+                p.vel.x = -p.vel.x * 0.45;
+              }
+              if (abs(p.pos.y) > margin) {
+                p.pos.y = sign(p.pos.y) * margin;
+                p.vel.y = -p.vel.y * 0.45;
+              }
+
+              particles[idx] = p;
+            }
+          `;
+
+          // Render Shader
+          const renderShaderCode = `
+            struct Particle {
+              pos : vec2<f32>,
+              vel : vec2<f32>,
+              force : vec2<f32>,
+              density : f32,
+              pressure : f32,
+            };
+
+            struct Params {
+              gravity : f32,
+              viscosity : f32,
+              pressureCoeff : f32,
+              h : f32,
+              targetDensity : f32,
+              particleRadius : f32,
+              deltaTime : f32,
+              particleCount : u32,
+              mousePos : vec2<f32>,
+              mouseActive : u32,
+            };
+
+            @group(0) @binding(0) var<uniform> u : Params;
+            @group(0) @binding(1) var<storage, read> particles : array<Particle>;
+
+            struct VertexOutput {
+              @builtin(position) pos : vec4<f32>,
+              @location(0) color : vec4<f32>,
+              @location(1) uv : vec2<f32>,
+            };
+
+            @vertex
+            fn vsMain(
+              @builtin(vertex_index) vertexIdx : u32,
+              @builtin(instance_index) instanceIdx : u32
+            ) -> VertexOutput {
+              let p = particles[instanceIdx];
+              
+              var quadOffsets = array<vec2<f32>, 6>(
+                vec2<f32>(-1.0, -1.0),
+                vec2<f32>(1.0, -1.0),
+                vec2<f32>(-1.0, 1.0),
+                vec2<f32>(-1.0, 1.0),
+                vec2<f32>(1.0, -1.0),
+                vec2<f32>(1.0, 1.0)
+              );
+
+              let uv = quadOffsets[vertexIdx];
+              let offset = uv * u.particleRadius;
+              let finalPos = p.pos + offset;
+
+              var out : VertexOutput;
+              out.pos = vec4<f32>(finalPos, 0.0, 1.0);
+              out.uv = uv;
+
+              // Fluid velocity-based coloring (glowing blue metaballs)
+              let speed = length(p.vel);
+              let waterColor = mix(vec3<f32>(0.1, 0.4, 0.9), vec3<f32>(0.2, 0.8, 1.0), min(speed * 0.4, 1.0));
+              out.color = vec4<f32>(waterColor, 0.65);
+              return out;
+            }
+
+            @fragment
+            fn fsMain(in : VertexOutput) -> @location(0) vec4<f32> {
+              let dist = length(in.uv);
+              if (dist > 1.0) {
+                discard;
+              }
+              // Radial blur gradient for soft water droplet look
+              let intensity = 1.0 - smoothstep(0.0, 1.0, dist);
+              return vec4<f32>(in.color.rgb, in.color.a * intensity);
+            }
+          `;
+
+          // Setup pipelines
+          const compDensityMod = device.createShaderModule({ code: compDensityShaderCode });
+          const compForceMod = device.createShaderModule({ code: compForceShaderCode });
+          const renderMod = device.createShaderModule({ code: renderShaderCode });
+
+          const densityPipeline = device.createComputePipeline({
+            layout: 'auto',
+            compute: { module: compDensityMod, entryPoint: 'main' },
+          });
+
+          const forcePipeline = device.createComputePipeline({
+            layout: 'auto',
+            compute: { module: compForceMod, entryPoint: 'main' },
+          });
+
+          const renderPipeline = device.createRenderPipeline({
+            layout: 'auto',
+            vertex: { module: renderMod, entryPoint: 'vsMain' },
+            fragment: {
+              module: renderMod,
+              entryPoint: 'fsMain',
+              targets: [
+                {
+                  format: presentationFormat,
+                  blend: {
+                    color: {
+                      srcFactor: 'src-alpha',
+                      dstFactor: 'one-minus-src-alpha',
+                      operation: 'add',
+                    },
+                    alpha: {
+                      srcFactor: 'one',
+                      dstFactor: 'one',
+                      operation: 'add',
+                    },
+                  },
+                },
+              ],
+            },
+            primitive: { topology: 'triangle-list' },
+          });
+
+          compDensityMod.getCompilationInfo().then((info) => {
+            for (const message of info.messages) {
+              if (message.type === 'error') {
+                console.error('compDensityMod compile error:', message.message);
+                fallback.innerHTML += `<p><strong>Lỗi Shader Mật độ:</strong> ${message.message} (Dòng ${message.lineNum}:${message.linePos})</p>`;
+                fallback.classList.remove('hidden');
+              }
+            }
+          });
+
+          compForceMod.getCompilationInfo().then((info) => {
+            for (const message of info.messages) {
+              if (message.type === 'error') {
+                console.error('compForceMod compile error:', message.message);
+                fallback.innerHTML += `<p><strong>Lỗi Shader Lực:</strong> ${message.message} (Dòng ${message.lineNum}:${message.linePos})</p>`;
+                fallback.classList.remove('hidden');
+              }
+            }
+          });
+
+          renderMod.getCompilationInfo().then((info) => {
+            for (const message of info.messages) {
+              if (message.type === 'error') {
+                console.error('renderMod compile error:', message.message);
+                fallback.innerHTML += `<p><strong>Lỗi Shader Render:</strong> ${message.message} (Dòng ${message.lineNum}:${message.linePos})</p>`;
+                fallback.classList.remove('hidden');
+              }
+            }
+          });
+
+          // Padded Params buffer: 36 bytes padded to 48 bytes
+          const paramData = new ArrayBuffer(48);
+          const paramViewF = new Float32Array(paramData);
+          const paramViewU = new Uint32Array(paramData);
+
+          const paramBuf = device.createBuffer({
+            size: 48,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          });
+
+          // Simulate 1500 particles for stable SPH on GPU
+          const particleCount = 1500;
+          const byteSize = particleCount * 32; // struct Particle size: 8 float values * 4 = 32 bytes
+
+          let particleBuf;
+          let computeDensityBindGroup;
+          let computeForceBindGroup;
+          let renderBindGroup;
+
+          function initParticles() {
+            if (particleBuf) {
+              particleBuf.destroy();
+            }
+
+            const initData = new Float32Array(particleCount * 8);
+            for (let i = 0; i < particleCount; i++) {
+              const idx = i * 8;
+              // Spawn in a water column on the left side of the container box
+              const row = i % 30;
+              const col = Math.floor(i / 30);
+              initData[idx] = -0.8 + col * 0.035 + (Math.random() - 0.5) * 0.005; // pos.x
+              initData[idx + 1] = -0.7 + row * 0.035 + (Math.random() - 0.5) * 0.005; // pos.y
+              initData[idx + 2] = 0.0; // vel.x
+              initData[idx + 3] = 0.0; // vel.y
+              initData[idx + 4] = 0.0; // force.x
+              initData[idx + 5] = 0.0; // force.y
+              initData[idx + 6] = 1.0; // density
+              initData[idx + 7] = 0.0; // pressure
+            }
+
+            particleBuf = device.createBuffer({
+              size: byteSize,
+              usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(particleBuf, 0, initData);
+
+            computeDensityBindGroup = device.createBindGroup({
+              layout: densityPipeline.getBindGroupLayout(0),
+              entries: [
+                { binding: 0, resource: { buffer: paramBuf } },
+                { binding: 1, resource: { buffer: particleBuf } },
+              ],
+            });
+
+            computeForceBindGroup = device.createBindGroup({
+              layout: forcePipeline.getBindGroupLayout(0),
+              entries: [
+                { binding: 0, resource: { buffer: paramBuf } },
+                { binding: 1, resource: { buffer: particleBuf } },
+              ],
+            });
+
+            renderBindGroup = device.createBindGroup({
+              layout: renderPipeline.getBindGroupLayout(0),
+              entries: [
+                { binding: 0, resource: { buffer: paramBuf } },
+                { binding: 1, resource: { buffer: particleBuf } },
+              ],
+            });
+          }
+
+          initParticles();
+
+          btnReset.addEventListener('click', initParticles);
+
+          // Mouse attraction interaction
+          let mouseX = 0;
+          let mouseY = 0;
+          let mouseActive = 0;
+
+          canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            mouseX = (cx / canvas.width) * 2 - 1;
+            mouseY = -((cy / canvas.height) * 2 - 1);
+            mouseActive = 1;
+          });
+
+          canvas.addEventListener('mouseleave', () => {
+            mouseActive = 0;
+          });
+
+          let lastTime = performance.now();
+          let frameCount = 0;
+
+          function frame() {
+            const now = performance.now();
+            const dt = Math.min((now - lastTime) / 1000, 0.016); // Cap dt
+            lastTime = now;
+
+            frameCount++;
+            if (frameCount >= 15) {
+              fpsVal.textContent = `${Math.round(1 / dt)} FPS`;
+              frameCount = 0;
+            }
+
+            // Pack SPH properties
+            // gravity, viscosity, pressureCoeff, h, targetDensity, particleRadius, deltaTime, particleCount, mousePos.x, mousePos.y, mouseActive
+            paramViewF[0] = 2.5; // Gravity
+            paramViewF[1] = parseFloat(rangeViscosity.value);
+            paramViewF[2] = parseFloat(rangePressure.value);
+            paramViewF[3] = parseFloat(rangeH.value);
+            paramViewF[4] = 3.5; // Target rest density
+            paramViewF[5] = 0.024; // Visual particle radius size
+            paramViewF[6] = dt;
+            paramViewU[7] = particleCount;
+            paramViewF[8] = mouseX;
+            paramViewF[9] = mouseY;
+            paramViewU[10] = mouseActive;
+
+            device.queue.writeBuffer(paramBuf, 0, paramData);
+
+            const commandEncoder = device.createCommandEncoder();
+
+            // LƯỢT COMPUTE 1: Tính mật độ và áp suất
+            const compPass1 = commandEncoder.beginComputePass();
+            compPass1.setPipeline(densityPipeline);
+            compPass1.setBindGroup(0, computeDensityBindGroup);
+            compPass1.dispatchWorkgroups(Math.ceil(particleCount / 64));
+            compPass1.end();
+
+            // LƯỢT COMPUTE 2: Tính lực tương tác đẩy và cập nhật Euler Integration
+            const compPass2 = commandEncoder.beginComputePass();
+            compPass2.setPipeline(forcePipeline);
+            compPass2.setBindGroup(0, computeForceBindGroup);
+            compPass2.dispatchWorkgroups(Math.ceil(particleCount / 64));
+            compPass2.end();
+
+            // LƯỢT RENDER: Vẽ các hạt chất lỏng hình tròn
+            const renderPassDesc = {
+              colorAttachments: [
+                {
+                  view: context.getCurrentTexture().createView(),
+                  clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+                  loadOp: 'clear',
+                  storeOp: 'store',
+                },
+              ],
+            };
+
+            const renderPass = commandEncoder.beginRenderPass(renderPassDesc);
+            renderPass.setPipeline(renderPipeline);
+            renderPass.setBindGroup(0, renderBindGroup);
+            renderPass.draw(6, particleCount, 0, 0);
+            renderPass.end();
+
+            device.queue.submit([commandEncoder.finish()]);
+
+            requestAnimationFrame(frame);
+          }
+
+          requestAnimationFrame(frame);
+        } catch (err) {
+          console.error('Lỗi khởi tạo WebGPU SPH:', err);
+          fallback.innerHTML = `<p><strong>Lỗi khởi tạo WebGPU:</strong> ${err.message}</p>`;
+          fallback.classList.remove('hidden');
+          canvas.classList.add('hidden');
+        }
+      })();
+    </script>
+  </body>
+</html>

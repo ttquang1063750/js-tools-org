@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 6: Compute Shader &amp; Threading — Nhân Ma Trận Siêu Tốc Độ — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu khái niệm GPGPU, mô hình phân luồng song song Workgroups, local/global invocation ID, GPU memory barriers và đồng bộ bộ nhớ. Demo benchmark nhân ma trận CPU vs GPU."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/webgpu/webgpu-compute-matrix" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      .hidden {
+        display: none !important;
+      }
+      .compute-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 24px;
+      }
+      .compute-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .compute-controls h3 {
+        color: #cdd6f4;
+        margin: 0;
+        font-size: 14px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 8px;
+      }
+      .compute-controls label {
+        color: #a6adc8;
+        font-weight: 600;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .compute-controls select {
+        background: #1e1e2e;
+        color: #cdd6f4;
+        border: 1px solid var(--border);
+        padding: 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        outline: none;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .btn-run {
+        border: none;
+        border-radius: 6px;
+        padding: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+        text-align: center;
+      }
+      .btn-run--cpu {
+        background: #f38ba8;
+        color: #11111b;
+      }
+      .btn-run--cpu:hover {
+        background: #eba0b2;
+      }
+      .btn-run--gpu {
+        background: #a6e3a1;
+        color: #11111b;
+      }
+      .btn-run--gpu:hover {
+        background: #b4befe;
+      }
+      .compute-viewport {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        min-height: 380px;
+        position: relative;
+        justify-content: center;
+      }
+      .compute-fallback {
+        color: #f38ba8;
+        padding: 24px;
+        text-align: center;
+        font-size: 14px;
+      }
+      .result-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .metric-card {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .metric-title {
+        font-weight: 600;
+        color: #a6adc8;
+      }
+      .metric-value {
+        font-family: monospace;
+        font-weight: bold;
+        font-size: 15px;
+      }
+      .metric-value--cpu {
+        color: #f38ba8;
+      }
+      .metric-value--gpu {
+        color: #a6e3a1;
+      }
+      .speedup-badge {
+        background: #f9e2af;
+        color: #11111b;
+        font-weight: bold;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 12px;
+        align-self: center;
+      }
+      .matrix-visualizer {
+        display: grid;
+        gap: 2px;
+        background: #181825;
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        overflow-x: auto;
+      }
+      .matrix-cell {
+        aspect-ratio: 1;
+        background: #313244;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        font-family: monospace;
+        color: #cdd6f4;
+        min-width: 20px;
+      }
+      @media (max-width: 880px) {
+        .compute-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--webgpu">
+        <div class="container">
+          <a href="webgpu-programming-series" class="article-hero__back">
+            ← <span data-lang-content="en">Back to WebGPU Series</span
+            ><span data-lang-content="vi">Quay lại Lộ trình WebGPU</span>
+          </a>
+          <div class="article-hero__tag article-hero__tag--webgpu">WebGPU &amp; 3D Graphics</div>
+          <h1 class="article-hero__title" data-lang-content="en">
+            WebGPU Lesson 6: Compute Shader &amp; Threading — Matrix Multiplication
+          </h1>
+          <h1 class="article-hero__title" data-lang-content="vi">
+            Bài 6: Compute Shader &amp; Threading — Nhân Ma Trận Siêu Tốc Độ
+          </h1>
+          <div class="article-hero__meta">
+            <span data-lang-content="en">June 30, 2026 · 14 min read</span>
+            <span data-lang-content="vi">30 tháng 6, 2026 · 14 phút đọc</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <!-- English Content -->
+              <div data-lang-content="en">
+                <p>
+                  Learn the fundamentals of General-Purpose GPU (GPGPU) compute pipelines, grid threading models
+                  (Workgroups, local and global invocation IDs), resource synchronization via barriers, and dynamic
+                  Storage Buffer allocation in WebGPU.
+                </p>
+                <p>
+                  <em
+                    >This lesson is currently only available in Vietnamese. Please switch the language toggle in the
+                    menu to Vietnamese to read the full guide and take the interactive quiz.</em
+                  >
+                </p>
+              </div>
+
+              <!-- Vietnamese Content -->
+              <div data-lang-content="vi">
+                <p>
+                  Trong các bài học trước, chúng ta đã tập trung hoàn toàn vào <strong>Render Pipeline</strong> – tức là
+                  quy trình đưa dữ liệu đỉnh qua các bộ lọc ánh sáng, bóng đổ rồi vẽ chúng trực tiếp ra màn hình canvas.
+                  Tuy nhiên, sức mạnh thực sự của GPU hiện đại nằm ở khả năng tính toán song song tổng quát (<strong
+                    >GPGPU - General-Purpose computing on GPUs</strong
+                  >).
+                </p>
+
+                <p>
+                  WebGPU hỗ trợ tính toán song song hiệu năng cao thông qua <strong>Compute Pipeline</strong>. Trong bài
+                  học này, chúng ta sẽ đi sâu vào mô hình phân luồng Compute Shader, cách trao đổi dữ liệu qua Storage
+                  Buffer và thực hiện đo lường hiệu năng (Benchmark) của phép nhân ma trận vuông khổng lồ giữa CPU
+                  (JavaScript) và GPU (WebGPU Compute).
+                </p>
+
+                <h2>1. Khái niệm GPGPU &amp; Compute Pipeline</h2>
+                <p>
+                  Khác với CPU chỉ sở hữu từ 4 đến 64 lõi tính toán phức tạp chạy tuần tự tối ưu, GPU sở hữu hàng ngàn
+                  lõi tính toán đơn giản chạy song song theo kiến trúc
+                  <strong>SIMT (Single Instruction, Multiple Threads)</strong>. Quy trình xử lý Compute Pipeline của
+                  WebGPU cực kỳ tối giản vì nó không cần qua giai đoạn lắp ráp đỉnh (vertex assembly) hay rasterization
+                  của màn hình vẽ. Nhiệm vụ duy nhất của nó là nhận dữ liệu thô, tính toán song song, và trả lại kết quả
+                  thô.
+                </p>
+
+                <h2>2. Mô hình phân luồng: Workgroups &amp; Invocation IDs</h2>
+                <p>
+                  Khi dispatch một Compute Shader, chúng ta không định nghĩa các luồng chạy riêng rẽ mà chia chúng thành
+                  các nhóm công việc gọi là <strong>Workgroup</strong> (Nhóm làm việc). Mỗi Workgroup lại chứa một lưới
+                  đa chiều các luồng tính toán (threads).
+                </p>
+
+                <div class="callout callout--info">
+                  <p><strong>Mô hình phân luồng trong WGSL:</strong></p>
+                  <ul>
+                    <li>
+                      Lưới threads trong một Workgroup được định nghĩa trong mã WGSL bằng cú pháp:
+                      <code>@compute @workgroup_size(X, Y, Z)</code>. Tổng số luồng trong một nhóm ($X \times Y \times
+                      Z$) thông thường bị giới hạn tối đa là 256 đến 1024 tùy cấu hình phần cứng GPU.
+                    </li>
+                    <li>
+                      Khi chạy mã Javascript trên CPU, ta gọi
+                      <code>passEncoder.dispatchWorkgroups(gridX, gridY, gridZ)</code> để chỉ định số lượng nhóm
+                      Workgroups cần chạy.
+                    </li>
+                  </ul>
+                </div>
+
+                <p>
+                  Để định vị từng luồng tính toán đơn lẻ trong một mạng lưới khổng lồ, WGSL cung cấp các định danh tích
+                  hợp sẵn (System Built-ins):
+                </p>
+                <ul>
+                  <li>
+                    <code>@builtin(local_invocation_id)</code>: Tọa độ 3D của luồng nằm trong Workgroup hiện tại (chạy
+                    từ <code>(0,0,0)</code> đến <code>(X-1, Y-1, Z-1)</code>).
+                  </li>
+                  <li>
+                    <code>@builtin(global_invocation_id)</code>: Tọa độ 3D tuyệt đối của luồng trên toàn bộ lưới tính
+                    toán tổng thể. Đây là ID quan trọng nhất để ánh xạ luồng vào phần tử mảng dữ liệu.
+                  </li>
+                  <li>
+                    <code>@builtin(workgroup_id)</code>: Tọa độ định danh của chính nhóm Workgroup đó trên lưới Grid.
+                  </li>
+                </ul>
+
+                \[\text{global\_invocation\_id} = \text{workgroup\_id} \times \text{workgroup\_size} +
+                \text{local\_invocation\_id}\]
+
+                <h2>3. Bộ nhớ chia sẻ (Shared Memory) &amp; Barrier</h2>
+                <p>
+                  Bên cạnh Storage Buffer (nằm ở VRAM toàn cục của GPU, truy cập chậm hơn), các luồng nằm trong
+                  <strong>cùng một Workgroup</strong> có thể chia sẻ dữ liệu tốc độ cực nhanh thông qua bộ đệm cục bộ
+                  <strong>Shared Memory</strong> (khai báo bằng từ khóa <code>var&lt;workgroup&gt;</code> trong WGSL).
+                </p>
+                <p>
+                  Vì các luồng chạy song song bất đồng bộ, để tránh xung đột đọc/ghi bộ nhớ chia sẻ này (Data Race), ta
+                  phải sử dụng lệnh đồng bộ <strong><code>workgroupBarrier()</code></strong
+                  >. Lệnh này hoạt động giống như một rào cản: tất cả các luồng trong nhóm bắt buộc phải dừng lại đợi
+                  cho đến khi toàn bộ luồng khác cùng nhóm chạy tới dòng này, đảm bảo dữ liệu ghi vào Shared Memory đã
+                  hoàn tất trước khi luồng kế tiếp đọc ra.
+                </p>
+
+                <h2>4. Thuật toán nhân ma trận song song trên GPU</h2>
+                <p>
+                  Phép nhân hai ma trận vuông $A \times B = C$ kích thước $N \times N$ thông thường trên CPU chạy 3 vòng
+                  lặp lồng nhau mất độ phức tạp thời gian cực lớn là \(O(N^3)\).
+                </p>
+                <p>
+                  Với GPU Compute Shader, ta có thể song song hóa hoàn toàn: Ta dispatch một lưới gồm $N \times N$ luồng
+                  song song. Mỗi luồng tương ứng với tọa độ hàng <code>row</code> (trục Y) và cột <code>col</code> (trục
+                  X) của ma trận kết quả $C$. Luồng này chỉ chạy duy nhất 1 vòng lặp chiều dài $N$ để tính tổng tích
+                  chập hàng-cột của phần tử $C[row, col]$ đó, giảm độ phức tạp thời gian chạy song song lý thuyết xuống
+                  chỉ còn \(O(N)\)!
+                </p>
+
+                <h2>Sân chơi tương tác: CPU vs GPU Matrix Benchmark</h2>
+                <p>
+                  Dưới đây là một phòng thí nghiệm hiệu năng thực tế. Hãy chọn kích thước ma trận vuông $N \times N$,
+                  tạo ngẫu nhiên dữ liệu ma trận, và chạy so sánh tốc độ thực thi giữa CPU (vòng lặp JavaScript thô) và
+                  GPU (WebGPU Compute Shader):
+                </p>
+
+                <!-- Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">⚡ Nhân Ma Trận Siêu Tốc Độ Benchmark</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="wgsl">WGSL</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="compute-sandbox">
+                      <div class="compute-controls">
+                        <h3>Cấu hình Benchmark</h3>
+                        <div class="control-group">
+                          <label>Kích thước ma trận (N × N)</label>
+                          <select id="sel-matrix-size">
+                            <option value="128">128 × 128 (Nhỏ)</option>
+                            <option value="256" selected>256 × 256 (Trung bình)</option>
+                            <option value="512">512 × 512 (Lớn)</option>
+                            <option value="1024">1024 × 1024 (Cực lớn - Warning CPU)</option>
+                          </select>
+                        </div>
+                        <button class="btn-run btn-run--cpu" id="btn-run-cpu">▶ Chạy trên CPU</button>
+                        <button class="btn-run btn-run--gpu" id="btn-run-gpu">🚀 Chạy trên GPU (WebGPU)</button>
+                      </div>
+
+                      <div class="compute-viewport">
+                        <div id="compute-fallback" class="compute-fallback hidden">
+                          <p>Trình duyệt của bạn chưa hỗ trợ WebGPU. Hãy sử dụng Chrome/Edge phiên bản mới nhất.</p>
+                        </div>
+
+                        <div class="result-panel" id="res-panel">
+                          <div class="metric-card">
+                            <span class="metric-title">Thời gian thực thi CPU:</span>
+                            <span class="metric-value metric-value--cpu" id="time-cpu">-- ms</span>
+                          </div>
+                          <div class="metric-card">
+                            <span class="metric-title">Thời gian thực thi GPU:</span>
+                            <span class="metric-value metric-value--gpu" id="time-gpu">-- ms</span>
+                          </div>
+                          <div class="speedup-badge hidden" id="badge-ratio">GPU nhanh hơn -- lần!</div>
+
+                          <div class="metric-card" style="flex-direction: column; align-items: flex-start; gap: 8px">
+                            <span class="metric-title">Xem trước một phần ma trận kết quả C (4 × 4):</span>
+                            <div
+                              class="matrix-visualizer"
+                              id="matrix-preview-c"
+                              style="
+                                grid-template-columns: repeat(4, 1fr);
+                                width: 100%;
+                                max-width: 200px;
+                                margin: 0 auto;
+                              "
+                            >
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                              <div class="matrix-cell">0</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="wgsl">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">matrix-multiply.wgsl</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-wgsl">struct Dims {
+  size: u32,
+};
+
+@group(0) @binding(0) var&lt;uniform&gt; u: Dims;
+@group(0) @binding(1) var&lt;storage, read&gt; a: array&lt;f32&gt;;
+@group(0) @binding(2) var&lt;storage, read&gt; b: array&lt;f32&gt;;
+@group(0) @binding(3) var&lt;storage, read_write&gt; c: array&lt;f32&gt;;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) id: vec3&lt;u32&gt;) {
+  let size = u.size;
+  let row = id.y;
+  let col = id.x;
+
+  // Tránh ghi đè nếu lưới Workgroup vượt quá kích thước ma trận thực tế
+  if (row &gt;= size || col &gt;= size) {
+    return;
+  }
+
+  var sum: f32 = 0.0;
+  for (var k: u32 = 0u; k &lt; size; k = k + 1u) {
+    sum = sum + a[row * size + k] * b[k * size + col];
+  }
+
+  c[row * size + col] = sum;
+}</code></pre>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window" style="margin: 0; border-radius: 0">
+                      <div class="code-header">
+                        <span class="code-filename">matrix-dispatch.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js">// 1. Khai báo Compute Pipeline
+const pipeline = device.createComputePipeline({
+  layout: 'auto',
+  compute: { module, entryPoint: 'main' }
+});
+
+// 2. Dispatch phân luồng song song trên GPU
+const passEncoder = commandEncoder.beginComputePass();
+passEncoder.setPipeline(pipeline);
+passEncoder.setBindGroup(0, bindGroup);
+// Chia nhỏ công việc thành các Workgroups kích cỡ 16x16
+const workgroupsX = Math.ceil(size / 16);
+const workgroupsY = Math.ceil(size / 16);
+passEncoder.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
+passEncoder.end();
+
+// 3. Sao chép kết quả về CPU qua Staging Buffer
+commandEncoder.copyBufferToBuffer(gpuBufC, 0, gpuStaging, 0, byteSize);
+device.queue.submit([commandEncoder.finish()]);
+
+// Đợi và map dữ liệu về bộ nhớ CPU đọc được
+await gpuStaging.mapAsync(GPUMapMode.READ);
+const result = new Float32Array(gpuStaging.getMappedRange().slice());
+gpuStaging.unmap();</code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="callout callout--deep">
+                  <p><strong>Tài liệu tham khảo chuyên sâu &amp; Trích dẫn Học thuật:</strong></p>
+                  <ul>
+                    <li>
+                      Tìm hiểu thêm về mô hình lập trình Compute Shader thế mới tại tài liệu đặc tả chính thức:
+                      <a href="https://www.w3.org/TR/webgpu/" target="_blank" rel="noopener">W3C WebGPU Specification</a
+                      >.
+                    </li>
+                    <li>
+                      Phân tích thiết kế song song Workgroups chi tiết qua hướng dẫn thực tế của Google:
+                      <a href="https://web.dev/gpu-compute/" target="_blank" rel="noopener"
+                        >GPU Compute on the Web - WebGPU essentials</a
+                      >.
+                    </li>
+                  </ul>
+                </div>
+
+                <!-- Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Tại sao không nên gọi hàm lấy mẫu vân ảnh (texture sampling) hoặc tính toán Mipmap bên trong
+                    một khối rẽ nhánh điều kiện không đồng nhất (non-uniform control flow)?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Hiệu năng giảm không phải nguyên nhân trình biên dịch chặn hoàn toàn.'
+                        )
+                      "
+                    >
+                      A. Vì nó gây chậm hiệu năng của luồng chạy song song.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! GPU tính toán đạo hàm vân ảnh dựa trên các pixel lân cận trong nhóm 2x2. Nếu luồng điều khiển rẽ nhánh không đồng nhất, các pixel lân cận không thực thi cùng một lúc, dẫn đến đạo hàm không xác định và gây lỗi biên dịch WGSL.'
+                        )
+                      "
+                    >
+                      B. Vì GPU cần các luồng lân cận trong nhóm 2x2 cùng thực thi để tính toán đạo hàm không gian chính
+                      xác.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. Dung lượng VRAM không bị ảnh hưởng bởi rẽ nhánh.')"
+                    >
+                      C. Vì nó sẽ gây rò rỉ dung lượng bộ nhớ VRAM của card đồ họa.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Nếu kích thước ma trận vuông là 512 × 512, và workgroup_size trong compute shader được thiết
+                    lập là 16 × 16, ta cần dispatch bao nhiêu nhóm Workgroup trên các trục tương ứng?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Sai. 16 nhóm là quá ít (16 * 16 = 256 threads, không đủ 512).')"
+                    >
+                      A. dispatchWorkgroups(16, 16, 1)
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! 512 / 16 = 32 nhóm trên mỗi trục X và Y. Lưới dispatch tổng thể sẽ là 32 x 32 nhóm Workgroups.'
+                        )
+                      "
+                    >
+                      B. dispatchWorkgroups(32, 32, 1)
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. 512 nhóm sẽ làm dư thừa quá nhiều luồng nhàn rỗi (512 * 16 = 8192 threads).'
+                        )
+                      "
+                    >
+                      C. dispatchWorkgroups(512, 512, 1)
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Related Articles -->
+            <div class="article-related">
+              <h2 data-lang-content="en">Related Articles</h2>
+              <h2 data-lang-content="vi">Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="webgpu-lighting-shadow" class="article-related__link article-related__link--prev">
+                  <span data-lang-content="en"
+                    >Lesson 5: Phong Lighting &amp; Shadow Maps — Dynamic Real-time Shadows</span
+                  >
+                  <span data-lang-content="vi"
+                    >Bài 5: Phong Lighting &amp; Shadow Maps — Bóng Đổ Động Thời Gian Thực</span
+                  >
+                </a>
+                <a href="webgpu-gpu-particles" class="article-related__link article-related__link--next">
+                  <span data-lang-content="en"
+                    >Lesson 7: 100k Particles Simulation — High Performance Instanced Rendering</span
+                  >
+                  <span data-lang-content="vi">Bài 7: Mô Phỏng 100k Hạt Trên GPU — Instanced Rendering Cực Đỉnh</span>
+                </a>
+                <a href="webgpu-programming-series" class="article-related__link">
+                  <span data-lang-content="en">Back to WebGPU Course Overview</span>
+                  <span data-lang-content="vi">Quay lại Lộ trình Series WebGPU</span>
+                </a>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script>
+      (function () {
+        const fallback = document.getElementById('compute-fallback');
+        const resPanel = document.getElementById('res-panel');
+
+        const selSize = document.getElementById('sel-matrix-size');
+        const btnCpu = document.getElementById('btn-run-cpu');
+        const btnGpu = document.getElementById('btn-run-gpu');
+
+        const timeCpu = document.getElementById('time-cpu');
+        const timeGpu = document.getElementById('time-gpu');
+        const badgeRatio = document.getElementById('badge-ratio');
+        const matrixPreviewC = document.getElementById('matrix-preview-c');
+
+        if (!navigator.gpu) {
+          fallback.classList.remove('hidden');
+          resPanel.classList.add('hidden');
+          btnCpu.disabled = true;
+          btnGpu.disabled = true;
+          return;
+        }
+
+        // Generate matrix helper
+        function generateRandomMatrix(size) {
+          const matrix = new Float32Array(size * size);
+          for (let i = 0; i < matrix.length; i++) {
+            matrix[i] = Math.random() * 2 - 1; // Range [-1, 1]
+          }
+          return matrix;
+        }
+
+        // Draw preview matrix helper
+        function renderMatrixPreview(flatMatrix, size) {
+          matrixPreviewC.innerHTML = '';
+          for (let r = 0; r < 4; r++) {
+            for (let c = 0; c < 4; c++) {
+              const el = document.createElement('div');
+              el.className = 'matrix-cell';
+              const val = flatMatrix[r * size + c];
+              el.textContent = isNaN(val) ? '--' : val.toFixed(2);
+              matrixPreviewC.appendChild(el);
+            }
+          }
+        }
+
+        // WebGPU Shaders
+        const computeShaderCode = `
+          struct Dims {
+            size: u32,
+          };
+
+          @group(0) @binding(0) var<uniform> u: Dims;
+          @group(0) @binding(1) var<storage, read> a: array<f32>;
+          @group(0) @binding(2) var<storage, read> b: array<f32>;
+          @group(0) @binding(3) var<storage, read_write> c: array<f32>;
+
+          @compute @workgroup_size(16, 16)
+          fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+            let size = u.size;
+            let row = id.y;
+            let col = id.x;
+
+            if (row >= size || col >= size) {
+              return;
+            }
+
+            var sum: f32 = 0.0;
+            for (var k: u32 = 0u; k < size; k = k + 1u) {
+              sum = sum + a[row * size + k] * b[k * size + col];
+            }
+
+            c[row * size + col] = sum;
+          }
+        `;
+
+        // CPU execution
+        btnCpu.addEventListener('click', function () {
+          const size = parseInt(selSize.value);
+          const a = generateRandomMatrix(size);
+          const b = generateRandomMatrix(size);
+          const c = new Float32Array(size * size);
+
+          btnCpu.textContent = 'Đang chạy CPU...';
+          btnCpu.disabled = true;
+          btnGpu.disabled = true;
+
+          setTimeout(function () {
+            const start = performance.now();
+            for (let r = 0; r < size; r++) {
+              for (let col = 0; col < size; col++) {
+                let sum = 0;
+                const rOffset = r * size;
+                for (let k = 0; k < size; k++) {
+                  sum += a[rOffset + k] * b[k * size + col];
+                }
+                c[rOffset + col] = sum;
+              }
+            }
+            const duration = performance.now() - start;
+
+            timeCpu.textContent = `${duration.toFixed(1)} ms`;
+            renderMatrixPreview(c, size);
+
+            btnCpu.textContent = '▶ Chạy trên CPU';
+            btnCpu.disabled = false;
+            btnGpu.disabled = false;
+
+            updateSpeedupRatio();
+          }, 50);
+        });
+
+        // GPU execution
+        btnGpu.addEventListener('click', async function () {
+          const size = parseInt(selSize.value);
+          const a = generateRandomMatrix(size);
+          const b = generateRandomMatrix(size);
+
+          btnGpu.textContent = 'Đang chạy GPU...';
+          btnCpu.disabled = true;
+          btnGpu.disabled = true;
+
+          try {
+            const adapter = await navigator.gpu.requestAdapter();
+            const device = await adapter.requestDevice();
+
+            device.addEventListener('uncaughterror', (event) => {
+              console.error('WebGPU uncaught error:', event.error.message);
+              fallback.innerHTML = `<p><strong>Lỗi WebGPU:</strong> ${event.error.message}</p>`;
+              fallback.classList.remove('hidden');
+              resPanel.classList.add('hidden');
+            });
+
+            // Write uniform dimension buffer
+            const dimData = new Uint32Array([size]);
+            const dimBuf = device.createBuffer({
+              size: 16, // Padded structure
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(dimBuf, 0, dimData);
+
+            // Write Matrix A and B buffers
+            const sizeBytes = size * size * 4;
+            const gpuBufA = device.createBuffer({
+              size: sizeBytes,
+              usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(gpuBufA, 0, a);
+
+            const gpuBufB = device.createBuffer({
+              size: sizeBytes,
+              usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(gpuBufB, 0, b);
+
+            // Output buffer matrix C
+            const gpuBufC = device.createBuffer({
+              size: sizeBytes,
+              usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            });
+
+            // Staging buffer to copy back to CPU host
+            const gpuStaging = device.createBuffer({
+              size: sizeBytes,
+              usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+            });
+
+            // Compute Pipeline Setup
+            const compMod = device.createShaderModule({ code: computeShaderCode });
+            const pipeline = device.createComputePipeline({
+              layout: 'auto',
+              compute: {
+                module: compMod,
+                entryPoint: 'main',
+              },
+            });
+
+            const bindGroup = device.createBindGroup({
+              layout: pipeline.getBindGroupLayout(0),
+              entries: [
+                { binding: 0, resource: { buffer: dimBuf } },
+                { binding: 1, resource: { buffer: gpuBufA } },
+                { binding: 2, resource: { buffer: gpuBufB } },
+                { binding: 3, resource: { buffer: gpuBufC } },
+              ],
+            });
+
+            // Record execution time of GPU Dispatch and staging read back
+            const start = performance.now();
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+
+            const workgroupCountX = Math.ceil(size / 16);
+            const workgroupCountY = Math.ceil(size / 16);
+            passEncoder.dispatchWorkgroups(workgroupCountX, workgroupCountY, 1);
+            passEncoder.end();
+
+            // Copy output to staging
+            commandEncoder.copyBufferToBuffer(gpuBufC, 0, gpuStaging, 0, sizeBytes);
+            device.queue.submit([commandEncoder.finish()]);
+
+            // Map buffer asynchronously
+            await gpuStaging.mapAsync(GPUMapMode.READ);
+            const resultData = new Float32Array(gpuStaging.getMappedRange().slice());
+            gpuStaging.unmap();
+
+            const duration = performance.now() - start;
+
+            timeGpu.textContent = `${duration.toFixed(1)} ms`;
+            renderMatrixPreview(resultData, size);
+
+            updateSpeedupRatio();
+          } catch (err) {
+            console.error('GPU execution failed:', err);
+            timeGpu.textContent = 'Error';
+          } finally {
+            btnGpu.textContent = '🚀 Chạy trên GPU (WebGPU)';
+            btnCpu.disabled = false;
+            btnGpu.disabled = false;
+          }
+        });
+
+        function updateSpeedupRatio() {
+          const cpuText = timeCpu.textContent;
+          const gpuText = timeGpu.textContent;
+
+          if (cpuText.indexOf('--') === -1 && gpuText.indexOf('--') === -1 && gpuText !== 'Error') {
+            const cpuVal = parseFloat(cpuText);
+            const gpuVal = parseFloat(gpuText);
+
+            if (gpuVal > 0) {
+              const ratio = cpuVal / gpuVal;
+              badgeRatio.textContent = `WebGPU nhanh hơn CPU gấp ${ratio.toFixed(1)} lần!`;
+              badgeRatio.classList.remove('hidden');
+            }
+          }
+        }
+      })();
+    </script>
+  </body>
+</html>

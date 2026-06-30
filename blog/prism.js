@@ -873,3 +873,22 @@ var _self =
       e.languages.cpp['base-clause']
     ));
 })(Prism);
+
+/* WGSL (WebGPU Shading Language) — for the WebGPU lesson series */
+(function (e) {
+  if (!e || !e.languages) return;
+  e.languages.wgsl = {
+    comment: { pattern: /\/\/.*|\/\*[\s\S]*?\*\//, greedy: true },
+    string: { pattern: /"[^"\r\n]*"/, greedy: true },
+    attribute: { pattern: /@\w+/, alias: 'attr-name' },
+    keyword:
+      /\b(?:alias|break|case|const|const_assert|continue|continuing|default|diagnostic|discard|else|enable|fallthrough|fn|for|if|let|loop|override|requires|return|struct|switch|true|false|type|var|while|bitcast)\b/,
+    builtin:
+      /\b(?:bool|f16|f32|i32|u32|vec[234][fhiu]?|mat[234]x[234][fh]?|array|atomic|ptr|sampler|sampler_comparison|texture_(?:1d|2d|2d_array|3d|cube|cube_array|multisampled_2d|depth_2d|depth_2d_array|depth_cube|depth_cube_array|depth_multisampled_2d|external|storage_1d|storage_2d|storage_2d_array|storage_3d))\b/,
+    'storage-class': /\b(?:function|private|workgroup|uniform|storage|read|write|read_write|handle)\b/,
+    function: /\b[a-zA-Z_]\w*(?=\s*\()/,
+    number: /\b(?:0[xX][\da-fA-F]+|\d+\.?\d*(?:[eE][+-]?\d+)?)[fhiu]?\b/,
+    operator: /->|[<>]=?|[!=]=|&&|\|\||[-+*/%&|^!~<>]=?/,
+    punctuation: /[{}[\];(),.:@]/,
+  };
+})(Prism);

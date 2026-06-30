@@ -4,6 +4,37 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ---
 
+## 📈 Progress & Status (Cập nhật 2026-06-30)
+
+| Series | Tên | Bài hoàn thành | Tổng bài | % |
+|--------|-----|---|---|---|
+| 🎉 **Series 2: WebGPU** | **Đồ họa 3D & Compute Shader** | **10/10** | **10** | **100%** ✅ |
+| 🎉 **Series 6: CSS & Animation** | **Hiệu ứng & Bố cục Web hiện đại** | **10/10** | **10** | **100%** ✅ |
+| Series 1 | WebAssembly & Rust | 0/10 | 10 | 0% |
+| Series 3 | Cấu Trúc Dữ Liệu & Giải Thuật Trực Quan | 0/8 | 8 | 0% |
+| Series 4 | WebRTC & WebSocket | 0/8 | 8 | 0% |
+| Series 5 | Toy JS Engine (Trình thông dịch JS) | 0/? | TBD | 0% |
+| Series 7 | SQL trong Trình duyệt (SQLite-WASM) | 0/? | TBD | 0% |
+| Series 8 | Web Audio API (Âm thanh & Visualizer) | 0/? | TBD | 0% |
+| Series 9 | Git (Mô hình & Visualizer) | 0/? | TBD | 0% |
+
+### WebGPU Series Lessons — HOÀN THÀNH 100%
+
+| Bài | Tên | Status | Link |
+|-----|-----|--------|------|
+| 1 | Kiến trúc GPU & WebGPU Setup | ✅ Done | `/blog/webgpu/webgpu-basics-setup` |
+| 2 | Lập trình Shader với WGSL | ✅ Done | `/blog/webgpu/webgpu-shaders-wgsl` |
+| 3 | Uniform & Storage Buffers | ✅ Done | `/blog/webgpu/webgpu-buffers-bindgroup` |
+| 4 | Pipeline State & Depth testing | ✅ Done | `/blog/webgpu/webgpu-pipeline-depth` |
+| 5 | Phong Lighting & Shadow Maps | ✅ Done | `/blog/webgpu/webgpu-lighting-shadow` |
+| 6 | Compute Shader & Threading | ✅ Done | `/blog/webgpu/webgpu-compute-matrix` |
+| 7 | Mô phỏng 100k Hạt trên GPU | ✅ Done | `/blog/webgpu/webgpu-gpu-particles` |
+| 8 | SPH Fluid Simulation | ✅ Done | `/blog/webgpu/webgpu-fluid-simulation` |
+| 9 | GLTF 3D Model Loading | ✅ Done | `/blog/webgpu/webgpu-gltf-loading` |
+| 10 | Dự án: ColorQuarium 3D | ✅ Done | `/blog/webgpu/webgpu-coloraquarium-3d` |
+
+---
+
 ## 🛠 Series 1: WebAssembly & Rust (Hiệu năng Native trong Trình duyệt)
 
 ### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
@@ -452,16 +483,16 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 
 ## Series 2 — WebGPU
 
-- **Bài 1 — Kiến trúc GPU & WebGPU Setup:** 1.1 Massively Parallel Processing & SIMT · 1.2 `navigator.gpu`, adapter, `GPUDevice` · 1.3 Swap chain & canvas context · 1.4 Vẽ tam giác đầu tiên (render pipeline).
-- **Bài 2 — Lập trình Shader với WGSL:** 2.1 Cú pháp WGSL & kiểu dữ liệu · 2.2 Vertex→Fragment qua location bindings · 2.3 Built-in `@builtin` & interpolation · 2.4 Gradient động theo `uniform time`.
-- **Bài 3 — Uniform & Storage Buffers:** 3.1 Tạo & ghi GPUBuffer · 3.2 Quy tắc alignment (std140-like) của struct · 3.3 BindGroup & BindGroupLayout · 3.4 Biến đổi model bằng ma trận trên GPU.
-- **Bài 4 — Pipeline State & Depth Testing:** 4.1 Rasterizer & primitive topology · 4.2 Depth buffer & z-fighting · 4.3 Khử răng cưa MSAA · 4.4 Khối Rubik 3D với depth chuẩn.
-- **Bài 5 — Phong Lighting & Shadow Maps:** 5.1 Mô hình Phong (ambient/diffuse/specular) · 5.2 Pháp tuyến & không gian thế giới · 5.3 Shadow Map qua FBO depth pass · 5.4 Bóng đổ real-time theo nguồn sáng.
-- **Bài 6 — Compute Shader & Threading:** 6.1 Workgroups & local/global invocation ID · 6.2 Storage buffer read/write trong compute · 6.3 Barrier & shared memory · 6.4 Nhân ma trận song song vs CPU.
-- **Bài 7 — Mô phỏng 100k Hạt trên GPU:** 7.1 Lưu trạng thái hạt trong Storage Buffer · 7.2 Cập nhật vị trí/vận tốc bằng compute · 7.3 Tránh round-trip qua PCIe/CPU · 7.4 Instanced render hàng vạn hạt.
-- **Bài 8 — SPH Fluid Simulation:** 8.1 Smoothed Particle Hydrodynamics tổng quan · 8.2 Tính mật độ & áp suất hạt · 8.3 Spatial hashing tìm lân cận · 8.4 Lực tương tác chuột tạo sóng.
-- **Bài 9 — glTF 3D Model Loading:** 9.1 Cấu trúc nhị phân glTF/GLB (buffers/accessors) · 9.2 Nạp thẳng vào GPU Buffer · 9.3 Vật liệu & texture cơ bản · 9.4 Xoay/zoom mô hình.
-- **Bài 10 — Dự án: ColorQuarium 3D:** 10.1 Instanced rendering 1 lệnh vẽ nhiều mesh · 10.2 Animation đàn cá bằng compute · 10.3 Ánh sáng & nền chất lỏng · 10.4 Tối ưu FPS cuối.
+- [x] **Bài 1 — Kiến trúc GPU & WebGPU Setup:** 1.1 Massively Parallel Processing & SIMT · 1.2 `navigator.gpu`, adapter, `GPUDevice` · 1.3 Swap chain & canvas context · 1.4 Vẽ tam giác đầu tiên (render pipeline).
+- [x] **Bài 2 — Lập trình Shader với WGSL:** 2.1 Cú pháp WGSL & kiểu dữ liệu · 2.2 Vertex→Fragment qua location bindings · 2.3 Built-in `@builtin` & interpolation · 2.4 Gradient động theo `uniform time`.
+- [x] **Bài 3 — Uniform & Storage Buffers:** 3.1 Tạo & ghi GPUBuffer · 3.2 Quy tắc alignment (std140-like) của struct · 3.3 BindGroup & BindGroupLayout · 3.4 Biến đổi model bằng ma trận trên GPU.
+- [x] **Bài 4 — Pipeline State & Depth Testing:** 4.1 Rasterizer & primitive topology · 4.2 Depth buffer & z-fighting · 4.3 Khử răng cưa MSAA · 4.4 Khối Rubik 3D với depth chuẩn.
+- [x] **Bài 5 — Phong Lighting & Shadow Maps:** 5.1 Mô hình Phong (ambient/diffuse/specular) · 5.2 Pháp tuyến & không gian thế giới · 5.3 Shadow Map qua FBO depth pass · 5.4 Bóng đổ real-time theo nguồn sáng.
+- [x] **Bài 6 — Compute Shader & Threading:** 6.1 Workgroups & local/global invocation ID · 6.2 Storage buffer read/write trong compute · 6.3 Barrier & shared memory · 6.4 Nhân ma trận song song vs CPU.
+- [x] **Bài 7 — Mô phỏng 100k Hạt trên GPU:** 7.1 Lưu trạng thái hạt trong Storage Buffer · 7.2 Cập nhật vị trí/vận tốc bằng compute · 7.3 Tránh round-trip qua PCIe/CPU · 7.4 Instanced render hàng vạn hạt.
+- [x] **Bài 8 — SPH Fluid Simulation:** 8.1 Smoothed Particle Hydrodynamics tổng quan · 8.2 Tính mật độ & áp suất hạt · 8.3 Spatial hashing tìm lân cận · 8.4 Lực tương tác chuột tạo sóng.
+- [x] **Bài 9 — glTF 3D Model Loading:** 9.1 Cấu trúc nhị phân glTF/GLB (buffers/accessors) · 9.2 Nạp thẳng vào GPU Buffer · 9.3 Vật liệu & texture cơ bản · 9.4 Xoay/zoom mô hình.
+- [x] **Bài 10 — Dự án: ColorQuarium 3D:** 10.1 Instanced rendering 1 lệnh vẽ nhiều mesh · 10.2 Animation đàn cá bằng compute · 10.3 Ánh sáng & nền chất lỏng · 10.4 Tối ưu FPS cuối.
 
 ## Series 3 — DS & Giải Thuật Trực Quan
 
