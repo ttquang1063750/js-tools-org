@@ -6,32 +6,32 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ## 📈 Progress & Status (Cập nhật 2026-06-30)
 
-| Series | Tên | Bài hoàn thành | Tổng bài | % |
-|--------|-----|---|---|---|
-| 🎉 **Series 2: WebGPU** | **Đồ họa 3D & Compute Shader** | **10/10** | **10** | **100%** ✅ |
-| 🎉 **Series 6: CSS & Animation** | **Hiệu ứng & Bố cục Web hiện đại** | **10/10** | **10** | **100%** ✅ |
-| Series 1 | WebAssembly & Rust | 0/10 | 10 | 0% |
-| Series 3 | Cấu Trúc Dữ Liệu & Giải Thuật Trực Quan | 0/8 | 8 | 0% |
-| Series 4 | WebRTC & WebSocket | 0/8 | 8 | 0% |
-| Series 5 | Toy JS Engine (Trình thông dịch JS) | 0/? | TBD | 0% |
-| Series 7 | SQL trong Trình duyệt (SQLite-WASM) | 0/? | TBD | 0% |
-| Series 8 | Web Audio API (Âm thanh & Visualizer) | 0/? | TBD | 0% |
-| Series 9 | Git (Mô hình & Visualizer) | 0/? | TBD | 0% |
+| Series                           | Tên                                     | Bài hoàn thành | Tổng bài | %           |
+| -------------------------------- | --------------------------------------- | -------------- | -------- | ----------- |
+| 🎉 **Series 2: WebGPU**          | **Đồ họa 3D & Compute Shader**          | **10/10**      | **10**   | **100%** ✅ |
+| 🎉 **Series 6: CSS & Animation** | **Hiệu ứng & Bố cục Web hiện đại**      | **10/10**      | **10**   | **100%** ✅ |
+| Series 1                         | WebAssembly & Rust                      | 0/10           | 10       | 0%          |
+| Series 3                         | Cấu Trúc Dữ Liệu & Giải Thuật Trực Quan | 0/8            | 8        | 0%          |
+| Series 4                         | WebRTC & WebSocket                      | 0/8            | 8        | 0%          |
+| Series 5                         | Toy JS Engine (Trình thông dịch JS)     | 0/?            | TBD      | 0%          |
+| Series 7                         | SQL trong Trình duyệt (SQLite-WASM)     | 0/?            | TBD      | 0%          |
+| Series 8                         | Web Audio API (Âm thanh & Visualizer)   | 0/?            | TBD      | 0%          |
+| Series 9                         | Git (Mô hình & Visualizer)              | 0/?            | TBD      | 0%          |
 
 ### WebGPU Series Lessons — HOÀN THÀNH 100%
 
-| Bài | Tên | Status | Link |
-|-----|-----|--------|------|
-| 1 | Kiến trúc GPU & WebGPU Setup | ✅ Done | `/blog/webgpu/webgpu-basics-setup` |
-| 2 | Lập trình Shader với WGSL | ✅ Done | `/blog/webgpu/webgpu-shaders-wgsl` |
-| 3 | Uniform & Storage Buffers | ✅ Done | `/blog/webgpu/webgpu-buffers-bindgroup` |
-| 4 | Pipeline State & Depth testing | ✅ Done | `/blog/webgpu/webgpu-pipeline-depth` |
-| 5 | Phong Lighting & Shadow Maps | ✅ Done | `/blog/webgpu/webgpu-lighting-shadow` |
-| 6 | Compute Shader & Threading | ✅ Done | `/blog/webgpu/webgpu-compute-matrix` |
-| 7 | Mô phỏng 100k Hạt trên GPU | ✅ Done | `/blog/webgpu/webgpu-gpu-particles` |
-| 8 | SPH Fluid Simulation | ✅ Done | `/blog/webgpu/webgpu-fluid-simulation` |
-| 9 | GLTF 3D Model Loading | ✅ Done | `/blog/webgpu/webgpu-gltf-loading` |
-| 10 | Dự án: ColorQuarium 3D | ✅ Done | `/blog/webgpu/webgpu-coloraquarium-3d` |
+| Bài | Tên                            | Status  | Link                                    |
+| --- | ------------------------------ | ------- | --------------------------------------- |
+| 1   | Kiến trúc GPU & WebGPU Setup   | ✅ Done | `/blog/webgpu/webgpu-basics-setup`      |
+| 2   | Lập trình Shader với WGSL      | ✅ Done | `/blog/webgpu/webgpu-shaders-wgsl`      |
+| 3   | Uniform & Storage Buffers      | ✅ Done | `/blog/webgpu/webgpu-buffers-bindgroup` |
+| 4   | Pipeline State & Depth testing | ✅ Done | `/blog/webgpu/webgpu-pipeline-depth`    |
+| 5   | Phong Lighting & Shadow Maps   | ✅ Done | `/blog/webgpu/webgpu-lighting-shadow`   |
+| 6   | Compute Shader & Threading     | ✅ Done | `/blog/webgpu/webgpu-compute-matrix`    |
+| 7   | Mô phỏng 100k Hạt trên GPU     | ✅ Done | `/blog/webgpu/webgpu-gpu-particles`     |
+| 8   | SPH Fluid Simulation           | ✅ Done | `/blog/webgpu/webgpu-fluid-simulation`  |
+| 9   | GLTF 3D Model Loading          | ✅ Done | `/blog/webgpu/webgpu-gltf-loading`      |
+| 10  | Dự án: ColorQuarium 3D         | ✅ Done | `/blog/webgpu/webgpu-coloraquarium-3d`  |
 
 ---
 
