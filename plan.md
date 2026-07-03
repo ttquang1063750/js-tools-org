@@ -16,7 +16,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | Series 5                         | Toy JS Engine (Trình thông dịch JS)   | 0/?            | TBD      | 0%          |
 | Series 7                         | SQL trong Trình duyệt (SQLite-WASM)   | 0/?            | TBD      | 0%          |
 | Series 8                         | Web Audio API (Âm thanh & Visualizer) | 0/?            | TBD      | 0%          |
-| 🚧 Series 9                      | Git (Mô hình & Visualizer)            | 7/13           | 13       | 54%         |
+| 🚧 Series 9                      | Git (Mô hình & Visualizer)            | 8/13           | 13       | 62%         |
 
 ### DSA Series Lessons
 

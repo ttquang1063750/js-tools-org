@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 7: Undo &amp; Phục Hồi — reset, revert, reflog — js-tools</title>
+    <title>Bài 8: Git Bisect — Tìm Commit Lỗi Bằng Tìm Kiếm Nhị Phân — js-tools</title>
     <meta
       name="description"
-      content="Ba mức độ của git reset (soft/mixed/hard), vì sao revert an toàn hơn reset cho nhánh public, và cách reflog cứu một commit tưởng đã mất. Sân chơi tương tác demo làm hỏng rồi tự cứu bằng reflog."
+      content="Tìm 1 commit gây lỗi giữa hàng trăm commit bằng tìm kiếm nhị phân good/bad, tự động hoá với git bisect run và mã thoát 0/1/125. Sân chơi tương tác mô phỏng 24 commit giấu 1 thủ phạm, hội tụ dần bằng bisect."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/git/git-undo-recovery" />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-bisect" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="../ide.css" />
     <script defer src="../prism.js"></script>
     <style>
-      /* Git Graph Simulator (Undo & Recovery) Sandbox styles */
+      /* Git Bisect Simulator Sandbox styles */
       .graph-sandbox {
         background: #181825;
         border: 1px solid var(--border);
@@ -63,17 +63,6 @@
         box-sizing: border-box;
         font-family: monospace;
       }
-      .graph-controls input[type='text'].graph-file-input {
-        color: #cdd6f4;
-        width: 100%;
-        padding: 6px 8px;
-        border-radius: 6px;
-        border: 1px solid var(--border);
-        background: #1e1e2e;
-        font-size: 12px;
-        box-sizing: border-box;
-        font-family: monospace;
-      }
       .graph-btn {
         padding: 6px 10px;
         border-radius: 6px;
@@ -114,7 +103,7 @@
         font-family: monospace;
         font-size: 11px;
         color: #a6e3a1;
-        max-height: 140px;
+        max-height: 160px;
         overflow-y: auto;
         line-height: 1.5;
       }
@@ -124,6 +113,10 @@
       }
       .graph-log div.err-line {
         color: #f38ba8;
+      }
+      .graph-log div.ok-line {
+        color: #a6e3a1;
+        font-weight: bold;
       }
       .graph-viewport-container {
         background: #0f0f1b;
@@ -234,8 +227,8 @@
         <div class="container">
           <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
           <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
-          <h1 class="article-hero__title">Bài 7: Undo &amp; Phục Hồi — reset, revert, reflog</h1>
-          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
+          <h1 class="article-hero__title">Bài 8: Git Bisect — Tìm Commit Lỗi Bằng Tìm Kiếm Nhị Phân</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 13 phút đọc</div>
         </div>
       </section>
 
@@ -245,117 +238,174 @@
             <div class="article-body">
               <div>
                 <p>
-                  Sau <a href="git-rebase-history">Bài 5</a> và <a href="git-cherry-pick">Bài 6</a> viết lại/di chuyển
-                  lịch sử, bài này trả lời câu hỏi mọi người dùng Git đều từng hoảng loạn hỏi ít nhất 1 lần:
-                  <em>"tôi vừa làm hỏng mọi thứ, cứu tôi với!"</em>. Tin vui: nhờ mọi object trong Git đều bất biến (<a
-                    href="git-object-model"
-                    >Bài 1</a
-                  >), gần như mọi thứ đều cứu được — miễn bạn biết công cụ đúng.
+                  Sau <a href="git-undo-recovery">Bài 7</a> học cách cứu commit tưởng đã mất, bài này giải quyết một bài
+                  toán khác: <em>commit nào trong 200 commit vừa qua đã làm hỏng tính năng X?</em> Dò từng commit một
+                  (build lại, test lại) là <code>O(n)</code> — chậm và nản. <code>git bisect</code> biến việc đó thành
+                  một bài toán <strong>tìm kiếm nhị phân</strong> quen thuộc, giảm xuống còn <code>O(log n)</code> bước.
                 </p>
 
-                <h2>1. <code>git reset</code>: Ba Mức Độ "Xoá"</h2>
+                <h2>1. Bài Toán: Lỗi Nằm Ở Đâu Trong Hàng Trăm Commit?</h2>
                 <p>
-                  <code>git reset &lt;commit&gt;</code> di chuyển con trỏ branch hiện tại về 1 commit khác — nhưng có 3
-                  chế độ khác nhau về việc <strong>Working Directory</strong> bị ảnh hưởng ra sao:
+                  Giả sử bạn biết commit hiện tại (<code>HEAD</code>) có lỗi, và commit từ 1 tuần trước (hoặc 1 tag
+                  release cũ) thì chắc chắn ổn. Ở giữa 2 điểm đó là hàng chục, hàng trăm commit. Dò tuần tự từ đầu tới
+                  cuối tốn tối đa <code>n</code> lần build+test. Nhưng nếu giả định lỗi chỉ xuất hiện
+                  <strong>đúng 1 lần</strong> và không biến mất rồi quay lại (tính chất <strong>đơn điệu</strong> —
+                  monotonic), bạn có thể áp dụng đúng thuật toán tìm kiếm nhị phân trên mảng đã sắp xếp: luôn kiểm tra
+                  điểm giữa, rồi thu hẹp một nửa phạm vi mỗi lần.
                 </p>
+
+                <h2>2. <code>git bisect start/good/bad</code>: Thu Hẹp Phạm Vi</h2>
+                <p>Quy trình thủ công gồm 4 loại lệnh:</p>
                 <table class="comparison-table">
                   <thead>
                     <tr>
-                      <th>Chế độ</th>
-                      <th>Con trỏ branch</th>
-                      <th>Staging Index</th>
-                      <th>Working Directory</th>
+                      <th>Lệnh</th>
+                      <th>Ý nghĩa</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td><code>--soft</code></td>
-                      <td>Di chuyển</td>
-                      <td>Giữ nguyên</td>
-                      <td>Giữ nguyên</td>
+                      <td><code>git bisect start</code></td>
+                      <td>Bắt đầu phiên bisect, chưa biết ranh giới good/bad nào.</td>
                     </tr>
                     <tr>
-                      <td><code>--mixed</code> (mặc định)</td>
-                      <td>Di chuyển</td>
-                      <td>Reset về commit đích</td>
-                      <td>Giữ nguyên</td>
+                      <td><code>git bisect bad [ref]</code></td>
+                      <td>Đánh dấu 1 commit là lỗi (mặc định là <code>HEAD</code> hiện tại nếu không truyền ref).</td>
                     </tr>
                     <tr>
-                      <td><code>--hard</code></td>
-                      <td>Di chuyển</td>
-                      <td>Reset về commit đích</td>
-                      <td><strong>Ghi đè</strong> — mất thay đổi chưa commit</td>
+                      <td><code>git bisect good &lt;ref&gt;</code></td>
+                      <td>Đánh dấu 1 commit cũ hơn là ổn — thiết lập ranh giới dưới của phạm vi tìm kiếm.</td>
+                    </tr>
+                    <tr>
+                      <td><code>git bisect reset</code></td>
+                      <td>Kết thúc phiên, quay lại đúng branch/HEAD ban đầu trước khi bisect.</td>
                     </tr>
                   </tbody>
                 </table>
                 <p>
-                  Nhớ lại 3 cây từ <a href="git-three-trees-staging">Bài 2</a>: càng xuống dưới bảng, reset càng "lan"
-                  sâu hơn qua 3 cây. <code>--soft</code> chỉ đụng tới HEAD; <code>--hard</code> đụng tới
-                  <strong>cả 3</strong>.
+                  Ngay khi có cả 1 mốc <code>good</code> và 1 mốc <code>bad</code>, Git tự động
+                  <strong>checkout commit ở chính giữa</strong> phạm vi đó — luôn dưới dạng
+                  <a href="git-branch-head">detached HEAD</a> (Bài 3), vì bạn chỉ đang "ghé thăm" để test chứ không làm
+                  việc trên đó. Bạn build/test commit đó, rồi báo lại <code>good</code> hoặc <code>bad</code>, Git tiếp
+                  tục thu hẹp phạm vi còn một nửa. Lặp lại tới khi phạm vi chỉ còn đúng 1 commit — đó chính là "thủ
+                  phạm" đầu tiên gây lỗi.
                 </p>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Không build được thì <code>skip</code>, đừng đoán</div>
+                  <div class="callout__content">
+                    Có những commit không thể test được (không build được, thiếu dependency tại thời điểm đó).
+                    <code>git bisect skip</code> báo cho Git biết "bỏ qua commit này, không tính là good hay bad" — Git
+                    sẽ chọn 1 điểm giữa khác thay vì buộc bạn đoán mò, tránh làm sai lệch kết quả tìm kiếm.
+                  </div>
+                </div>
+
+                <h2>3. Tự Động Hoá Với <code>git bisect run</code></h2>
+                <p>
+                  Thay vì tự tay test rồi gõ <code>good</code>/<code>bad</code> hàng chục lần,
+                  <code>git bisect run &lt;lệnh&gt;</code> giao toàn bộ vòng lặp cho 1 script — thường là lệnh chạy
+                  test. Git đọc <strong>mã thoát</strong>
+                  (exit code) của lệnh đó để tự quyết định:
+                </p>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Exit code</th>
+                      <th>Git hiểu là</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>0</code></td>
+                      <td>good — commit này ổn.</td>
+                    </tr>
+                    <tr>
+                      <td><code>1</code>–<code>124</code>, <code>126</code>–<code>127</code></td>
+                      <td>bad — commit này lỗi.</td>
+                    </tr>
+                    <tr>
+                      <td><code>125</code></td>
+                      <td>skip — không thể test commit này (dành riêng, không phải "bad").</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Toàn bộ vòng lặp checkout → chạy script → đọc exit code → thu hẹp phạm vi diễn ra tự động, không cần
+                  tương tác — cực kỳ hữu ích khi phạm vi tìm kiếm lên tới hàng trăm commit.
+                </p>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">💡 Mẹo: script cho <code>bisect run</code> nên tự lo phần build</div>
+                  <div class="callout__content">
+                    Một lệnh điển hình: <code>git bisect run npm test</code> hoặc 1 script bash tự build rồi chạy test
+                    cụ thể. Script nên <code>exit 125</code> ngay khi build thất bại vì lý do không liên quan tới bug
+                    đang tìm (ví dụ thiếu file tại thời điểm đó) — để Git bỏ qua commit đó thay vì tính nhầm là bad.
+                  </div>
+                </div>
+
+                <h2>4. So Sánh Độ Phức Tạp: <code>O(log n)</code> vs <code>O(n)</code></h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Số commit cần dò</th>
+                      <th>Dò tuần tự (tối đa)</th>
+                      <th><code>git bisect</code> (tối đa)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>16</td>
+                      <td>16 lần</td>
+                      <td>~4 lần</td>
+                    </tr>
+                    <tr>
+                      <td>256</td>
+                      <td>256 lần</td>
+                      <td>~8 lần</td>
+                    </tr>
+                    <tr>
+                      <td>1.000.000</td>
+                      <td>1.000.000 lần</td>
+                      <td>~20 lần</td>
+                    </tr>
+                  </tbody>
+                </table>
 
                 <div class="callout callout--pitfall">
                   <div class="callout__title">
-                    🕳️ Cạm bẫy thường gặp: <code>reset --hard</code> mất vĩnh viễn thứ CHƯA commit
+                    🕳️ Cạm bẫy thường gặp: lỗi "không đơn điệu" phá vỡ giả định của bisect
                   </div>
                   <div class="callout__content">
-                    Reflog (mục 3) chỉ cứu được những gì đã từng là 1 <strong>commit</strong> — vì object trong Git bất
-                    biến và reflog theo dõi lịch sử di chuyển HEAD giữa các commit. Thay đổi trong Working Directory
-                    <strong>chưa bao giờ commit</strong> thì chưa từng là object — <code>reset --hard</code> ghi đè
-                    chúng và <strong>không có cách nào cứu lại</strong>. Luôn <code>git stash</code> (mục 4) trước khi
-                    chạy <code>reset --hard</code> nếu còn thay đổi dở dang.
+                    Tìm kiếm nhị phân chỉ đúng khi tính chất good/bad đổi <strong>đúng 1 lần</strong> dọc lịch sử. Nếu
+                    bug được sửa ở 1 commit rồi vô tình tái xuất hiện ở commit sau đó (không đơn điệu), hoặc test bị
+                    flaky (lúc pass lúc fail trên cùng 1 commit), <code>git bisect</code> có thể hội tụ sai chỗ. Luôn
+                    xác nhận thủ công commit mà Git chỉ ra thực sự là nguyên nhân trước khi kết luận.
                   </div>
                 </div>
-
-                <h2>2. <code>git revert</code>: Undo An Toàn Cho Nhánh Công Khai</h2>
-                <p>
-                  Khác hẳn <code>reset</code> (di chuyển con trỏ, có thể làm mồ côi commit),
-                  <code>git revert &lt;commit&gt;</code> tạo ra <strong>1 commit MỚI</strong> áp dụng đúng thay đổi
-                  ngược lại của commit đó — lịch sử cũ được giữ nguyên vẹn, không branch nào bị "lùi lại". Đây là lựa
-                  chọn an toàn khi cần undo trên nhánh đã push, đúng theo Golden Rule đã học ở
-                  <a href="git-rebase-history">Bài 5</a>.
-                </p>
-
-                <h2>3. <code>git reflog</code>: Nhật Ký Cứu Sinh</h2>
-                <p>
-                  Mỗi lần HEAD di chuyển — commit, checkout, reset, rebase — Git âm thầm ghi lại vào
-                  <strong>reflog</strong>, một nhật ký cục bộ hoàn toàn tách biệt với các branch ref. Ngay cả sau
-                  <code>reset --hard</code> khiến 1 commit trông như "biến mất" (không branch nào trỏ tới, mồ côi giống
-                  cơ chế ở <a href="git-branch-head">Bài 3</a>), reflog vẫn nhớ hash của nó — bạn chỉ cần
-                  <code>git branch &lt;tên&gt; &lt;hash-từ-reflog&gt;</code> để "cứu" nó trở lại reachable.
-                </p>
 
                 <div class="callout callout--deep">
-                  <div class="callout__title">🔬 Đào sâu: Vì sao reflog không đồng bộ qua remote?</div>
+                  <div class="callout__title">🔬 Đào sâu: bisect trên lịch sử có merge commit</div>
                   <div class="callout__content">
-                    Reflog <strong>không phải</strong> 1 ref thực sự nằm trong <code>.git/refs</code> mà Git đồng bộ khi
-                    <code>push</code>/<code>pull</code> — nó là 1 file log riêng (<code>.git/logs/HEAD</code>) chỉ ghi
-                    lại lịch sử thao tác <strong>trên chính máy bạn</strong>. Đây là lý do reflog là công cụ cứu hộ
-                    tuyệt vời cho lỗi cục bộ, nhưng vô dụng nếu bạn cần khôi phục thứ gì đó chỉ tồn tại trên máy đồng
-                    nghiệp — mặc định reflog cũng tự dọn dẹp các entry cũ (thường sau 90 ngày), không phải kho lưu trữ
-                    vĩnh viễn.
+                    Với lịch sử tuyến tính, "điểm giữa" chỉ đơn giản là trung vị theo thứ tự commit. Khi có merge commit
+                    (nhiều cha), Git dùng thứ tự tô-pô (topological order) của toàn bộ DAG để chọn điểm giữa, và có thể
+                    phải checkout qua nhiều nhánh phụ trước khi hội tụ. Cờ <code>git bisect start --first-parent</code>
+                    giới hạn việc tìm kiếm chỉ theo nhánh chính, bỏ qua nội dung bên trong các merge — hữu ích khi bug
+                    chắc chắn nằm ở nhánh chính chứ không phải trong 1 feature branch đã merge vào.
                   </div>
                 </div>
 
-                <h2>4. <code>git stash</code>: Cất Tạm Thay Đổi Chưa Commit</h2>
+                <h2>Sân chơi tương tác: Demo Bisect Trên 24 Commit Giấu 1 Thủ Phạm</h2>
                 <p>
-                  Khi cần chuyển nhánh gấp nhưng thay đổi hiện tại chưa đủ hoàn chỉnh để commit,
-                  <code>git stash</code> cất toàn bộ Working Directory + Staging Index vào 1 "ngăn kéo" riêng, trả
-                  Working Directory về trạng thái sạch của HEAD. <code>git stash pop</code> lấy lại đúng những gì vừa
-                  cất, tiếp tục làm việc như chưa hề rời đi.
-                </p>
-
-                <h2>Sân chơi tương tác: Demo "Làm Hỏng Rồi Tự Cứu"</h2>
-                <p>
-                  Tiếp nối engine từ các bài trước. Thử đúng kịch bản kinh điển: commit vài lần,
-                  <code>reset --hard</code> lùi về 1 commit cũ (các commit sau "biến mất" — mồ côi), rồi dùng
-                  <code>git reflog</code> tìm lại hash và <code>git branch</code> cứu chúng trở lại.
+                  Bên dưới là 24 commit liên tiếp — đúng 1 commit trong số đó âm thầm gây lỗi (nội dung không hé lộ
+                  trước, giống thực tế). Hãy tự tay bisect: đánh dấu 1 mốc cũ là good, HEAD hiện tại là bad, rồi lặp lại
+                  good/bad theo commit Git tự checkout tới khi tìm ra thủ phạm. Thử cả <code>git bisect run</code>
+                  để xem toàn bộ vòng lặp tự động hoá chỉ trong vài bước.
                 </p>
 
                 <!-- Interactive Sandbox -->
                 <div class="code-tabs">
                   <div class="code-tabs__nav">
-                    <span class="code-tabs__title">🧯 Sân chơi tương tác: Undo &amp; Recovery Simulator</span>
+                    <span class="code-tabs__title">🔍 Sân chơi tương tác: Git Bisect Simulator</span>
                     <div class="code-tabs__btns">
                       <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
                       <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
@@ -371,24 +421,21 @@
                           <input
                             type="text"
                             id="graph-cmd-input"
-                            placeholder="git reset --hard C1"
+                            placeholder="git bisect start"
                             autocomplete="off"
                             spellcheck="false"
                           />
                           <button class="graph-btn graph-btn--primary" id="graph-run-btn">Chạy</button>
                         </div>
                         <ul class="graph-hint-list">
-                          <li><code>git commit -m "..."</code></li>
-                          <li><code>git reset --soft|--mixed|--hard &lt;ref&gt;</code></li>
-                          <li><code>git revert &lt;ref&gt;</code></li>
-                          <li><code>git reflog</code></li>
-                          <li><code>git stash</code> / <code>git stash pop</code></li>
-                          <li><code>git branch &lt;tên&gt; &lt;ref&gt;</code></li>
+                          <li><code>git bisect start</code></li>
+                          <li><code>git bisect bad [C&lt;n&gt;]</code></li>
+                          <li><code>git bisect good C&lt;n&gt;</code></li>
+                          <li><code>git bisect skip</code></li>
+                          <li><code>git bisect run</code> (tự động hoá)</li>
+                          <li><code>git bisect log</code></li>
+                          <li><code>git bisect reset</code></li>
                         </ul>
-                        <div>
-                          <label for="graph-file-input">Nội dung file app.js (Working Directory)</label>
-                          <input type="text" id="graph-file-input" class="graph-file-input" value="version = 1" />
-                        </div>
                         <button class="graph-btn" id="graph-reset-btn">Reset demo</button>
                         <div>
                           <h3>Nhật ký</h3>
@@ -398,7 +445,7 @@
 
                       <!-- Canvas Stage -->
                       <div class="graph-viewport-container">
-                        <canvas id="graph-canvas" class="graph-canvas" width="600" height="300"></canvas>
+                        <canvas id="graph-canvas" class="graph-canvas" width="680" height="220"></canvas>
                         <div class="graph-status-line" id="graph-status-line"></div>
                       </div>
                     </div>
@@ -407,7 +454,7 @@
                   <div class="code-tabs__panel" data-panel="js">
                     <div class="code-window">
                       <div class="code-header">
-                        <span class="code-filename">git-undo-live.js</span>
+                        <span class="code-filename">git-bisect-live.js</span>
                         <button class="code-copy" onclick="copyCode(this)">Copy</button>
                       </div>
                       <pre><code class="language-js" id="js-code-display"></code></pre>
@@ -419,8 +466,8 @@
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Bạn <code>git reset --hard HEAD~1</code> trong khi đang sửa dở 1 file (chưa
-                    <code>git add</code>, chưa commit). Chuyện gì xảy ra với phần đang sửa dở đó?
+                    Câu 1: Với 1000 commit giữa 1 mốc good và 1 mốc bad, <code>git bisect</code> cần tối đa khoảng bao
+                    nhiêu lần checkout+test để tìm ra thủ phạm, so với dò tuần tự?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -430,12 +477,11 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! reset --hard ghi đè Working Directory về đúng nội dung tại commit đích. Vì thay đổi dở dang CHƯA BAO GIỜ được commit (chưa từng là 1 Git object), nó không tồn tại ở đâu khác để reflog cứu lại — mất vĩnh viễn.'
+                          'Chính xác! log2(1000) xấp xỉ 10 — mỗi lần test loại bỏ một nửa phạm vi còn lại, trong khi dò tuần tự cần tới gần 1000 lần trong trường hợp xấu nhất.'
                         )
                       "
                     >
-                      A. Mất vĩnh viễn — vì chưa từng được commit nên không tồn tại dưới dạng object nào để cứu lại bằng
-                      reflog.
+                      A. Khoảng 10 lần (log2 1000 ≈ 10), so với tối đa 1000 lần nếu dò tuần tự từng commit.
                     </button>
                     <button
                       class="quiz-option"
@@ -443,11 +489,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. reflog chỉ ghi lại lịch sử di chuyển HEAD giữa các COMMIT đã tồn tại — nó không có cách nào lưu trạng thái Working Directory chưa commit.'
+                          'Sai. Đây chính là độ phức tạp O(n) của dò tuần tự — bisect nhanh hơn RẤT nhiều nhờ mỗi bước loại bỏ một nửa phạm vi.'
                         )
                       "
                     >
-                      B. Vẫn cứu được bằng <code>git reflog</code>, giống mọi commit khác.
+                      B. Vẫn cần khoảng 1000 lần, không khác gì dò tuần tự.
                     </button>
                     <button
                       class="quiz-option"
@@ -455,11 +501,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Git không tự động stash trước khi reset --hard — đây chính là lý do lệnh này nguy hiểm nếu dùng không cẩn thận.'
+                          'Sai. Bisect luôn cần ít nhất vài bước để thu hẹp phạm vi qua từng lần chia đôi — không thể tìm ra ngay lập tức trừ khi phạm vi ban đầu đã rất nhỏ.'
                         )
                       "
                     >
-                      C. Git tự động stash lại trước khi reset, không mất gì cả.
+                      C. Chỉ cần đúng 1 lần vì Git biết trước commit nào lỗi.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -468,8 +514,8 @@
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Điều gì khiến <code>git revert</code> an toàn hơn <code>git reset --hard</code> khi cần undo
-                    trên 1 nhánh đã push lên remote?
+                    Câu 2: Trong <code>git bisect run &lt;script&gt;</code>, mã thoát (exit code) <code>125</code> có ý
+                    nghĩa gì?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -479,12 +525,11 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! revert THÊM 1 commit mới đảo ngược thay đổi, giữ nguyên toàn bộ lịch sử cũ — không hash nào đổi, không commit nào mồ côi. reset --hard di chuyển branch pointer, có thể làm mồ côi các commit phía sau và gây phân kỳ lịch sử với bất kỳ ai đã pull bản cũ (đúng Golden Rule ở Bài 5).'
+                          'Chính xác! 125 là mã dành riêng cho skip — báo cho Git biết commit này không thể build/test được vì lý do không liên quan tới bug đang tìm, nên bỏ qua thay vì tính nhầm là bad.'
                         )
                       "
                     >
-                      A. Revert tạo 1 commit mới đảo ngược thay đổi mà không xoá/viết lại lịch sử cũ, trong khi reset
-                      --hard di chuyển con trỏ branch và có thể làm phân kỳ lịch sử với người đã pull bản cũ.
+                      A. Bỏ qua (skip) — commit này không thể test được, không tính là good hay bad.
                     </button>
                     <button
                       class="quiz-option"
@@ -492,11 +537,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Cả 2 lệnh đều chạy hoàn toàn cục bộ (local) — không lệnh nào tự động kết nối remote để kiểm tra quyền.'
+                          'Sai. Mã 0 mới là good — 125 là mã dành riêng cho skip, khác hoàn toàn với good.'
                         )
                       "
                     >
-                      B. Revert tự động kiểm tra quyền truy cập remote trước khi thực thi.
+                      B. Good — commit này chắc chắn ổn.
                     </button>
                     <button
                       class="quiz-option"
@@ -504,11 +549,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Không lệnh nào trong 2 lệnh này liên quan gì tới việc mã hoá dữ liệu — đây không phải khác biệt thực sự giữa chúng.'
+                          'Sai. Các mã thoát khác từ 1-124 (và 126-127) mới được hiểu là bad — 125 được Git dành riêng ra để phân biệt với bad thực sự.'
                         )
                       "
                     >
-                      C. Revert mã hoá commit trước khi gửi lên remote, còn reset thì không.
+                      C. Bad — commit này chắc chắn lỗi giống mọi exit code khác 0.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -517,7 +562,7 @@
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Vì sao <code>git reflog</code> không đồng bộ khi bạn push/pull với đồng nghiệp?
+                    Câu 3: Điều gì khiến kết quả của <code>git bisect</code> có thể SAI (chỉ ra nhầm thủ phạm)?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -527,12 +572,11 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Reflog không phải 1 ref/object mà Git đồng bộ qua network — nó chỉ là 1 file log nội bộ (.git/logs/HEAD) theo dõi lịch sử di chuyển HEAD TRÊN CHÍNH MÁY BẠN. Đây là lý do nó cứu được lỗi cục bộ nhưng không giúp gì cho commit chỉ tồn tại trên máy người khác.'
+                          'Chính xác! Tìm kiếm nhị phân giả định tính chất good/bad chỉ đổi đúng 1 lần dọc lịch sử (đơn điệu). Nếu bug được sửa rồi tái xuất hiện, hoặc test flaky cho kết quả không ổn định trên cùng 1 commit, giả định này bị phá vỡ và bisect có thể hội tụ sai chỗ.'
                         )
                       "
                     >
-                      A. Vì reflog chỉ là 1 nhật ký nội bộ theo dõi lịch sử HEAD trên máy cục bộ, không phải ref/object
-                      mà Git đồng bộ qua push/pull.
+                      A. Khi tính chất good/bad không đơn điệu — ví dụ bug được sửa rồi tái xuất hiện, hoặc test flaky.
                     </button>
                     <button
                       class="quiz-option"
@@ -540,11 +584,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Kích thước file không phải lý do — reflog không đồng bộ vì bản chất nó KHÔNG PHẢI 1 ref được thiết kế để chia sẻ, dù dung lượng lớn hay nhỏ.'
+                          'Sai. Số lượng commit không ảnh hưởng tới TÍNH ĐÚNG của kết quả — chỉ ảnh hưởng số bước cần thiết (vẫn luôn là O(log n)).'
                         )
                       "
                     >
-                      B. Vì reflog quá lớn để truyền qua mạng.
+                      B. Khi số lượng commit giữa 2 mốc quá lớn (trên 100 commit).
                     </button>
                     <button
                       class="quiz-option"
@@ -552,11 +596,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Không có cấu hình nào bật đồng bộ reflog — đây là giới hạn THIẾT KẾ cố định, không phải tuỳ chọn có thể bật/tắt.'
+                          'Sai. git bisect hoạt động hoàn toàn cục bộ, dựa trên lịch sử commit sẵn có trên máy — không cần kết nối remote nào cả.'
                         )
                       "
                     >
-                      C. Vì cần bật 1 cấu hình đặc biệt (<code>git config reflog.sync true</code>) mà mặc định tắt.
+                      C. Khi không có kết nối mạng tới remote trong lúc chạy bisect.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -567,29 +611,24 @@
                 <h3>📖 Tài liệu tham khảo / References</h3>
                 <ul>
                   <li>
-                    <a
-                      href="https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >Pro Git Book — Reset Demystified</a
-                    >
-                  </li>
-                  <li>
-                    <a href="https://git-scm.com/docs/git-revert" target="_blank" rel="noopener noreferrer"
-                      >git-scm.com — git-revert Documentation</a
-                    >
-                  </li>
-                  <li>
-                    <a href="https://git-scm.com/docs/git-reflog" target="_blank" rel="noopener noreferrer"
-                      >git-scm.com — git-reflog Documentation</a
+                    <a href="https://git-scm.com/docs/git-bisect" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-bisect Documentation</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://git-scm.com/book/en/v2/Git-Tools-Stashing-and-Cleaning"
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Debugging-with-Git"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >Pro Git Book — Stashing and Cleaning</a
+                      >Pro Git Book — Debugging with Git</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://www.atlassian.com/git/tutorials/debugging-with-git"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Atlassian — Debugging with Git Tutorial</a
                     >
                   </li>
                 </ul>
@@ -599,11 +638,11 @@
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="git-bisect" class="article-related__link article-related__link--next">
-                    Bài 8: Git Bisect — Tìm Commit Lỗi
-                  </a>
-                  <a href="git-cherry-pick" class="article-related__link article-related__link--prev">
-                    Bài 6: Cherry-pick — Chọn Lọc Commit
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 9: Remote &amp; Collaboration (sắp ra mắt)
+                  </span>
+                  <a href="git-undo-recovery" class="article-related__link article-related__link--prev">
+                    Bài 7: Undo &amp; Phục Hồi
                   </a>
                   <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
                 </div>
@@ -738,6 +777,6 @@
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
-    <script src="git-undo-recovery.js" defer></script>
+    <script src="git-bisect.js" defer></script>
   </body>
 </html>
