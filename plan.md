@@ -10,7 +10,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | -------------------------------- | ------------------------------------- | -------------- | -------- | ----------- |
 | 🎉 **Series 2: WebGPU**          | **Đồ họa 3D & Compute Shader**        | **10/10**      | **10**   | **100%** ✅ |
 | 🎉 **Series 6: CSS & Animation** | **Hiệu ứng & Bố cục Web hiện đại**    | **10/10**      | **10**   | **100%** ✅ |
-| 🚧 **Series 3: DSA Trực Quan**   | **Cấu Trúc Dữ Liệu & Giải Thuật**     | **2/8**        | **8**    | **25%**     |
+| 🚧 **Series 3: DSA Trực Quan**   | **Cấu Trúc Dữ Liệu & Giải Thuật**     | **2/12**       | **12**   | **17%**     |
 | Series 1                         | WebAssembly & Rust                    | 0/10           | 10       | 0%          |
 | Series 4                         | WebRTC & WebSocket                    | 0/8            | 8        | 0%          |
 | Series 5                         | Toy JS Engine (Trình thông dịch JS)   | 0/?            | TBD      | 0%          |
@@ -20,16 +20,20 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### DSA Series Lessons
 
-| Bài | Tên                         | Status     | Link                                         |
-| --- | --------------------------- | ---------- | -------------------------------------------- |
-| 1   | Xoay Cây AVL & Red-Black    | ✅ Done    | `/blog/algo/algo-avl-redblack-tree`          |
-| 2   | Pathfinding Dijkstra & A\*  | ✅ Done    | `/blog/algo/algo-pathfinding-dijkstra-astar` |
-| 3   | Quy Hoạch Động Trực Quan    | 🔲 Pending | -                                            |
-| 4   | B-Tree Database Index       | 🔲 Pending | -                                            |
-| 5   | Memory Allocator Visualizer | 🔲 Pending | -                                            |
-| 6   | Hash Table & Va Chạm        | 🔲 Pending | -                                            |
-| 7   | Huffman Data Compression    | 🔲 Pending | -                                            |
-| 8   | Dự án: Algorithm Playground | 🔲 Pending | -                                            |
+| Bài | Tên                           | Status     | Link                                         |
+| --- | ----------------------------- | ---------- | -------------------------------------------- |
+| 1   | Xoay Cây AVL & Red-Black      | ✅ Done    | `/blog/algo/algo-avl-redblack-tree`          |
+| 2   | Pathfinding Dijkstra & A\*    | ✅ Done    | `/blog/algo/algo-pathfinding-dijkstra-astar` |
+| 3   | Sorting Algorithms Visualizer | 🔲 Pending | -                                            |
+| 4   | Trie (Cấu trúc từ điển)       | 🔲 Pending | -                                            |
+| 5   | Union-Find / Disjoint Set     | 🔲 Pending | -                                            |
+| 6   | Segment Tree / Fenwick Tree   | 🔲 Pending | -                                            |
+| 7   | Quy Hoạch Động Trực Quan      | 🔲 Pending | -                                            |
+| 8   | B-Tree Database Index         | 🔲 Pending | -                                            |
+| 9   | Memory Allocator Visualizer   | 🔲 Pending | -                                            |
+| 10  | Hash Table & Va Chạm          | 🔲 Pending | -                                            |
+| 11  | Huffman Data Compression      | 🔲 Pending | -                                            |
+| 12  | Dự án: Algorithm Playground   | 🔲 Pending | -                                            |
 
 ### WebGPU Series Lessons — HOÀN THÀNH 100%
 
@@ -142,16 +146,20 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học                     | Nội dung CS chuyên sâu                                                                              | Dự án/Demo đi kèm                                                                 |
-| --- | ------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| 1   | **Xoay cây AVL & Red-Black**    | Phân tích toán học đằng sau cây tìm kiếm tự cân bằng, điều kiện xoay đơn/xoay kép, luật tô màu nút. | Hoạt ảnh trực quan hóa các bước xoay cây tự động khi chèn nút.                    |
-| 2   | **Pathfinding Dijkstra & A\***  | Giải thuật tìm kiếm trên đồ thị, hàm Heuristic đánh giá khoảng cách Manhattan và Euclid.            | Bản đồ mê cung tương tác cho phép xem thuật toán lan rộng vùng tìm kiếm.          |
-| 3   | **Quy Hoạch Động Trực Quan**    | Phương pháp tối ưu hóa bài toán con trùng nhau, bảng lưu vết trạng thái (State Space).              | Ma trận động tính toán khoảng cách chỉnh sửa chuỗi (Edit Distance) hoặc Knapsack. |
-| 4   | **B-Tree Database Index**       | Cơ chế phân nhánh bậc cao của B-Tree nhằm tối ưu hóa việc đọc ghi ổ đĩa cho cơ sở dữ liệu.          | Trình mô phỏng chèn/xóa nút B-Tree kèm hiệu ứng tách/gộp trang.                   |
-| 5   | **Memory Allocator Visualizer** | Sự phân mảnh của bộ nhớ (Internal/External Fragmentation), thuật toán quản lý Heap tự do.           | Demo mô phỏng phân bổ RAM của lệnh `malloc`/`free` trực quan.                     |
-| 6   | **Hash Table & Va chạm**        | Phép băm bảo mật/không bảo mật. Các kỹ thuật Linear Probing, Quadratic Probing và Chaining.         | Bộ trực quan hóa phân bổ khóa vào Hash Table và các bước nhảy dò tìm khi va chạm. |
-| 7   | **Huffman Data Compression**    | Nén dữ liệu không mất mát, mã hóa tiền tố, tối ưu hóa độ dài bit dựa trên tần suất ký tự.           | Trình nén chuỗi ký tự hiển thị cây Huffman động được xây dựng từng bước.          |
-| 8   | **Dự án: Algorithm Playground** | Thiết kế bộ khung (Framework) chuẩn để lập trình và vẽ hoạt ảnh cho bất kỳ thuật toán nào.          | Trang web tổng hợp tất cả các thuật toán trực quan hóa tương tác mượt mà.         |
+| Bài | Tên bài học                       | Nội dung CS chuyên sâu                                                                                                      | Dự án/Demo đi kèm                                                                            |
+| --- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 1   | **Xoay cây AVL & Red-Black**      | Phân tích toán học đằng sau cây tìm kiếm tự cân bằng, điều kiện xoay đơn/xoay kép, luật tô màu nút.                         | Hoạt ảnh trực quan hóa các bước xoay cây tự động khi chèn nút.                               |
+| 2   | **Pathfinding Dijkstra & A\***    | Giải thuật tìm kiếm trên đồ thị, hàm Heuristic đánh giá khoảng cách Manhattan và Euclid.                                    | Bản đồ mê cung tương tác cho phép xem thuật toán lan rộng vùng tìm kiếm.                     |
+| 3   | **Sorting Algorithms Visualizer** | So sánh song song Quick/Merge/Heap/Radix Sort: độ phức tạp thời gian/bộ nhớ, tính ổn định (stability), trường hợp xấu nhất. | Bảng đua trực quan 4 thuật toán sắp xếp cùng một mảng ngẫu nhiên, đếm phép so sánh/hoán đổi. |
+| 4   | **Trie (Cấu trúc từ điển)**       | Cây tiền tố (prefix tree) cho tìm kiếm chuỗi theo từng ký tự, ứng dụng autocomplete và kiểm tra chính tả.                   | Trực quan hóa từng bước chèn/tìm từ vào Trie, gợi ý autocomplete trực tiếp khi gõ.           |
+| 5   | **Union-Find / Disjoint Set**     | Path compression và union by rank, ứng dụng phát hiện chu trình và thuật toán Kruskal tìm cây khung nhỏ nhất (MST).         | Trực quan hóa thao tác union/find trên tập hợp rời rạc và quá trình xây MST bằng Kruskal.    |
+| 6   | **Segment Tree / Fenwick Tree**   | Truy vấn tổng/min/max trên đoạn con và cập nhật giá trị trong O(log n), cấu trúc chủ lực competitive programming.           | Trực quan hóa cây Segment Tree phân đoạn và cách truy vấn/cập nhật lan truyền qua node cha.  |
+| 7   | **Quy Hoạch Động Trực Quan**      | Phương pháp tối ưu hóa bài toán con trùng nhau, bảng lưu vết trạng thái (State Space).                                      | Ma trận động tính toán khoảng cách chỉnh sửa chuỗi (Edit Distance) hoặc Knapsack.            |
+| 8   | **B-Tree Database Index**         | Cơ chế phân nhánh bậc cao của B-Tree nhằm tối ưu hóa việc đọc ghi ổ đĩa cho cơ sở dữ liệu.                                  | Trình mô phỏng chèn/xóa nút B-Tree kèm hiệu ứng tách/gộp trang.                              |
+| 9   | **Memory Allocator Visualizer**   | Sự phân mảnh của bộ nhớ (Internal/External Fragmentation), thuật toán quản lý Heap tự do.                                   | Demo mô phỏng phân bổ RAM của lệnh `malloc`/`free` trực quan.                                |
+| 10  | **Hash Table & Va chạm**          | Phép băm bảo mật/không bảo mật. Các kỹ thuật Linear Probing, Quadratic Probing và Chaining.                                 | Bộ trực quan hóa phân bổ khóa vào Hash Table và các bước nhảy dò tìm khi va chạm.            |
+| 11  | **Huffman Data Compression**      | Nén dữ liệu không mất mát, mã hóa tiền tố, tối ưu hóa độ dài bit dựa trên tần suất ký tự.                                   | Trình nén chuỗi ký tự hiển thị cây Huffman động được xây dựng từng bước.                     |
+| 12  | **Dự án: Algorithm Playground**   | Thiết kế bộ khung (Framework) chuẩn để lập trình và vẽ hoạt ảnh cho bất kỳ thuật toán nào.                                  | Trang web tổng hợp tất cả các thuật toán trực quan hóa tương tác mượt mà.                    |
 
 ---
 
@@ -378,7 +386,7 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 | --- | ------------------------- | ---------------- | ---------------------------------- | ------------- | ------ |
 | 1   | WebAssembly & Rust        | `blog/wasm/`     | `wasm-programming-series.html`     | `--wasm`      | 10     |
 | 2   | WebGPU                    | `blog/webgpu/`   | `webgpu-programming-series.html`   | `--webgpu`    | 10     |
-| 3   | DS & Giải Thuật Trực Quan | `blog/algo/`     | `algo-programming-series.html`     | `--algo`      | 8      |
+| 3   | DS & Giải Thuật Trực Quan | `blog/algo/`     | `algo-programming-series.html`     | `--algo`      | 12     |
 | 4   | WebRTC & WebSocket        | `blog/realtime/` | `realtime-programming-series.html` | `--rtc`       | 8      |
 | 5   | Toy JS Engine             | `blog/toyjs/`    | `toyjs-programming-series.html`    | `--toyjs`     | 8      |
 | 6   | CSS & Animation           | `blog/css/`      | `css-programming-series.html`      | `--css`       | 10     |
