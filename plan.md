@@ -10,7 +10,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | -------------------------------- | ------------------------------------- | -------------- | -------- | ----------- |
 | 🎉 **Series 2: WebGPU**          | **Đồ họa 3D & Compute Shader**        | **10/10**      | **10**   | **100%** ✅ |
 | 🎉 **Series 6: CSS & Animation** | **Hiệu ứng & Bố cục Web hiện đại**    | **10/10**      | **10**   | **100%** ✅ |
-| 🚧 **Series 3: DSA Trực Quan**   | **Cấu Trúc Dữ Liệu & Giải Thuật**     | **9/12**       | **12**   | **75%**     |
+| 🚧 **Series 3: DSA Trực Quan**   | **Cấu Trúc Dữ Liệu & Giải Thuật**     | **10/12**      | **12**   | **83%**     |
 | Series 1                         | WebAssembly & Rust                    | 0/10           | 10       | 0%          |
 | Series 4                         | WebRTC & WebSocket                    | 0/8            | 8        | 0%          |
 | Series 5                         | Toy JS Engine (Trình thông dịch JS)   | 0/?            | TBD      | 0%          |
@@ -31,7 +31,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 7   | Quy Hoạch Động Trực Quan      | ✅ Done    | `/blog/algo/algo-dynamic-programming`        |
 | 8   | B-Tree Database Index         | ✅ Done    | `/blog/algo/algo-btree-database-index`       |
 | 9   | Memory Allocator Visualizer   | ✅ Done    | `/blog/algo/algo-memory-allocator`           |
-| 10  | Hash Table & Va Chạm          | 🔲 Pending | -                                            |
+| 10  | Hash Table & Va Chạm          | ✅ Done    | `/blog/algo/algo-hash-table-collision`       |
 | 11  | Huffman Data Compression      | 🔲 Pending | -                                            |
 | 12  | Dự án: Algorithm Playground   | 🔲 Pending | -                                            |
 
