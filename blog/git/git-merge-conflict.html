@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 3: Branch &amp; HEAD — Con Trỏ, Không Phải Bản Sao — js-tools</title>
+    <title>Bài 4: Merge &amp; Conflict — Three-Way Merge Hoạt Động Thế Nào — js-tools</title>
     <meta
       name="description"
-      content="Branch trong Git chỉ là 1 file 41 byte chứa hash của 1 commit. Tìm hiểu HEAD là con trỏ của con trỏ, detached HEAD, checkout/switch di chuyển HEAD thế nào, và fast-forward. Gõ lệnh Git giả lập trong sân chơi Interactive Git Graph."
+      content="Vì sao Git cần một tổ tiên chung (merge base) để merge 2 nhánh, khi nào tạo merge commit thay vì fast-forward, cơ chế three-way merge sinh xung đột và cách giải quyết. Sân chơi tương tác merge trực tiếp trên đồ thị commit."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/git/git-branch-head" />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-merge-conflict" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="../ide.css" />
     <script defer src="../prism.js"></script>
     <style>
-      /* Git Graph Simulator Sandbox styles */
+      /* Git Graph Simulator (Merge) Sandbox styles */
       .graph-sandbox {
         background: #181825;
         border: 1px solid var(--border);
@@ -63,6 +63,17 @@
         box-sizing: border-box;
         font-family: monospace;
       }
+      .graph-controls input[type='text'].graph-file-input {
+        color: #cdd6f4;
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
       .graph-btn {
         padding: 6px 10px;
         border-radius: 6px;
@@ -103,7 +114,7 @@
         font-family: monospace;
         font-size: 11px;
         color: #a6e3a1;
-        max-height: 160px;
+        max-height: 140px;
         overflow-y: auto;
         line-height: 1.5;
       }
@@ -125,6 +136,7 @@
         min-height: 380px;
         overflow: auto;
         padding: 10px 0;
+        gap: 10px;
       }
       .graph-canvas {
         display: block;
@@ -133,7 +145,35 @@
         font-family: monospace;
         font-size: 12px;
         color: #cdd6f4;
-        margin-top: 8px;
+      }
+      .conflict-panel {
+        display: none;
+        width: 90%;
+        background: #1e1e2e;
+        border: 1px solid #f38ba8;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .conflict-panel.is-visible {
+        display: block;
+      }
+      .conflict-panel h4 {
+        margin: 0 0 8px 0;
+        color: #f38ba8;
+        font-size: 12px;
+      }
+      .conflict-panel textarea {
+        width: 100%;
+        min-height: 90px;
+        box-sizing: border-box;
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: #f9e2af;
+        font-family: monospace;
+        font-size: 12px;
+        padding: 8px;
+        resize: vertical;
       }
       @media (max-width: 880px) {
         .graph-sandbox {
@@ -223,7 +263,7 @@
         <div class="container">
           <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
           <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
-          <h1 class="article-hero__title">Bài 3: Branch &amp; HEAD — Con Trỏ, Không Phải Bản Sao</h1>
+          <h1 class="article-hero__title">Bài 4: Merge &amp; Conflict — Three-Way Merge Hoạt Động Thế Nào</h1>
           <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
         </div>
       </section>
@@ -234,143 +274,142 @@
             <div class="article-body">
               <div>
                 <p>
-                  Ở <a href="git-three-trees-staging">Bài 2</a>, mỗi lần <code>git commit</code> chúng ta chỉ nói chung
-                  chung "HEAD cập nhật". Bài này mở đúng chỗ đó ra: <strong>branch</strong> và
-                  <strong>HEAD</strong> thực chất chỉ là những file văn bản bé xíu trỏ tới hash commit — và hiểu rõ cơ
-                  chế con trỏ này giải thích được vì sao Git khuyến khích tạo hàng chục nhánh mỗi ngày mà không lo tốn
-                  kém gì.
+                  Ở <a href="git-branch-head">Bài 3</a> chúng ta tách nhánh ra để làm việc song song. Bài này khép lại
+                  vòng lặp: đưa 2 dòng lịch sử đã phân kỳ <strong>hợp nhất lại</strong>. Điều thú vị là Git không so
+                  sánh 2 nhánh trực tiếp với nhau — nó cần một "trọng tài" thứ ba: điểm mà 2 nhánh từng tách ra.
                 </p>
 
-                <h2>1. Branch Chỉ Là Một Con Trỏ 41 Byte</h2>
+                <h2>1. Vì Sao Cần "Ba Bên" Để Merge? (Merge Base)</h2>
                 <p>
-                  Một branch trong Git, ví dụ <code>main</code>, thực chất là 1 file tại
-                  <code>.git/refs/heads/main</code> chứa <strong>đúng 1 dòng</strong>: hash 40 ký tự hex của commit mà
-                  nhánh đó đang trỏ tới (cộng 1 ký tự xuống dòng = 41 byte). Không có gì khác. Tạo 1 branch mới nghĩa là
-                  tạo 1 file bé xíu như vậy — cực rẻ, bất kể repo có bao nhiêu file hay lịch sử dài tới đâu:
+                  Giả sử <code>main</code> và <code>feature</code> đều sửa dòng cuối của 1 file, nhưng theo 2 cách khác
+                  nhau. Nếu chỉ so sánh trực tiếp <code>main</code> với <code>feature</code>, Git chỉ biết
+                  <strong>2 bản khác nhau</strong> — không thể biết bên nào mới thực sự "thay đổi" so với ban đầu. Git
+                  cần điểm thứ ba: <strong>merge base</strong> — commit tổ tiên chung gần nhất, tức chính xác nơi 2
+                  nhánh tách ra. Có base, Git mới trả lời được: "so với base, <code>main</code> đổi gì, và
+                  <code>feature</code> đổi gì?" — đây gọi là <strong>three-way merge</strong>.
                 </p>
                 <div class="code-window">
                   <div class="code-header">
                     <span class="code-filename">terminal</span>
                     <button class="code-copy" onclick="copyCode(this)">Copy</button>
                   </div>
-                  <pre><code class="language-bash">$ cat .git/refs/heads/main
-a1b2c3d4e5f6789012345678901234567890abcd
-
-$ git branch feature       # tạo file .git/refs/heads/feature với CÙNG hash trên
-$ cat .git/refs/heads/feature
-a1b2c3d4e5f6789012345678901234567890abcd</code></pre>
+                  <pre><code class="language-bash">$ git merge-base main feature
+a1b2c3d          # hash của commit tổ tiên chung gần nhất — nơi 2 nhánh tách ra</code></pre>
                 </div>
 
-                <h2>2. HEAD: Con Trỏ Của Con Trỏ</h2>
+                <h2>2. Fast-Forward vs Merge Commit</h2>
                 <p>
-                  <code>HEAD</code> trả lời câu hỏi "tôi đang đứng ở đâu?" — nhưng nó thường <strong>không</strong> trỏ
-                  thẳng vào 1 commit. Nó trỏ vào <strong>tên của 1 branch</strong>, và branch đó mới trỏ vào commit. Đây
-                  gọi là <em>symbolic ref</em>:
-                </p>
-                <div class="code-window">
-                  <div class="code-header">
-                    <span class="code-filename">terminal</span>
-                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
-                  </div>
-                  <pre><code class="language-bash">$ cat .git/HEAD
-ref: refs/heads/main       # HEAD trỏ tới TÊN branch, không phải hash trực tiếp</code></pre>
-                </div>
-                <p>
-                  Vì HEAD trỏ gián tiếp qua tên branch, khi bạn <code>git commit</code>, Git chỉ cần cập nhật file
-                  <code>refs/heads/main</code> để trỏ tới commit mới — <strong>HEAD không cần đổi gì cả</strong>, nó tự
-                  động "theo" branch main tới vị trí mới vì vẫn trỏ vào đúng cái tên đó.
+                  Nhắc lại fast-forward từ <a href="git-branch-head">Bài 3</a>: nếu merge base
+                  <strong>trùng với</strong> commit hiện tại của <code>main</code> (tức <code>main</code> chưa hề đổi gì
+                  kể từ lúc tách nhánh), Git chỉ cần <strong>di chuyển con trỏ</strong> — không tạo commit mới. Nếu
+                  merge base <strong>khác</strong> cả 2 đầu nhánh (cả 2 bên đều có commit mới kể từ lúc tách), Git bắt
+                  buộc phải tạo 1 <strong>merge commit</strong> — commit đặc biệt duy nhất có
+                  <strong>2 commit cha</strong> thay vì 1.
                 </p>
 
-                <h2>3. <code>git checkout</code> / <code>git switch</code> — Di Chuyển HEAD</h2>
+                <h2>3. Three-Way Merge: So Sánh Base, Ours, Theirs</h2>
                 <p>
-                  Chuyển nhánh nghĩa là ghi đè nội dung file <code>.git/HEAD</code> để nó trỏ sang tên branch khác, rồi
-                  cập nhật Working Directory + Staging Index (từ <a href="git-three-trees-staging">Bài 2</a>) cho khớp
-                  với tree của commit mà branch mới đang trỏ tới:
+                  Với mỗi phần nội dung (Git làm việc ở cấp độ dòng), thuật toán so sánh 3 phiên bản —
+                  <strong>base</strong> (gốc chung), <strong>ours</strong> (HEAD hiện tại), <strong>theirs</strong>
+                  (nhánh đang merge vào) — và áp dụng đúng 4 quy tắc:
                 </p>
-                <div class="code-window">
-                  <div class="code-header">
-                    <span class="code-filename">terminal</span>
-                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
-                  </div>
-                  <pre><code class="language-bash">$ git checkout feature     # .git/HEAD giờ chứa: ref: refs/heads/feature
-$ git switch feature       # lệnh mới hơn (Git 2.23+), làm đúng việc tương tự cho branch
-$ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang luôn</code></pre>
-                </div>
-
-                <h2>4. Detached HEAD: Khi HEAD Trỏ Thẳng Vào Commit</h2>
-                <p>
-                  Nếu bạn <code>checkout</code> thẳng vào 1 hash commit (thay vì tên branch), <code>.git/HEAD</code> sẽ
-                  chứa <strong>chính hash đó</strong> thay vì <code>ref: refs/heads/...</code> — trạng thái này gọi là
-                  <strong>detached HEAD</strong>. Bạn vẫn commit được bình thường, nhưng
-                  <strong>không branch nào trỏ tới</strong> những commit mới này:
-                </p>
-
-                <div class="callout callout--pitfall">
-                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Mất commit vì quên đang ở detached HEAD</div>
-                  <div class="callout__content">
-                    Nếu bạn tạo vài commit trong lúc detached HEAD rồi <code>checkout</code> sang 1 branch khác, những
-                    commit đó <strong>không còn nằm trên nhánh nào</strong> — chúng vẫn tồn tại trong
-                    <code>.git/objects</code> (bất biến, không tự xoá ngay) nhưng không có con trỏ nào dẫn tới. Nếu
-                    không tạo branch mới trỏ vào chúng trước khi rời đi, chúng sẽ dần bị garbage-collect. Luôn
-                    <code>git branch &lt;tên&gt;</code> ngay khi nhận ra mình cần giữ lại các commit lỡ tạo ở trạng thái
-                    detached.
-                  </div>
-                </div>
-
-                <h2>5. Fast-Forward: Khi Không Cần Tạo Commit Mới</h2>
-                <p>
-                  Xem trước một khái niệm mà <a href="git-merge-conflict">Bài 4</a> sẽ đào sâu: nếu branch
-                  <code>main</code> chưa có commit nào mới kể từ khi bạn tách nhánh <code>feature</code> ra, thì "merge"
-                  <code>feature</code> vào <code>main</code> không cần tạo commit hợp nhất nào cả — Git chỉ đơn giản
-                  <strong>di chuyển con trỏ</strong> <code>main</code> tới thẳng vị trí commit mới nhất của
-                  <code>feature</code>. Đây gọi là <strong>fast-forward</strong>, và nó chỉ khả thi chính xác vì branch
-                  chỉ là 1 con trỏ có thể di chuyển tự do dọc theo 1 đường thẳng lịch sử.
-                </p>
-
-                <h2>6. So Sánh Các Lệnh Di Chuyển Nhánh</h2>
                 <table class="comparison-table">
                   <thead>
                     <tr>
-                      <th>Lệnh</th>
-                      <th>Tạo branch mới?</th>
-                      <th>Di chuyển HEAD?</th>
+                      <th>So với base</th>
+                      <th>Kết quả</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td><code>git branch &lt;tên&gt;</code></td>
-                      <td>Có</td>
-                      <td>Không</td>
+                      <td>Cả ours và theirs đều KHÔNG đổi</td>
+                      <td>Giữ nguyên nội dung base</td>
                     </tr>
                     <tr>
-                      <td><code>git checkout &lt;branch&gt;</code> / <code>git switch &lt;branch&gt;</code></td>
-                      <td>Không</td>
-                      <td>Có — trỏ sang branch đó</td>
+                      <td>Chỉ ours đổi, theirs không đổi</td>
+                      <td>Lấy bản ours</td>
                     </tr>
                     <tr>
-                      <td><code>git checkout -b &lt;tên&gt;</code> / <code>git switch -c &lt;tên&gt;</code></td>
-                      <td>Có</td>
-                      <td>Có — trỏ sang branch vừa tạo</td>
+                      <td>Chỉ theirs đổi, ours không đổi</td>
+                      <td>Lấy bản theirs</td>
                     </tr>
                     <tr>
-                      <td><code>git checkout &lt;hash-commit&gt;</code></td>
-                      <td>Không</td>
-                      <td>Có — detached, trỏ thẳng vào commit</td>
+                      <td>Cả 2 đều đổi, và đổi GIỐNG NHAU</td>
+                      <td>Lấy bản đó (không xung đột)</td>
+                    </tr>
+                    <tr>
+                      <td>Cả 2 đều đổi, nhưng đổi KHÁC NHAU</td>
+                      <td><strong>XUNG ĐỘT (conflict)</strong> — cần con người quyết định</td>
                     </tr>
                   </tbody>
                 </table>
 
-                <h2>Sân chơi tương tác: Interactive Git Graph Simulator</h2>
+                <h2>4. Khi Xung Đột Phát Sinh: Git Đánh Dấu Ngay Trong File</h2>
                 <p>
-                  Gõ lệnh Git giả lập vào ô bên dưới và xem đồ thị commit, con trỏ branch, và HEAD cập nhật ngay lập
-                  tức. Thử: tạo 1 branch mới, chuyển qua lại, commit trên từng nhánh, rồi thử checkout thẳng vào 1 hash
-                  commit để xem detached HEAD trông như thế nào.
+                  Khi rơi vào trường hợp cuối, Git không đoán mò — nó ghi
+                  <strong>cả 2 phiên bản</strong> thẳng vào file trên Working Directory, kẹp giữa các dấu đánh dấu xung
+                  đột, rồi dừng lại chờ bạn quyết định:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">app.js (đang có conflict)</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD (main)
+const version = "v2-main";
+=======
+const version = "v2-feature";
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; feature</code></pre>
+                </div>
+                <p>
+                  Đồng thời, Staging Index (<a href="git-three-trees-staging">Bài 2</a>) tạm thời lưu
+                  <strong>3 phiên bản song song</strong> của file đó (gọi là stage 1/2/3: base/ours/theirs) thay vì 1
+                  bản duy nhất — đây là cách Git "nhớ" đủ thông tin để bạn (hoặc công cụ merge tool) tra cứu lại nếu cần
+                  trong lúc giải quyết.
+                </p>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Quên xoá dấu đánh dấu xung đột</div>
+                  <div class="callout__content">
+                    Dấu <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>/<code>=======</code>/<code
+                      >&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code
+                    >
+                    chỉ là văn bản thường được Git chèn vào — nếu bạn <code>git add</code> rồi commit mà quên xoá, chúng
+                    sẽ nằm nguyên trong code, thường gây lỗi cú pháp (với code) hoặc dữ liệu rác (với file khác). Luôn
+                    build/chạy lại code sau khi giải quyết xung đột, trước khi commit.
+                  </div>
+                </div>
+
+                <h2>5. Giải Quyết Xung Đột: Sửa, Add, Rồi Commit</h2>
+                <p>
+                  Giải quyết chỉ đơn giản là mở file, xoá 3 dòng đánh dấu, giữ lại đúng nội dung bạn muốn (có thể là bản
+                  ours, bản theirs, hoặc kết hợp cả 2), rồi <code>git add</code> để báo "xung đột này đã giải quyết
+                  xong" — <code>git commit</code> lúc này sẽ tự tạo <strong>merge commit</strong> với message mặc định
+                  kiểu <code>"Merge branch 'feature' into main"</code>.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Vì sao merge commit cần 2 cha?</div>
+                  <div class="callout__content">
+                    Ghi cả 2 commit cha giữ nguyên vẹn <strong>toàn bộ lịch sử của cả 2 nhánh</strong> — sau này
+                    <code>git log</code> hay công cụ blame vẫn truy ngược được chính xác dòng code nào tới từ nhánh nào.
+                    Nếu merge commit chỉ có 1 cha (giống commit thường), Git sẽ "quên" mất rằng đã từng có 2 dòng phát
+                    triển song song — đây chính là điểm khác biệt cấu trúc duy nhất giữa merge commit và commit thường,
+                    không phải nội dung mà nó lưu.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Merge &amp; Conflict Simulator</h2>
+                <p>
+                  Tiếp nối engine đồ thị commit từ <a href="git-branch-head">Bài 3</a>, giờ hỗ trợ thêm
+                  <code>git merge</code>. Tạo 2 nhánh, sửa "nội dung file" khác nhau trên mỗi nhánh rồi commit, sau đó
+                  <code>git merge</code> để thử cả 2 kịch bản: hợp nhất êm đẹp và xung đột thật sự.
                 </p>
 
                 <!-- Interactive Sandbox -->
                 <div class="code-tabs">
                   <div class="code-tabs__nav">
-                    <span class="code-tabs__title">🌿 Sân chơi tương tác: Interactive Git Graph Simulator</span>
+                    <span class="code-tabs__title">🔀 Sân chơi tương tác: Merge &amp; Conflict Simulator</span>
                     <div class="code-tabs__btns">
                       <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
                       <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
@@ -386,20 +425,23 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                           <input
                             type="text"
                             id="graph-cmd-input"
-                            placeholder="git branch feature"
+                            placeholder="git merge feature"
                             autocomplete="off"
                             spellcheck="false"
                           />
                           <button class="graph-btn graph-btn--primary" id="graph-run-btn">Chạy</button>
                         </div>
                         <ul class="graph-hint-list">
-                          <li><code>git commit -m "..."</code></li>
                           <li><code>git branch &lt;tên&gt;</code></li>
-                          <li><code>git checkout &lt;tên|hash&gt;</code></li>
-                          <li><code>git checkout -b &lt;tên&gt;</code></li>
-                          <li><code>git switch &lt;tên&gt;</code></li>
+                          <li><code>git checkout &lt;tên&gt;</code></li>
+                          <li><code>git commit -m "..."</code></li>
+                          <li><code>git merge &lt;tên&gt;</code></li>
                           <li><code>git log</code></li>
                         </ul>
+                        <div>
+                          <label for="graph-file-input">Nội dung file app.js (áp dụng khi commit)</label>
+                          <input type="text" id="graph-file-input" class="graph-file-input" value="version = 1" />
+                        </div>
                         <button class="graph-btn" id="graph-reset-btn">Reset</button>
                         <div>
                           <h3>Nhật ký</h3>
@@ -411,6 +453,13 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                       <div class="graph-viewport-container">
                         <canvas id="graph-canvas" class="graph-canvas" width="600" height="300"></canvas>
                         <div class="graph-status-line" id="graph-status-line"></div>
+                        <div class="conflict-panel" id="graph-conflict-panel">
+                          <h4>⚠️ XUNG ĐỘT — sửa nội dung bên dưới rồi bấm "Hoàn tất Merge"</h4>
+                          <textarea id="graph-conflict-textarea"></textarea>
+                          <div class="graph-btn-row" style="margin-top: 8px">
+                            <button class="graph-btn graph-btn--primary" id="graph-resolve-btn">Hoàn tất Merge</button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -418,7 +467,7 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                   <div class="code-tabs__panel" data-panel="js">
                     <div class="code-window">
                       <div class="code-header">
-                        <span class="code-filename">git-graph-live.js</span>
+                        <span class="code-filename">git-merge-live.js</span>
                         <button class="code-copy" onclick="copyCode(this)">Copy</button>
                       </div>
                       <pre><code class="language-js" id="js-code-display"></code></pre>
@@ -430,8 +479,8 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Khi bạn <code>git commit</code> trên branch <code>main</code>, vì sao HEAD "tự động đi theo"
-                    tới commit mới mà không cần cập nhật gì thêm?
+                    Câu 1: Vì sao Git cần biết "merge base" (tổ tiên chung) thay vì chỉ so sánh trực tiếp 2 branch với
+                    nhau?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -441,12 +490,12 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! HEAD là 1 symbolic ref — nó lưu TÊN branch (vd &quot;ref: refs/heads/main&quot;), không lưu hash trực tiếp. commit chỉ cập nhật file refs/heads/main để trỏ hash mới; vì HEAD vẫn trỏ đúng cái TÊN đó, nó tự động &quot;nhìn thấy&quot; vị trí mới mà không cần đổi nội dung của chính nó.'
+                          'Chính xác! So sánh trực tiếp 2 branch chỉ cho biết CHÚNG KHÁC NHAU ở đâu — không cho biết bên nào thực sự đã THAY ĐỔI so với trạng thái ban đầu. Merge base là điểm tham chiếu ban đầu đó, cần thiết để phân biệt &quot;ai đổi cái gì&quot; và áp đúng 4 quy tắc three-way merge.'
                         )
                       "
                     >
-                      A. Vì HEAD lưu TÊN của branch (symbolic ref) chứ không lưu hash trực tiếp — chỉ file branch cần
-                      cập nhật, HEAD vẫn trỏ đúng cái tên đó nên tự động theo tới vị trí mới.
+                      A. Vì so sánh trực tiếp chỉ biết 2 branch khác nhau ở đâu, không biết bên nào thực sự đã thay đổi
+                      so với trạng thái ban đầu — cần base làm điểm tham chiếu.
                     </button>
                     <button
                       class="quiz-option"
@@ -454,11 +503,11 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Git không có tiến trình nền nào chạy định kỳ để đồng bộ — mọi cập nhật ref đều diễn ra ĐỒNG BỘ ngay trong lúc lệnh commit thực thi.'
+                          'Sai. Merge base không liên quan gì tới tốc độ merge — nó là yêu cầu THUẬT TOÁN, không phải tối ưu hiệu năng.'
                         )
                       "
                     >
-                      B. Vì Git có 1 tiến trình nền tự động đồng bộ HEAD với branch mỗi vài giây.
+                      B. Vì so sánh 3 bên luôn nhanh hơn so sánh 2 bên về mặt tốc độ tính toán.
                     </button>
                     <button
                       class="quiz-option"
@@ -466,11 +515,11 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                         checkQuiz(
                           this,
                           false,
-                          'Sai. HEAD được cập nhật lại mỗi khi có commit mới trên branch nó đang trỏ tới — nó không phải giá trị cố định.'
+                          'Sai. Merge base là 1 commit CÓ THẬT trong lịch sử (tổ tiên chung), không phải bước xác thực quyền hạn.'
                         )
                       "
                     >
-                      C. Vì HEAD được tính lại từ đầu mỗi khi chạy <code>git log</code>.
+                      C. Vì Git cần xác thực quyền merge của người dùng trước khi cho phép hợp nhất.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -479,34 +528,10 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Bạn <code>git checkout</code> thẳng vào 1 hash commit rồi tạo 3 commit mới. Sau đó bạn
-                    <code>git checkout main</code>. Chuyện gì xảy ra với 3 commit vừa tạo?
+                    Câu 2: <code>ours</code> đã thay đổi so với base, nhưng <code>theirs</code> giống hệt base. Kết quả
+                    three-way merge là gì?
                   </p>
                   <div class="quiz-options">
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. Git không tự động xoá object ngay lập tức — các object vẫn còn trong .git/objects, chỉ là không branch nào trỏ tới chúng nữa.'
-                        )
-                      "
-                    >
-                      A. Chúng bị xoá ngay lập tức khỏi <code>.git/objects</code>.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. main không hề biết gì về các commit được tạo trong lúc detached HEAD — nó vẫn trỏ đúng vị trí cũ của nó, không tự động &quot;nuốt&quot; thêm commit nào.'
-                        )
-                      "
-                    >
-                      B. Chúng tự động được gộp vào cuối branch <code>main</code>.
-                    </button>
                     <button
                       class="quiz-option"
                       data-correct="true"
@@ -514,12 +539,36 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! 3 commit đó vẫn tồn tại nguyên vẹn trong .git/objects (bất biến), nhưng không branch nào trỏ tới chúng nữa — chúng trở thành &quot;orphaned&quot; (mồ côi). Chúng sẽ bị garbage-collect sau một khoảng thời gian trừ khi bạn tạo 1 branch mới trỏ vào chúng trước khi rời đi (hoặc tìm lại qua reflog ở Bài 6).'
+                          'Chính xác! theirs giống hệt base nghĩa là nhánh kia KHÔNG hề sửa gì — chỉ ours có thay đổi thực sự. Không có gì để &quot;xung đột&quot; cả vì chỉ 1 bên thay đổi, Git tự tin lấy bản ours mà không cần hỏi bạn.'
                         )
                       "
                     >
-                      C. Chúng vẫn tồn tại trong <code>.git/objects</code> nhưng không branch nào trỏ tới — trở thành
-                      "mồ côi" (orphaned), có nguy cơ bị garbage-collect nếu không được cứu kịp thời.
+                      A. Không xung đột — lấy bản <code>ours</code>, vì <code>theirs</code> không hề thay đổi gì so với
+                      base.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Xung đột chỉ xảy ra khi CẢ HAI bên đều thay đổi và thay đổi KHÁC NHAU — ở đây chỉ 1 bên (ours) thay đổi, nên không có cơ sở nào để xung đột.'
+                        )
+                      "
+                    >
+                      B. Luôn luôn xung đột vì có ít nhất 1 bên đã thay đổi.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Merge sẽ lấy bản ĐÃ THAY ĐỔI thực sự (ours), không bao giờ quay lại bản base cũ trong trường hợp này — quay về base sẽ làm MẤT thay đổi hợp lệ của ours.'
+                        )
+                      "
+                    >
+                      C. Giữ nguyên bản base, bỏ qua thay đổi của <code>ours</code>.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -528,9 +577,21 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Điều kiện nào khiến một merge trở thành fast-forward (không tạo commit hợp nhất)?
+                    Câu 3: Điều gì làm merge commit khác biệt về CẤU TRÚC so với 1 commit thường?
                   </p>
                   <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cả 2 loại commit đều lưu đúng 1 tree gốc như bình thường — không có tree &quot;kép&quot; nào ở đây. Khác biệt nằm ở số lượng commit CHA, không phải cấu trúc tree.'
+                        )
+                      "
+                    >
+                      A. Merge commit trỏ tới 2 tree object thay vì 1.
+                    </button>
                     <button
                       class="quiz-option"
                       data-correct="true"
@@ -538,12 +599,12 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Fast-forward chỉ khả thi khi branch đích (vd main) chưa có commit MỚI nào kể từ điểm tách nhánh — nói cách khác, main là tổ tiên trực tiếp của feature. Lúc đó Git chỉ cần DI CHUYỂN con trỏ main tới thẳng vị trí feature, không cần tạo commit hợp nhất vì không có 2 dòng lịch sử nào thực sự cần hợp nhất.'
+                          'Chính xác! Merge commit có đúng 1 tree (snapshot kết quả sau khi hợp nhất — giống mọi commit khác), nhưng lại có 2 THAM CHIẾU COMMIT CHA thay vì 1. Đây là điểm khác biệt cấu trúc DUY NHẤT, giữ lại dấu vết rằng lịch sử từng phân kỳ thành 2 dòng trước khi hợp nhất.'
                         )
                       "
                     >
-                      A. Branch đích (vd <code>main</code>) chưa có commit mới nào kể từ điểm 2 nhánh tách ra — nó là tổ
-                      tiên trực tiếp của branch đang merge vào.
+                      B. Merge commit có 2 commit cha (parent) thay vì 1, dù vẫn chỉ trỏ tới đúng 1 tree kết quả như mọi
+                      commit khác.
                     </button>
                     <button
                       class="quiz-option"
@@ -551,23 +612,11 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Fast-forward hoàn toàn không liên quan tới SỐ LƯỢNG file — nó chỉ phụ thuộc vào QUAN HỆ TỔ TIÊN giữa 2 branch trên đồ thị commit.'
+                          'Sai. Không có giới hạn kích thước đặc biệt nào cho merge commit — message có thể ngắn hay dài tuỳ ý, giống hệt commit thường.'
                         )
                       "
                     >
-                      B. Số lượng file thay đổi giữa 2 branch phải nhỏ hơn 10.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. Fast-forward xảy ra ở mọi kích thước message, kể cả rỗng — nó không liên quan tới nội dung message, chỉ liên quan tới cấu trúc đồ thị commit.'
-                        )
-                      "
-                    >
-                      C. Commit message của cả 2 branch phải giống hệt nhau.
+                      C. Merge commit bắt buộc phải có message dài hơn 100 ký tự.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -579,31 +628,28 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
                 <ul>
                   <li>
                     <a
-                      href="https://git-scm.com/book/en/v2/Git-Branching-Branches-in-a-Nutshell"
+                      href="https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-and-Merging"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >Pro Git Book — Branches in a Nutshell</a
-                    >
-                  </li>
-                  <li>
-                    <a href="https://git-scm.com/docs/git-switch" target="_blank" rel="noopener noreferrer"
-                      >git-scm.com — git-switch Documentation</a
+                      >Pro Git Book — Basic Branching and Merging</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://git-scm.com/docs/git-checkout#_detached_head"
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Advanced-Merging"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >git-scm.com — Detached HEAD</a
+                      >Pro Git Book — Advanced Merging</a
                     >
                   </li>
                   <li>
-                    <a
-                      href="https://git-scm.com/book/en/v2/Git-Internals-Git-References"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >Pro Git Book — Git References</a
+                    <a href="https://git-scm.com/docs/git-merge" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-merge Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-merge-base" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-merge-base Documentation</a
                     >
                   </li>
                 </ul>
@@ -613,11 +659,11 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="git-merge-conflict" class="article-related__link article-related__link--next">
-                    Bài 4: Merge &amp; Conflict
-                  </a>
-                  <a href="git-three-trees-staging" class="article-related__link article-related__link--prev">
-                    Bài 2: Three Trees &amp; Staging
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 5: Rebase &amp; Viết Lại Lịch Sử (sắp ra mắt)
+                  </span>
+                  <a href="git-branch-head" class="article-related__link article-related__link--prev">
+                    Bài 3: Branch &amp; HEAD
                   </a>
                   <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
                 </div>
@@ -752,6 +798,6 @@ $ git switch -c hotfix     # tắt: tạo branch "hotfix" RỒI chuyển sang lu
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
-    <script src="git-branch-head.js" defer></script>
+    <script src="git-merge-conflict.js" defer></script>
   </body>
 </html>
