@@ -16,7 +16,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | Series 5                         | Toy JS Engine (Trình thông dịch JS)   | 0/?            | TBD      | 0%          |
 | Series 7                         | SQL trong Trình duyệt (SQLite-WASM)   | 0/?            | TBD      | 0%          |
 | Series 8                         | Web Audio API (Âm thanh & Visualizer) | 0/?            | TBD      | 0%          |
-| Series 9                         | Git (Mô hình & Visualizer)            | 0/8            | 8        | 0%          |
+| Series 9                         | Git (Mô hình & Visualizer)            | 0/13           | 13       | 0%          |
 
 ### DSA Series Lessons
 
@@ -331,21 +331,26 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 - **Tên: "Interactive Git Graph Simulator"**
 - **Mô tả giao diện:**
   - Khung chính: đồ thị commit (các node tròn + nhánh màu) cập nhật khi gõ lệnh.
-  - Ô nhập lệnh giả lập: `commit`, `branch`, `checkout`, `merge`, `rebase`, `cherry-pick`, `reset` — vẽ lại graph tương ứng.
+  - Ô nhập lệnh giả lập: `commit`, `branch`, `checkout`, `merge`, `rebase`, `cherry-pick`, `reset`, `bisect`, `tag` — vẽ lại graph tương ứng.
   - Panel phụ: trạng thái 3 cây (Working Dir / Staging / HEAD) và con trỏ refs (HEAD, branch tips) di chuyển trực quan.
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học                   | Nội dung chuyên sâu                                                                      | Dự án/Demo đi kèm                                        |
-| --- | ----------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| 1   | **Mô hình đối tượng Git**     | Blob/Tree/Commit, content-addressable SHA-1/256, vì sao Git là snapshot không phải diff. | Trình xem cấu trúc `.git/objects` của một commit mẫu.    |
-| 2   | **Three Trees & Staging**     | Working Directory, Index (staging), HEAD; vòng đời `add`/`commit`.                       | Visualizer file di chuyển qua 3 cây khi add/commit.      |
-| 3   | **Branch & HEAD**             | Branch chỉ là con trỏ, HEAD tách rời (detached), fast-forward.                           | Graph tạo nhánh, di chuyển HEAD trực quan.               |
-| 4   | **Merge & Conflict**          | Three-way merge, merge base, cơ chế phát sinh & giải xung đột.                           | Demo merge tạo commit hợp nhất + tô vùng conflict.       |
-| 5   | **Rebase & History viết lại** | Rebase vs merge, `--onto`, interactive rebase (squash/fixup/reorder).                    | So sánh graph trước/sau rebase cùng kịch bản.            |
-| 6   | **Undo & Phục hồi**           | `reset --soft/mixed/hard`, `revert`, `reflog` cứu commit mất.                            | Demo "làm hỏng rồi cứu" bằng reflog.                     |
-| 7   | **Remote & Collaboration**    | `fetch`/`pull`/`push`, tracking branch, mô hình PR, rebase vs merge khi team work.       | Mô phỏng 2 remote đồng bộ, minh hoạ diverge & sync.      |
-| 8   | **Dự án: Git Kata Trainer**   | Bộ thử thách: cho trạng thái graph đích, người học gõ lệnh để đạt được.                  | Trò chơi luyện Git chấm điểm tự động theo graph kết quả. |
+| Bài | Tên bài học                             | Nội dung chuyên sâu                                                                      | Dự án/Demo đi kèm                                                          |
+| --- | ---------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 1   | **Mô hình đối tượng Git**               | Blob/Tree/Commit, content-addressable SHA-1/256, vì sao Git là snapshot không phải diff. | Trình xem cấu trúc `.git/objects` của một commit mẫu.                      |
+| 2   | **Three Trees & Staging**               | Working Directory, Index (staging), HEAD; vòng đời `add`/`commit`.                       | Visualizer file di chuyển qua 3 cây khi add/commit.                        |
+| 3   | **Branch & HEAD**                       | Branch chỉ là con trỏ, HEAD tách rời (detached), fast-forward.                           | Graph tạo nhánh, di chuyển HEAD trực quan.                                 |
+| 4   | **Merge & Conflict**                    | Three-way merge, merge base, cơ chế phát sinh & giải xung đột.                           | Demo merge tạo commit hợp nhất + tô vùng conflict.                         |
+| 5   | **Rebase & History viết lại**           | Rebase vs merge, `--onto`, interactive rebase (squash/fixup/reorder).                    | So sánh graph trước/sau rebase cùng kịch bản.                              |
+| 6   | **Cherry-pick — Chọn Lọc Commit**       | Nhặt 1 commit cụ thể sang nhánh khác, cơ chế tạo commit MỚI cùng diff nhưng khác SHA.     | Đồ thị 2 nhánh, "nhặt" 1 commit từ nhánh B sang nhánh A, xem SHA đổi.       |
+| 7   | **Undo & Phục hồi**                     | `reset --soft/mixed/hard`, `revert`, `reflog` cứu commit mất, `stash`.                   | Demo "làm hỏng rồi cứu" bằng reflog.                                       |
+| 8   | **Git Bisect — Tìm Commit Lỗi**         | Tìm kiếm nhị phân trên lịch sử commit (good/bad), `bisect run` tự động hoá.               | Danh sách commit giả lập giấu 1 "commit lỗi", hội tụ tìm thủ phạm.         |
+| 9   | **Remote & Collaboration**              | `fetch`/`pull`/`push`, tracking branch, mô hình PR, rebase vs merge khi team work.       | Mô phỏng 2 remote đồng bộ, minh hoạ diverge & sync.                        |
+| 10  | **Subtree & Submodule**                 | Nhúng 1 repo trong repo khác: submodule (con trỏ commit) vs subtree (nhúng lịch sử).      | Mô phỏng repo chính + thư viện, so sánh trực quan 2 cách nhúng.            |
+| 11  | **Hooks & Worktree**                    | Git hooks tự động hoá (pre-commit/pre-push), `worktree` làm việc song song nhiều nhánh.   | Demo pre-commit hook chặn commit lỗi + visualizer 2 worktree song song.    |
+| 12  | **Tags & Aliases Nâng Cao**             | Lightweight vs annotated tag, Semantic Versioning, `git alias`/`config` tuỳ biến workflow. | Bảng so sánh tag trực quan + "alias builder" ghép lệnh dài thành alias.   |
+| 13  | **Dự án: Git Kata Trainer**             | Bộ thử thách: cho trạng thái graph đích, người học gõ lệnh để đạt được.                  | Trò chơi luyện Git chấm điểm tự động theo graph kết quả, tổng hợp 12 bài. |
 
 ---
 
@@ -392,7 +397,7 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 | 6   | CSS & Animation           | `blog/css/`      | `css-programming-series.html`      | `--css`       | 10     |
 | 7   | SQL (SQLite-WASM)         | `blog/sql/`      | `sql-programming-series.html`      | `--sql`       | 8      |
 | 8   | Web Audio API             | `blog/audio/`    | `audio-programming-series.html`    | `--audio`     | 8      |
-| 9   | Git                       | `blog/git/`      | `git-programming-series.html`      | `--git`       | 8      |
+| 9   | Git                       | `blog/git/`      | `git-programming-series.html`      | `--git`       | 13     |
 
 > Slug từng bài đặt theo mẫu sẵn có: `<series>-<chu-de>.html` (vd `wasm-linear-memory.html`, `webgpu-compute-shaders.html`). Đặt tên kebab-case, không dấu.
 
@@ -603,9 +608,14 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - **Bài 3 — Branch & HEAD:** 3.1 Branch là con trỏ · 3.2 HEAD & detached HEAD · 3.3 `checkout`/`switch` · 3.4 Fast-forward.
 - **Bài 4 — Merge & Conflict:** 4.1 Merge base & three-way merge · 4.2 Fast-forward vs merge commit · 4.3 Phát sinh xung đột · 4.4 Giải & đánh dấu conflict.
 - **Bài 5 — Rebase & History viết lại:** 5.1 Rebase vs merge · 5.2 `--onto` · 5.3 Interactive (squash/fixup/reorder) · 5.4 Golden rule (không rebase nhánh public).
-- **Bài 6 — Undo & Phục hồi:** 6.1 `reset --soft/mixed/hard` · 6.2 `revert` · 6.3 `reflog` cứu commit · 6.4 `stash`.
-- **Bài 7 — Remote & Collaboration:** 7.1 `fetch`/`pull`/`push` · 7.2 Tracking branch & upstream · 7.3 Diverge & sync · 7.4 Mô hình PR & merge vs rebase khi team.
-- **Bài 8 — Dự án: Git Kata Trainer:** 8.1 Định nghĩa graph đích · 8.2 Parser lệnh giả lập · 8.3 Chấm điểm theo graph kết quả · 8.4 Bộ thử thách tăng dần.
+- **Bài 6 — Cherry-pick — Chọn Lọc Commit:** 6.1 Vì sao cần cherry-pick (áp 1 fix mà không merge cả nhánh) · 6.2 Cơ chế tạo commit mới cùng diff, khác SHA · 6.3 Xử lý conflict khi pick · 6.4 Cờ `-x` ghi nguồn & rủi ro double-apply khi merge sau.
+- **Bài 7 — Undo & Phục hồi:** 7.1 `reset --soft/mixed/hard` · 7.2 `revert` · 7.3 `reflog` cứu commit · 7.4 `stash`.
+- **Bài 8 — Git Bisect — Tìm Commit Lỗi:** 8.1 Bài toán dò lỗi giữa hàng trăm commit · 8.2 Tìm kiếm nhị phân áp vào lịch sử (good/bad) · 8.3 `bisect start/good/bad`, tự động hoá bằng `bisect run` · 8.4 So sánh O(log n) vs dò tuần tự O(n).
+- **Bài 9 — Remote & Collaboration:** 9.1 `fetch`/`pull`/`push` · 9.2 Tracking branch & upstream · 9.3 Diverge & sync · 9.4 Mô hình PR & merge vs rebase khi team.
+- **Bài 10 — Subtree & Submodule:** 10.1 Bài toán nhúng repo trong repo (thư viện dùng chung) · 10.2 Submodule: con trỏ commit & `.gitmodules` · 10.3 Subtree: nhúng thẳng lịch sử vào cây thư mục · 10.4 So sánh ưu/nhược 2 hướng.
+- **Bài 11 — Hooks & Worktree:** 11.1 Git hooks tự động hoá (pre-commit/pre-push/commit-msg) · 11.2 Use case chặn commit lỗi lint/test · 11.3 `worktree` checkout song song nhiều nhánh không cần clone lại · 11.4 So sánh worktree vs chuyển nhánh thông thường.
+- **Bài 12 — Tags & Aliases Nâng Cao:** 12.1 Lightweight vs annotated tag (metadata, GPG sign) · 12.2 Semantic Versioning & quy ước tag release · 12.3 `git alias` rút gọn lệnh dài · 12.4 `git config` tuỳ biến hành vi (core.editor, pull.rebase...).
+- **Bài 13 — Dự án: Git Kata Trainer:** 13.1 Định nghĩa graph đích · 13.2 Parser lệnh giả lập · 13.3 Chấm điểm theo graph kết quả · 13.4 Bộ thử thách tăng dần, tổng hợp 12 bài trước.
 
 ---
 
