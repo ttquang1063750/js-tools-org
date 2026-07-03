@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 8: Git Bisect — Tìm Commit Lỗi Bằng Tìm Kiếm Nhị Phân — js-tools</title>
+    <title>Bài 9: Remote &amp; Collaboration — fetch, pull, push — js-tools</title>
     <meta
       name="description"
-      content="Tìm 1 commit gây lỗi giữa hàng trăm commit bằng tìm kiếm nhị phân good/bad, tự động hoá với git bisect run và mã thoát 0/1/125. Sân chơi tương tác mô phỏng 24 commit giấu 1 thủ phạm, hội tụ dần bằng bisect."
+      content="Vì sao git fetch không đụng tới branch cục bộ, remote-tracking branch origin/main là gì, khi nào push bị từ chối non-fast-forward, và so sánh merge vs rebase khi pull cùng đồng đội. Sân chơi tương tác mô phỏng repo local và remote diverge rồi đồng bộ lại."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/git/git-bisect" />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-remote-collaboration" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="../ide.css" />
     <script defer src="../prism.js"></script>
     <style>
-      /* Git Bisect Simulator Sandbox styles */
+      /* Git Remote & Collaboration Simulator Sandbox styles */
       .graph-sandbox {
         background: #181825;
         border: 1px solid var(--border);
@@ -136,8 +136,10 @@
       }
       .graph-status-line {
         font-family: monospace;
-        font-size: 12px;
+        font-size: 11px;
         color: #cdd6f4;
+        text-align: center;
+        line-height: 1.6;
       }
       @media (max-width: 880px) {
         .graph-sandbox {
@@ -227,8 +229,8 @@
         <div class="container">
           <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
           <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
-          <h1 class="article-hero__title">Bài 8: Git Bisect — Tìm Commit Lỗi Bằng Tìm Kiếm Nhị Phân</h1>
-          <div class="article-hero__meta">3 tháng 7, 2026 · 13 phút đọc</div>
+          <h1 class="article-hero__title">Bài 9: Remote &amp; Collaboration — fetch, pull, push</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
         </div>
       </section>
 
@@ -238,174 +240,138 @@
             <div class="article-body">
               <div>
                 <p>
-                  Sau <a href="git-undo-recovery">Bài 7</a> học cách cứu commit tưởng đã mất, bài này giải quyết một bài
-                  toán khác: <em>commit nào trong 200 commit vừa qua đã làm hỏng tính năng X?</em> Dò từng commit một
-                  (build lại, test lại) là <code>O(n)</code> — chậm và nản. <code>git bisect</code> biến việc đó thành
-                  một bài toán <strong>tìm kiếm nhị phân</strong> quen thuộc, giảm xuống còn <code>O(log n)</code> bước.
+                  Tám bài trước xoay quanh 1 repo cục bộ duy nhất. Bài này mở rộng ra tình huống thực tế nhất: nhiều
+                  người cùng làm việc trên 1 remote (thường là GitHub/GitLab). <code>fetch</code>, <code>pull</code>,
+                  <code>push</code> chỉ là các cách khác nhau để đồng bộ 2 đồ thị commit — repo cục bộ của bạn và repo
+                  trên server — vốn có thể phân kỳ (diverge) bất cứ lúc nào đồng nghiệp push trước bạn.
                 </p>
 
-                <h2>1. Bài Toán: Lỗi Nằm Ở Đâu Trong Hàng Trăm Commit?</h2>
+                <h2>1. <code>git fetch</code> vs <code>git pull</code>: Tải Về Nhưng Không (Hoặc Có) Trộn</h2>
                 <p>
-                  Giả sử bạn biết commit hiện tại (<code>HEAD</code>) có lỗi, và commit từ 1 tuần trước (hoặc 1 tag
-                  release cũ) thì chắc chắn ổn. Ở giữa 2 điểm đó là hàng chục, hàng trăm commit. Dò tuần tự từ đầu tới
-                  cuối tốn tối đa <code>n</code> lần build+test. Nhưng nếu giả định lỗi chỉ xuất hiện
-                  <strong>đúng 1 lần</strong> và không biến mất rồi quay lại (tính chất <strong>đơn điệu</strong> —
-                  monotonic), bạn có thể áp dụng đúng thuật toán tìm kiếm nhị phân trên mảng đã sắp xếp: luôn kiểm tra
-                  điểm giữa, rồi thu hẹp một nửa phạm vi mỗi lần.
+                  <code>git fetch</code> tải các commit mới từ remote về máy bạn và cập nhật con trỏ
+                  <code>origin/main</code> — nhưng
+                  <strong>không đụng tới branch <code>main</code> cục bộ hay Working Directory</strong> của bạn. Đây là
+                  lệnh 100% an toàn, có thể chạy bất cứ lúc nào chỉ để "xem đồng nghiệp đã làm gì" mà không ảnh hưởng
+                  việc bạn đang làm dở.
+                </p>
+                <p>
+                  <code>git pull</code> đơn giản là <code>git fetch</code> rồi tự động <strong>trộn</strong>
+                  <code>origin/main</code> vào branch hiện tại của bạn — mặc định bằng <code>merge</code> (tạo commit
+                  hợp nhất nếu đã phân kỳ, xem lại <a href="git-merge-conflict">Bài 4</a>), hoặc bằng
+                  <code>rebase</code> nếu bạn chạy <code>git pull --rebase</code>.
                 </p>
 
-                <h2>2. <code>git bisect start/good/bad</code>: Thu Hẹp Phạm Vi</h2>
-                <p>Quy trình thủ công gồm 4 loại lệnh:</p>
-                <table class="comparison-table">
-                  <thead>
-                    <tr>
-                      <th>Lệnh</th>
-                      <th>Ý nghĩa</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td><code>git bisect start</code></td>
-                      <td>Bắt đầu phiên bisect, chưa biết ranh giới good/bad nào.</td>
-                    </tr>
-                    <tr>
-                      <td><code>git bisect bad [ref]</code></td>
-                      <td>Đánh dấu 1 commit là lỗi (mặc định là <code>HEAD</code> hiện tại nếu không truyền ref).</td>
-                    </tr>
-                    <tr>
-                      <td><code>git bisect good &lt;ref&gt;</code></td>
-                      <td>Đánh dấu 1 commit cũ hơn là ổn — thiết lập ranh giới dưới của phạm vi tìm kiếm.</td>
-                    </tr>
-                    <tr>
-                      <td><code>git bisect reset</code></td>
-                      <td>Kết thúc phiên, quay lại đúng branch/HEAD ban đầu trước khi bisect.</td>
-                    </tr>
-                  </tbody>
-                </table>
+                <h2>2. Remote-tracking Branch: <code>origin/main</code> Là Gì?</h2>
                 <p>
-                  Ngay khi có cả 1 mốc <code>good</code> và 1 mốc <code>bad</code>, Git tự động
-                  <strong>checkout commit ở chính giữa</strong> phạm vi đó — luôn dưới dạng
-                  <a href="git-branch-head">detached HEAD</a> (Bài 3), vì bạn chỉ đang "ghé thăm" để test chứ không làm
-                  việc trên đó. Bạn build/test commit đó, rồi báo lại <code>good</code> hoặc <code>bad</code>, Git tiếp
-                  tục thu hẹp phạm vi còn một nửa. Lặp lại tới khi phạm vi chỉ còn đúng 1 commit — đó chính là "thủ
-                  phạm" đầu tiên gây lỗi.
+                  <code>origin/main</code> không phải là branch trên remote — nó là một
+                  <strong>bản sao cục bộ, chỉ đọc</strong>, ghi nhớ "lần cuối tôi fetch, remote đang ở commit nào".
+                  Local <code>main</code> và local <code>origin/main</code> hoàn toàn có thể trỏ tới 2 commit khác nhau
+                  cùng lúc — đó chính xác là lúc bạn "phía trước" hoặc "phía sau" remote, giống hệt cơ chế con trỏ đã
+                  học ở <a href="git-branch-head">Bài 3</a>.
                 </p>
 
                 <div class="callout callout--note">
-                  <div class="callout__title">ℹ️ Không build được thì <code>skip</code>, đừng đoán</div>
+                  <div class="callout__title">ℹ️ <code>git fetch</code> tuyệt đối không làm hỏng thứ gì</div>
                   <div class="callout__content">
-                    Có những commit không thể test được (không build được, thiếu dependency tại thời điểm đó).
-                    <code>git bisect skip</code> báo cho Git biết "bỏ qua commit này, không tính là good hay bad" — Git
-                    sẽ chọn 1 điểm giữa khác thay vì buộc bạn đoán mò, tránh làm sai lệch kết quả tìm kiếm.
+                    Vì fetch chỉ tải object mới và di chuyển con trỏ <code>origin/main</code> (không đụng
+                    <code>main</code> hay Working Directory), nó không thể gây conflict hay mất dữ liệu. Thói quen tốt:
+                    <code>git fetch</code> thường xuyên để luôn biết trạng thái remote, rồi tự quyết định khi nào
+                    <code>merge</code> hoặc <code>rebase</code> — thay vì để <code>pull</code> tự động quyết định hộ
+                    bạn.
                   </div>
                 </div>
 
-                <h2>3. Tự Động Hoá Với <code>git bisect run</code></h2>
+                <h2>3. <code>git push</code>: Fast-forward Hay Bị Từ Chối?</h2>
                 <p>
-                  Thay vì tự tay test rồi gõ <code>good</code>/<code>bad</code> hàng chục lần,
-                  <code>git bisect run &lt;lệnh&gt;</code> giao toàn bộ vòng lặp cho 1 script — thường là lệnh chạy
-                  test. Git đọc <strong>mã thoát</strong>
-                  (exit code) của lệnh đó để tự quyết định:
+                  <code>git push</code> chỉ thành công khi lịch sử remote là <strong>tổ tiên trực tiếp</strong> của lịch
+                  sử bạn đang push — tức remote có thể "tiến nhanh" (fast-forward, xem lại
+                  <a href="git-branch-head">Bài 3</a>) tới đúng commit bạn gửi lên. Nếu ai đó đã push trước bạn kể từ
+                  lần fetch gần nhất, remote chứa commit bạn chưa có — Git từ chối với lỗi <em>non-fast-forward</em>,
+                  buộc bạn <code>fetch</code>/<code>pull</code> để tích hợp trước.
                 </p>
-                <table class="comparison-table">
-                  <thead>
-                    <tr>
-                      <th>Exit code</th>
-                      <th>Git hiểu là</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td><code>0</code></td>
-                      <td>good — commit này ổn.</td>
-                    </tr>
-                    <tr>
-                      <td><code>1</code>–<code>124</code>, <code>126</code>–<code>127</code></td>
-                      <td>bad — commit này lỗi.</td>
-                    </tr>
-                    <tr>
-                      <td><code>125</code></td>
-                      <td>skip — không thể test commit này (dành riêng, không phải "bad").</td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p>
-                  Toàn bộ vòng lặp checkout → chạy script → đọc exit code → thu hẹp phạm vi diễn ra tự động, không cần
-                  tương tác — cực kỳ hữu ích khi phạm vi tìm kiếm lên tới hàng trăm commit.
-                </p>
-
-                <div class="callout callout--tip">
-                  <div class="callout__title">💡 Mẹo: script cho <code>bisect run</code> nên tự lo phần build</div>
-                  <div class="callout__content">
-                    Một lệnh điển hình: <code>git bisect run npm test</code> hoặc 1 script bash tự build rồi chạy test
-                    cụ thể. Script nên <code>exit 125</code> ngay khi build thất bại vì lý do không liên quan tới bug
-                    đang tìm (ví dụ thiếu file tại thời điểm đó) — để Git bỏ qua commit đó thay vì tính nhầm là bad.
-                  </div>
-                </div>
-
-                <h2>4. So Sánh Độ Phức Tạp: <code>O(log n)</code> vs <code>O(n)</code></h2>
-                <table class="comparison-table">
-                  <thead>
-                    <tr>
-                      <th>Số commit cần dò</th>
-                      <th>Dò tuần tự (tối đa)</th>
-                      <th><code>git bisect</code> (tối đa)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>16</td>
-                      <td>16 lần</td>
-                      <td>~4 lần</td>
-                    </tr>
-                    <tr>
-                      <td>256</td>
-                      <td>256 lần</td>
-                      <td>~8 lần</td>
-                    </tr>
-                    <tr>
-                      <td>1.000.000</td>
-                      <td>1.000.000 lần</td>
-                      <td>~20 lần</td>
-                    </tr>
-                  </tbody>
-                </table>
 
                 <div class="callout callout--pitfall">
                   <div class="callout__title">
-                    🕳️ Cạm bẫy thường gặp: lỗi "không đơn điệu" phá vỡ giả định của bisect
+                    🕳️ Cạm bẫy thường gặp: <code>git push --force</code> ghi đè lịch sử người khác
                   </div>
                   <div class="callout__content">
-                    Tìm kiếm nhị phân chỉ đúng khi tính chất good/bad đổi <strong>đúng 1 lần</strong> dọc lịch sử. Nếu
-                    bug được sửa ở 1 commit rồi vô tình tái xuất hiện ở commit sau đó (không đơn điệu), hoặc test bị
-                    flaky (lúc pass lúc fail trên cùng 1 commit), <code>git bisect</code> có thể hội tụ sai chỗ. Luôn
-                    xác nhận thủ công commit mà Git chỉ ra thực sự là nguyên nhân trước khi kết luận.
+                    <code>--force</code> bỏ qua kiểm tra fast-forward, ép remote nhận đúng lịch sử của bạn — kể cả khi
+                    nó xoá mất commit của đồng nghiệp. Đây là vi phạm trực tiếp <strong>Golden Rule</strong> đã học ở
+                    <a href="git-rebase-history">Bài 5</a>: không viết lại lịch sử đã chia sẻ. Nếu thực sự cần (ví dụ
+                    sau khi rebase 1 nhánh cá nhân), luôn dùng <code>--force-with-lease</code> — nó từ chối ghi đè nếu
+                    ai đó đã push thêm gì mà bạn chưa fetch, an toàn hơn <code>--force</code> thường rất nhiều.
                   </div>
                 </div>
+
+                <h2>4. Rebase vs Merge Khi Làm Việc Nhóm</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th><code>git pull</code> (merge, mặc định)</th>
+                      <th><code>git pull --rebase</code></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Lịch sử kết quả</td>
+                      <td>Có commit hợp nhất (2 cha) khi phân kỳ</td>
+                      <td>Tuyến tính — commit cục bộ được phát lại (replay) trên đỉnh remote</td>
+                    </tr>
+                    <tr>
+                      <td>Hash commit cục bộ</td>
+                      <td>Giữ nguyên</td>
+                      <td>Đổi mới (giống cherry-pick ở <a href="git-cherry-pick">Bài 6</a>)</td>
+                    </tr>
+                    <tr>
+                      <td>An toàn khi nào</td>
+                      <td>Luôn an toàn, kể cả commit đã push</td>
+                      <td>
+                        Chỉ an toàn với commit <strong>CHƯA push</strong> — đúng Golden Rule ở
+                        <a href="git-rebase-history">Bài 5</a>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Nhiều team đặt <code>git config pull.rebase true</code> làm mặc định để giữ lịch sử tuyến tính, dễ đọc
+                  hơn khi nhiều người cùng push liên tục vào 1 branch.
+                </p>
 
                 <div class="callout callout--deep">
-                  <div class="callout__title">🔬 Đào sâu: bisect trên lịch sử có merge commit</div>
+                  <div class="callout__title">🔬 Đào sâu: Pull Request không phải khái niệm của Git</div>
                   <div class="callout__content">
-                    Với lịch sử tuyến tính, "điểm giữa" chỉ đơn giản là trung vị theo thứ tự commit. Khi có merge commit
-                    (nhiều cha), Git dùng thứ tự tô-pô (topological order) của toàn bộ DAG để chọn điểm giữa, và có thể
-                    phải checkout qua nhiều nhánh phụ trước khi hội tụ. Cờ <code>git bisect start --first-parent</code>
-                    giới hạn việc tìm kiếm chỉ theo nhánh chính, bỏ qua nội dung bên trong các merge — hữu ích khi bug
-                    chắc chắn nằm ở nhánh chính chứ không phải trong 1 feature branch đã merge vào.
+                    <strong>Pull Request</strong> (GitHub) / <strong>Merge Request</strong> (GitLab) hoàn toàn là quy
+                    ước của nền tảng lưu trữ, <strong>không tồn tại</strong> trong chính Git. Về bản chất, PR chỉ là "đề
+                    xuất merge nhánh A vào nhánh B, kèm review/comment/CI check" — khi bấm nút "Merge", nền tảng chỉ đơn
+                    giản chạy đúng <code>git merge</code> (hoặc rebase/squash tuỳ cấu hình) mà bạn đã học ở
+                    <a href="git-merge-conflict">Bài 4</a> và <a href="git-rebase-history">Bài 5</a> — không có phép màu
+                    Git nào khác đứng sau nó.
                   </div>
                 </div>
 
-                <h2>Sân chơi tương tác: Demo Bisect Trên 24 Commit Giấu 1 Thủ Phạm</h2>
+                <div class="callout callout--tip">
+                  <div class="callout__title">💡 Mẹo: xem trạng thái ahead/behind bằng <code>git branch -vv</code></div>
+                  <div class="callout__content">
+                    Lệnh này liệt kê mỗi local branch cùng branch remote-tracking nó bám theo (upstream), và số commit
+                    "ahead"/"behind" — biết ngay cần <code>push</code>, <code>pull</code>, hay cả 2 mà không cần đoán.
+                    Lần đầu push 1 branch mới, dùng <code>git push -u origin &lt;tên-branch&gt;</code> để thiết lập quan
+                    hệ upstream này.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Demo Diverge &amp; Sync Giữa Local Và Remote</h2>
                 <p>
-                  Bên dưới là 24 commit liên tiếp — đúng 1 commit trong số đó âm thầm gây lỗi (nội dung không hé lộ
-                  trước, giống thực tế). Hãy tự tay bisect: đánh dấu 1 mốc cũ là good, HEAD hiện tại là bad, rồi lặp lại
-                  good/bad theo commit Git tự checkout tới khi tìm ra thủ phạm. Thử cả <code>git bisect run</code>
-                  để xem toàn bộ vòng lặp tự động hoá chỉ trong vài bước.
+                  Kịch bản khởi đầu: bạn đã commit 1 thay đổi cục bộ, nhưng <strong>chưa fetch</strong> — trong lúc đó 1
+                  đồng nghiệp đã âm thầm push 1 commit khác lên remote. Hãy thử <code>git push</code> ngay xem điều gì
+                  xảy ra, rồi <code>git fetch</code>, rồi thử cả <code>git pull</code> lẫn
+                  <code>git pull --rebase</code> (reset demo giữa 2 lần thử) để so sánh kết quả.
                 </p>
 
                 <!-- Interactive Sandbox -->
                 <div class="code-tabs">
                   <div class="code-tabs__nav">
-                    <span class="code-tabs__title">🔍 Sân chơi tương tác: Git Bisect Simulator</span>
+                    <span class="code-tabs__title">🌐 Sân chơi tương tác: Remote Sync Simulator</span>
                     <div class="code-tabs__btns">
                       <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
                       <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
@@ -416,26 +382,26 @@
                     <div class="graph-sandbox">
                       <!-- Controls Panel -->
                       <div class="graph-controls">
-                        <h3>Terminal giả lập</h3>
+                        <h3>Terminal giả lập (local)</h3>
                         <div class="graph-cmd-row">
                           <input
                             type="text"
                             id="graph-cmd-input"
-                            placeholder="git bisect start"
+                            placeholder="git push"
                             autocomplete="off"
                             spellcheck="false"
                           />
                           <button class="graph-btn graph-btn--primary" id="graph-run-btn">Chạy</button>
                         </div>
                         <ul class="graph-hint-list">
-                          <li><code>git bisect start</code></li>
-                          <li><code>git bisect bad [C&lt;n&gt;]</code></li>
-                          <li><code>git bisect good C&lt;n&gt;</code></li>
-                          <li><code>git bisect skip</code></li>
-                          <li><code>git bisect run</code> (tự động hoá)</li>
-                          <li><code>git bisect log</code></li>
-                          <li><code>git bisect reset</code></li>
+                          <li><code>git commit -m "..."</code></li>
+                          <li><code>git fetch</code></li>
+                          <li><code>git pull</code></li>
+                          <li><code>git pull --rebase</code></li>
+                          <li><code>git push</code></li>
+                          <li><code>git log</code></li>
                         </ul>
+                        <button class="graph-btn" id="graph-teammate-btn">👥 Mô phỏng: đồng nghiệp push</button>
                         <button class="graph-btn" id="graph-reset-btn">Reset demo</button>
                         <div>
                           <h3>Nhật ký</h3>
@@ -445,7 +411,7 @@
 
                       <!-- Canvas Stage -->
                       <div class="graph-viewport-container">
-                        <canvas id="graph-canvas" class="graph-canvas" width="680" height="220"></canvas>
+                        <canvas id="graph-canvas" class="graph-canvas" width="650" height="300"></canvas>
                         <div class="graph-status-line" id="graph-status-line"></div>
                       </div>
                     </div>
@@ -454,7 +420,7 @@
                   <div class="code-tabs__panel" data-panel="js">
                     <div class="code-window">
                       <div class="code-header">
-                        <span class="code-filename">git-bisect-live.js</span>
+                        <span class="code-filename">git-remote-live.js</span>
                         <button class="code-copy" onclick="copyCode(this)">Copy</button>
                       </div>
                       <pre><code class="language-js" id="js-code-display"></code></pre>
@@ -466,8 +432,7 @@
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Với 1000 commit giữa 1 mốc good và 1 mốc bad, <code>git bisect</code> cần tối đa khoảng bao
-                    nhiêu lần checkout+test để tìm ra thủ phạm, so với dò tuần tự?
+                    Câu 1: Sau khi chạy <code>git fetch</code>, điều gì chắc chắn KHÔNG thay đổi?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -477,11 +442,11 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! log2(1000) xấp xỉ 10 — mỗi lần test loại bỏ một nửa phạm vi còn lại, trong khi dò tuần tự cần tới gần 1000 lần trong trường hợp xấu nhất.'
+                          'Chính xác! fetch chỉ tải object mới và cập nhật con trỏ origin/main — branch main cục bộ và Working Directory hoàn toàn không bị đụng tới. Đây là lý do fetch luôn an toàn để chạy bất cứ lúc nào.'
                         )
                       "
                     >
-                      A. Khoảng 10 lần (log2 1000 ≈ 10), so với tối đa 1000 lần nếu dò tuần tự từng commit.
+                      A. Branch <code>main</code> cục bộ và nội dung Working Directory.
                     </button>
                     <button
                       class="quiz-option"
@@ -489,11 +454,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Đây chính là độ phức tạp O(n) của dò tuần tự — bisect nhanh hơn RẤT nhiều nhờ mỗi bước loại bỏ một nửa phạm vi.'
+                          'Sai. Con trỏ origin/main CHÍNH LÀ thứ mà fetch cập nhật — nó luôn đổi để phản ánh đúng trạng thái remote tại thời điểm fetch.'
                         )
                       "
                     >
-                      B. Vẫn cần khoảng 1000 lần, không khác gì dò tuần tự.
+                      B. Con trỏ <code>origin/main</code>.
                     </button>
                     <button
                       class="quiz-option"
@@ -501,11 +466,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Bisect luôn cần ít nhất vài bước để thu hẹp phạm vi qua từng lần chia đôi — không thể tìm ra ngay lập tức trừ khi phạm vi ban đầu đã rất nhỏ.'
+                          'Sai. Object database cục bộ CÓ nhận thêm các commit mới tải về từ remote — đó chính là việc mà fetch thực hiện.'
                         )
                       "
                     >
-                      C. Chỉ cần đúng 1 lần vì Git biết trước commit nào lỗi.
+                      C. Object database cục bộ (không có commit mới nào được tải về).
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -514,8 +479,7 @@
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Trong <code>git bisect run &lt;script&gt;</code>, mã thoát (exit code) <code>125</code> có ý
-                    nghĩa gì?
+                    Câu 2: Vì sao <code>git push</code> đôi khi bị từ chối với lỗi "non-fast-forward"?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -525,11 +489,12 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! 125 là mã dành riêng cho skip — báo cho Git biết commit này không thể build/test được vì lý do không liên quan tới bug đang tìm, nên bỏ qua thay vì tính nhầm là bad.'
+                          'Chính xác! Push chỉ thành công khi remote có thể tiến nhanh (fast-forward) tới đúng commit bạn gửi. Nếu đồng nghiệp đã push trước, remote chứa commit không nằm trong lịch sử của bạn — Git từ chối để tránh vô tình xoá mất công việc của họ, buộc bạn fetch/pull tích hợp trước.'
                         )
                       "
                     >
-                      A. Bỏ qua (skip) — commit này không thể test được, không tính là good hay bad.
+                      A. Vì remote đã có commit mới (do đồng nghiệp push trước) mà lịch sử cục bộ của bạn chưa chứa —
+                      không thể tiến nhanh (fast-forward) tới commit bạn đang gửi.
                     </button>
                     <button
                       class="quiz-option"
@@ -537,11 +502,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Mã 0 mới là good — 125 là mã dành riêng cho skip, khác hoàn toàn với good.'
+                          'Sai. Dung lượng file không liên quan gì tới lỗi non-fast-forward — đây thuần tuý là vấn đề về thứ tự lịch sử commit.'
                         )
                       "
                     >
-                      B. Good — commit này chắc chắn ổn.
+                      B. Vì file bạn thay đổi quá lớn để upload.
                     </button>
                     <button
                       class="quiz-option"
@@ -549,11 +514,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Các mã thoát khác từ 1-124 (và 126-127) mới được hiểu là bad — 125 được Git dành riêng ra để phân biệt với bad thực sự.'
+                          'Sai. Push không yêu cầu quyền admin đặc biệt cho thao tác thông thường — lỗi non-fast-forward xảy ra với bất kỳ ai, kể cả admin, khi lịch sử phân kỳ.'
                         )
                       "
                     >
-                      C. Bad — commit này chắc chắn lỗi giống mọi exit code khác 0.
+                      C. Vì bạn thiếu quyền admin trên repository.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -562,7 +527,8 @@
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Điều gì khiến kết quả của <code>git bisect</code> có thể SAI (chỉ ra nhầm thủ phạm)?
+                    Câu 3: Pull Request (GitHub) hay Merge Request (GitLab) có phải là 1 khái niệm cốt lõi của Git
+                    không?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -572,11 +538,12 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Tìm kiếm nhị phân giả định tính chất good/bad chỉ đổi đúng 1 lần dọc lịch sử (đơn điệu). Nếu bug được sửa rồi tái xuất hiện, hoặc test flaky cho kết quả không ổn định trên cùng 1 commit, giả định này bị phá vỡ và bisect có thể hội tụ sai chỗ.'
+                          'Chính xác! PR/MR hoàn toàn là quy ước của nền tảng lưu trữ (GitHub/GitLab), không tồn tại trong chính Git. Khi bấm Merge, nền tảng chỉ chạy đúng git merge/rebase/squash phía sau — không có cơ chế Git nào khác biệt.'
                         )
                       "
                     >
-                      A. Khi tính chất good/bad không đơn điệu — ví dụ bug được sửa rồi tái xuất hiện, hoặc test flaky.
+                      A. Không — đây là quy ước của nền tảng lưu trữ (GitHub/GitLab), khi merge chỉ chạy đúng git
+                      merge/rebase như bình thường phía sau.
                     </button>
                     <button
                       class="quiz-option"
@@ -584,11 +551,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Số lượng commit không ảnh hưởng tới TÍNH ĐÚNG của kết quả — chỉ ảnh hưởng số bước cần thiết (vẫn luôn là O(log n)).'
+                          'Sai. git CLI không có lệnh nào tên là pull-request hay merge-request — đây là tính năng riêng của các nền tảng như GitHub/GitLab, không phải Git core.'
                         )
                       "
                     >
-                      B. Khi số lượng commit giữa 2 mốc quá lớn (trên 100 commit).
+                      B. Có — <code>git pull-request</code> là 1 lệnh Git tiêu chuẩn.
                     </button>
                     <button
                       class="quiz-option"
@@ -596,11 +563,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. git bisect hoạt động hoàn toàn cục bộ, dựa trên lịch sử commit sẵn có trên máy — không cần kết nối remote nào cả.'
+                          'Sai. Git không lưu trữ review/comment trong object database (blob/tree/commit) — đó là dữ liệu riêng của nền tảng lưu trữ, tách biệt hoàn toàn khỏi lịch sử Git.'
                         )
                       "
                     >
-                      C. Khi không có kết nối mạng tới remote trong lúc chạy bisect.
+                      C. Có — mọi comment review được lưu thành 1 loại Git object riêng.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -611,24 +578,24 @@
                 <h3>📖 Tài liệu tham khảo / References</h3>
                 <ul>
                   <li>
-                    <a href="https://git-scm.com/docs/git-bisect" target="_blank" rel="noopener noreferrer"
-                      >git-scm.com — git-bisect Documentation</a
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Basics-Working-with-Remotes"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Working with Remotes</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-push" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-push Documentation</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://git-scm.com/book/en/v2/Git-Tools-Debugging-with-Git"
+                      href="https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >Pro Git Book — Debugging with Git</a
-                    >
-                  </li>
-                  <li>
-                    <a
-                      href="https://www.atlassian.com/git/tutorials/debugging-with-git"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >Atlassian — Debugging with Git Tutorial</a
+                      >GitHub Docs — About Pull Requests</a
                     >
                   </li>
                 </ul>
@@ -638,11 +605,11 @@
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="git-remote-collaboration" class="article-related__link article-related__link--next">
-                    Bài 9: Remote &amp; Collaboration
-                  </a>
-                  <a href="git-undo-recovery" class="article-related__link article-related__link--prev">
-                    Bài 7: Undo &amp; Phục Hồi
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 10: Subtree &amp; Submodule (sắp ra mắt)
+                  </span>
+                  <a href="git-bisect" class="article-related__link article-related__link--prev">
+                    Bài 8: Git Bisect — Tìm Commit Lỗi
                   </a>
                   <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
                 </div>
@@ -777,6 +744,6 @@
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
-    <script src="git-bisect.js" defer></script>
+    <script src="git-remote-collaboration.js" defer></script>
   </body>
 </html>
