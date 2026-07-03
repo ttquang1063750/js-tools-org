@@ -12,7 +12,7 @@ lesson must not be shallower than those.
 | Item                   | Minimum                                              | Notes                                                               |
 | ---------------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
 | Deep H2 sections       | ≥ 4 (foundational), ≥ 5 (core/capstone)              | Per the Part III breakdown; more is fine.                           |
-| Body length            | ≥ 1,200 words PER language                           | EN and VI equivalent. Depth, not filler.                            |
+| Body length            | ≥ 1,200 words Vietnamese                             | Single-language for new series (2026-07-03+). Depth, not filler.    |
 | Runnable code examples | ≥ 4 `.code-window` blocks                            | Each core concept needs ≥1; see §2.                                 |
 | Visualizer / diagram   | ≥ 1 interactive demo OR inline SVG/canvas diagram    | Capstone lessons require an interactive demo.                       |
 | Callouts               | ≥ 3 (at least one `--pitfall`)                       | See §4.                                                             |

@@ -38,9 +38,14 @@ These hold for every series. Don't quietly break them.
 
 - **No build step, no framework.** Pure HTML + CSS + vanilla JS. Deployed as
   static files on Cloudflare Pages. No bundler, no npm runtime deps in pages.
-- **Bilingual EN/VI.** Article body uses paired `data-lang-content="en"` /
-  `data-lang-content="vi"` blocks; nav/footer chrome uses `data-i18n`. Both
-  languages must be equivalent in depth — never ship one side thinner.
+- **Vietnamese only for new series (as of the DSA series, 2026-07-03).** Do
+  NOT add `data-lang-content="en"`/`"vi"` splits to article body, hero
+  title/meta, back-links, or related-article links — write one Vietnamese
+  string with no language attribute. Nav/footer chrome still uses `data-i18n`
+  (shared site-wide toggle) and stays as-is; only per-page article content
+  drops the EN/VI split. Older series (C, C++, JS, Canvas, WebGL, Bash,
+  WebGPU, CSS) already shipped bilingual or VI-stub — don't retroactively
+  rewrite them, this only applies going forward.
 - **Math = KaTeX local.** Render formulas with a local copy of KaTeX
   (`$…$` inline, `$$…$$` block, auto-render on `DOMContentLoaded`). No CDN, no
   MathJax. Only load it on pages that actually have formulas.

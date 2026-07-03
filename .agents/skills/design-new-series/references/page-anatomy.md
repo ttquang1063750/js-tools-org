@@ -36,12 +36,16 @@ Each `blog/<slug>/<slug>-<topic>.html`:
   (no `.html`), OG/Twitter tags, JSON-LD `TechArticle`/`Article`. CSS:
   `../blog.css`, `../ide.css`, `../prism.css` (+ KaTeX if formulas).
 - **Header** (hamburger nav, `data-i18n`) + **Footer** (full nav): copy verbatim
-  from the template so every page matches.
-- `.article-hero`: back-link to hub (bilingual), `h1.article-hero__title` (EN+VI),
-  `.article-hero__meta` (date + read-time, bilingual).
-- `.article-body`: paired `div[data-lang-content="en"]` / `="vi"` holding the H2
-  sections. Code in `.code-window` (`.code-header`, `.code-filename`,
-  `.code-dots`, copy button, Prism `language-*`).
+  from the template so every page matches. The nav/footer `data-i18n` toggle
+  stays — it's shared site-wide chrome, unrelated to the point below.
+- **Vietnamese only, no `data-lang-content` split (2026-07-03+).**
+  `.article-hero` back-link, `h1.article-hero__title`, `.article-hero__meta`,
+  and `.article-body` are each a single Vietnamese string/block with no
+  `data-lang-content="en"`/`"vi"` attribute — do not pair EN+VI blocks like
+  older series (C, C++, JS, Canvas, WebGL, Bash, WebGPU, CSS) did.
+- `.article-body`: H2 sections directly, no language wrapper div needed. Code
+  in `.code-window` (`.code-header`, `.code-filename`, `.code-dots`, copy
+  button, Prism `language-*`).
 - Interactive demo: wrapped in a `.code-tabs` component — tabs **Xem trước
   (Preview) | <primary language: WGSL/CSS/SQL/…> | JavaScript**, each panel
   Prism-highlighted with the right `language-*`. This is the current standard
@@ -54,7 +58,7 @@ Each `blog/<slug>/<slug>-<topic>.html`:
 - Quiz via `ide.js`/`ide.css` (`.quiz-container/.quiz-title/.quiz-question/`
   `.quiz-options/.quiz-option/.quiz-feedback`).
 - `.article-refs` (≥3 external links, new tab) + "Tải file code thực hành" link.
-- `.article-related` (prev/next + back to hub, bilingual).
+- `.article-related` (prev/next + back to hub, single Vietnamese string per link).
 - `.article-discuss` + **giscus**.
 - Run `npx prettier --write` before committing.
 
@@ -64,7 +68,8 @@ Each `blog/<slug>/<slug>-<topic>.html`:
 
 - Copy from `webgl-programming-series.html`. Title/description/canonical/OG +
   JSON-LD `Course`/`ItemList`.
-- Bilingual intro section.
+- Intro section: single Vietnamese block, no `data-lang-content` split
+  (2026-07-03+ — see the Vietnamese-only note under Lesson page anatomy).
 - `.lessons-list > a.lesson-item` rows: `.lesson-number` (01, 02…),
   `.lesson-content > h2.lesson-title` + `p.lesson-desc`, `.lesson-arrow ➔`.
   `href` points to the lesson slug **without** `.html`.

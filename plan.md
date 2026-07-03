@@ -362,14 +362,15 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 
 ## 🚫 Điều kiện chặn — BẮT BUỘC đúng trước khi coi 1 bài là "xong"
 
-Đây là các lỗi đã lặp lại nhiều lần ở series trước (WebGPU, CSS). Tự kiểm tra đủ 6 mục dưới đây cho **từng bài** trước khi báo hoàn thành, không đợi người dùng phát hiện lại:
+Đây là các lỗi đã lặp lại nhiều lần ở series trước (WebGPU, CSS). Tự kiểm tra đủ 7 mục dưới đây cho **từng bài** trước khi báo hoàn thành, không đợi người dùng phát hiện lại:
 
 1. **Header/Footer đồng nhất.** Copy nguyên văn header (hamburger nav) và footer (full nav + AdSense slot) từ file mẫu chuẩn của series gần nhất đã hoàn thành (hiện tại: `webgl-shaders-glsl.html` hoặc bài WebGPU/CSS mới nhất). Không tự viết lại, không thiếu mục nav nào.
-2. **Liên kết giữa các trang đúng & đủ.** Hub → từng bài (đúng thứ tự, đúng slug không đuôi `.html`); mỗi bài có link bài trước/bài sau + về hub (`.article-related`, song ngữ); danh sách bài trên hub (`.lessons-list`) khớp 100% với các file thực tế đã tạo — không link tới bài chưa tồn tại, không sót bài đã tạo.
+2. **Liên kết giữa các trang đúng & đủ.** Hub → từng bài (đúng thứ tự, đúng slug không đuôi `.html`); mỗi bài có link bài trước/bài sau + về hub (`.article-related`); danh sách bài trên hub (`.lessons-list`) khớp 100% với các file thực tế đã tạo — không link tới bài chưa tồn tại, không sót bài đã tạo.
 3. **Công thức toán học phải highlight qua KaTeX.** Mọi công thức (`$…$` inline, `$$…$$` block) phải render qua `katex.min.js` + `auto-render.min.js` (local, không CDN). Test thực tế trên trình duyệt — không được để công thức hiện dạng text thô `$...$`.
 4. **Code demo bắt buộc có tab hiển thị code.** Dùng component `.code-tabs` (chuẩn từ WebGPU/CSS series): tối thiểu 3 tab **Xem trước (Preview) | <ngôn ngữ chính: WGSL/CSS/…> | JavaScript**, mỗi tab có Prism syntax highlight đúng `language-*`. KHÔNG dùng lại pattern cũ "chỉ 1 nút ⟨⟩ Xem Code" cho bài mới — đó là pattern lỗi thời trước WebGPU.
-5. **Không còn markdown thô chưa convert.** Quét toàn bộ nội dung bài (cả EN lẫn VI) để chắc chắn không còn `**text**` (phải là `<strong>text</strong>`) hay `` `code` `` (phải là `<code>code</code>`) hiển thị dưới dạng ký tự thô. Grep từng file mới để tự rà trước khi commit.
+5. **Không còn markdown thô chưa convert.** Quét toàn bộ nội dung bài để chắc chắn không còn `**text**` (phải là `<strong>text</strong>`) hay `` `code` `` (phải là `<code>code</code>`) hiển thị dưới dạng ký tự thô. Grep từng file mới để tự rà trước khi commit.
 6. **Thêm vào ROOT `index.html` (không phải `blog/index.html`).** Sau khi 1 series có bài đầu tiên hoàn thành, thêm 1 `a.learn-card` vào section "Programming Courses" của **`index.html` ở thư mục gốc** (khác với `blog/index.html` — dễ nhầm lẫn, đã từng bị bỏ sót). Card gồm `.learn-card__tag`, `h3.learn-card__title`, `p.learn-card__desc` (dùng `data-i18n`, không phải `data-lang-content`). Đối chiếu số lượng `learn-card` ở root `index.html` phải luôn khớp số lượng `blog-card` series ở `blog/index.html`.
+7. **⚠️ CHỈ TIẾNG VIỆT cho series mới, không song ngữ EN/VI (áp dụng từ series DSA, 2026-07-03).** Nội dung bài (`.article-hero` title/meta/back-link, `.article-body`, `.article-related`) viết 1 khối tiếng Việt duy nhất, KHÔNG dùng cặp `data-lang-content="en"`/`"vi"` và KHÔNG cần nút toggle ngôn ngữ cho nội dung bài. Header/footer/nav vẫn giữ `data-i18n` (chrome dùng chung toàn site, không đổi). Các series cũ (C, C++, JS, Canvas, WebGL, Bash, WebGPU, CSS) đã lỡ làm song ngữ/VI-stub thì giữ nguyên, KHÔNG cần viết lại — quy tắc này chỉ áp dụng cho nội dung viết mới từ đây trở đi.
 
 ## 0. Quy ước slug thư mục & ID series
 
