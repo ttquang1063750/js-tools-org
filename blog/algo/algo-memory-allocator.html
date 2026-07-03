@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: Memory Allocator Visualizer — malloc/free Hoạt Động Thế Nào — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu cách bộ cấp phát bộ nhớ (memory allocator) hoạt động: free list, First-Fit/Best-Fit/Worst-Fit, phân mảnh trong/ngoài, gộp khối liền kề, và sân chơi tương tác mô phỏng malloc/free trực quan."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/algo/algo-memory-allocator" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      /* Memory Allocator Sandbox styles */
+      .mem-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        gap: 24px;
+      }
+      .mem-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .mem-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .mem-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .mem-controls input[type='number'],
+      .mem-controls select {
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+      .mem-btn-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .mem-btn {
+        flex: 1;
+        min-width: 70px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .mem-btn:hover {
+        background: #313244;
+      }
+      .mem-btn--primary {
+        background: #d946ef;
+        border-color: #d946ef;
+        color: #fff;
+        font-weight: 600;
+      }
+      .mem-btn--primary:hover {
+        background: #c026d3;
+      }
+      .mem-stat {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        font-size: 12px;
+      }
+      .mem-stat .label {
+        color: #a6adc8;
+      }
+      .mem-stat .value {
+        color: #cdd6f4;
+        font-family: monospace;
+        font-weight: 700;
+      }
+      .mem-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 100px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .mem-log div {
+        border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+        padding: 3px 0;
+      }
+      .mem-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 380px;
+        overflow: auto;
+      }
+      .mem-canvas {
+        display: block;
+        cursor: pointer;
+      }
+      .mem-hint {
+        margin: 0;
+        color: #a6adc8;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      @media (max-width: 880px) {
+        .mem-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--algo">
+        <div class="container">
+          <a href="algo-programming-series" class="article-hero__back">← Quay lại Lộ trình DSA</a>
+          <div class="article-hero__tag article-hero__tag--algo">Data Structures &amp; Algorithms</div>
+          <h1 class="article-hero__title">Bài 9: Memory Allocator Visualizer — malloc/free Hoạt Động Thế Nào</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Ở <a href="algo-btree-database-index">Bài 8</a> chúng ta thấy cách hệ quản trị CSDL quản lý dữ liệu
+                  trên đĩa. Bài này đi sâu hơn vào một câu hỏi nền tảng hơn nữa:
+                  <strong>khi bạn gọi <code>malloc()</code> trong C, điều gì thực sự xảy ra bên dưới?</strong>
+                  Không có phép màu nào cả — chỉ là một cấu trúc dữ liệu và vài giải thuật khá đơn giản.
+                </p>
+
+                <h2>1. Vì sao cần một bộ cấp phát bộ nhớ động?</h2>
+                <p>
+                  Chương trình xin cấp phát vùng nhớ (heap) với kích thước khác nhau tại thời điểm chạy, rồi giải phóng
+                  chúng theo thứ tự bất kỳ — không nhất thiết theo đúng thứ tự đã xin. Bộ cấp phát (allocator) phải quản
+                  lý vùng nhớ trống còn lại sao cho các lần xin cấp phát sau vẫn tìm được chỗ trống phù hợp, mà không
+                  tốn quá nhiều thời gian dò tìm.
+                </p>
+
+                <h2>2. Free List: Danh sách các khối nhớ trống</h2>
+                <p>
+                  Kỹ thuật kinh điển nhất: bộ cấp phát duy trì một
+                  <strong>danh sách liên kết các khối nhớ trống</strong> (free list). Điều thú vị là con trỏ
+                  <code>next</code> của danh sách này được lưu <strong>ngay bên trong chính vùng nhớ trống đó</strong> —
+                  không tốn thêm bộ nhớ phụ nào, vì vùng nhớ đang trống thì không ai dùng tới nội dung của nó cả:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">free-block.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">// Mô phỏng khối nhớ trống — trong C thật, size/next được ghi
+// TRỰC TIẾP vào những byte đầu của vùng nhớ trống đó
+class FreeBlock {
+  constructor(start, size) {
+    this.start = start; // địa chỉ bắt đầu
+    this.size = size;   // kích thước khối (byte)
+  }
+}
+// Free list là mảng/danh sách các FreeBlock, luôn được sắp xếp
+// theo địa chỉ start tăng dần để việc gộp khối (coalescing) ở
+// phần 5 chỉ cần so sánh 2 khối liền kề trong danh sách.</code></pre>
+                </div>
+
+                <h2>3. Chiến lược cấp phát: First-Fit, Best-Fit, Worst-Fit</h2>
+                <p>
+                  Khi cần cấp phát $n$ byte, bộ cấp phát phải chọn 1 khối trống đủ lớn trong free list. Có 3 chiến lược
+                  kinh điển:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">allocation-strategies.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">// First-Fit: lấy khối trống ĐẦU TIÊN đủ lớn — nhanh nhất, dừng ngay khi tìm thấy
+function firstFit(freeList, size) {
+  for (const block of freeList) {
+    if (block.size >= size) return block;
+  }
+  return null; // không còn khối nào đủ lớn
+}
+
+// Best-Fit: quét HẾT danh sách, chọn khối NHỎ NHẤT vẫn đủ chứa
+// (giảm thiểu phần thừa lãng phí mỗi lần cấp phát)
+function bestFit(freeList, size) {
+  let best = null;
+  for (const block of freeList) {
+    if (block.size >= size && (!best || block.size < best.size)) best = block;
+  }
+  return best;
+}
+
+// Worst-Fit: quét HẾT danh sách, chọn khối LỚN NHẤT
+// (để phần còn thừa lại vẫn đủ lớn, hữu dụng cho lần sau)
+function worstFit(freeList, size) {
+  let worst = null;
+  for (const block of freeList) {
+    if (block.size >= size && (!worst || block.size > worst.size)) worst = block;
+  }
+  return worst;
+}</code></pre>
+                </div>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Vì sao Best-Fit không hẳn là "tốt nhất"?</div>
+                  <div class="callout__content">
+                    Nghe tên tưởng Best-Fit luôn thắng — nó lãng phí ít nhất mỗi lần cấp phát. Nhưng về lâu dài,
+                    Best-Fit có xu hướng để lại rất nhiều <strong>mảnh vụn cực nhỏ</strong> (tiny leftover fragments)
+                    rải khắp bộ nhớ — những mảnh này thường quá nhỏ để dùng cho bất kỳ yêu cầu cấp phát nào sau đó, làm
+                    phân mảnh ngoài trở nên TỆ HƠN theo thời gian dù mỗi lần cấp phát riêng lẻ đều "tối ưu".
+                  </div>
+                </div>
+
+                <h2>4. Phân mảnh trong (Internal) và Phân mảnh ngoài (External)</h2>
+                <p>
+                  <strong>Phân mảnh trong</strong> (internal fragmentation) xảy ra khi khối cấp phát
+                  <strong>lớn hơn</strong> yêu cầu thực tế (do làm tròn theo alignment, hoặc do chọn worst-fit để lại
+                  khối to hơn cần thiết) — phần dư đó bị "khóa" bên trong khối đã cấp phát, không ai dùng được dù nó vẫn
+                  tính là "đã cấp phát". <strong>Phân mảnh ngoài</strong> (external fragmentation) xảy ra khi
+                  <strong>tổng</strong> bộ nhớ trống đủ lớn, nhưng bị chia nhỏ rải rác thành nhiều mảnh không liền kề —
+                  không mảnh nào đủ lớn cho yêu cầu cấp phát mới dù cộng dồn lại thì thừa sức.
+                </p>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Lưu ý: Đo phân mảnh ngoài bằng công thức nào?</div>
+                  <div class="callout__content">
+                    Một cách đo phổ biến: $\text{external\_frag} = 1 - \dfrac{\text{khối trống lớn nhất}}{\text{tổng bộ
+                    nhớ trống}}$. Nếu tổng bộ nhớ trống là 100 byte nhưng khối lớn nhất chỉ 10 byte, tỷ lệ phân mảnh
+                    ngoài là 0.9 — tức 90% bộ nhớ trống "về mặt lý thuyết" thực chất không dùng được cho một yêu cầu cấp
+                    phát lớn.
+                  </div>
+                </div>
+
+                <h2>5. Gộp khối liền kề (Coalescing)</h2>
+                <p>
+                  Khi giải phóng 1 khối, nếu khối <strong>liền trước</strong> hoặc <strong>liền sau</strong> nó trong bộ
+                  nhớ cũng đang trống, phải <strong>gộp ngay</strong> thành 1 khối trống lớn hơn — đây là kỹ thuật chống
+                  phân mảnh ngoài quan trọng nhất:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">coalesce.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">// freeList luôn được giữ SẮP XẾP theo start — gộp chỉ cần
+// so sánh khối vừa thêm với khối ngay trước/sau nó trong mảng
+function coalesce(freeList) {
+  freeList.sort((a, b) => a.start - b.start);
+  for (let i = 0; i < freeList.length - 1; i++) {
+    const cur = freeList[i];
+    const next = freeList[i + 1];
+    if (cur.start + cur.size === next.start) { // liền kề tuyệt đối
+      cur.size += next.size;      // gộp next vào cur
+      freeList.splice(i + 1, 1);  // xoá next khỏi danh sách
+      i--; // xét lại cur với khối kế tiếp mới (có thể gộp tiếp)
+    }
+  }
+}</code></pre>
+                </div>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Quên gộp khối sau khi free()</div>
+                  <div class="callout__content">
+                    Nếu <code>free()</code> chỉ đơn giản thêm khối vừa giải phóng vào free list mà
+                    <strong>không gộp</strong> với khối liền kề, một chuỗi cấp phát/giải phóng xen kẽ (allocate A, B, C
+                    rồi free B) có thể để lại vô số khối trống nhỏ xíu nằm rải rác — dù tổng bộ nhớ trống dư dả, không
+                    khối nào đủ lớn cho yêu cầu cấp phát tiếp theo. Đây là nguyên nhân phổ biến nhất gây phân mảnh ngoài
+                    nghiêm trọng trong các allocator cài đặt cẩu thả.
+                  </div>
+                </div>
+
+                <h2>6. So sánh First-Fit, Best-Fit, Worst-Fit</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Tiêu chí</th>
+                      <th>First-Fit</th>
+                      <th>Best-Fit</th>
+                      <th>Worst-Fit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Tốc độ tìm khối</td>
+                      <td>Nhanh nhất (dừng ngay khi thấy)</td>
+                      <td>Chậm (phải quét hết)</td>
+                      <td>Chậm (phải quét hết)</td>
+                    </tr>
+                    <tr>
+                      <td>Phân mảnh ngoài theo thời gian</td>
+                      <td>Trung bình</td>
+                      <td>Có thể TỆ hơn (nhiều mảnh vụn nhỏ)</td>
+                      <td>Thường tốt hơn Best-Fit</td>
+                    </tr>
+                    <tr>
+                      <td>Lãng phí mỗi lần cấp phát</td>
+                      <td>Trung bình</td>
+                      <td>Ít nhất (tối ưu cục bộ)</td>
+                      <td>Nhiều nhất</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">💡 Mẹo: Allocator thực tế dùng kỹ thuật gì tinh vi hơn?</div>
+                  <div class="callout__content">
+                    Glibc <code>malloc</code>, jemalloc, và tcmalloc dùng kỹ thuật phức tạp hơn nhiều: segregated free
+                    lists (nhiều free list riêng theo dải kích thước), buddy allocator (chia đôi/gộp đôi theo lũy thừa
+                    2), và slab allocator (cấp phát theo lô cho các object cùng kích thước). Bộ thu gom rác (garbage
+                    collector) của JavaScript/Java cũng đối mặt bài toán phân mảnh tương tự — đó là lý do một số GC có
+                    bước "compaction" định kỳ dồn các object đang sống lại gần nhau.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Memory Allocator Visualizer</h2>
+                <p>
+                  Cấp phát nhiều khối kích thước khác nhau theo chiến lược bạn chọn, rồi giải phóng vài khối bằng cách
+                  <strong>click trực tiếp vào khối trên thanh bộ nhớ</strong> — quan sát phân mảnh ngoài hình thành và
+                  cách gộp khối liền kề hoạt động.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">💾 Sân chơi tương tác: Memory Allocator</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="mem-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="mem-controls">
+                        <h3>Cấp phát (heap 200 byte)</h3>
+                        <div>
+                          <label for="mem-size-input">Kích thước (byte)</label>
+                          <input type="number" id="mem-size-input" min="1" max="200" value="20" />
+                        </div>
+                        <div>
+                          <label for="mem-strategy-select">Chiến lược</label>
+                          <select id="mem-strategy-select">
+                            <option value="first">First-Fit</option>
+                            <option value="best">Best-Fit</option>
+                            <option value="worst">Worst-Fit</option>
+                          </select>
+                        </div>
+                        <button class="mem-btn mem-btn--primary" id="mem-alloc-btn">Cấp phát (malloc)</button>
+                        <p class="mem-hint">Click vào khối màu trên thanh bộ nhớ để giải phóng (free).</p>
+                        <div class="mem-btn-row">
+                          <button class="mem-btn" id="mem-random-btn">Ngẫu nhiên</button>
+                          <button class="mem-btn" id="mem-reset-btn">Reset</button>
+                        </div>
+
+                        <div>
+                          <div class="mem-stat">
+                            <span class="label">Tổng bộ nhớ trống</span
+                            ><span class="value" id="mem-stat-free">200</span>
+                          </div>
+                          <div class="mem-stat">
+                            <span class="label">Khối trống lớn nhất</span
+                            ><span class="value" id="mem-stat-largest">200</span>
+                          </div>
+                          <div class="mem-stat">
+                            <span class="label">Phân mảnh ngoài</span><span class="value" id="mem-stat-frag">0%</span>
+                          </div>
+                        </div>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="mem-log" id="mem-log"></div>
+                        </div>
+                      </div>
+
+                      <!-- Canvas Stage -->
+                      <div class="mem-viewport-container">
+                        <canvas id="mem-canvas" class="mem-canvas" width="600" height="360"></canvas>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">memory-allocator-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Sự khác biệt cốt lõi giữa phân mảnh trong (internal) và phân mảnh ngoài (external) là gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Phân mảnh trong là phần dư THỪA bên trong 1 khối ĐÃ cấp phát (không ai dùng được dù khối đó thuộc về 1 chương trình). Phân mảnh ngoài là bộ nhớ TRỐNG nhưng bị chia nhỏ rải rác, không khối nào đủ lớn cho yêu cầu mới dù tổng lại thì đủ.'
+                        )
+                      "
+                    >
+                      A. Phân mảnh trong là lãng phí bên trong khối đã cấp phát; phân mảnh ngoài là bộ nhớ trống bị chia
+                      nhỏ rải rác không dùng được.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cả hai loại phân mảnh đều liên quan tới CÁCH bộ nhớ được cấp phát/giải phóng, không phải tốc độ CPU.'
+                        )
+                      "
+                    >
+                      B. Phân mảnh trong xảy ra trên CPU nhanh, phân mảnh ngoài xảy ra trên CPU chậm.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Đây là định nghĩa ngược — phân mảnh NGOÀI mới liên quan tới bộ nhớ trống bị chia nhỏ, không phải phân mảnh trong.'
+                        )
+                      "
+                    >
+                      C. Phân mảnh trong là bộ nhớ trống bị chia nhỏ; phân mảnh ngoài là lãng phí bên trong khối đã cấp
+                      phát.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Vì sao Best-Fit — dù tối ưu cho TỪNG lần cấp phát riêng lẻ — có thể khiến phân mảnh ngoài TỆ
+                    HƠN về lâu dài so với First-Fit?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Best-Fit luôn chọn khối vừa khít nhất, để lại phần dư CỰC NHỎ mỗi lần. Theo thời gian, những mảnh vụn cực nhỏ này tích luỹ rải rác khắp bộ nhớ, không đủ lớn cho bất kỳ yêu cầu cấp phát nào sau đó — làm phân mảnh ngoài tệ hơn dù mỗi quyết định riêng lẻ đều tối ưu cục bộ.'
+                        )
+                      "
+                    >
+                      A. Vì Best-Fit để lại rất nhiều mảnh vụn cực nhỏ rải rác, tích luỹ theo thời gian thành phân mảnh
+                      ngoài nghiêm trọng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Best-Fit không hề chậm hơn về mặt lý thuyết tính đúng đắn — vấn đề là hệ quả lâu dài của việc để lại mảnh vụn, không phải lỗi thuật toán.'
+                        )
+                      "
+                    >
+                      B. Vì Best-Fit có lỗi thuật toán khiến nó tính sai kích thước khối.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Đây không liên quan gì tới thuật toán Best-Fit — vấn đề nằm ở hệ quả phân bổ bộ nhớ theo thời gian, không phải phần cứng.'
+                        )
+                      "
+                    >
+                      C. Vì Best-Fit chỉ hoạt động đúng trên ổ cứng SSD.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Vì sao free list phải được sắp xếp theo địa chỉ (start) tăng dần khi cài đặt gộp khối
+                    (coalescing)?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Danh sách sắp xếp theo địa chỉ hoàn toàn không liên quan tới tốc độ cấp phát First-Fit — First-Fit chỉ cần duyệt tuần tự, sắp xếp hay không đều được.'
+                        )
+                      "
+                    >
+                      A. Để First-Fit chạy nhanh hơn.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Gộp khối chỉ cần kiểm tra: liệu khối này có KẾT THÚC đúng bằng địa chỉ BẮT ĐẦU của khối kế tiếp không (cur.start + cur.size === next.start). Điều kiện này chỉ đơn giản và đúng khi 2 khối đang xét thực sự nằm CẠNH NHAU trong danh sách đã sắp xếp theo địa chỉ — nếu không sắp xếp, phải quét toàn bộ O(n) để tìm khối liền kề mỗi lần.'
+                        )
+                      "
+                    >
+                      B. Để việc kiểm tra "2 khối có liền kề nhau trong bộ nhớ hay không" chỉ cần so sánh 2 phần tử liên
+                      tiếp trong danh sách, không cần quét toàn bộ.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Free list không giới hạn số lượng khối tối đa — số 256 không có ý nghĩa gì ở đây.'
+                        )
+                      "
+                    >
+                      C. Vì free list chỉ hỗ trợ tối đa 256 khối nếu không sắp xếp.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://en.wikipedia.org/wiki/Memory_management" target="_blank" rel="noopener noreferrer"
+                      >Wikipedia — Memory Management</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://en.wikipedia.org/wiki/Fragmentation_(computing)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Wikipedia — Memory Fragmentation</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://sourceware.org/glibc/wiki/MallocInternals"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Glibc Wiki — Malloc Internals</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://gee.cs.oswego.edu/dl/html/malloc.html" target="_blank" rel="noopener noreferrer"
+                      >Doug Lea — A Memory Allocator (dlmalloc, tài liệu kinh điển)</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 10: Hash Table &amp; Va Chạm (sắp ra mắt)
+                  </span>
+                  <a href="algo-btree-database-index" class="article-related__link article-related__link--prev">
+                    Bài 8: B-Tree Database Index
+                  </a>
+                  <a href="algo-programming-series" class="article-related__link">Quay lại Lộ trình Series DSA</a>
+                  <a href="../c/c-memory-management" class="article-related__link">
+                    Series C: Quản Lý Bộ Nhớ &amp; Valgrind
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="algo-memory-allocator.js" defer></script>
+  </body>
+</html>
