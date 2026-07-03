@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 6: Cherry-pick — Chọn Lọc Commit Cụ Thể — js-tools</title>
+    <title>Bài 7: Undo &amp; Phục Hồi — reset, revert, reflog — js-tools</title>
     <meta
       name="description"
-      content="Tìm hiểu git cherry-pick: nhặt 1 commit cụ thể từ nhánh khác mà không merge cả nhánh, cơ chế tạo commit mới cùng diff nhưng khác hash, xử lý xung đột khi pick, và so sánh với rebase/merge."
+      content="Ba mức độ của git reset (soft/mixed/hard), vì sao revert an toàn hơn reset cho nhánh public, và cách reflog cứu một commit tưởng đã mất. Sân chơi tương tác demo làm hỏng rồi tự cứu bằng reflog."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/git/git-cherry-pick" />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-undo-recovery" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="../ide.css" />
     <script defer src="../prism.js"></script>
     <style>
-      /* Git Graph Simulator (Cherry-pick) Sandbox styles */
+      /* Git Graph Simulator (Undo & Recovery) Sandbox styles */
       .graph-sandbox {
         background: #181825;
         border: 1px solid var(--border);
@@ -146,35 +146,6 @@
         font-size: 12px;
         color: #cdd6f4;
       }
-      .conflict-panel {
-        display: none;
-        width: 90%;
-        background: #1e1e2e;
-        border: 1px solid #f38ba8;
-        border-radius: 8px;
-        padding: 12px;
-      }
-      .conflict-panel.is-visible {
-        display: block;
-      }
-      .conflict-panel h4 {
-        margin: 0 0 8px 0;
-        color: #f38ba8;
-        font-size: 12px;
-      }
-      .conflict-panel textarea {
-        width: 100%;
-        min-height: 90px;
-        box-sizing: border-box;
-        background: #0f0f1b;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        color: #f9e2af;
-        font-family: monospace;
-        font-size: 12px;
-        padding: 8px;
-        resize: vertical;
-      }
       @media (max-width: 880px) {
         .graph-sandbox {
           grid-template-columns: 1fr;
@@ -263,8 +234,8 @@
         <div class="container">
           <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
           <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
-          <h1 class="article-hero__title">Bài 6: Cherry-pick — Chọn Lọc Commit Cụ Thể</h1>
-          <div class="article-hero__meta">3 tháng 7, 2026 · 13 phút đọc</div>
+          <h1 class="article-hero__title">Bài 7: Undo &amp; Phục Hồi — reset, revert, reflog</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
         </div>
       </section>
 
@@ -274,137 +245,117 @@
             <div class="article-body">
               <div>
                 <p>
-                  Ở <a href="git-rebase-history">Bài 5</a>, rebase phát lại <strong>toàn bộ</strong> chuỗi commit riêng
-                  của 1 nhánh lên nền mới. Nhưng đôi khi bạn chỉ cần đúng <strong>1 commit cụ thể</strong> từ nhánh khác
-                  — không phải cả nhánh. Đó là lúc <code>git cherry-pick</code> phát huy tác dụng.
+                  Sau <a href="git-rebase-history">Bài 5</a> và <a href="git-cherry-pick">Bài 6</a> viết lại/di chuyển
+                  lịch sử, bài này trả lời câu hỏi mọi người dùng Git đều từng hoảng loạn hỏi ít nhất 1 lần:
+                  <em>"tôi vừa làm hỏng mọi thứ, cứu tôi với!"</em>. Tin vui: nhờ mọi object trong Git đều bất biến (<a
+                    href="git-object-model"
+                    >Bài 1</a
+                  >), gần như mọi thứ đều cứu được — miễn bạn biết công cụ đúng.
                 </p>
 
-                <h2>1. Bài toán: Chỉ Muốn 1 Commit, Không Phải Cả Nhánh</h2>
+                <h2>1. <code>git reset</code>: Ba Mức Độ "Xoá"</h2>
                 <p>
-                  Tình huống kinh điển: một lập trình viên vô tình commit bản sửa lỗi bảo mật khẩn cấp lên nhánh
-                  <code>feature</code> đang phát triển dở (chưa sẵn sàng release). Bạn cần bản vá đó trên
-                  <code>main</code> <strong>ngay lập tức</strong>, nhưng merge cả <code>feature</code> vào
-                  <code>main</code> sẽ kéo theo toàn bộ code dở dang chưa hoàn thiện.
-                  <code>git cherry-pick &lt;hash&gt;</code> cho phép "nhặt" đúng commit sửa lỗi đó sang
-                  <code>main</code>, bỏ qua mọi commit khác trên <code>feature</code>.
+                  <code>git reset &lt;commit&gt;</code> di chuyển con trỏ branch hiện tại về 1 commit khác — nhưng có 3
+                  chế độ khác nhau về việc <strong>Working Directory</strong> bị ảnh hưởng ra sao:
                 </p>
-
-                <h2>2. Cơ Chế: Tạo Commit Mới Cùng Diff, Khác Hash</h2>
-                <p>
-                  Giống hệt nguyên lý rebase đã thấy ở Bài 5: cherry-pick <strong>không di chuyển</strong> commit gốc.
-                  Nó tính <strong>diff</strong> mà commit đó giới thiệu (so với commit cha của nó), rồi áp diff đó lên
-                  đỉnh nhánh hiện tại — tạo ra 1 <strong>commit hoàn toàn mới</strong> với cha khác, nên hash cũng khác.
-                  Commit gốc trên nhánh nguồn vẫn còn nguyên, không bị ảnh hưởng gì.
-                </p>
-
-                <div class="callout callout--note">
-                  <div class="callout__title">ℹ️ Lưu ý: Message thường ghi rõ nguồn gốc</div>
-                  <div class="callout__content">
-                    Theo mặc định, Git thêm dòng <code>(cherry picked from commit &lt;hash&gt;)</code> vào cuối message
-                    của commit mới — giúp bất kỳ ai đọc log sau này biết thay đổi này vốn đến từ đâu, dù commit gốc và
-                    bản sao chép có hash hoàn toàn khác nhau.
-                  </div>
-                </div>
-
-                <h2>3. Xử Lý Xung Đột Khi Cherry-pick</h2>
-                <p>
-                  Cherry-pick vẫn có thể <strong>xung đột</strong> — nếu nhánh hiện tại đã thay đổi cùng phần nội dung
-                  theo cách khác kể từ điểm phân kỳ, Git không biết chọn phiên bản nào. Về bản chất, cơ chế giải xung
-                  đột giống hệt three-way merge đã học ở <a href="git-merge-conflict">Bài 4</a> — chỉ khác
-                  <strong>base</strong> lúc này là commit cha của commit được pick, còn <strong>theirs</strong> chính là
-                  commit đó:
-                </p>
-                <div class="code-window">
-                  <div class="code-header">
-                    <span class="code-filename">terminal</span>
-                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
-                  </div>
-                  <pre><code class="language-bash">$ git cherry-pick a1b2c3d
-# Nếu xung đột:
-Auto-merging app.js
-CONFLICT (content): Merge conflict in app.js
-
-# Sửa file thủ công, rồi:
-$ git add app.js
-$ git cherry-pick --continue</code></pre>
-                </div>
-
-                <div class="callout callout--pitfall">
-                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Cherry-pick lặp lại gây trùng lặp lịch sử</div>
-                  <div class="callout__content">
-                    Nếu bạn cherry-pick 1 commit từ <code>feature</code> sang <code>main</code>, rồi sau này vẫn merge
-                    <code>feature</code> vào <code>main</code>, thay đổi đó tồn tại <strong>2 lần</strong> trong lịch sử
-                    dưới 2 hash khác nhau (dù nội dung cây thường giống hệt nên Git thường tự merge êm, không báo
-                    conflict). Kết quả: <code>git log</code> hiện 2 commit riêng biệt mang cùng nội dung — gây khó hiểu
-                    khi tra cứu lịch sử về sau. Cân nhắc kỹ trước khi cherry-pick từ 1 nhánh vẫn còn dự định merge đầy
-                    đủ sau này.
-                  </div>
-                </div>
-
-                <h2>4. So Sánh Cherry-pick, Rebase, và Merge</h2>
                 <table class="comparison-table">
                   <thead>
                     <tr>
-                      <th>Tiêu chí</th>
-                      <th>Cherry-pick</th>
-                      <th>Rebase</th>
-                      <th>Merge</th>
+                      <th>Chế độ</th>
+                      <th>Con trỏ branch</th>
+                      <th>Staging Index</th>
+                      <th>Working Directory</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>Số commit bị ảnh hưởng</td>
-                      <td>Đúng 1 commit chỉ định</td>
-                      <td>Toàn bộ commit riêng của nhánh</td>
-                      <td>Không tạo lại commit nào</td>
+                      <td><code>--soft</code></td>
+                      <td>Di chuyển</td>
+                      <td>Giữ nguyên</td>
+                      <td>Giữ nguyên</td>
                     </tr>
                     <tr>
-                      <td>Commit mới tạo ra</td>
-                      <td>1 commit mới (hash mới)</td>
-                      <td>N commit mới (N = số commit replay)</td>
-                      <td>1 merge commit (2 cha)</td>
+                      <td><code>--mixed</code> (mặc định)</td>
+                      <td>Di chuyển</td>
+                      <td>Reset về commit đích</td>
+                      <td>Giữ nguyên</td>
                     </tr>
                     <tr>
-                      <td>Trường hợp dùng điển hình</td>
-                      <td>Backport 1 hotfix cụ thể sang nhánh khác</td>
-                      <td>Dọn lịch sử thẳng hàng trước khi chia sẻ</td>
-                      <td>Hợp nhất đầy đủ lịch sử 2 nhánh</td>
+                      <td><code>--hard</code></td>
+                      <td>Di chuyển</td>
+                      <td>Reset về commit đích</td>
+                      <td><strong>Ghi đè</strong> — mất thay đổi chưa commit</td>
                     </tr>
                   </tbody>
                 </table>
+                <p>
+                  Nhớ lại 3 cây từ <a href="git-three-trees-staging">Bài 2</a>: càng xuống dưới bảng, reset càng "lan"
+                  sâu hơn qua 3 cây. <code>--soft</code> chỉ đụng tới HEAD; <code>--hard</code> đụng tới
+                  <strong>cả 3</strong>.
+                </p>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">
+                    🕳️ Cạm bẫy thường gặp: <code>reset --hard</code> mất vĩnh viễn thứ CHƯA commit
+                  </div>
+                  <div class="callout__content">
+                    Reflog (mục 3) chỉ cứu được những gì đã từng là 1 <strong>commit</strong> — vì object trong Git bất
+                    biến và reflog theo dõi lịch sử di chuyển HEAD giữa các commit. Thay đổi trong Working Directory
+                    <strong>chưa bao giờ commit</strong> thì chưa từng là object — <code>reset --hard</code> ghi đè
+                    chúng và <strong>không có cách nào cứu lại</strong>. Luôn <code>git stash</code> (mục 4) trước khi
+                    chạy <code>reset --hard</code> nếu còn thay đổi dở dang.
+                  </div>
+                </div>
+
+                <h2>2. <code>git revert</code>: Undo An Toàn Cho Nhánh Công Khai</h2>
+                <p>
+                  Khác hẳn <code>reset</code> (di chuyển con trỏ, có thể làm mồ côi commit),
+                  <code>git revert &lt;commit&gt;</code> tạo ra <strong>1 commit MỚI</strong> áp dụng đúng thay đổi
+                  ngược lại của commit đó — lịch sử cũ được giữ nguyên vẹn, không branch nào bị "lùi lại". Đây là lựa
+                  chọn an toàn khi cần undo trên nhánh đã push, đúng theo Golden Rule đã học ở
+                  <a href="git-rebase-history">Bài 5</a>.
+                </p>
+
+                <h2>3. <code>git reflog</code>: Nhật Ký Cứu Sinh</h2>
+                <p>
+                  Mỗi lần HEAD di chuyển — commit, checkout, reset, rebase — Git âm thầm ghi lại vào
+                  <strong>reflog</strong>, một nhật ký cục bộ hoàn toàn tách biệt với các branch ref. Ngay cả sau
+                  <code>reset --hard</code> khiến 1 commit trông như "biến mất" (không branch nào trỏ tới, mồ côi giống
+                  cơ chế ở <a href="git-branch-head">Bài 3</a>), reflog vẫn nhớ hash của nó — bạn chỉ cần
+                  <code>git branch &lt;tên&gt; &lt;hash-từ-reflog&gt;</code> để "cứu" nó trở lại reachable.
+                </p>
 
                 <div class="callout callout--deep">
-                  <div class="callout__title">🔬 Đào sâu: Cherry-pick chỉ là 1 trường hợp đặc biệt của Merge</div>
+                  <div class="callout__title">🔬 Đào sâu: Vì sao reflog không đồng bộ qua remote?</div>
                   <div class="callout__content">
-                    Về mặt thuật toán, cherry-pick dùng đúng <strong>three-way merge</strong> đã học ở Bài 4 — chỉ khác
-                    cách chọn 3 điểm so sánh: <strong>base</strong> = commit cha của commit được pick,
-                    <strong>ours</strong> = HEAD hiện tại, <strong>theirs</strong> = chính commit được pick. Vì vậy mọi
-                    quy tắc phát hiện xung đột ở Bài 4 áp dụng y hệt ở đây — Git không có 2 thuật toán merge khác nhau,
-                    chỉ có 2 cách khác nhau để <em>chọn đầu vào</em> cho cùng 1 thuật toán.
+                    Reflog <strong>không phải</strong> 1 ref thực sự nằm trong <code>.git/refs</code> mà Git đồng bộ khi
+                    <code>push</code>/<code>pull</code> — nó là 1 file log riêng (<code>.git/logs/HEAD</code>) chỉ ghi
+                    lại lịch sử thao tác <strong>trên chính máy bạn</strong>. Đây là lý do reflog là công cụ cứu hộ
+                    tuyệt vời cho lỗi cục bộ, nhưng vô dụng nếu bạn cần khôi phục thứ gì đó chỉ tồn tại trên máy đồng
+                    nghiệp — mặc định reflog cũng tự dọn dẹp các entry cũ (thường sau 90 ngày), không phải kho lưu trữ
+                    vĩnh viễn.
                   </div>
                 </div>
 
-                <div class="callout callout--tip">
-                  <div class="callout__title">💡 Mẹo: Khi nào nên dùng cherry-pick?</div>
-                  <div class="callout__content">
-                    Cherry-pick lý tưởng cho: backport 1 bản vá bảo mật khẩn cấp sang nhiều nhánh release cùng lúc; cứu
-                    1 commit hữu ích từ 1 Pull Request đã bị đóng/từ chối mà không muốn merge toàn bộ; hoặc chuyển 1
-                    commit bị commit nhầm nhánh sang đúng nhánh nó thuộc về.
-                  </div>
-                </div>
-
-                <h2>Sân chơi tương tác: Cherry-pick Simulator</h2>
+                <h2>4. <code>git stash</code>: Cất Tạm Thay Đổi Chưa Commit</h2>
                 <p>
-                  Kịch bản mẫu đã dựng sẵn 2 nhánh phân kỳ với 1 commit "Fix security bug" trên nhánh
-                  <code>hotfix</code>. Thử <code>git cherry-pick C2</code> khi đang ở <code>main</code> để xem cách nhặt
-                  commit đó — và xử lý xung đột thực sự xảy ra vì <code>main</code> cũng đã thay đổi nội dung khác kể từ
-                  điểm phân kỳ.
+                  Khi cần chuyển nhánh gấp nhưng thay đổi hiện tại chưa đủ hoàn chỉnh để commit,
+                  <code>git stash</code> cất toàn bộ Working Directory + Staging Index vào 1 "ngăn kéo" riêng, trả
+                  Working Directory về trạng thái sạch của HEAD. <code>git stash pop</code> lấy lại đúng những gì vừa
+                  cất, tiếp tục làm việc như chưa hề rời đi.
+                </p>
+
+                <h2>Sân chơi tương tác: Demo "Làm Hỏng Rồi Tự Cứu"</h2>
+                <p>
+                  Tiếp nối engine từ các bài trước. Thử đúng kịch bản kinh điển: commit vài lần,
+                  <code>reset --hard</code> lùi về 1 commit cũ (các commit sau "biến mất" — mồ côi), rồi dùng
+                  <code>git reflog</code> tìm lại hash và <code>git branch</code> cứu chúng trở lại.
                 </p>
 
                 <!-- Interactive Sandbox -->
                 <div class="code-tabs">
                   <div class="code-tabs__nav">
-                    <span class="code-tabs__title">🍒 Sân chơi tương tác: Cherry-pick Simulator</span>
+                    <span class="code-tabs__title">🧯 Sân chơi tương tác: Undo &amp; Recovery Simulator</span>
                     <div class="code-tabs__btns">
                       <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
                       <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
@@ -420,28 +371,25 @@ $ git cherry-pick --continue</code></pre>
                           <input
                             type="text"
                             id="graph-cmd-input"
-                            placeholder="git cherry-pick C2"
+                            placeholder="git reset --hard C1"
                             autocomplete="off"
                             spellcheck="false"
                           />
                           <button class="graph-btn graph-btn--primary" id="graph-run-btn">Chạy</button>
                         </div>
                         <ul class="graph-hint-list">
-                          <li><code>git branch/checkout &lt;tên&gt;</code></li>
                           <li><code>git commit -m "..."</code></li>
-                          <li><code>git cherry-pick &lt;id&gt;</code></li>
-                          <li><code>git log</code></li>
+                          <li><code>git reset --soft|--mixed|--hard &lt;ref&gt;</code></li>
+                          <li><code>git revert &lt;ref&gt;</code></li>
+                          <li><code>git reflog</code></li>
+                          <li><code>git stash</code> / <code>git stash pop</code></li>
+                          <li><code>git branch &lt;tên&gt; &lt;ref&gt;</code></li>
                         </ul>
                         <div>
-                          <label for="graph-file-input">Nội dung file app.js (áp dụng khi commit)</label>
-                          <input
-                            type="text"
-                            id="graph-file-input"
-                            class="graph-file-input"
-                            value="version = 1 + featureX"
-                          />
+                          <label for="graph-file-input">Nội dung file app.js (Working Directory)</label>
+                          <input type="text" id="graph-file-input" class="graph-file-input" value="version = 1" />
                         </div>
-                        <button class="graph-btn" id="graph-reset-btn">Reset</button>
+                        <button class="graph-btn" id="graph-reset-btn">Reset demo</button>
                         <div>
                           <h3>Nhật ký</h3>
                           <div class="graph-log" id="graph-log"></div>
@@ -452,15 +400,6 @@ $ git cherry-pick --continue</code></pre>
                       <div class="graph-viewport-container">
                         <canvas id="graph-canvas" class="graph-canvas" width="600" height="300"></canvas>
                         <div class="graph-status-line" id="graph-status-line"></div>
-                        <div class="conflict-panel" id="graph-conflict-panel">
-                          <h4>⚠️ XUNG ĐỘT KHI CHERRY-PICK — sửa nội dung bên dưới rồi bấm "Hoàn tất"</h4>
-                          <textarea id="graph-conflict-textarea"></textarea>
-                          <div class="graph-btn-row" style="margin-top: 8px">
-                            <button class="graph-btn graph-btn--primary" id="graph-resolve-btn">
-                              Hoàn tất Cherry-pick
-                            </button>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -468,7 +407,7 @@ $ git cherry-pick --continue</code></pre>
                   <div class="code-tabs__panel" data-panel="js">
                     <div class="code-window">
                       <div class="code-header">
-                        <span class="code-filename">git-cherry-pick-live.js</span>
+                        <span class="code-filename">git-undo-live.js</span>
                         <button class="code-copy" onclick="copyCode(this)">Copy</button>
                       </div>
                       <pre><code class="language-js" id="js-code-display"></code></pre>
@@ -480,8 +419,8 @@ $ git cherry-pick --continue</code></pre>
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Sau khi <code>git cherry-pick C2</code> thành công, commit C2 gốc trên nhánh
-                    <code>hotfix</code> có bị thay đổi hay xoá không?
+                    Câu 1: Bạn <code>git reset --hard HEAD~1</code> trong khi đang sửa dở 1 file (chưa
+                    <code>git add</code>, chưa commit). Chuyện gì xảy ra với phần đang sửa dở đó?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -491,11 +430,12 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Cherry-pick không hề đụng tới commit gốc — nó chỉ ĐỌC diff của C2 rồi tạo ra 1 commit MỚI áp diff đó lên nhánh hiện tại. C2 trên hotfix vẫn y nguyên, không bị xoá hay sửa.'
+                          'Chính xác! reset --hard ghi đè Working Directory về đúng nội dung tại commit đích. Vì thay đổi dở dang CHƯA BAO GIỜ được commit (chưa từng là 1 Git object), nó không tồn tại ở đâu khác để reflog cứu lại — mất vĩnh viễn.'
                         )
                       "
                     >
-                      A. Không — C2 vẫn y nguyên trên hotfix, cherry-pick chỉ tạo thêm 1 commit mới ở nhánh đích.
+                      A. Mất vĩnh viễn — vì chưa từng được commit nên không tồn tại dưới dạng object nào để cứu lại bằng
+                      reflog.
                     </button>
                     <button
                       class="quiz-option"
@@ -503,11 +443,11 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Git object bất biến — cherry-pick không bao giờ sửa đổi hay xoá commit gốc.'
+                          'Sai. reflog chỉ ghi lại lịch sử di chuyển HEAD giữa các COMMIT đã tồn tại — nó không có cách nào lưu trạng thái Working Directory chưa commit.'
                         )
                       "
                     >
-                      B. Có — C2 bị di chuyển sang nhánh main, không còn trên hotfix nữa.
+                      B. Vẫn cứu được bằng <code>git reflog</code>, giống mọi commit khác.
                     </button>
                     <button
                       class="quiz-option"
@@ -515,11 +455,11 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Cherry-pick không xoá commit gốc — commit mới được tạo THÊM vào, không thay thế commit cũ ở nhánh nguồn.'
+                          'Sai. Git không tự động stash trước khi reset --hard — đây chính là lý do lệnh này nguy hiểm nếu dùng không cẩn thận.'
                         )
                       "
                     >
-                      C. Có — C2 bị xoá hoàn toàn khỏi lịch sử sau khi cherry-pick.
+                      C. Git tự động stash lại trước khi reset, không mất gì cả.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -528,8 +468,8 @@ $ git cherry-pick --continue</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Vì sao commit tạo ra bởi cherry-pick có hash khác hoàn toàn với commit gốc, dù nội dung thay
-                    đổi giống hệt nhau?
+                    Câu 2: Điều gì khiến <code>git revert</code> an toàn hơn <code>git reset --hard</code> khi cần undo
+                    trên 1 nhánh đã push lên remote?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -539,12 +479,12 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Hash commit được tính từ nhiều thành phần, bao gồm commit CHA. Commit mới do cherry-pick tạo ra có cha khác (đỉnh nhánh đích) so với commit gốc (cha trên nhánh nguồn) — dù nội dung tree giống hệt, chuỗi dữ liệu được băm khác đi vì phần parent khác, nên hash cũng khác hoàn toàn.'
+                          'Chính xác! revert THÊM 1 commit mới đảo ngược thay đổi, giữ nguyên toàn bộ lịch sử cũ — không hash nào đổi, không commit nào mồ côi. reset --hard di chuyển branch pointer, có thể làm mồ côi các commit phía sau và gây phân kỳ lịch sử với bất kỳ ai đã pull bản cũ (đúng Golden Rule ở Bài 5).'
                         )
                       "
                     >
-                      A. Vì commit mới có cha (parent) khác với commit gốc — hash được tính từ cả thông tin commit cha,
-                      nên khác cha thì khác hash dù nội dung tree giống hệt.
+                      A. Revert tạo 1 commit mới đảo ngược thay đổi mà không xoá/viết lại lịch sử cũ, trong khi reset
+                      --hard di chuyển con trỏ branch và có thể làm phân kỳ lịch sử với người đã pull bản cũ.
                     </button>
                     <button
                       class="quiz-option"
@@ -552,11 +492,11 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Git luôn dùng cùng 1 thuật toán băm (SHA) cho mọi commit — không có phiên bản băm riêng cho cherry-pick.'
+                          'Sai. Cả 2 lệnh đều chạy hoàn toàn cục bộ (local) — không lệnh nào tự động kết nối remote để kiểm tra quyền.'
                         )
                       "
                     >
-                      B. Vì Git cố tình dùng thuật toán băm khác cho commit được cherry-pick.
+                      B. Revert tự động kiểm tra quyền truy cập remote trước khi thực thi.
                     </button>
                     <button
                       class="quiz-option"
@@ -564,11 +504,11 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Timestamp có ảnh hưởng tới hash, nhưng đây không phải lý do CHÍNH được nhấn mạnh trong bài — điểm mấu chốt là commit cha khác nhau, một hệ quả trực tiếp và luôn đúng của việc gắn vào nhánh khác.'
+                          'Sai. Không lệnh nào trong 2 lệnh này liên quan gì tới việc mã hoá dữ liệu — đây không phải khác biệt thực sự giữa chúng.'
                         )
                       "
                     >
-                      C. Vì hash được random hoàn toàn mỗi lần tạo commit, không liên quan tới nội dung.
+                      C. Revert mã hoá commit trước khi gửi lên remote, còn reset thì không.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -576,7 +516,9 @@ $ git cherry-pick --continue</code></pre>
 
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
-                  <p class="quiz-question">Câu 3: Khi nào cherry-pick 1 commit KHÔNG gây xung đột (áp dụng êm)?</p>
+                  <p class="quiz-question">
+                    Câu 3: Vì sao <code>git reflog</code> không đồng bộ khi bạn push/pull với đồng nghiệp?
+                  </p>
                   <div class="quiz-options">
                     <button
                       class="quiz-option"
@@ -585,12 +527,12 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Nếu HEAD hiện tại có nội dung GIỐNG HỆT commit cha của commit được pick (nghĩa là phần liên quan chưa bị ai thay đổi thêm kể từ đó), diff của commit được pick áp thẳng vào mà không có gì mâu thuẫn — Git chỉ đơn giản phát lại thay đổi đó lên trên.'
+                          'Chính xác! Reflog không phải 1 ref/object mà Git đồng bộ qua network — nó chỉ là 1 file log nội bộ (.git/logs/HEAD) theo dõi lịch sử di chuyển HEAD TRÊN CHÍNH MÁY BẠN. Đây là lý do nó cứu được lỗi cục bộ nhưng không giúp gì cho commit chỉ tồn tại trên máy người khác.'
                         )
                       "
                     >
-                      A. Khi nội dung hiện tại của HEAD giống hệt nội dung của commit CHA của commit được pick (chưa ai
-                      thay đổi phần đó thêm).
+                      A. Vì reflog chỉ là 1 nhật ký nội bộ theo dõi lịch sử HEAD trên máy cục bộ, không phải ref/object
+                      mà Git đồng bộ qua push/pull.
                     </button>
                     <button
                       class="quiz-option"
@@ -598,11 +540,11 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Cherry-pick hoàn toàn có thể xung đột — không có sự khác biệt kỹ thuật giữa cherry-pick trong ngày và cherry-pick sau nhiều ngày, chỉ khác là càng để lâu càng dễ phân kỳ nhiều hơn.'
+                          'Sai. Kích thước file không phải lý do — reflog không đồng bộ vì bản chất nó KHÔNG PHẢI 1 ref được thiết kế để chia sẻ, dù dung lượng lớn hay nhỏ.'
                         )
                       "
                     >
-                      B. Cherry-pick không bao giờ xung đột nếu thực hiện trong cùng ngày commit được tạo.
+                      B. Vì reflog quá lớn để truyền qua mạng.
                     </button>
                     <button
                       class="quiz-option"
@@ -610,11 +552,11 @@ $ git cherry-pick --continue</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Không có giới hạn số dòng thay đổi để tránh xung đột — xung đột phụ thuộc vào việc 2 bên có sửa CÙNG PHẦN nội dung theo cách khác nhau hay không, không phụ thuộc kích thước thay đổi.'
+                          'Sai. Không có cấu hình nào bật đồng bộ reflog — đây là giới hạn THIẾT KẾ cố định, không phải tuỳ chọn có thể bật/tắt.'
                         )
                       "
                     >
-                      C. Khi commit được pick chỉ thay đổi ít hơn 5 dòng code.
+                      C. Vì cần bật 1 cấu hình đặc biệt (<code>git config reflog.sync true</code>) mà mặc định tắt.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -625,24 +567,29 @@ $ git cherry-pick --continue</code></pre>
                 <h3>📖 Tài liệu tham khảo / References</h3>
                 <ul>
                   <li>
-                    <a href="https://git-scm.com/docs/git-cherry-pick" target="_blank" rel="noopener noreferrer"
-                      >git-scm.com — git-cherry-pick Documentation</a
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Reset Demystified</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-revert" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-revert Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-reflog" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-reflog Documentation</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://git-scm.com/book/en/v2/Git-Tools-Rewriting-History"
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Stashing-and-Cleaning"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >Pro Git Book — Rewriting History</a
-                    >
-                  </li>
-                  <li>
-                    <a
-                      href="https://www.atlassian.com/git/tutorials/cherry-pick"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >Atlassian Git Tutorial — Cherry Pick</a
+                      >Pro Git Book — Stashing and Cleaning</a
                     >
                   </li>
                 </ul>
@@ -652,16 +599,13 @@ $ git cherry-pick --continue</code></pre>
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="git-undo-recovery" class="article-related__link article-related__link--next">
-                    Bài 7: Undo &amp; Phục Hồi
-                  </a>
-                  <a href="git-rebase-history" class="article-related__link article-related__link--prev">
-                    Bài 5: Rebase &amp; Viết Lại Lịch Sử
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 8: Git Bisect — Tìm Commit Lỗi (sắp ra mắt)
+                  </span>
+                  <a href="git-cherry-pick" class="article-related__link article-related__link--prev">
+                    Bài 6: Cherry-pick — Chọn Lọc Commit
                   </a>
                   <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
-                  <a href="git-merge-conflict" class="article-related__link">
-                    Bài 4: Merge &amp; Conflict (three-way merge nền tảng)
-                  </a>
                 </div>
               </div>
 
@@ -794,6 +738,6 @@ $ git cherry-pick --continue</code></pre>
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
-    <script src="git-cherry-pick.js" defer></script>
+    <script src="git-undo-recovery.js" defer></script>
   </body>
 </html>
