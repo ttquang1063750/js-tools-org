@@ -44,6 +44,13 @@ These hold for every series. Don't quietly break them.
 - **Math = KaTeX local.** Render formulas with a local copy of KaTeX
   (`$…$` inline, `$$…$$` block, auto-render on `DOMContentLoaded`). No CDN, no
   MathJax. Only load it on pages that actually have formulas.
+- **Code demos = `.code-tabs`.** Every interactive demo is wrapped in tabs
+  (Xem trước/Preview | primary language | JavaScript), Prism-highlighted per
+  tab — the pattern introduced with WebGPU/CSS. Don't reach for the older
+  single `⟨⟩ Xem Code` button for new series.
+- **No raw markdown left in HTML.** `**bold**` and `` `code` `` must always be
+  converted to `<strong>`/`<code>` before shipping — this has slipped through
+  more than once, grep for stray `**`/`` ` `` before calling a lesson done.
 - **Comments = giscus only.** Never Facebook / `fb-comments`. Copy the giscus
   block from `blog/c/c-data-structures.html`.
 - **Internal links have no `.html` suffix** (Cloudflare rewrites). External
@@ -167,8 +174,10 @@ Produce the build/handoff checklist from **`references/page-anatomy.md`** (read
 it when you reach this step). It covers the exact anatomy of a lesson page and a
 hub page, the co-located code files, the shared infra (Prism languages, tag
 colors, callout/glossary/references components, KaTeX, giscus), and the global
-integration every new series needs: a card in `blog/index.html`, `<url>` entries
-in `sitemap.xml`, entries in `blog/search-index.json`, and updates to
+integration every new series needs: a card in `blog/index.html`, **a matching
+`a.learn-card` in the repo-root `index.html`** (a separate file from
+`blog/index.html` — missed twice before, always double-check both), `<url>`
+entries in `sitemap.xml`, entries in `blog/search-index.json`, and updates to
 `README.md` / `AGENTS.md`.
 
 ## Output

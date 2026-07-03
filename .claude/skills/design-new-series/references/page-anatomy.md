@@ -42,8 +42,14 @@ Each `blog/<slug>/<slug>-<topic>.html`:
 - `.article-body`: paired `div[data-lang-content="en"]` / `="vi"` holding the H2
   sections. Code in `.code-window` (`.code-header`, `.code-filename`,
   `.code-dots`, copy button, Prism `language-*`).
-- Interactive demo: iframe to the visualizer (or inline `<canvas>` + script) with
-  the `⟨⟩ Xem Code` toggle that lazy-fetches and highlights the source file.
+- Interactive demo: wrapped in a `.code-tabs` component — tabs **Xem trước
+  (Preview) | <primary language: WGSL/CSS/SQL/…> | JavaScript**, each panel
+  Prism-highlighted with the right `language-*`. This is the current standard
+  (introduced with WebGPU/CSS series) — do **not** fall back to the older
+  single `⟨⟩ Xem Code` lazy-fetch button for new series.
+- Scan the finished body for literal, unconverted markdown before shipping:
+  `**bold**` must become `<strong>`, `` `code` `` must become `<code>` — this
+  has slipped through review before, so grep for stray `**`/`` ` `` pairs.
 - `js-playground` where the lesson runs in pure JS.
 - Quiz via `ide.js`/`ide.css` (`.quiz-container/.quiz-title/.quiz-question/`
   `.quiz-options/.quiz-option/.quiz-feedback`).
@@ -67,16 +73,16 @@ Each `blog/<slug>/<slug>-<topic>.html`:
 ## Co-located code files
 
 One runnable file per lesson in the series folder (`.rs`, `.wgsl`, `.js`,
-`.sql`, `.html`, …) — powers both the `⟨⟩ Xem Code` button (lazy-fetched) and the
-download link.
+`.sql`, `.html`, …) — powers both the `.code-tabs` panels and the download
+link.
 
 ## Core visualizer file
 
-One standalone HTML demo in the series folder, embedded via iframe with a
-Xem-Code toggle. Respect constraints: feature-detect new APIs (`navigator.gpu`),
-honor autoplay policy (only create `AudioContext` after a user gesture), and for
-wasm-based demos (e.g. `sql.js`, Rust) **commit the prebuilt `.wasm`** — no
-runtime build.
+One standalone HTML demo in the series folder, embedded inside a `.code-tabs`
+component (see above), not a bare iframe with a Xem-Code toggle. Respect
+constraints: feature-detect new APIs (`navigator.gpu`), honor autoplay policy
+(only create `AudioContext` after a user gesture), and for wasm-based demos
+(e.g. `sql.js`, Rust) **commit the prebuilt `.wasm`** — no runtime build.
 
 ## Global integration (after each series)
 
@@ -84,6 +90,13 @@ runtime build.
       `.blog-card__tag--<slug>`, bilingual title/excerpt, `.blog-card__meta`, and
       "Start learning → / Bắt đầu học →". Place it with the other programming
       series.
+- [ ] **ROOT `index.html`** (repo-root file, **not** `blog/index.html` — easy
+      to conflate, has been missed twice already for the WebGPU and CSS
+      series) — add an `a.learn-card` to the "Programming Courses" section:
+      `.learn-card__tag`, `h3.learn-card__title`, `p.learn-card__desc` (these
+      use `data-i18n`, not `data-lang-content`). After this step, the count of
+      `.learn-card` in root `index.html` must equal the count of `.blog-card`
+      programming-series entries in `blog/index.html` — verify with `grep -c`.
 - [ ] **`sitemap.xml`** — one `<url>` per hub + lesson + visualizer. Hub
       `priority` 0.8, lessons 0.7, `changefreq` monthly, current `lastmod`.
 - [ ] **`blog/search-index.json`** — one object per lesson: `url` (no `.html`),
@@ -98,7 +111,10 @@ runtime build.
       errors.
 - [ ] EN/VI toggle shows every block; nothing missing on either side.
 - [ ] Responsive at <600px, hamburger <880px, desktop.
-- [ ] `⟨⟩ Xem Code` fetches & highlights; quiz grades; download links return 200.
+- [ ] `.code-tabs` render and highlight correctly on every tab; quiz grades;
+      download links return 200.
+- [ ] Grepping every new lesson for stray `**` or backtick pairs comes back
+      clean — no raw markdown left unconverted to `<strong>`/`<code>`.
 - [ ] Search on `blog/index.html` surfaces the new lessons.
 - [ ] giscus loads with no `facebook.net` request; KaTeX renders; sitemap clean.
 - [ ] Prettier clean.
