@@ -347,6 +347,17 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 - **Thứ tự đề xuất:** hạ tầng §1 (mỗi mục một lượt) → 1 series hoàn chỉnh mẫu (hub → visualizer → 1–2 bài) để chủ dự án duyệt văn phong → nhân các bài còn lại, **mỗi lượt 1 bài**, kèm tích hợp toàn cục (§5) cho bài đó.
 - Đối chiếu chất lượng từng bài với **Phần IV** trước khi tick "xong".
 
+## 🚫 Điều kiện chặn — BẮT BUỘC đúng trước khi coi 1 bài là "xong"
+
+Đây là các lỗi đã lặp lại nhiều lần ở series trước (WebGPU, CSS). Tự kiểm tra đủ 6 mục dưới đây cho **từng bài** trước khi báo hoàn thành, không đợi người dùng phát hiện lại:
+
+1. **Header/Footer đồng nhất.** Copy nguyên văn header (hamburger nav) và footer (full nav + AdSense slot) từ file mẫu chuẩn của series gần nhất đã hoàn thành (hiện tại: `webgl-shaders-glsl.html` hoặc bài WebGPU/CSS mới nhất). Không tự viết lại, không thiếu mục nav nào.
+2. **Liên kết giữa các trang đúng & đủ.** Hub → từng bài (đúng thứ tự, đúng slug không đuôi `.html`); mỗi bài có link bài trước/bài sau + về hub (`.article-related`, song ngữ); danh sách bài trên hub (`.lessons-list`) khớp 100% với các file thực tế đã tạo — không link tới bài chưa tồn tại, không sót bài đã tạo.
+3. **Công thức toán học phải highlight qua KaTeX.** Mọi công thức (`$…$` inline, `$$…$$` block) phải render qua `katex.min.js` + `auto-render.min.js` (local, không CDN). Test thực tế trên trình duyệt — không được để công thức hiện dạng text thô `$...$`.
+4. **Code demo bắt buộc có tab hiển thị code.** Dùng component `.code-tabs` (chuẩn từ WebGPU/CSS series): tối thiểu 3 tab **Xem trước (Preview) | <ngôn ngữ chính: WGSL/CSS/…> | JavaScript**, mỗi tab có Prism syntax highlight đúng `language-*`. KHÔNG dùng lại pattern cũ "chỉ 1 nút ⟨⟩ Xem Code" cho bài mới — đó là pattern lỗi thời trước WebGPU.
+5. **Không còn markdown thô chưa convert.** Quét toàn bộ nội dung bài (cả EN lẫn VI) để chắc chắn không còn `**text**` (phải là `<strong>text</strong>`) hay `` `code` `` (phải là `<code>code</code>`) hiển thị dưới dạng ký tự thô. Dùng `grep -n '\*\*\|`' <file>` để tự rà trước khi commit.
+6. **Thêm vào ROOT `index.html` (không phải `blog/index.html`).** Sau khi 1 series có bài đầu tiên hoàn thành, thêm 1 `a.learn-card` vào section "Programming Courses" của **`index.html` ở thư mục gốc** (khác với `blog/index.html` — dễ nhầm lẫn, đã từng bị bỏ sót). Card gồm `.learn-card__tag`, `h3.learn-card__title`, `p.learn-card__desc` (dùng `data-i18n`, không phải `data-lang-content`). Đối chiếu số lượng `learn-card` ở root `index.html` phải luôn khớp số lượng `blog-card` series ở `blog/index.html`.
+
 ## 0. Quy ước slug thư mục & ID series
 
 | #   | Series                    | Thư mục          | File hub                           | Tag class CSS | Số bài |
@@ -396,7 +407,7 @@ Mỗi file `<series>-<topic>.html` phải có đủ:
 - [ ] **Header** hamburger nav + **Footer** full nav: copy nguyên văn từ file chuẩn (kèm `data-i18n` nav, AdSense slot).
 - [ ] **`.article-hero`**: back-link về hub (song ngữ), `h1.article-hero__title` (2 bản EN/VI), `.article-hero__meta` (ngày + "X phút đọc", song ngữ).
 - [ ] **`.article-body`**: 2 khối song song `div[data-lang-content="en"]` và `div[data-lang-content="vi"]` chứa toàn bộ nội dung CS chuyên sâu theo đề cương Phần I. Code block bọc Prism (`<pre><code class="language-…">`).
-- [ ] **Demo tương tác**: nhúng visualizer (iframe tới file demo, hoặc `<canvas>` + script inline) **kèm nút `⟨⟩ Xem Code`** hiển thị source dedent + highlight (lazy-fetch file external) — đúng pattern hiện có.
+- [ ] **Demo tương tác**: nhúng visualizer (`<canvas>`/`<svg>` + script inline, hoặc iframe tới file demo) **bọc trong component `.code-tabs`** với tab **Xem trước (Preview) | <ngôn ngữ chính> | JavaScript** — pattern chuẩn từ WebGPU/CSS series (KHÔNG dùng lại nút `⟨⟩ Xem Code` đơn lẻ kiểu series cũ). Xem chi tiết ở "🚫 Điều kiện chặn" #4.
 - [ ] **`js-playground`** (nếu hợp): textarea nhập code + ô log console output (chỉ với bài chạy được JS thuần).
 - [ ] **Quiz**: 2–3 câu trắc nghiệm dùng `ide.js`/`ide.css` (pattern "Trắc nghiệm N").
 - [ ] **Link tải code**: "Tải file code thực hành" trỏ tới file co-located.
@@ -423,6 +434,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 ## 5. Tích hợp toàn cục (sau khi xong mỗi series)
 
 - [ ] **`blog/index.html`**: thêm 1 `a.blog-card` trỏ tới `<series>/<series>-programming-series` với `span.blog-card__tag--<x>`, tiêu đề + excerpt song ngữ (`data-lang-content`), `.blog-card__meta`, "Start learning → / Bắt đầu học →". Đặt cùng nhóm các series lập trình.
+- [ ] **⚠️ ROOT `index.html`** (thư mục gốc, KHÁC `blog/index.html`): thêm 1 `a.learn-card` vào section "Programming Courses" — xem chi tiết & lý do ở mục "🚫 Điều kiện chặn" #6 phía trên. Bước này đã bị bỏ sót ở WebGPU/CSS series trước đây, luôn kiểm tra lại số lượng card khớp giữa 2 file.
 - [ ] **`sitemap.xml`**: thêm 1 block `<url>` cho hub + mỗi bài + mỗi visualizer. Mẫu:
   ```xml
   <url>
