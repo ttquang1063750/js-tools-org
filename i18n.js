@@ -218,6 +218,12 @@ const TRANSLATIONS = {
     'learn.webgl.desc': 'Shaders, the GPU pipeline, lighting and 3D math — real graphics programming in the browser.',
     'learn.bash.title': 'Bash & Shell',
     'learn.bash.desc': 'Scripting, text processing, automation and defensive shell techniques for real-world work.',
+    'learn.css.title': 'CSS & Animation',
+    'learn.css.desc': 'Modern layouts, flexbox, grid, animations, transitions and responsive design mastery.',
+    'learn.webgpu.title': 'WebGPU & 3D Graphics',
+    'learn.webgpu.desc': 'Modern GPU compute shaders, WGSL, real-time 3D rendering and interactive graphics.',
+    'learn.algo.title': 'Data Structures & Algorithms',
+    'learn.algo.desc': 'AVL/Red-Black trees, pathfinding, dynamic programming and hashing — visualized step by step.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -439,6 +445,12 @@ const TRANSLATIONS = {
     'learn.webgl.desc': 'Shader, pipeline GPU, ánh sáng và toán 3D — lập trình đồ họa thật trong trình duyệt.',
     'learn.bash.title': 'Bash & Shell',
     'learn.bash.desc': 'Scripting, xử lý văn bản, tự động hóa và kỹ thuật shell phòng thủ cho công việc thực tế.',
+    'learn.css.title': 'CSS & Animation',
+    'learn.css.desc': 'Bố cục hiện đại, flexbox, grid, animation, transition và làm chủ thiết kế responsive.',
+    'learn.webgpu.title': 'WebGPU & Đồ Họa 3D',
+    'learn.webgpu.desc': 'Compute shader GPU hiện đại, WGSL, dựng hình 3D thời gian thực và đồ họa tương tác.',
+    'learn.algo.title': 'Cấu Trúc Dữ Liệu & Giải Thuật',
+    'learn.algo.desc': 'Cây AVL/Red-Black, tìm đường, quy hoạch động và băm — trực quan hoá từng bước.',
   },
 };
 
