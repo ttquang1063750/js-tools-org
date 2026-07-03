@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 5: Rebase &amp; Viết Lại Lịch Sử — js-tools</title>
+    <title>Bài 6: Cherry-pick — Chọn Lọc Commit Cụ Thể — js-tools</title>
     <meta
       name="description"
-      content="Rebase không di chuyển commit cũ — nó tạo commit HOÀN TOÀN MỚI áp cùng thay đổi lên nền khác, khiến lịch sử thẳng hàng thay vì phân nhánh. Tìm hiểu rebase --onto, interactive rebase (pick/squash/drop), và Golden Rule không rebase nhánh công khai."
+      content="Tìm hiểu git cherry-pick: nhặt 1 commit cụ thể từ nhánh khác mà không merge cả nhánh, cơ chế tạo commit mới cùng diff nhưng khác hash, xử lý xung đột khi pick, và so sánh với rebase/merge."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/git/git-rebase-history" />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-cherry-pick" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="../ide.css" />
     <script defer src="../prism.js"></script>
     <style>
-      /* Git Graph Simulator (Rebase) Sandbox styles */
+      /* Git Graph Simulator (Cherry-pick) Sandbox styles */
       .graph-sandbox {
         background: #181825;
         border: 1px solid var(--border);
@@ -146,57 +146,34 @@
         font-size: 12px;
         color: #cdd6f4;
       }
-      .rebase-plan-panel {
+      .conflict-panel {
         display: none;
         width: 90%;
         background: #1e1e2e;
-        border: 1px solid #f9e2af;
+        border: 1px solid #f38ba8;
         border-radius: 8px;
         padding: 12px;
       }
-      .rebase-plan-panel.is-visible {
+      .conflict-panel.is-visible {
         display: block;
       }
-      .rebase-plan-panel h4 {
+      .conflict-panel h4 {
         margin: 0 0 8px 0;
-        color: #f9e2af;
+        color: #f38ba8;
         font-size: 12px;
       }
-      .rebase-plan-row {
-        display: flex;
-        align-items: center;
-        gap: 6px;
+      .conflict-panel textarea {
+        width: 100%;
+        min-height: 90px;
+        box-sizing: border-box;
         background: #0f0f1b;
         border: 1px solid var(--border);
         border-radius: 6px;
-        padding: 6px 8px;
-        margin-bottom: 6px;
+        color: #f9e2af;
         font-family: monospace;
-        font-size: 11px;
-        color: #cdd6f4;
-      }
-      .rebase-plan-row select {
-        background: #1e1e2e;
-        color: #cdd6f4;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        font-size: 11px;
-        padding: 2px 4px;
-      }
-      .rebase-plan-row .rebase-plan-msg {
-        flex: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .rebase-plan-row button {
-        background: #1e1e2e;
-        color: #cdd6f4;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        font-size: 11px;
-        cursor: pointer;
-        padding: 2px 6px;
+        font-size: 12px;
+        padding: 8px;
+        resize: vertical;
       }
       @media (max-width: 880px) {
         .graph-sandbox {
@@ -286,8 +263,8 @@
         <div class="container">
           <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
           <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
-          <h1 class="article-hero__title">Bài 5: Rebase &amp; Viết Lại Lịch Sử</h1>
-          <div class="article-hero__meta">3 tháng 7, 2026 · 15 phút đọc</div>
+          <h1 class="article-hero__title">Bài 6: Cherry-pick — Chọn Lọc Commit Cụ Thể</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 13 phút đọc</div>
         </div>
       </section>
 
@@ -297,140 +274,137 @@
             <div class="article-body">
               <div>
                 <p>
-                  Ở <a href="git-merge-conflict">Bài 4</a>, merge tạo ra một commit hợp nhất với 2 cha, giữ lại hình
-                  thoi phân nhánh trong lịch sử. <code>git rebase</code> đi theo hướng hoàn toàn khác: nó
-                  <strong>viết lại lịch sử</strong> để trông như mọi commit luôn nằm trên 1 đường thẳng — nhưng cái giá
-                  phải trả là những commit "cũ" không còn tồn tại theo đúng nghĩa nữa.
+                  Ở <a href="git-rebase-history">Bài 5</a>, rebase phát lại <strong>toàn bộ</strong> chuỗi commit riêng
+                  của 1 nhánh lên nền mới. Nhưng đôi khi bạn chỉ cần đúng <strong>1 commit cụ thể</strong> từ nhánh khác
+                  — không phải cả nhánh. Đó là lúc <code>git cherry-pick</code> phát huy tác dụng.
                 </p>
 
-                <h2>1. Rebase vs Merge: Viết Lại Lịch Sử Thay Vì Hợp Nhất</h2>
+                <h2>1. Bài toán: Chỉ Muốn 1 Commit, Không Phải Cả Nhánh</h2>
                 <p>
-                  Merge giữ nguyên lịch sử cũ của cả 2 nhánh và thêm 1 commit hợp nhất ở cuối. Rebase làm ngược lại: nó
-                  lấy các commit riêng của nhánh bạn đang đứng, rồi
-                  <strong>phát lại (replay)</strong> từng commit đó — theo đúng thứ tự — lên trên đỉnh mới nhất của
-                  nhánh khác. Kết quả cuối cùng có cùng nội dung, nhưng đồ thị commit trông thẳng hàng, không còn hình
-                  thoi phân nhánh.
+                  Tình huống kinh điển: một lập trình viên vô tình commit bản sửa lỗi bảo mật khẩn cấp lên nhánh
+                  <code>feature</code> đang phát triển dở (chưa sẵn sàng release). Bạn cần bản vá đó trên
+                  <code>main</code> <strong>ngay lập tức</strong>, nhưng merge cả <code>feature</code> vào
+                  <code>main</code> sẽ kéo theo toàn bộ code dở dang chưa hoàn thiện.
+                  <code>git cherry-pick &lt;hash&gt;</code> cho phép "nhặt" đúng commit sửa lỗi đó sang
+                  <code>main</code>, bỏ qua mọi commit khác trên <code>feature</code>.
                 </p>
 
-                <h2>2. Cơ Chế: Replay Từng Commit, Không Di Chuyển Commit Cũ</h2>
+                <h2>2. Cơ Chế: Tạo Commit Mới Cùng Diff, Khác Hash</h2>
                 <p>
-                  Đây là điểm hay bị hiểu lầm nhất: <code>git rebase</code> <strong>không hề "di chuyển"</strong> các
-                  commit cũ. Nhớ lại từ <a href="git-object-model">Bài 1</a>, mọi object trong Git đều bất biến. Rebase
-                  tính toán <strong>diff</strong> mà mỗi commit cũ giới thiệu, rồi tạo ra một
-                  <strong>commit hoàn toàn mới</strong> áp đúng diff đó lên nền mới — commit mới có cha khác, nên
-                  <strong>hash cũng khác</strong>. Các commit gốc vẫn còn nguyên trong <code>.git/objects</code>, nhưng
-                  branch giờ trỏ sang chuỗi mới — commit cũ trở thành <strong>mồ côi</strong>, giống hệt cơ chế đã thấy
-                  ở <a href="git-branch-head">Bài 3</a>.
+                  Giống hệt nguyên lý rebase đã thấy ở Bài 5: cherry-pick <strong>không di chuyển</strong> commit gốc.
+                  Nó tính <strong>diff</strong> mà commit đó giới thiệu (so với commit cha của nó), rồi áp diff đó lên
+                  đỉnh nhánh hiện tại — tạo ra 1 <strong>commit hoàn toàn mới</strong> với cha khác, nên hash cũng khác.
+                  Commit gốc trên nhánh nguồn vẫn còn nguyên, không bị ảnh hưởng gì.
                 </p>
 
-                <div class="callout callout--deep">
-                  <div class="callout__title">🔬 Đào sâu: Vì sao rebase "trông giống" nhưng lại là commit khác?</div>
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Lưu ý: Message thường ghi rõ nguồn gốc</div>
                   <div class="callout__content">
-                    Hash commit được tính từ (trong số nhiều thứ khác) hash của <strong>commit cha</strong> (xem lại
-                    công thức băm ở <a href="git-object-model">Bài 1</a>). Khi rebase đặt 1 commit lên trên 1 cha khác,
-                    dù nội dung tree/message giữ nguyên y hệt, chuỗi văn bản được băm để tạo commit đã đổi (vì có dòng
-                    <code>parent &lt;hash-khác&gt;</code>) — buộc ra 1 hash hoàn toàn mới. Đây không phải lỗi hay giới
-                    hạn, mà là hệ quả tất yếu của content-addressable storage.
+                    Theo mặc định, Git thêm dòng <code>(cherry picked from commit &lt;hash&gt;)</code> vào cuối message
+                    của commit mới — giúp bất kỳ ai đọc log sau này biết thay đổi này vốn đến từ đâu, dù commit gốc và
+                    bản sao chép có hash hoàn toàn khác nhau.
                   </div>
                 </div>
 
-                <h2>3. <code>git rebase --onto</code>: Chuyển Cả Đoạn Lịch Sử Sang Gốc Khác</h2>
+                <h2>3. Xử Lý Xung Đột Khi Cherry-pick</h2>
                 <p>
-                  Đôi khi bạn không muốn rebase lên đỉnh MỚI NHẤT của 1 nhánh, mà muốn di chuyển một
-                  <strong>đoạn</strong> commit cụ thể sang hẳn 1 gốc khác — ví dụ nhánh <code>topic</code> đang dựa trên
-                  <code>feature</code> (đã bị huỷ), bạn muốn chuyển thẳng các commit riêng của <code>topic</code> sang
-                  <code>main</code>:
+                  Cherry-pick vẫn có thể <strong>xung đột</strong> — nếu nhánh hiện tại đã thay đổi cùng phần nội dung
+                  theo cách khác kể từ điểm phân kỳ, Git không biết chọn phiên bản nào. Về bản chất, cơ chế giải xung
+                  đột giống hệt three-way merge đã học ở <a href="git-merge-conflict">Bài 4</a> — chỉ khác
+                  <strong>base</strong> lúc này là commit cha của commit được pick, còn <strong>theirs</strong> chính là
+                  commit đó:
                 </p>
                 <div class="code-window">
                   <div class="code-header">
                     <span class="code-filename">terminal</span>
                     <button class="code-copy" onclick="copyCode(this)">Copy</button>
                   </div>
-                  <pre><code class="language-bash"># Lấy các commit CHỈ CÓ trên topic (không có trên feature),
-# replay chúng lên trên main thay vì lên trên feature
-$ git rebase --onto main feature topic</code></pre>
+                  <pre><code class="language-bash">$ git cherry-pick a1b2c3d
+# Nếu xung đột:
+Auto-merging app.js
+CONFLICT (content): Merge conflict in app.js
+
+# Sửa file thủ công, rồi:
+$ git add app.js
+$ git cherry-pick --continue</code></pre>
                 </div>
 
-                <h2>4. Interactive Rebase: Sửa Lại Lịch Sử Trước Khi Chia Sẻ</h2>
-                <p>
-                  <code>git rebase -i &lt;base&gt;</code> mở ra 1 "kế hoạch" liệt kê từng commit sắp được replay, cho
-                  phép bạn quyết định số phận từng commit trước khi thực thi:
-                </p>
-                <ul>
-                  <li><strong>pick</strong> — giữ nguyên, replay bình thường.</li>
-                  <li>
-                    <strong>squash</strong> — gộp commit này vào commit <strong>ngay phía trước</strong> trong kế hoạch,
-                    kết hợp thành 1 commit duy nhất.
-                  </li>
-                  <li><strong>drop</strong> — bỏ hẳn commit này, coi như chưa từng tồn tại.</li>
-                </ul>
-                <p>
-                  Interactive rebase cực hữu ích để "dọn dẹp" một chuỗi commit lộn xộn (kiểu
-                  <em>"fix typo", "fix typo again", "oops"</em>) thành vài commit có ý nghĩa trước khi mở Pull Request.
-                </p>
-
-                <h2>5. Golden Rule: Không Bao Giờ Rebase Nhánh Công Khai</h2>
-                <p>
-                  Vì rebase tạo hash mới cho <strong>mọi</strong> commit bị viết lại, nếu ai đó đã
-                  <code>git pull</code> nhánh của bạn về máy họ TRƯỚC khi bạn rebase, lịch sử của họ giờ chứa các commit
-                  cũ (đã mồ côi với bạn) trong khi bạn có bản mới — 2 lịch sử phân kỳ dù nội dung logic giống hệt nhau.
-                  Việc đồng bộ lại đòi hỏi force-push và có thể gây mất commit của người khác nếu không cẩn thận (xem
-                  thêm ở <a href="git-remote-collaboration">Bài 9</a>).
-                </p>
-
                 <div class="callout callout--pitfall">
-                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Rebase xong rồi mới nhớ ra đã push</div>
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Cherry-pick lặp lại gây trùng lặp lịch sử</div>
                   <div class="callout__content">
-                    Quy tắc thực dụng: <strong>chỉ rebase các commit CHƯA từng push lên remote dùng chung</strong>
-                    (hoặc nhánh cá nhân không ai khác pull). Nếu lỡ rebase một nhánh đã có người khác kéo về, cách an
-                    toàn nhất là trao đổi trực tiếp với họ trước khi force-push — đừng âm thầm ghi đè lịch sử chung.
+                    Nếu bạn cherry-pick 1 commit từ <code>feature</code> sang <code>main</code>, rồi sau này vẫn merge
+                    <code>feature</code> vào <code>main</code>, thay đổi đó tồn tại <strong>2 lần</strong> trong lịch sử
+                    dưới 2 hash khác nhau (dù nội dung cây thường giống hệt nên Git thường tự merge êm, không báo
+                    conflict). Kết quả: <code>git log</code> hiện 2 commit riêng biệt mang cùng nội dung — gây khó hiểu
+                    khi tra cứu lịch sử về sau. Cân nhắc kỹ trước khi cherry-pick từ 1 nhánh vẫn còn dự định merge đầy
+                    đủ sau này.
                   </div>
                 </div>
 
-                <h2>6. So Sánh Merge vs Rebase</h2>
+                <h2>4. So Sánh Cherry-pick, Rebase, và Merge</h2>
                 <table class="comparison-table">
                   <thead>
                     <tr>
                       <th>Tiêu chí</th>
-                      <th>Merge</th>
+                      <th>Cherry-pick</th>
                       <th>Rebase</th>
+                      <th>Merge</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>Hình dạng lịch sử</td>
-                      <td>Phân nhánh (hình thoi)</td>
-                      <td>Thẳng hàng (linear)</td>
+                      <td>Số commit bị ảnh hưởng</td>
+                      <td>Đúng 1 commit chỉ định</td>
+                      <td>Toàn bộ commit riêng của nhánh</td>
+                      <td>Không tạo lại commit nào</td>
                     </tr>
                     <tr>
-                      <td>Commit cũ có thay đổi?</td>
-                      <td>Không — giữ nguyên</td>
-                      <td>Có — bị thay bằng commit mới, hash khác</td>
+                      <td>Commit mới tạo ra</td>
+                      <td>1 commit mới (hash mới)</td>
+                      <td>N commit mới (N = số commit replay)</td>
+                      <td>1 merge commit (2 cha)</td>
                     </tr>
                     <tr>
-                      <td>An toàn cho nhánh public?</td>
-                      <td>Luôn an toàn</td>
-                      <td>Chỉ an toàn cho nhánh CHƯA chia sẻ</td>
-                    </tr>
-                    <tr>
-                      <td>Commit hợp nhất?</td>
-                      <td>Có (2 cha)</td>
-                      <td>Không có commit hợp nhất nào</td>
+                      <td>Trường hợp dùng điển hình</td>
+                      <td>Backport 1 hotfix cụ thể sang nhánh khác</td>
+                      <td>Dọn lịch sử thẳng hàng trước khi chia sẻ</td>
+                      <td>Hợp nhất đầy đủ lịch sử 2 nhánh</td>
                     </tr>
                   </tbody>
                 </table>
 
-                <h2>Sân chơi tương tác: Rebase Simulator</h2>
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Cherry-pick chỉ là 1 trường hợp đặc biệt của Merge</div>
+                  <div class="callout__content">
+                    Về mặt thuật toán, cherry-pick dùng đúng <strong>three-way merge</strong> đã học ở Bài 4 — chỉ khác
+                    cách chọn 3 điểm so sánh: <strong>base</strong> = commit cha của commit được pick,
+                    <strong>ours</strong> = HEAD hiện tại, <strong>theirs</strong> = chính commit được pick. Vì vậy mọi
+                    quy tắc phát hiện xung đột ở Bài 4 áp dụng y hệt ở đây — Git không có 2 thuật toán merge khác nhau,
+                    chỉ có 2 cách khác nhau để <em>chọn đầu vào</em> cho cùng 1 thuật toán.
+                  </div>
+                </div>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">💡 Mẹo: Khi nào nên dùng cherry-pick?</div>
+                  <div class="callout__content">
+                    Cherry-pick lý tưởng cho: backport 1 bản vá bảo mật khẩn cấp sang nhiều nhánh release cùng lúc; cứu
+                    1 commit hữu ích từ 1 Pull Request đã bị đóng/từ chối mà không muốn merge toàn bộ; hoặc chuyển 1
+                    commit bị commit nhầm nhánh sang đúng nhánh nó thuộc về.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Cherry-pick Simulator</h2>
                 <p>
-                  Tiếp nối engine từ các bài trước, giờ hỗ trợ <code>git rebase</code>, <code>git rebase -i</code> (kế
-                  hoạch pick/squash/drop), và <code>git rebase --onto</code>. Tạo nhánh, commit vài lần, rồi thử rebase
-                  để xem commit cũ mồ côi và lịch sử thẳng hàng xuất hiện.
+                  Kịch bản mẫu đã dựng sẵn 2 nhánh phân kỳ với 1 commit "Fix security bug" trên nhánh
+                  <code>hotfix</code>. Thử <code>git cherry-pick C2</code> khi đang ở <code>main</code> để xem cách nhặt
+                  commit đó — và xử lý xung đột thực sự xảy ra vì <code>main</code> cũng đã thay đổi nội dung khác kể từ
+                  điểm phân kỳ.
                 </p>
 
                 <!-- Interactive Sandbox -->
                 <div class="code-tabs">
                   <div class="code-tabs__nav">
-                    <span class="code-tabs__title">📏 Sân chơi tương tác: Rebase Simulator</span>
+                    <span class="code-tabs__title">🍒 Sân chơi tương tác: Cherry-pick Simulator</span>
                     <div class="code-tabs__btns">
                       <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
                       <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
@@ -446,7 +420,7 @@ $ git rebase --onto main feature topic</code></pre>
                           <input
                             type="text"
                             id="graph-cmd-input"
-                            placeholder="git rebase main"
+                            placeholder="git cherry-pick C2"
                             autocomplete="off"
                             spellcheck="false"
                           />
@@ -455,14 +429,17 @@ $ git rebase --onto main feature topic</code></pre>
                         <ul class="graph-hint-list">
                           <li><code>git branch/checkout &lt;tên&gt;</code></li>
                           <li><code>git commit -m "..."</code></li>
-                          <li><code>git rebase &lt;tên&gt;</code></li>
-                          <li><code>git rebase -i &lt;tên&gt;</code></li>
-                          <li><code>git rebase --onto &lt;new&gt; &lt;old&gt;</code></li>
+                          <li><code>git cherry-pick &lt;id&gt;</code></li>
                           <li><code>git log</code></li>
                         </ul>
                         <div>
                           <label for="graph-file-input">Nội dung file app.js (áp dụng khi commit)</label>
-                          <input type="text" id="graph-file-input" class="graph-file-input" value="version = 1" />
+                          <input
+                            type="text"
+                            id="graph-file-input"
+                            class="graph-file-input"
+                            value="version = 1 + featureX"
+                          />
                         </div>
                         <button class="graph-btn" id="graph-reset-btn">Reset</button>
                         <div>
@@ -475,10 +452,14 @@ $ git rebase --onto main feature topic</code></pre>
                       <div class="graph-viewport-container">
                         <canvas id="graph-canvas" class="graph-canvas" width="600" height="300"></canvas>
                         <div class="graph-status-line" id="graph-status-line"></div>
-                        <div class="rebase-plan-panel" id="rebase-plan-panel">
-                          <h4>📋 Kế hoạch Interactive Rebase — chọn hành động rồi bấm "Thực thi"</h4>
-                          <div id="rebase-plan-rows"></div>
-                          <button class="graph-btn graph-btn--primary" id="rebase-execute-btn">Thực thi</button>
+                        <div class="conflict-panel" id="graph-conflict-panel">
+                          <h4>⚠️ XUNG ĐỘT KHI CHERRY-PICK — sửa nội dung bên dưới rồi bấm "Hoàn tất"</h4>
+                          <textarea id="graph-conflict-textarea"></textarea>
+                          <div class="graph-btn-row" style="margin-top: 8px">
+                            <button class="graph-btn graph-btn--primary" id="graph-resolve-btn">
+                              Hoàn tất Cherry-pick
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -487,7 +468,7 @@ $ git rebase --onto main feature topic</code></pre>
                   <div class="code-tabs__panel" data-panel="js">
                     <div class="code-window">
                       <div class="code-header">
-                        <span class="code-filename">git-rebase-live.js</span>
+                        <span class="code-filename">git-cherry-pick-live.js</span>
                         <button class="code-copy" onclick="copyCode(this)">Copy</button>
                       </div>
                       <pre><code class="language-js" id="js-code-display"></code></pre>
@@ -499,8 +480,8 @@ $ git rebase --onto main feature topic</code></pre>
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Sau khi rebase, các commit "cũ" của nhánh vẫn còn nguyên nội dung/thay đổi — vậy tại sao
-                    chúng lại trở thành mồ côi?
+                    Câu 1: Sau khi <code>git cherry-pick C2</code> thành công, commit C2 gốc trên nhánh
+                    <code>hotfix</code> có bị thay đổi hay xoá không?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -510,12 +491,11 @@ $ git rebase --onto main feature topic</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Rebase KHÔNG sửa đổi commit cũ (mọi object trong Git bất biến) — nó tạo ra CÔNG MỚI áp cùng diff lên 1 cha khác. Vì commit cha khác đi, hash mới khác hoàn toàn. Branch giờ trỏ tới chuỗi mới, còn commit cũ vẫn tồn tại trong .git/objects nhưng không branch nào trỏ tới — mồ côi.'
+                          'Chính xác! Cherry-pick không hề đụng tới commit gốc — nó chỉ ĐỌC diff của C2 rồi tạo ra 1 commit MỚI áp diff đó lên nhánh hiện tại. C2 trên hotfix vẫn y nguyên, không bị xoá hay sửa.'
                         )
                       "
                     >
-                      A. Vì rebase tạo commit HOÀN TOÀN MỚI (cha khác → hash khác) áp cùng thay đổi lên nền mới, rồi di
-                      chuyển branch sang chuỗi mới đó — commit cũ vẫn tồn tại nhưng không còn branch nào trỏ tới.
+                      A. Không — C2 vẫn y nguyên trên hotfix, cherry-pick chỉ tạo thêm 1 commit mới ở nhánh đích.
                     </button>
                     <button
                       class="quiz-option"
@@ -523,11 +503,11 @@ $ git rebase --onto main feature topic</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Git object là BẤT BIẾN — không object nào bị sửa đổi tại chỗ. Rebase luôn tạo object mới, không bao giờ sửa object cũ.'
+                          'Sai. Git object bất biến — cherry-pick không bao giờ sửa đổi hay xoá commit gốc.'
                         )
                       "
                     >
-                      B. Vì rebase xoá nội dung bên trong commit cũ nhưng giữ nguyên hash.
+                      B. Có — C2 bị di chuyển sang nhánh main, không còn trên hotfix nữa.
                     </button>
                     <button
                       class="quiz-option"
@@ -535,56 +515,11 @@ $ git rebase --onto main feature topic</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Đây không phải lỗi hay bug — đây là hệ quả TẤT YẾU và có chủ đích của cách content-addressable storage hoạt động, đã thiết kế đúng như vậy.'
+                          'Sai. Cherry-pick không xoá commit gốc — commit mới được tạo THÊM vào, không thay thế commit cũ ở nhánh nguồn.'
                         )
                       "
                     >
-                      C. Đây là 1 lỗi (bug) hiếm gặp trong cách Git cài đặt rebase.
-                    </button>
-                  </div>
-                  <div class="quiz-feedback hidden"></div>
-                </div>
-
-                <div class="quiz-container" style="margin-top: 20px">
-                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
-                  <p class="quiz-question">Câu 2: Trong interactive rebase, đánh dấu 1 commit là "squash" sẽ làm gì?</p>
-                  <div class="quiz-options">
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. Drop mới là hành động bỏ hẳn commit — squash có mục đích hoàn toàn khác: GỘP, không phải XOÁ.'
-                        )
-                      "
-                    >
-                      A. Xoá hẳn commit đó khỏi lịch sử, không giữ lại thay đổi nào.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      data-correct="true"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          true,
-                          'Chính xác! Squash gộp commit đó vào commit NGAY PHÍA TRƯỚC trong kế hoạch, tạo thành 1 commit duy nhất mang cả 2 thay đổi. Rất hữu ích để dọn dẹp chuỗi commit &quot;fix typo&quot;, &quot;fix typo again&quot; thành 1 commit gọn gàng trước khi chia sẻ.'
-                        )
-                      "
-                    >
-                      B. Gộp commit đó vào commit ngay phía trước trong kế hoạch, tạo thành 1 commit duy nhất.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. Squash không tạo branch mới — nó thao tác trên chính chuỗi commit đang được rebase, gộp chúng lại, không nhân bản.'
-                        )
-                      "
-                    >
-                      C. Tạo 1 branch mới chứa riêng commit đó.
+                      C. Có — C2 bị xoá hoàn toàn khỏi lịch sử sau khi cherry-pick.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -593,21 +528,10 @@ $ git rebase --onto main feature topic</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Vì sao "Golden Rule" khuyên không rebase 1 nhánh công khai đã có người khác pull về?
+                    Câu 2: Vì sao commit tạo ra bởi cherry-pick có hash khác hoàn toàn với commit gốc, dù nội dung thay
+                    đổi giống hệt nhau?
                   </p>
                   <div class="quiz-options">
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. Git không giới hạn tần suất rebase theo thời gian thực — vấn đề nằm ở việc CHIA SẺ lịch sử, không phải tốc độ thao tác.'
-                        )
-                      "
-                    >
-                      A. Vì rebase chạy rất chậm trên máy chủ (server), làm nghẽn mạng.
-                    </button>
                     <button
                       class="quiz-option"
                       data-correct="true"
@@ -615,12 +539,12 @@ $ git rebase --onto main feature topic</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Rebase tạo hash mới cho MỌI commit bị viết lại. Nếu ai đó đã pull các commit cũ về máy họ, lịch sử của họ giờ phân kỳ khỏi bản mới của bạn dù nội dung logic giống hệt — họ sẽ gặp conflict rối rắm hoặc cần force-pull, và có nguy cơ mất công việc riêng của họ nếu xử lý không cẩn thận.'
+                          'Chính xác! Hash commit được tính từ nhiều thành phần, bao gồm commit CHA. Commit mới do cherry-pick tạo ra có cha khác (đỉnh nhánh đích) so với commit gốc (cha trên nhánh nguồn) — dù nội dung tree giống hệt, chuỗi dữ liệu được băm khác đi vì phần parent khác, nên hash cũng khác hoàn toàn.'
                         )
                       "
                     >
-                      B. Vì rebase tạo hash mới cho mọi commit bị viết lại — nếu người khác đã pull bản cũ, lịch sử của
-                      họ sẽ phân kỳ khỏi bản mới, gây rối và có nguy cơ mất commit khi đồng bộ lại.
+                      A. Vì commit mới có cha (parent) khác với commit gốc — hash được tính từ cả thông tin commit cha,
+                      nên khác cha thì khác hash dù nội dung tree giống hệt.
                     </button>
                     <button
                       class="quiz-option"
@@ -628,11 +552,69 @@ $ git rebase --onto main feature topic</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Rebase áp dụng ĐƯỢC cho private branch cũng như public branch về mặt kỹ thuật — Golden Rule là quy tắc THỰC HÀNH AN TOÀN, không phải giới hạn kỹ thuật của Git.'
+                          'Sai. Git luôn dùng cùng 1 thuật toán băm (SHA) cho mọi commit — không có phiên bản băm riêng cho cherry-pick.'
                         )
                       "
                     >
-                      C. Vì Git kỹ thuật không cho phép rebase trên nhánh có nhiều hơn 1 người theo dõi.
+                      B. Vì Git cố tình dùng thuật toán băm khác cho commit được cherry-pick.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Timestamp có ảnh hưởng tới hash, nhưng đây không phải lý do CHÍNH được nhấn mạnh trong bài — điểm mấu chốt là commit cha khác nhau, một hệ quả trực tiếp và luôn đúng của việc gắn vào nhánh khác.'
+                        )
+                      "
+                    >
+                      C. Vì hash được random hoàn toàn mỗi lần tạo commit, không liên quan tới nội dung.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">Câu 3: Khi nào cherry-pick 1 commit KHÔNG gây xung đột (áp dụng êm)?</p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Nếu HEAD hiện tại có nội dung GIỐNG HỆT commit cha của commit được pick (nghĩa là phần liên quan chưa bị ai thay đổi thêm kể từ đó), diff của commit được pick áp thẳng vào mà không có gì mâu thuẫn — Git chỉ đơn giản phát lại thay đổi đó lên trên.'
+                        )
+                      "
+                    >
+                      A. Khi nội dung hiện tại của HEAD giống hệt nội dung của commit CHA của commit được pick (chưa ai
+                      thay đổi phần đó thêm).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cherry-pick hoàn toàn có thể xung đột — không có sự khác biệt kỹ thuật giữa cherry-pick trong ngày và cherry-pick sau nhiều ngày, chỉ khác là càng để lâu càng dễ phân kỳ nhiều hơn.'
+                        )
+                      "
+                    >
+                      B. Cherry-pick không bao giờ xung đột nếu thực hiện trong cùng ngày commit được tạo.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Không có giới hạn số dòng thay đổi để tránh xung đột — xung đột phụ thuộc vào việc 2 bên có sửa CÙNG PHẦN nội dung theo cách khác nhau hay không, không phụ thuộc kích thước thay đổi.'
+                        )
+                      "
+                    >
+                      C. Khi commit được pick chỉ thay đổi ít hơn 5 dòng code.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -643,24 +625,24 @@ $ git rebase --onto main feature topic</code></pre>
                 <h3>📖 Tài liệu tham khảo / References</h3>
                 <ul>
                   <li>
-                    <a
-                      href="https://git-scm.com/book/en/v2/Git-Branching-Rebasing"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >Pro Git Book — Rebasing</a
+                    <a href="https://git-scm.com/docs/git-cherry-pick" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-cherry-pick Documentation</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://git-scm.com/book/en/v2/Git-Branching-Rebasing#_rebase_peril"
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Rewriting-History"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >Pro Git Book — The Perils of Rebasing (Golden Rule)</a
+                      >Pro Git Book — Rewriting History</a
                     >
                   </li>
                   <li>
-                    <a href="https://git-scm.com/docs/git-rebase" target="_blank" rel="noopener noreferrer"
-                      >git-scm.com — git-rebase Documentation</a
+                    <a
+                      href="https://www.atlassian.com/git/tutorials/cherry-pick"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Atlassian Git Tutorial — Cherry Pick</a
                     >
                   </li>
                 </ul>
@@ -670,13 +652,16 @@ $ git rebase --onto main feature topic</code></pre>
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="git-cherry-pick" class="article-related__link article-related__link--next">
-                    Bài 6: Cherry-pick — Chọn Lọc Commit Cụ Thể
-                  </a>
-                  <a href="git-merge-conflict" class="article-related__link article-related__link--prev">
-                    Bài 4: Merge &amp; Conflict
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 7: Undo &amp; Phục Hồi (sắp ra mắt)
+                  </span>
+                  <a href="git-rebase-history" class="article-related__link article-related__link--prev">
+                    Bài 5: Rebase &amp; Viết Lại Lịch Sử
                   </a>
                   <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
+                  <a href="git-merge-conflict" class="article-related__link">
+                    Bài 4: Merge &amp; Conflict (three-way merge nền tảng)
+                  </a>
                 </div>
               </div>
 
@@ -809,6 +794,6 @@ $ git rebase --onto main feature topic</code></pre>
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
-    <script src="git-rebase-history.js" defer></script>
+    <script src="git-cherry-pick.js" defer></script>
   </body>
 </html>

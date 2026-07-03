@@ -16,24 +16,24 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | Series 5                         | Toy JS Engine (Trình thông dịch JS)   | 0/?            | TBD      | 0%          |
 | Series 7                         | SQL trong Trình duyệt (SQLite-WASM)   | 0/?            | TBD      | 0%          |
 | Series 8                         | Web Audio API (Âm thanh & Visualizer) | 0/?            | TBD      | 0%          |
-| 🚧 Series 9                      | Git (Mô hình & Visualizer)            | 5/13           | 13       | 38%         |
+| 🚧 Series 9                      | Git (Mô hình & Visualizer)            | 6/13           | 13       | 46%         |
 
 ### DSA Series Lessons
 
-| Bài | Tên                           | Status     | Link                                         |
-| --- | ----------------------------- | ---------- | -------------------------------------------- |
-| 1   | Xoay Cây AVL & Red-Black      | ✅ Done    | `/blog/algo/algo-avl-redblack-tree`          |
-| 2   | Pathfinding Dijkstra & A\*    | ✅ Done    | `/blog/algo/algo-pathfinding-dijkstra-astar` |
-| 3   | Sorting Algorithms Visualizer | ✅ Done    | `/blog/algo/algo-sorting-visualizer`         |
-| 4   | Trie (Cấu trúc từ điển)       | ✅ Done    | `/blog/algo/algo-trie-prefix-tree`           |
-| 5   | Union-Find / Disjoint Set     | ✅ Done    | `/blog/algo/algo-union-find`                 |
-| 6   | Segment Tree / Fenwick Tree   | ✅ Done    | `/blog/algo/algo-segment-tree`               |
-| 7   | Quy Hoạch Động Trực Quan      | ✅ Done    | `/blog/algo/algo-dynamic-programming`        |
-| 8   | B-Tree Database Index         | ✅ Done    | `/blog/algo/algo-btree-database-index`       |
-| 9   | Memory Allocator Visualizer   | ✅ Done    | `/blog/algo/algo-memory-allocator`           |
-| 10  | Hash Table & Va Chạm          | ✅ Done    | `/blog/algo/algo-hash-table-collision`       |
-| 11  | Huffman Data Compression      | ✅ Done    | `/blog/algo/algo-huffman-compression`        |
-| 12  | Dự án: Algorithm Playground   | ✅ Done    | `/blog/algo/algo-playground-project`         |
+| Bài | Tên                           | Status  | Link                                         |
+| --- | ----------------------------- | ------- | -------------------------------------------- |
+| 1   | Xoay Cây AVL & Red-Black      | ✅ Done | `/blog/algo/algo-avl-redblack-tree`          |
+| 2   | Pathfinding Dijkstra & A\*    | ✅ Done | `/blog/algo/algo-pathfinding-dijkstra-astar` |
+| 3   | Sorting Algorithms Visualizer | ✅ Done | `/blog/algo/algo-sorting-visualizer`         |
+| 4   | Trie (Cấu trúc từ điển)       | ✅ Done | `/blog/algo/algo-trie-prefix-tree`           |
+| 5   | Union-Find / Disjoint Set     | ✅ Done | `/blog/algo/algo-union-find`                 |
+| 6   | Segment Tree / Fenwick Tree   | ✅ Done | `/blog/algo/algo-segment-tree`               |
+| 7   | Quy Hoạch Động Trực Quan      | ✅ Done | `/blog/algo/algo-dynamic-programming`        |
+| 8   | B-Tree Database Index         | ✅ Done | `/blog/algo/algo-btree-database-index`       |
+| 9   | Memory Allocator Visualizer   | ✅ Done | `/blog/algo/algo-memory-allocator`           |
+| 10  | Hash Table & Va Chạm          | ✅ Done | `/blog/algo/algo-hash-table-collision`       |
+| 11  | Huffman Data Compression      | ✅ Done | `/blog/algo/algo-huffman-compression`        |
+| 12  | Dự án: Algorithm Playground   | ✅ Done | `/blog/algo/algo-playground-project`         |
 
 ### WebGPU Series Lessons — HOÀN THÀNH 100%
 
@@ -336,21 +336,21 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học                             | Nội dung chuyên sâu                                                                      | Dự án/Demo đi kèm                                                          |
-| --- | ---------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| 1   | **Mô hình đối tượng Git**               | Blob/Tree/Commit, content-addressable SHA-1/256, vì sao Git là snapshot không phải diff. | Trình xem cấu trúc `.git/objects` của một commit mẫu.                      |
-| 2   | **Three Trees & Staging**               | Working Directory, Index (staging), HEAD; vòng đời `add`/`commit`.                       | Visualizer file di chuyển qua 3 cây khi add/commit.                        |
-| 3   | **Branch & HEAD**                       | Branch chỉ là con trỏ, HEAD tách rời (detached), fast-forward.                           | Graph tạo nhánh, di chuyển HEAD trực quan.                                 |
-| 4   | **Merge & Conflict**                    | Three-way merge, merge base, cơ chế phát sinh & giải xung đột.                           | Demo merge tạo commit hợp nhất + tô vùng conflict.                         |
-| 5   | **Rebase & History viết lại**           | Rebase vs merge, `--onto`, interactive rebase (squash/fixup/reorder).                    | So sánh graph trước/sau rebase cùng kịch bản.                              |
-| 6   | **Cherry-pick — Chọn Lọc Commit**       | Nhặt 1 commit cụ thể sang nhánh khác, cơ chế tạo commit MỚI cùng diff nhưng khác SHA.     | Đồ thị 2 nhánh, "nhặt" 1 commit từ nhánh B sang nhánh A, xem SHA đổi.       |
-| 7   | **Undo & Phục hồi**                     | `reset --soft/mixed/hard`, `revert`, `reflog` cứu commit mất, `stash`.                   | Demo "làm hỏng rồi cứu" bằng reflog.                                       |
-| 8   | **Git Bisect — Tìm Commit Lỗi**         | Tìm kiếm nhị phân trên lịch sử commit (good/bad), `bisect run` tự động hoá.               | Danh sách commit giả lập giấu 1 "commit lỗi", hội tụ tìm thủ phạm.         |
-| 9   | **Remote & Collaboration**              | `fetch`/`pull`/`push`, tracking branch, mô hình PR, rebase vs merge khi team work.       | Mô phỏng 2 remote đồng bộ, minh hoạ diverge & sync.                        |
-| 10  | **Subtree & Submodule**                 | Nhúng 1 repo trong repo khác: submodule (con trỏ commit) vs subtree (nhúng lịch sử).      | Mô phỏng repo chính + thư viện, so sánh trực quan 2 cách nhúng.            |
-| 11  | **Hooks & Worktree**                    | Git hooks tự động hoá (pre-commit/pre-push), `worktree` làm việc song song nhiều nhánh.   | Demo pre-commit hook chặn commit lỗi + visualizer 2 worktree song song.    |
-| 12  | **Tags & Aliases Nâng Cao**             | Lightweight vs annotated tag, Semantic Versioning, `git alias`/`config` tuỳ biến workflow. | Bảng so sánh tag trực quan + "alias builder" ghép lệnh dài thành alias.   |
-| 13  | **Dự án: Git Kata Trainer**             | Bộ thử thách: cho trạng thái graph đích, người học gõ lệnh để đạt được.                  | Trò chơi luyện Git chấm điểm tự động theo graph kết quả, tổng hợp 12 bài. |
+| Bài | Tên bài học                       | Nội dung chuyên sâu                                                                        | Dự án/Demo đi kèm                                                         |
+| --- | --------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| 1   | **Mô hình đối tượng Git**         | Blob/Tree/Commit, content-addressable SHA-1/256, vì sao Git là snapshot không phải diff.   | Trình xem cấu trúc `.git/objects` của một commit mẫu.                     |
+| 2   | **Three Trees & Staging**         | Working Directory, Index (staging), HEAD; vòng đời `add`/`commit`.                         | Visualizer file di chuyển qua 3 cây khi add/commit.                       |
+| 3   | **Branch & HEAD**                 | Branch chỉ là con trỏ, HEAD tách rời (detached), fast-forward.                             | Graph tạo nhánh, di chuyển HEAD trực quan.                                |
+| 4   | **Merge & Conflict**              | Three-way merge, merge base, cơ chế phát sinh & giải xung đột.                             | Demo merge tạo commit hợp nhất + tô vùng conflict.                        |
+| 5   | **Rebase & History viết lại**     | Rebase vs merge, `--onto`, interactive rebase (squash/fixup/reorder).                      | So sánh graph trước/sau rebase cùng kịch bản.                             |
+| 6   | **Cherry-pick — Chọn Lọc Commit** | Nhặt 1 commit cụ thể sang nhánh khác, cơ chế tạo commit MỚI cùng diff nhưng khác SHA.      | Đồ thị 2 nhánh, "nhặt" 1 commit từ nhánh B sang nhánh A, xem SHA đổi.     |
+| 7   | **Undo & Phục hồi**               | `reset --soft/mixed/hard`, `revert`, `reflog` cứu commit mất, `stash`.                     | Demo "làm hỏng rồi cứu" bằng reflog.                                      |
+| 8   | **Git Bisect — Tìm Commit Lỗi**   | Tìm kiếm nhị phân trên lịch sử commit (good/bad), `bisect run` tự động hoá.                | Danh sách commit giả lập giấu 1 "commit lỗi", hội tụ tìm thủ phạm.        |
+| 9   | **Remote & Collaboration**        | `fetch`/`pull`/`push`, tracking branch, mô hình PR, rebase vs merge khi team work.         | Mô phỏng 2 remote đồng bộ, minh hoạ diverge & sync.                       |
+| 10  | **Subtree & Submodule**           | Nhúng 1 repo trong repo khác: submodule (con trỏ commit) vs subtree (nhúng lịch sử).       | Mô phỏng repo chính + thư viện, so sánh trực quan 2 cách nhúng.           |
+| 11  | **Hooks & Worktree**              | Git hooks tự động hoá (pre-commit/pre-push), `worktree` làm việc song song nhiều nhánh.    | Demo pre-commit hook chặn commit lỗi + visualizer 2 worktree song song.   |
+| 12  | **Tags & Aliases Nâng Cao**       | Lightweight vs annotated tag, Semantic Versioning, `git alias`/`config` tuỳ biến workflow. | Bảng so sánh tag trực quan + "alias builder" ghép lệnh dài thành alias.   |
+| 13  | **Dự án: Git Kata Trainer**       | Bộ thử thách: cho trạng thái graph đích, người học gõ lệnh để đạt được.                    | Trò chơi luyện Git chấm điểm tự động theo graph kết quả, tổng hợp 12 bài. |
 
 ---
 
