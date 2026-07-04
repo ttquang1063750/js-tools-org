@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 2: Môi Trường Thực Hành Kép — Browser &amp; Docker — js-tools</title>
+    <meta
+      name="description"
+      content="Vì sao cần cả demo browser lẫn Docker PostgreSQL, cách dựng PostgreSQL bằng Docker Compose, cài sqlite3 CLI, và bản đồ đầy đủ khác biệt dialect SQLite↔PostgreSQL (auto-increment, boolean, ngày giờ, upsert, phân trang, regex). Chuẩn bị 1 lần dùng cho các lab Docker ở Bài 9, 11, 15, 16."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-docker-lab-setup" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* Dialect Translator Sandbox styles */
+      .dialect-workbench {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .dialect-picker {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .dialect-picker-btn {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #11111b;
+        color: #a6adc8;
+        font-size: 12px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .dialect-picker-btn:hover {
+        background: #313244;
+        color: #cdd6f4;
+      }
+      .dialect-picker-btn.is-active {
+        background: #10b981;
+        border-color: #10b981;
+        color: #fff;
+        font-weight: 600;
+      }
+      .dialect-compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .dialect-pane {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        overflow-x: auto;
+      }
+      .dialect-pane h4 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .dialect-pane--sqlite h4 {
+        color: #10b981;
+      }
+      .dialect-pane--postgres h4 {
+        color: #0ea5e9;
+      }
+      .dialect-pane pre {
+        margin: 0;
+      }
+      .dialect-explain {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        font-size: 13px;
+        color: #cdd6f4;
+        line-height: 1.6;
+      }
+      @media (max-width: 880px) {
+        .dialect-compare {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sql">
+        <div class="container">
+          <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
+          <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
+          <h1 class="article-hero__title">
+            Bài 2: Môi Trường Thực Hành Kép — Browser &amp; Docker <span style="font-size: 0.6em">🐳</span>
+          </h1>
+          <div class="article-hero__meta">4 tháng 7, 2026 · 16 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Bài này khác các bài còn lại — không dạy 1 tính năng SQL cụ thể, mà chuẩn bị
+                  <strong>môi trường thực hành thứ 2</strong> dùng xuyên suốt 4 bài sau (9, 11, 15, 16, đánh dấu
+                  <span style="color: #0ea5e9">🐳</span>): 1 PostgreSQL thật chạy qua Docker trên máy bạn. 13/17 bài còn
+                  lại hoàn toàn không cần bước này — SQL workbench trong trình duyệt ở
+                  <a href="sql-relational-model-select">Bài 1</a>
+                  vẫn là "xương sống" chính của cả series.
+                </p>
+
+                <h2>1. Vì Sao Cần 2 Môi Trường Song Song?</h2>
+                <p>
+                  SQLite-WASM chạy trong trình duyệt là <strong>1 tiến trình đơn, 1 kết nối đơn</strong> — hoàn hảo để
+                  học cú pháp, cấu trúc dữ liệu, và logic truy vấn mà không cần cài đặt gì. Nhưng có những khái niệm
+                  <strong>về bản chất cần nhiều tiến trình/kết nối tranh chấp nhau thật sự</strong> mới quan sát được:
+                </p>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Khái niệm</th>
+                      <th>Vì sao browser không demo nổi</th>
+                      <th>Bài học liên quan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Isolation level &amp; lock contention</td>
+                      <td>Cần ít nhất 2 kết nối riêng biệt tranh chấp cùng 1 dòng dữ liệu cùng lúc</td>
+                      <td><a href="sql-transaction-acid">Bài 11</a></td>
+                    </tr>
+                    <tr>
+                      <td>Query optimizer với thống kê thật</td>
+                      <td>
+                        Optimizer của PostgreSQL dùng model chi phí khác hẳn SQLite, cần dữ liệu đủ lớn +
+                        <code>ANALYZE</code> thật để thấy quyết định thực tế
+                      </td>
+                      <td><a href="sql-query-optimizer-deep-dive">Bài 9</a></td>
+                    </tr>
+                    <tr>
+                      <td>Disk I/O &amp; <code>fsync</code> thật</td>
+                      <td>Trình duyệt không cho code JS truy cập trực tiếp đĩa cứng vật lý để đo độ trễ ghi thật</td>
+                      <td><a href="sql-performance-engineering">Bài 15</a></td>
+                    </tr>
+                    <tr>
+                      <td>WAL reader/writer đồng thời</td>
+                      <td>Cần 2 tiến trình hệ điều hành riêng biệt cùng mở 1 file <code>.sqlite</code> lúc này</td>
+                      <td><a href="sql-wal-persistence-browser">Bài 16</a></td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Docker là tuỳ chọn — không bắt buộc để học 13/17 bài còn lại</div>
+                  <div class="callout__content">
+                    Nếu bạn chỉ quan tâm cú pháp SQL và cách tư duy dữ liệu quan hệ, có thể bỏ qua hoàn toàn phần Docker
+                    và chỉ theo dõi demo trình duyệt — vẫn đầy đủ 13/17 bài. Phần setup dưới đây chỉ cần thiết nếu bạn
+                    muốn tự tay quan sát 4 khái niệm ở bảng trên bằng 1 database server thật.
+                  </div>
+                </div>
+
+                <h2>2. Dựng PostgreSQL Bằng Docker (Làm 1 Lần, Dùng Cho Cả Series)</h2>
+                <p>Cách nhanh nhất — 1 lệnh <code>docker run</code> duy nhất, không cần file cấu hình:</p>
+                <pre><code class="language-bash">docker run --name techmart-pg \
+  -e POSTGRES_PASSWORD=techmart123 \
+  -p 5432:5432 \
+  -d postgres:16</code></pre>
+                <p>
+                  Hoặc dùng <code>docker-compose.yml</code> nếu muốn cấu hình bền vững hơn (volume lưu dữ liệu giữa các
+                  lần khởi động lại):
+                </p>
+                <pre><code class="language-yaml">version: "3.9"
+services:
+  db:
+    image: postgres:16
+    container_name: techmart-pg
+    environment:
+      POSTGRES_PASSWORD: techmart123
+      POSTGRES_DB: techmart
+    ports:
+      - "5432:5432"
+    volumes:
+      - techmart-pg-data:/var/lib/postgresql/data
+
+volumes:
+  techmart-pg-data:</code></pre>
+                <pre><code class="language-bash">docker compose up -d</code></pre>
+                <p>Kiểm tra kết nối và nạp dữ liệu TechMart (bản PostgreSQL, khai báo kiểu đúng chuẩn dialect):</p>
+                <pre><code class="language-bash">psql -h localhost -U postgres -d techmart -c "SELECT version();"
+psql -h localhost -U postgres -d techmart -f sql-techmart-postgres-seed.sql</code></pre>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: cổng 5432 đã bị chiếm</div>
+                  <div class="callout__content">
+                    Nếu máy bạn đã cài PostgreSQL cục bộ (qua Homebrew, apt, hay 1 container khác), cổng
+                    <code>5432</code> có thể đã bị chiếm, khiến <code>docker run</code> báo lỗi
+                    <code>bind: address already in use</code>. Đổi cổng map bên ngoài, ví dụ <code>-p 5433:5432</code>,
+                    rồi kết nối qua <code>psql -h localhost -p 5433 ...</code>.
+                  </div>
+                </div>
+
+                <p>
+                  <a href="sql-techmart-postgres-seed.sql" download>⬇ Tải file seed TechMart cho PostgreSQL (.sql)</a>
+                </p>
+
+                <h2>3. Cài <code>sqlite3</code> CLI (Dùng Ở Bài 10 &amp; 16)</h2>
+                <p>
+                  Công cụ dòng lệnh chính thức để mở trực tiếp file <code>.sqlite</code> — dùng khi
+                  <a href="sql-internals-btree-file-format">Bài 10</a> đọc hex thật của file, hoặc
+                  <a href="sql-wal-persistence-browser">Bài 16</a> quan sát file <code>-wal</code>/<code>-shm</code>
+                  sinh ra trên đĩa. macOS/hầu hết bản Linux đã cài sẵn; nếu chưa có:
+                </p>
+                <pre><code class="language-bash"># macOS (Homebrew)
+brew install sqlite3
+
+# Debian/Ubuntu
+sudo apt-get install sqlite3
+
+# Kiểm tra
+sqlite3 --version</code></pre>
+
+                <h2>4. Bản Đồ Khác Biệt Dialect: SQLite ↔ PostgreSQL</h2>
+                <p>
+                  Đây là phần quan trọng nhất bài — SQLite và PostgreSQL
+                  <strong>giống nhau ở phần lớn cú pháp SELECT/JOIN/WHERE</strong> cơ bản (đó là lý do bạn có thể học
+                  SQL qua SQLite rồi áp dụng gần như nguyên vẹn sang PostgreSQL), nhưng khác nhau ở 1 số điểm cụ thể dễ
+                  gây lỗi khi chuyển đổi qua lại. Bấm từng mục để so sánh cú pháp 2 bên trên đúng bối cảnh TechMart:
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🔄 Sân chơi tương tác: Dialect Translator</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="dialect-workbench">
+                      <div class="dialect-picker" id="dialect-picker"></div>
+                      <div class="dialect-compare">
+                        <div class="dialect-pane dialect-pane--sqlite">
+                          <h4>SQLite (dùng trong workbench trình duyệt)</h4>
+                          <pre><code class="language-sql" id="dialect-sqlite-code"></code></pre>
+                        </div>
+                        <div class="dialect-pane dialect-pane--postgres">
+                          <h4>PostgreSQL (dùng trong lab Docker)</h4>
+                          <pre><code class="language-sql" id="dialect-postgres-code"></code></pre>
+                        </div>
+                      </div>
+                      <div class="dialect-explain" id="dialect-explain"></div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">sql-docker-lab-setup.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="dialect-js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">
+                    🔬 Đào sâu: <code>SERIAL</code> thực chất là "đường tắt cú pháp", không phải kiểu dữ liệu thật
+                  </div>
+                  <div class="callout__content">
+                    Khai báo <code>product_id SERIAL</code> trong PostgreSQL thực ra được engine "dịch ngầm" thành: tạo
+                    1 <code>SEQUENCE</code> riêng, đặt cột kiểu <code>INTEGER</code>, và gán
+                    <code>DEFAULT nextval('tên_sequence')</code>. Đây là lý do khi <code>INSERT</code> thủ công kèm ID
+                    cụ thể (như file seed TechMart làm), sequence không tự biết ID lớn nhất đã dùng — phải gọi
+                    <code>setval()</code> đồng bộ lại, nếu không lần <code>INSERT</code> tiếp theo không chỉ định ID sẽ
+                    cố dùng lại ID đã tồn tại và báo lỗi trùng khoá chính.
+                  </div>
+                </div>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">
+                    💡 Mẹo: <code>\d tên_bảng</code> trong <code>psql</code> = <code>.schema tên_bảng</code> trong
+                    <code>sqlite3</code>
+                  </div>
+                  <div class="callout__content">
+                    Cả 2 CLI đều có lệnh riêng xem nhanh cấu trúc 1 bảng mà không cần query
+                    <code>information_schema</code>/<code>sqlite_master</code> thủ công: <code>psql</code> dùng
+                    <code>\d products</code>, <code>sqlite3</code> dùng <code>.schema products</code> (hoặc
+                    <code>.tables</code> để liệt kê mọi bảng).
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Vì sao cần Docker PostgreSQL thay vì chỉ dùng demo trình duyệt cho MỌI khái niệm trong
+                    series?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! SQLite-WASM trong trình duyệt chạy 1 tiến trình/1 kết nối đơn — không thể mô phỏng các khái niệm về bản chất cần NHIỀU tiến trình/kết nối tranh chấp nhau thật: isolation level, lock contention, disk I/O/fsync thật, WAL reader/writer đồng thời.'
+                        )
+                      "
+                    >
+                      A. Vì demo trình duyệt chạy 1 tiến trình/kết nối đơn, không thể mô phỏng các khái niệm cần nhiều
+                      tiến trình tranh chấp thật (lock contention, disk I/O, WAL đa kết nối...).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. SQLite-WASM chạy hoàn toàn client-side, không cần server nào cả — đây chính là điểm mạnh của nó, không phải lý do cần Docker.'
+                        )
+                      "
+                    >
+                      B. Vì SQLite-WASM cần kết nối server để hoạt động.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. SQLite hỗ trợ SELECT/JOIN/WHERE/GROUP BY... đầy đủ, hoàn toàn tương đương PostgreSQL ở các câu lệnh cơ bản — đây không phải lý do cần Docker.'
+                        )
+                      "
+                    >
+                      C. Vì SQLite không hỗ trợ câu lệnh <code>SELECT</code> cơ bản.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: <code>SERIAL</code> trong PostgreSQL thực chất hoạt động như thế nào phía dưới?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! SERIAL là đường tắt cú pháp — PostgreSQL tự tạo 1 SEQUENCE riêng, đặt cột kiểu INTEGER, và gán DEFAULT nextval(tên_sequence). Đây không phải 1 kiểu dữ liệu thật sự riêng biệt.'
+                        )
+                      "
+                    >
+                      A. Tạo 1 <code>SEQUENCE</code> riêng, đặt cột kiểu <code>INTEGER</code>, và gán
+                      <code>DEFAULT nextval(...)</code> — không phải kiểu dữ liệu thật riêng biệt.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. SERIAL không phải kiểu dữ liệu độc lập trong PostgreSQL — nó chỉ là cách khai báo tắt cho INTEGER + sequence + default, như đã giải thích ở callout đào sâu.'
+                        )
+                      "
+                    >
+                      B. Là 1 kiểu dữ liệu độc lập, hoàn toàn khác <code>INTEGER</code>.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Đây chính xác là cơ chế của INTEGER PRIMARY KEY trong SQLite (rowid alias) — không phải cách SERIAL của PostgreSQL hoạt động.'
+                        )
+                      "
+                    >
+                      C. Giống hệt <code>INTEGER PRIMARY KEY</code> của SQLite — chỉ là 1 alias của rowid nội bộ.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Cú pháp <code>FETCH FIRST 5 ROWS ONLY</code> có chạy được trên SQLite không?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! FETCH FIRST là cú pháp chuẩn SQL:2008 mà PostgreSQL hỗ trợ, nhưng SQLite KHÔNG hỗ trợ — SQLite chỉ có LIMIT/OFFSET. Đây là 1 trong những khác biệt dialect cần nhớ khi chuyển đổi query qua lại.'
+                        )
+                      "
+                    >
+                      A. Không — đây là cú pháp chuẩn SQL:2008 mà PostgreSQL hỗ trợ, còn SQLite chỉ hỗ trợ
+                      <code>LIMIT</code>/<code>OFFSET</code>.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. SQLite thực sự KHÔNG hỗ trợ cú pháp FETCH FIRST — chỉ hỗ trợ LIMIT/OFFSET, như đã học ở Bài 1.'
+                        )
+                      "
+                    >
+                      B. Có, chạy được y hệt như <code>LIMIT</code>.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Không cần cài extension nào — vấn đề đơn giản là SQLite không hỗ trợ cú pháp này trong ngôn ngữ SQL lõi của nó.'
+                        )
+                      "
+                    >
+                      C. Có, nhưng phải cài thêm extension riêng.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 4: Vì sao chỉ 4/17 bài trong series có lab Docker, còn lại thuần trình duyệt?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Phần lớn khái niệm SQL (SELECT, JOIN, aggregate, window function, index cơ bản, JSON, FTS5...) hoàn toàn demo được bằng 1 tiến trình SQLite đơn giản — chỉ những khái niệm cần MÔI TRƯỜNG ĐA TIẾN TRÌNH thật (transaction concurrency, optimizer thống kê thật, disk I/O, WAL đa reader/writer) mới cần tới Docker.'
+                        )
+                      "
+                    >
+                      A. Vì phần lớn khái niệm SQL demo được bằng 1 tiến trình SQLite đơn giản — chỉ 4 khái niệm cần môi
+                      trường đa tiến trình thật mới cần Docker.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Không có giới hạn kỹ thuật nào như vậy — số lượng bài có Docker được chọn dựa trên việc khái niệm đó có THỰC SỰ CẦN môi trường đa tiến trình hay không, không phải giới hạn Docker Compose.'
+                        )
+                      "
+                    >
+                      B. Vì Docker Compose chỉ hỗ trợ tối đa 4 container cùng lúc.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cả PostgreSQL và SQLite đều miễn phí, mã nguồn mở hoàn toàn — không có yếu tố chi phí nào ảnh hưởng tới thiết kế series.'
+                        )
+                      "
+                    >
+                      C. Vì chi phí chạy PostgreSQL trên Docker quá đắt cho nhiều bài.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://hub.docker.com/_/postgres" target="_blank" rel="noopener noreferrer"
+                      >Docker Hub — Official PostgreSQL Image</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://www.postgresql.org/docs/current/app-psql.html"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >PostgreSQL Docs — psql</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/cli.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Docs — Command Line Shell</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://www.postgresql.org/docs/current/datatype-serial.html"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >PostgreSQL Docs — Serial Types</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 3: JOIN Toàn Tập (sắp ra mắt)
+                  </span>
+                  <a href="sql-relational-model-select" class="article-related__link article-related__link--prev">
+                    Bài 1: Mô Hình Quan Hệ &amp; SELECT
+                  </a>
+                  <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="sql-docker-lab-setup.js" defer></script>
+  </body>
+</html>
