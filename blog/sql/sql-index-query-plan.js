@@ -158,15 +158,21 @@ FROM seq;`;
       const empty = document.createElement('div');
       empty.className = 'sql-results-empty';
       const alreadyExists = /already exists/i.test(err.message);
+      const missingTable = /no such table|no such column|no such index/i.test(err.message);
       let message = 'Lỗi SQL: ' + err.message;
       if (alreadyExists) {
         message +=
           ' — Bảng/index này đã được tạo ở bước trước rồi. Bấm "Reset dữ liệu" nếu muốn làm lại từ đầu, hoặc bỏ qua và tiếp tục các bước sau.';
+      } else if (missingTable) {
+        message +=
+          ' — Bảng/cột này chưa được tạo. Hãy bấm lần lượt các bước theo đúng thứ tự (1️⃣ 2️⃣ 3️⃣...) từ đầu trước khi thử bước này.';
       }
       empty.textContent = message;
       resultsEl.appendChild(empty);
       if (alreadyExists) {
         setStatus('Không cần chạy lại bước này — bảng/index đã có sẵn từ trước.', false);
+      } else if (missingTable) {
+        setStatus('Thiếu bước trước đó — hãy chạy lần lượt theo đúng thứ tự từ 1️⃣.', true);
       } else {
         setStatus('Lỗi khi thực thi.', true);
       }
