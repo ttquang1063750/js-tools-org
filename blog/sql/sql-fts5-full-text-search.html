@@ -1,0 +1,974 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 14: FTS5 Full-Text Search — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu cơ chế hoạt động của chỉ mục đảo ngược (Inverted Index), bộ phân tích từ vựng Tokenizer, thuật toán xếp hạng BM25, và các hàm trợ giúp như snippet()/highlight() để xây dựng một bộ máy tìm kiếm toàn văn siêu tốc trong SQLite."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-fts5-full-text-search" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex/katex.min.js"></script>
+    <script
+      defer
+      src="../katex/contrib/auto-render.min.js"
+      onload="
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+        })
+      "
+    ></script>
+    <style>
+      /* SQL Workbench Sandbox styles */
+      .sql-workbench {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .sql-workbench__row {
+        display: grid;
+        grid-template-columns: 1fr 200px;
+        gap: 16px;
+      }
+      .sql-editor {
+        width: 100%;
+        min-height: 130px;
+        background: #0f0f1b;
+        color: #a6e3a1;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-family: monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+      .sql-side-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sql-btn {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .sql-btn:hover {
+        background: #313244;
+      }
+      .sql-btn--primary {
+        background: #10b981;
+        border-color: #10b981;
+        color: #fff;
+        font-weight: 600;
+      }
+      .sql-btn--primary:hover {
+        background: #059669;
+      }
+      .sql-examples {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .sql-example-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #11111b;
+        color: #a6adc8;
+        font-size: 11px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .sql-example-btn:hover {
+        background: #313244;
+        color: #cdd6f4;
+      }
+      .sql-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #a6adc8;
+      }
+      .sql-status-line.is-error {
+        color: #f38ba8;
+      }
+      .sql-schema-panel {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        font-size: 12px;
+        color: #cdd6f4;
+        display: none;
+      }
+      .sql-schema-panel.is-visible {
+        display: block;
+      }
+      #sql-schema-panel table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 12px;
+        font-size: 11px;
+      }
+      #sql-schema-panel th,
+      #sql-schema-panel td {
+        text-align: left;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border);
+        color: #cdd6f4;
+      }
+      #sql-schema-panel th {
+        color: #a6adc8;
+      }
+      #sql-schema-panel tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .sql-schema-panel h4 {
+        color: #10b981;
+        margin: 0 0 6px;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      .sql-results-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        overflow-x: auto;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      #sql-results table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12px;
+        font-family: monospace;
+        color: #cdd6f4;
+      }
+      #sql-results th,
+      #sql-results td {
+        padding: 6px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        color: #cdd6f4;
+      }
+      #sql-results th {
+        background: #11111b;
+        color: #10b981;
+        position: sticky;
+        top: -13px;
+      }
+      #sql-results tbody tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      #sql-results td.is-null {
+        color: #6c7086;
+        font-style: italic;
+      }
+      .sql-results-empty {
+        color: #6c7086;
+        font-size: 13px;
+        padding: 8px;
+      }
+      @media (max-width: 880px) {
+        .sql-workbench__row {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sql">
+        <div class="container">
+          <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
+          <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
+          <h1 class="article-hero__title">Bài 14: FTS5 Full-Text Search</h1>
+          <div class="article-hero__meta">5 tháng 7, 2026 · 30 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Khi xây dựng các tính năng tìm kiếm văn bản như tìm sản phẩm, bài viết hay nhật ký giao dịch, các lập
+                  trình viên thường nghĩ ngay đến toán tử <code>LIKE '%từ_khóa%'</code>. Tuy nhiên, trên tập dữ liệu
+                  hàng triệu dòng, phương pháp này tốn rất nhiều thời gian do hệ thống phải thực hiện quét tuần tự toàn
+                  bảng (Full Table Scan) với độ phức tạp \(O(N)\). Bài viết này sẽ phân tích chi tiết cơ chế hoạt động
+                  của <strong>Inverted Index</strong> (Chỉ mục đảo ngược), cấu trúc bộ phân tích từ vựng (Tokenizer),
+                  thuật toán xếp hạng độ liên quan <strong>BM25</strong>, và cách ứng dụng module
+                  <strong>FTS5</strong> để xây dựng một bộ máy tìm kiếm toàn văn siêu tốc trong SQLite.
+                </p>
+
+                <h2>1. Trái Tim Của Mọi Bộ Máy Tìm Kiếm: Chỉ Mục Đảo Ngược (Inverted Index)</h2>
+                <p>
+                  Để hiểu vì sao các công cụ tìm kiếm như Elasticsearch hay module FTS (Full-Text Search) của SQLite có
+                  thể trả về kết quả trong vài mili-giây trên hàng triệu dòng tài liệu, chúng ta cần tìm hiểu cấu trúc
+                  dữ liệu bên dưới của chúng.
+                </p>
+                <p>
+                  Trong bảng B-Tree thông thường, dữ liệu được tổ chức theo chiều xuôi:
+                  <code>Document ID (Khóa chính) -&gt; Nội dung văn bản</code>. Khi bạn tìm một từ, hệ thống buộc phải
+                  đọc từng tài liệu và duyệt qua chuỗi ký tự để kiểm tra.
+                </p>
+                <p>
+                  <strong>Inverted Index (Chỉ mục đảo ngược)</strong> tổ chức dữ liệu theo chiều ngược lại:
+                  <code>Từ đơn (Term) -&gt; Danh sách Document ID chứa từ đó + Vị trí từ</code>.
+                </p>
+
+                <p>Giả sử ta có hai tài liệu trong cơ sở dữ liệu:</p>
+                <ul>
+                  <li><strong>Tài liệu 1 (D1)</strong>: "Học SQL rất thú vị."</li>
+                  <li><strong>Tài liệu 2 (D2)</strong>: "Học giải thuật trực quan."</li>
+                </ul>
+
+                <p>Sau khi phân tích, Inverted Index sẽ lưu trữ như sau:</p>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Từ đơn (Term)</th>
+                      <th>Danh sách xuất hiện (Posting List)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>học</td>
+                      <td>(D1, vị trí 0), (D2, vị trí 0)</td>
+                    </tr>
+                    <tr>
+                      <td>sql</td>
+                      <td>(D1, vị trí 1)</td>
+                    </tr>
+                    <tr>
+                      <td>rất</td>
+                      <td>(D1, vị trí 2)</td>
+                    </tr>
+                    <tr>
+                      <td>thú vị</td>
+                      <td>(D1, vị trí 3)</td>
+                    </tr>
+                    <tr>
+                      <td>giải thuật</td>
+                      <td>(D2, vị trí 1)</td>
+                    </tr>
+                    <tr>
+                      <td>trực quan</td>
+                      <td>(D2, vị trí 2)</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p>
+                  Khi người dùng tìm kiếm từ "SQL", SQLite không cần đọc nội dung bất kỳ hàng nào. Nó chỉ cần thực hiện
+                  tra cứu nhị phân trên danh sách từ đơn để tìm khóa <code>sql</code>, lập tức lấy được danh sách kết
+                  quả chứa <code>D1</code>. Độ phức tạp tìm kiếm giảm từ quét toàn bảng \(O(N)\) xuống còn tìm kiếm nhị
+                  phân hoặc bảng băm \(O(\log M)\) với $M$ là tổng số từ đơn phân biệt.
+                </p>
+
+                <h2>2. Bộ Phân Tích Từ Vựng (Tokenizer): unicode61 vs trigram</h2>
+                <p>
+                  Quá trình chuyển đổi một câu văn bản thô thành danh sách các từ đơn trong Inverted Index được đảm nhận
+                  bởi
+                  <strong>Tokenizer</strong>. SQLite cung cấp một số bộ Tokenizer mặc định:
+                </p>
+                <ul>
+                  <li>
+                    <strong><code>simple</code></strong
+                    >: Chỉ phân tách từ dựa trên các ký tự khoảng trắng và dấu câu ASCII. Nó loại bỏ hoàn toàn các ký tự
+                    ngoài ASCII và không hỗ trợ tốt tiếng Việt có dấu.
+                  </li>
+                  <li>
+                    <strong><code>porter</code></strong
+                    >: Áp dụng thuật toán Stemming của Porter dành riêng cho tiếng Anh (ví dụ: biến đổi "running",
+                    "runs", "ran" về từ gốc chung là "run").
+                  </li>
+                  <li>
+                    <strong><code>unicode61</code></strong
+                    >: Hỗ trợ đầy đủ bảng mã Unicode (UTF-8). Nó nhận biết chính xác các nguyên âm có dấu trong tiếng
+                    Việt để tách từ một cách chuẩn xác nhất. Đây là lựa chọn bắt buộc khi làm ứng dụng đa ngôn ngữ hoặc
+                    ứng dụng thuần Việt.
+                  </li>
+                  <li>
+                    <strong><code>trigram</code> (Từ SQLite 3.34.0, chỉ có ở FTS5)</strong>: Phân rã chuỗi thành các cụm
+                    3 ký tự liên tiếp. Trigram rất mạnh cho tìm kiếm mờ (fuzzy search) hoặc tìm kiếm chuỗi con không cần
+                    đúng ranh giới từ (ví dụ: tìm "code" có thể khớp cả "bytecode", "codegolf").
+                  </li>
+                </ul>
+
+                <p>Khai báo bảng ảo FTS5 sử dụng Tokenizer unicode61 cấu hình loại bỏ dấu câu tùy biến:</p>
+                <pre><code class="language-sql">-- FTS5 Syntax (Dành cho production)
+CREATE VIRTUAL TABLE articles_search USING fts5(
+  title, 
+  body, 
+  tokenize = "unicode61 remove_diacritics 1"
+);</code></pre>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Bản sql.js/WASM trong trình duyệt sử dụng FTS3</div>
+                  <div class="callout__content">
+                    Bản phân phối <code>sql.js</code> WASM chạy trực tiếp trên trình duyệt hiện tại chỉ được biên dịch
+                    kích hoạt module **FTS3** (không có FTS5). Trong bài học tương tác này, chúng ta sẽ viết code tương
+                    thích FTS3 để chạy thật được 100%. Về mặt lý thuyết và kiến trúc tìm kiếm, FTS3 và FTS5 đều dùng
+                    chung mô hình Inverted Index và cú pháp toán tử <code>MATCH</code>. Điểm khác biệt là FTS5 cung cấp
+                    thuật toán xếp hạng BM25 tốt hơn và cú pháp linh hoạt hơn.
+                  </div>
+                </div>
+
+                <h2>3. Thuật Toán Xếp Hạng Độ Liên Quan BM25 (Best Matching 25)</h2>
+                <p>
+                  Khi một câu truy vấn có nhiều kết quả khớp, làm sao để đưa các tài liệu liên quan nhất lên đầu? Module
+                  FTS5 của SQLite sử dụng thuật toán xếp hạng nổi tiếng **BM25**. Điểm số BM25 của tài liệu $D$ đối với
+                  truy vấn $Q$ chứa các từ khóa $q_1, q_2, \dots, q_n$ được tính toán theo công thức toán học sau:
+                </p>
+
+                \[ \text{Score}(D, Q) = \sum_{i=1}^{n} \text{IDF}(q_i) \cdot \frac{f(q_i, D) \cdot (k_1 + 1)}{f(q_i, D)
+                + k_1 \cdot \left(1 - b + b \cdot \frac{|D|}{\text{avgdl}}\right)} \]
+
+                <p>Trong đó:</p>
+                <ul>
+                  <li>
+                    <strong>\(f(q_i, D)\)</strong>: Tần suất từ khóa $q_i$ xuất hiện trong tài liệu $D$ (Term
+                    Frequency). Từ khóa xuất hiện càng nhiều, điểm càng cao.
+                  </li>
+                  <li><strong>\(|D|\)</strong>: Chiều dài (số lượng từ) của tài liệu $D$.</li>
+                  <li><strong>\(\text{avgdl}\)</strong>: Chiều dài trung bình của tất cả tài liệu trong bảng.</li>
+                  <li>
+                    <strong>\(\text{IDF}(q_i)\)</strong>: Trọng số nghịch đảo tần suất tài liệu chứa từ khóa (Inverse
+                    Document Frequency). Từ khóa nào càng hiếm trong cơ sở dữ liệu (ví dụ: thuật ngữ chuyên ngành) thì
+                    khi khớp sẽ mang lại điểm số cao hơn hẳn các từ phổ biến (như "và", "là", "thì").
+                  </li>
+                  <li>
+                    <strong>\(k_1\) và \(b\)</strong>: Các siêu tham số hiệu chỉnh (mặc định trong SQLite thường là
+                    \(k_1 = 1.2\) điều khiển mức độ bão hòa tần suất từ, và \(b = 0.75\) điều khiển mức độ phạt độ dài
+                    tài liệu).
+                  </li>
+                </ul>
+
+                <p>
+                  Trong FTS5, SQLite cung cấp hàm <code>bm25()</code> để tự động tính điểm số này. Điểm số trả về của
+                  hàm <code>bm25()</code> là một số âm, tài liệu nào có điểm số âm **càng nhỏ** (càng âm sâu) thì độ
+                  liên quan càng cao.
+                </p>
+
+                <pre><code class="language-sql">-- FTS5 query xếp hạng theo BM25 và lọc trọng số cột
+SELECT title, bm25(articles_search, 10.0, 1.0) AS score
+FROM articles_search 
+WHERE articles_search MATCH 'học SQL'
+ORDER BY score ASC; -- Xếp hạng tốt nhất lên đầu</code></pre>
+                <p>
+                  Trọng số <code>10.0, 1.0</code> truyền vào hàm <code>bm25()</code> chỉ ra rằng nếu từ khóa khớp ở cột
+                  thứ nhất (title), nó sẽ có mức độ quan trọng gấp 10 lần so với khớp ở cột thứ hai (body).
+                </p>
+
+                <h2>4. Các Hàm Bổ Trợ Trực Quan Hóa: <code>snippet()</code> và <code>highlight()</code></h2>
+                <p>
+                  Một bộ máy tìm kiếm không thể chỉ trả về tiêu đề trơ trọi. Người dùng cần nhìn thấy một đoạn trích dẫn
+                  ngắn chứa từ khóa được tô đậm để quyết định có click vào xem hay không.
+                </p>
+                <ul>
+                  <li>
+                    <strong><code>snippet(table, column_index, start_tag, end_tag, ellipses, max_tokens)</code></strong
+                    >: Tự động trích xuất một đoạn văn ngắn xung quanh từ khóa khớp, thêm dấu ba chấm <code>...</code> ở
+                    hai đầu.
+                  </li>
+                  <li>
+                    <strong><code>highlight(table, column_index, start_tag, end_tag)</code></strong
+                    >: Trả về toàn bộ nội dung cột nhưng bọc các từ khóa khớp bằng thẻ HTML tùy chọn (ví dụ: bọc bằng
+                    thẻ <code>&lt;mark&gt;</code>).
+                  </li>
+                </ul>
+
+                <pre><code class="language-sql">-- Sử dụng các hàm trực quan trong FTS5
+SELECT highlight(articles_search, 0, '&lt;span class="match"&gt;', '&lt;/span&gt;') AS highlighted_title,
+       snippet(articles_search, 1, '&lt;mark&gt;', '&lt;/mark&gt;', '...', 15) AS preview_snippet
+FROM articles_search
+WHERE articles_search MATCH 'trực quan'
+LIMIT 5;</code></pre>
+
+                <h2>5. Thực Hành Xây Dựng Search Engine Mini Trên Trình Duyệt</h2>
+                <p>
+                  Để tiến hành thử nghiệm trực tiếp trên trình duyệt với thư viện <code>sql.js</code>, chúng ta sử dụng
+                  module <strong>FTS3</strong> có sẵn. Cú pháp tìm kiếm và hàm cắt chuỗi <code>snippet()</code> hoạt
+                  động hoàn toàn tương thích.
+                </p>
+                <p>Hãy cùng chạy thử các câu lệnh trên bảng tìm kiếm sản phẩm TechMart dưới đây.</p>
+
+                <!-- SQL Workbench Sandbox -->
+                <div class="sql-workbench">
+                  <div>
+                    <div class="sql-examples" id="sql-examples"></div>
+                  </div>
+                  <div class="sql-workbench__row">
+                    <div>
+                      <textarea
+                        id="sql-editor"
+                        class="sql-editor"
+                        spellcheck="false"
+                        placeholder="Nhập câu lệnh SQL tại đây..."
+                      ></textarea>
+                    </div>
+                    <div class="sql-side-panel">
+                      <button id="sql-run-btn" class="sql-btn sql-btn--primary">Chạy lệnh (Ctrl+Enter)</button>
+                      <button id="sql-schema-toggle" class="sql-btn">📋 Xem Schema</button>
+                      <button id="sql-reset-btn" class="sql-btn" style="border-color: #f38ba8; color: #f38ba8">
+                        🔄 Reset Dữ Liệu
+                      </button>
+                    </div>
+                  </div>
+                  <div class="sql-status-line" id="sql-status-line">Đang tải SQLite-WASM...</div>
+                  <div class="sql-schema-panel" id="sql-schema-panel">
+                    <h4>📋 Sơ đồ bảng hiện có (Schema)</h4>
+                    <div id="sql-schema-content"></div>
+                  </div>
+                  <div class="sql-results-container">
+                    <div id="sql-results">
+                      <div class="sql-results-empty">Kết quả truy vấn sẽ hiển thị ở đây...</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Boolean Operator &amp; Dò cụm từ chính xác</div>
+                  <div class="callout__content">
+                    FTS hỗ trợ các toán tử Boolean nâng cao ngay trong chuỗi truy vấn MATCH:
+                    <ul>
+                      <li>
+                        <code>AND</code>: Mặc định giữa các từ (ví dụ: <code>'chuột không_dây'</code> tương đương
+                        <code>'chuột AND không_dây'</code>).
+                      </li>
+                      <li><code>OR</code>: Khớp một trong các từ khóa (ví dụ: <code>'bàn_phím OR chuột'</code>).</li>
+                      <li>
+                        <code>NOT</code> hoặc dấu trừ <code>-</code>: Loại bỏ các dòng chứa từ đó (ví dụ:
+                        <code>'chuột -dây'</code> tìm chuột không dây).
+                      </li>
+                      <li>
+                        <code>"cụm từ"</code>: Bao trong dấu nháy kép để tìm chính xác thứ tự từ xuất hiện cạnh nhau
+                        (Phrase Search), ví dụ <code>'"không dây bluetooth"'</code>.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Interactive Quiz Section -->
+              <div class="quiz-section">
+                <h2>Kiểm tra kiến thức ôn tập</h2>
+
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Cơ chế nào giúp bộ chỉ mục đảo ngược (Inverted Index) tìm kiếm nhanh hơn hàng nghìn lần so
+                    với toán tử <code>LIKE '%từ_khóa%'</code> thông thường?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Inverted Index phân tách văn bản thành các từ đơn và ánh xạ ngược từ đơn -> danh sách Document ID chứa từ đó, giúp tra cứu nhị phân hoặc bảng băm cực nhanh mà không cần quét tuần tự từng dòng văn bản.'
+                        )
+                      "
+                    >
+                      A. Nó phân tích và ánh xạ ngược từ từ đơn sang danh sách Document ID chứa từ đó, bỏ qua thao tác
+                      quét tuần tự.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Inverted Index hoàn toàn có thể lưu trữ trên ổ đĩa vật lý bình thường, không bắt buộc phải nạp toàn bộ vào RAM.'
+                        )
+                      "
+                    >
+                      B. Nó nạp toàn bộ cơ sở dữ liệu vào bộ nhớ RAM và khóa các luồng tính toán khác.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Inverted Index không chuyển đổi dữ liệu thành mã hóa nhị phân MD5, nó lưu danh sách posting list gồm DocID và offset.'
+                        )
+                      "
+                    >
+                      C. Nó mã hóa toàn bộ dữ liệu văn bản sang dạng MD5 để so sánh chuỗi nhị phân nhanh hơn.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Tại sao Tokenizer <code>unicode61</code> là bắt buộc khi xây dựng tính năng tìm kiếm văn bản
+                    tiếng Việt trong SQLite?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Stemming của Porter chỉ thiết kế và hoạt động đúng cho ngữ pháp tiếng Anh (như s/es, ing, ed).'
+                        )
+                      "
+                    >
+                      A. Vì nó tích hợp sẵn thuật toán rút gọn Stemming cho các hậu tố tiếng Việt.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'unicode61 hỗ trợ toàn vẹn bảng mã UTF-8, nhận biết đúng các ký tự Latin mở rộng có dấu của tiếng Việt để tách từ chính xác, thay vì coi các ký tự có dấu là khoảng trắng hoặc dấu câu bị loại bỏ như bộ tokenizer simple.'
+                        )
+                      "
+                    >
+                      B. Vì nó hỗ trợ đầy đủ bảng mã UTF-8 và nhận diện chính xác các nguyên âm tiếng Việt có dấu để
+                      tách từ chuẩn xác.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'unicode61 không nén dữ liệu mà chịu trách nhiệm phân tích tách chuỗi ký tự thành các token từ đơn.'
+                        )
+                      "
+                    >
+                      C. Vì nó tự động nén văn bản tiếng Việt nhỏ đi 2 lần trước khi lưu vào đệm.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Trong thuật toán xếp hạng BM25, yếu tố IDF (Inverse Document Frequency) đóng vai trò gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Ngược lại, IDF đánh giá độ hiếm của từ khóa, từ khóa càng hiếm điểm số mang lại càng cao.'
+                        )
+                      "
+                    >
+                      A. Đảm bảo các từ khóa xuất hiện nhiều nhất trong tài liệu luôn có điểm số cao nhất.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'IDF phản ánh độ hiếm của một từ khóa trong toàn bộ cơ sở dữ liệu. Nếu từ khóa xuất hiện ở rất ít tài liệu (từ khóa hiếm), nó sẽ mang lại điểm số cộng hưởng cao hơn nhiều so với các từ xuất hiện phổ biến.'
+                        )
+                      "
+                    >
+                      B. Đánh giá độ hiếm của từ khóa trong cơ sở dữ liệu để trao điểm số cao hơn cho các từ khóa mang
+                      tính đặc trưng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Độ dài tài liệu được điều chỉnh bởi tham số chuẩn hóa b kết hợp với avgdl, không phải bởi IDF.'
+                        )
+                      "
+                    >
+                      C. Tính toán tỉ lệ phạt điểm của các tài liệu có độ dài quá lớn so với trung bình.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 4: Sự khác nhau về kết quả hiển thị giữa hai hàm trợ giúp <code>snippet()</code> và
+                    <code>highlight()</code> là gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'snippet() chỉ cắt lấy một đoạn văn ngắn chứa từ khóa khớp và thêm dấu ba chấm, phù hợp làm preview. highlight() trả về toàn bộ nội dung của cột văn bản đó và tô đậm các từ khóa khớp.'
+                        )
+                      "
+                    >
+                      A. <code>snippet()</code> trả về một đoạn trích văn bản ngắn chứa từ khóa khớp làm preview, còn
+                      <code>highlight()</code> trả về toàn bộ văn bản cột và chỉ bọc thẻ tô đậm từ khóa.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Cả hai hàm đều không liên quan đến việc tính điểm xếp hạng độ liên quan (việc của bm25).'
+                        )
+                      "
+                    >
+                      B. <code>snippet()</code> tính điểm xếp hạng độ liên quan, còn <code>highlight()</code> dùng để
+                      đổi màu văn bản.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Cả hai hàm đều hỗ trợ đầy đủ các thẻ tag HTML tùy biến do lập trình viên định nghĩa.'
+                        )
+                      "
+                    >
+                      C. <code>snippet()</code> không cho phép thay đổi thẻ tag HTML bọc từ khóa, còn
+                      <code>highlight()</code> thì có.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 5: Trong câu lệnh MATCH <code>techmart_search MATCH 'chuột -dây'</code>, kết quả trả về sẽ là
+                    gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Dấu trừ đứng sát trước từ khóa biểu thị toán tử loại trừ NOT, không phải là tìm kiếm cụm từ ghép.'
+                        )
+                      "
+                    >
+                      A. Tìm kiếm các tài liệu chứa cụm từ ghép chính xác "chuột-dây".
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Phép toán AND được viết là chuột AND dây, hoặc chỉ cần viết cách nhau chuột dây.'
+                        )
+                      "
+                    >
+                      B. Tìm kiếm các tài liệu chứa cả hai từ "chuột" và từ "dây".
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Dấu trừ (-) hoạt động tương tự như toán tử NOT trong FTS của SQLite. Nó sẽ tìm kiếm các dòng chứa từ chuột nhưng loại bỏ hoàn toàn các dòng có xuất hiện từ dây.'
+                        )
+                      "
+                    >
+                      C. Tìm kiếm các tài liệu chứa từ "chuột" nhưng loại bỏ các tài liệu có chứa từ "dây".
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://www.sqlite.org/fts5.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — SQLite FTS5 Extension</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/fts3.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — SQLite FTS3 and FTS4 Extensions</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://en.wikipedia.org/wiki/Okapi_BM25" target="_blank" rel="noopener noreferrer"
+                      >Wikipedia — Okapi BM25 Ranking Algorithm</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 15: Performance Engineering (sắp ra mắt)
+                  </span>
+                  <a href="sql-json-generated-columns" class="article-related__link article-related__link--prev">
+                    Bài 13: JSON &amp; Generated Columns
+                  </a>
+                  <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="vendor/sql-wasm.js" defer></script>
+    <script src="sql-fts5-full-text-search.js" defer></script>
+  </body>
+</html>
