@@ -1,0 +1,1097 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 10: SQLite Internals — B-Tree &amp; File Format — js-tools</title>
+    <meta
+      name="description"
+      content="Header 100 byte đầu file .sqlite, cấu trúc trang B-Tree interior/leaf, record format và varint, overflow page và freelist — đọc thẳng bytes thật của file .sqlite export ra từ trình duyệt bằng Page/Byte Explorer tự viết."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-internals-btree-file-format" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* SQL Workbench Sandbox styles (giống Bài 1/3/4/5/7/8/9) */
+      .sql-workbench {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .sql-workbench__row {
+        display: grid;
+        grid-template-columns: 1fr 200px;
+        gap: 16px;
+      }
+      .sql-editor {
+        width: 100%;
+        min-height: 130px;
+        background: #0f0f1b;
+        color: #a6e3a1;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-family: monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+      .sql-side-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sql-btn {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .sql-btn:hover {
+        background: #313244;
+      }
+      .sql-btn--primary {
+        background: #10b981;
+        border-color: #10b981;
+        color: #fff;
+        font-weight: 600;
+      }
+      .sql-btn--primary:hover {
+        background: #059669;
+      }
+      .sql-examples {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .sql-example-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #11111b;
+        color: #a6adc8;
+        font-size: 11px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .sql-example-btn:hover {
+        background: #313244;
+        color: #cdd6f4;
+      }
+      .sql-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #a6adc8;
+      }
+      .sql-status-line.is-error {
+        color: #f38ba8;
+      }
+      .sql-schema-panel {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        font-size: 12px;
+        color: #cdd6f4;
+        display: none;
+      }
+      .sql-schema-panel.is-visible {
+        display: block;
+      }
+      #sql-schema-panel table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 12px;
+        font-size: 11px;
+      }
+      #sql-schema-panel th,
+      #sql-schema-panel td {
+        text-align: left;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border);
+        color: #cdd6f4;
+      }
+      #sql-schema-panel th {
+        color: #a6adc8;
+      }
+      #sql-schema-panel tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .sql-schema-panel h4 {
+        color: #10b981;
+        margin: 0 0 6px;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      .sql-results-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        overflow-x: auto;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      #sql-results table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12px;
+        font-family: monospace;
+        color: #cdd6f4;
+      }
+      #sql-results th,
+      #sql-results td {
+        padding: 6px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        color: #cdd6f4;
+      }
+      #sql-results th {
+        background: #11111b;
+        color: #10b981;
+        position: sticky;
+        top: -13px;
+      }
+      #sql-results tbody tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      #sql-results td.is-null {
+        color: #6c7086;
+        font-style: italic;
+      }
+      .sql-results-empty {
+        color: #6c7086;
+        font-size: 13px;
+        padding: 8px;
+      }
+      @media (max-width: 880px) {
+        .sql-workbench__row {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+      /* Page/Byte Explorer */
+      .page-explorer {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+      }
+      .page-explorer__controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+      }
+      .page-explorer__controls input {
+        width: 80px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #0f0f1b;
+        color: #cdd6f4;
+        font-family: monospace;
+      }
+      #page-explorer-output {
+        color: #cdd6f4;
+        font-size: 13px;
+      }
+      #page-explorer-output h4 {
+        color: #10b981;
+        margin: 16px 0 8px;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      #page-explorer-output h4:first-child {
+        margin-top: 0;
+      }
+      #page-explorer-output .comparison-table {
+        font-size: 12px;
+        margin: 8px 0 16px;
+      }
+      #page-explorer-output .comparison-table td {
+        color: #cdd6f4;
+        border-color: var(--border);
+      }
+      .hex-dump {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        font-family: monospace;
+        font-size: 11px;
+        line-height: 1.6;
+        color: #a6e3a1;
+        overflow-x: auto;
+        white-space: pre;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sql">
+        <div class="container">
+          <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
+          <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
+          <h1 class="article-hero__title">Bài 10: SQLite Internals — B-Tree &amp; File Format</h1>
+          <div class="article-hero__meta">4 tháng 7, 2026 · 32 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Mọi bài trước dừng ở mức <strong>SQL</strong> — <code>SELECT</code>, <code>JOIN</code>,
+                  <code>EXPLAIN QUERY PLAN</code>. Bài này đi xuống 1 tầng nữa: file <code>.sqlite</code> trên đĩa thực
+                  chất là gì, tính từng byte. Không lý thuyết suông — mọi con số trong bài đều đọc thẳng từ
+                  <code>db.export()</code> (bytes thật của database TechMart quen thuộc từ Bài 1) bằng 1
+                  <strong>Page/Byte Explorer</strong> tự viết ngay trong sân chơi bên dưới.
+                </p>
+
+                <h2>1. Header 100 Byte Đầu File</h2>
+                <p>
+                  100 byte đầu tiên của <strong>mọi</strong> file <code>.sqlite</code> là 1 header cố định, cấu trúc
+                  giống hệt nhau bất kể dữ liệu bên trong là gì. Đọc thật từ file TechMart (12 khách hàng, 14 sản phẩm,
+                  28 đơn hàng, 34 dòng chi tiết đơn — 5 trang, 20.480 byte):
+                </p>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Offset</th>
+                      <th>Trường</th>
+                      <th>Giá trị thật (TechMart)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>0-15</td>
+                      <td>Magic string</td>
+                      <td><code>"SQLite format 3\0"</code></td>
+                    </tr>
+                    <tr>
+                      <td>16-17</td>
+                      <td>Page size (byte)</td>
+                      <td><code>4096</code></td>
+                    </tr>
+                    <tr>
+                      <td>28-31</td>
+                      <td>Kích thước DB (số trang)</td>
+                      <td><code>5</code> (khớp đúng 20.480 ÷ 4096)</td>
+                    </tr>
+                    <tr>
+                      <td>32-39</td>
+                      <td>Trang freelist-trunk đầu + tổng số trang free</td>
+                      <td><code>0, 0</code> (chưa từng xoá gì)</td>
+                    </tr>
+                    <tr>
+                      <td>44-47</td>
+                      <td>Schema format number</td>
+                      <td><code>4</code> (chuẩn hiện đại, hỗ trợ <code>DESC</code> index...)</td>
+                    </tr>
+                    <tr>
+                      <td>96-99</td>
+                      <td>SQLite version number</td>
+                      <td><code>3049001</code> → giải mã <code>X·1000000 + Y·1000 + Z</code> = phiên bản 3.49.1</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Đây chỉ là 6/23 trường thật sự tồn tại — bấm "Phân tích trang" ở trang 1 trong sân chơi bên dưới để
+                  xem đầy đủ. Mọi database SQLite trên thế giới, dù nặng vài KB hay vài TB, đều bắt đầu bằng đúng 100
+                  byte theo cấu trúc này — đây là lý do bất kỳ công cụ nào (kể cả 1 trình phân tích tự viết bằng
+                  JavaScript như trong bài) đều đọc được file <code>.sqlite</code> mà không cần chính SQLite.
+                </p>
+
+                <h2>2. Cấu Trúc Trang B-Tree: Interior &amp; Leaf</h2>
+                <p>
+                  Ngay sau 100 byte header (với trang 1) hoặc ngay từ byte đầu tiên (mọi trang khác) là
+                  <strong>b-tree page header</strong> — 8 byte cho trang lá (leaf), 12 byte cho trang nội (interior, có
+                  thêm 4 byte con trỏ phải cùng). Với dataset nhỏ như TechMart (5 trang), mọi bảng chỉ cần
+                  <strong>1 trang lá duy nhất</strong> — không có trang nội nào cả. Để thấy trang nội thật, sân chơi tự
+                  sinh 1 bảng <code>demo_orders</code> 2.000 dòng (kỹ thuật CTE đệ quy quen thuộc từ Bài 8, 9):
+                </p>
+                <pre><code class="language-text">-- TechMart chiếm sẵn Trang 1-5. Sau khi tạo demo_orders (2.000 dòng, bước 3️⃣),
+-- bảng này chiếm thêm 20 trang (Trang 6-25):
+-- Trang 6 (rootpage của demo_orders) = 0x05 Interior table b-tree, 18 cell
+-- Con trỏ phải cùng (right-most pointer) → Trang 25
+
+-- 3 cell đầu tiên (đã giải mã thật):
+--   khoá ≤ 108  → trang con trái = Trang 7
+--   khoá ≤ 214  → trang con trái = Trang 8
+--   khoá ≤ 319  → trang con trái = Trang 9</code></pre>
+                <p>
+                  Đọc đúng theo thứ tự: rowid 1-108 nằm ở Trang 7, rowid 109-214 nằm ở Trang 8, rowid 215-319 nằm ở
+                  Trang 9, ... và mọi rowid lớn hơn khoá cuối cùng đi theo con trỏ phải cùng (Trang 25). Số trang cụ thể
+                  sẽ khác nếu bạn bấm các nút không đúng thứ tự 1️⃣→5️⃣b — tự kiểm tra lại bằng Page Explorer bên dưới.
+                  Đây
+                  <strong>chính là</strong> cơ chế đứng sau <code>SEARCH ... USING INTEGER PRIMARY KEY</code> đã thấy ở
+                  Bài 8, 9: tra 1 <code>rowid</code> cụ thể không cần dò tuần tự 2.000 dòng — chỉ cần
+                  <strong>1-2 bước rẽ nhánh</strong> qua trang nội để nhảy thẳng tới đúng trang lá chứa nó, giống hệt
+                  tra mục lục sách nhiều cấp.
+                </p>
+
+                <h2>3. Record Format &amp; Varint: Giải Mã 1 Dòng Dữ Liệu Thật</h2>
+                <p>
+                  Trước khi đọc được 1 dòng dữ liệu, cần hiểu <strong>varint</strong> — cách SQLite mã hoá số nguyên
+                  bằng <strong>số byte thay đổi</strong> (1-9 byte) thay vì luôn cố định 4/8 byte: mỗi byte dùng 7 bit
+                  chứa dữ liệu, bit cao nhất (bit thứ 8) báo hiệu "còn byte tiếp theo hay không". Số càng nhỏ (rowid, độ
+                  dài chuỗi ngắn...) càng tốn ít byte — tiết kiệm không gian đáng kể khi số đó lặp lại trong hàng triệu
+                  bản ghi. Giải mã thật record đầu tiên của bảng <code>customers</code> (rowid = 1, Nguyễn Minh Anh) từ
+                  Trang 2 của TechMart:
+                </p>
+                <pre><code class="language-text">Payload dài 65 byte, rowid = 1 (1 byte varint)
+Header record dài 7 byte, gồm 6 serial type: [0, 47, 61, 27, 33, 9]
+
+Serial type 0   → NULL           → customer_id (KHÔNG lưu — xem callout dưới)
+Serial type 47  → TEXT dài 17    → "Nguyễn Minh Anh"
+Serial type 61  → TEXT dài 24    → "minhanh.nguyen@gmail.com"
+Serial type 27  → TEXT dài 7     → "Vietnam"
+Serial type 33  → TEXT dài 10    → "2025-11-02"
+Serial type 9   → hằng số 1      → is_active (0 byte lưu trữ!)</code></pre>
+                <p>
+                  Công thức <code>serial_type</code> cho TEXT: <code>13 + 2×độ_dài</code> — vd chuỗi "Vietnam" dài 7 ký
+                  tự → <code>13 + 2×7 = 27</code>, khớp chính xác giá trị đọc được. Với BLOB, công thức tương tự nhưng
+                  dùng số chẵn: <code>12 + 2×độ_dài</code>.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">
+                    🔬 Đào sâu: vì sao <code>customer_id</code> lại là <code>NULL</code> trong record?
+                  </div>
+                  <div class="callout__content">
+                    Đây không phải lỗi hay dữ liệu thiếu — <code>customer_id</code> được khai báo
+                    <code>INTEGER PRIMARY KEY</code> ở Bài 1, nghĩa là nó chính là <strong>alias của rowid</strong> (đã
+                    học ở Bài 1, nhắc lại có chủ đích ở đây). Vì rowid đã được lưu <strong>riêng</strong> ngay đầu mỗi
+                    cell (byte thứ 2 trong ví dụ trên: <code>rowid = 1</code>), SQLite
+                    <strong>không lưu lại</strong> giá trị đó lần nữa trong phần record — tiết kiệm gần như toàn bộ chi
+                    phí lưu trữ cho cột này. Tương tự, serial type 9 (hằng số 1) cho <code>is_active</code> cũng tốn
+                    <strong>0 byte</strong> — SQLite nhận ra giá trị 0 và 1 phổ biến tới mức đáng có 2 serial type riêng
+                    chỉ để "báo hiệu giá trị" mà không cần lưu byte dữ liệu nào cả.
+                  </div>
+                </div>
+
+                <h2>4. Overflow Page &amp; Freelist</h2>
+                <p>
+                  <strong>Overflow page</strong> xử lý giá trị quá lớn để nằm gọn trong 1 trang. Sân chơi tạo 1 bảng
+                  <code>demo_overflow</code> rồi chèn 1 chuỗi TEXT dài <strong>6.000 ký tự</strong> (lớn hơn hẳn trang
+                  4096 byte) — chèn thật, đọc thật kết quả:
+                </p>
+                <pre><code class="language-text">Payload tổng = 6.004 byte — vượt xa 1 trang (4096 byte)
+→ Chỉ ~1.912 byte đầu lưu cục bộ trên rootpage của demo_overflow (Trang 26, sau khi
+  TechMart + demo_orders đã chiếm Trang 1-25 — số trang cụ thể phụ thuộc bạn đã chạy
+  những bước nào trước đó, tự kiểm tra lại bằng Page Explorer)
+→ 4 byte cuối cùng của phần cục bộ = con trỏ trang overflow: Trang 27
+→ Trang 27 bắt đầu bằng 4 byte "con trỏ overflow TIẾP THEO": 0 (= đây là trang overflow CUỐI, không còn trang nào nữa)
+→ Ngay sau 4 byte đó là dữ liệu thô tiếp theo của chuỗi — trang overflow KHÔNG có b-tree
+  header nào cả, chỉ có [4 byte con trỏ][dữ liệu thô...]</code></pre>
+                <p>
+                  Nếu giá trị dài hơn nữa (vượt cả 1 trang overflow), trang overflow đầu sẽ trỏ tiếp sang trang overflow
+                  thứ 2 — tạo thành 1 <strong>danh sách liên kết đơn (linked list)</strong> các trang, đọc tuần tự cho
+                  tới khi gặp con trỏ <code>0</code>. Đây là lý do truy vấn lọc theo 1 cột TEXT/BLOB rất dài luôn chậm
+                  hơn cột ngắn — engine phải nhảy qua nhiều trang overflow rời rạc trên đĩa thay vì đọc liền mạch trong
+                  1 trang.
+                </p>
+                <p>
+                  <strong>Freelist</strong> quản lý các trang đã <strong>giải phóng</strong> (sau
+                  <code>DELETE</code> hàng loạt hoặc <code>DROP TABLE</code>) để tái sử dụng cho lần ghi sau, tránh phải
+                  phình to file liên tục. Sân chơi xoá hẳn bảng <code>demo_orders</code> (20 trang: 1 root + 19 lá) rồi
+                  đọc thật:
+                </p>
+                <pre><code class="language-text">DROP TABLE demo_orders; -- giải phóng toàn bộ 20 trang, kể cả rootpage
+
+PRAGMA freelist_count;  -- → 20  (20 trang giờ đã "free", chờ tái sử dụng)
+PRAGMA page_count;      -- → 27  (KHÔNG giảm — file KHÔNG tự co lại)
+
+-- Header: trang freelist-trunk đầu tiên = Trang 7, tổng số trang free = 20
+-- Trang 7 (trunk): 4 byte đầu = con trỏ trunk tiếp theo (0 = trunk cuối),
+--                  4 byte kế = số con trỏ lá (19), theo sau là 19 số hiệu trang free: [8, 9, 10, 11, 12, ...]</code></pre>
+                <p>
+                  Điểm quan trọng hay bị hiểu nhầm: <code>DROP TABLE</code>/<code>DELETE</code>
+                  <strong>không</strong> làm file <code>.sqlite</code> nhỏ lại ngay lập tức — các trang cũ chỉ được đánh
+                  dấu "free" trong danh sách liên kết freelist-trunk/leaf, sẵn sàng tái sử dụng cho lần
+                  <code>INSERT</code>/<code>CREATE TABLE</code> tiếp theo. Muốn thật sự thu nhỏ file trên đĩa, cần chạy
+                  <code>VACUUM</code> — lệnh này viết lại toàn bộ database vào 1 file mới, bỏ hết các trang free, rồi
+                  thay thế file cũ.
+                </p>
+
+                <h2>Sân Chơi Tương Tác: SQL Workbench + Page/Byte Explorer</h2>
+                <p>
+                  Bấm lần lượt các nút 1️⃣ → 5️⃣b để tái tạo đúng các số liệu ở trên, rồi dùng ô "Phân tích trang" để tự
+                  soi bytes thật của bất kỳ trang nào (thử trang 1, 2, và các trang mới sinh ra sau mỗi bước).
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🗄️ SQL Workbench (TechMart + demo_orders/demo_overflow)</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="sql-workbench">
+                      <div>
+                        <div class="sql-examples" id="sql-examples"></div>
+                      </div>
+                      <div class="sql-workbench__row">
+                        <textarea
+                          id="sql-editor"
+                          class="sql-editor"
+                          spellcheck="false"
+                          placeholder="Bấm lần lượt 1️⃣ 2️⃣ 3️⃣... theo thứ tự để đi hết bài..."
+                        ></textarea>
+                        <div class="sql-side-panel">
+                          <button class="sql-btn sql-btn--primary" id="sql-run-btn">▶ Chạy (Ctrl+Enter)</button>
+                          <button class="sql-btn" id="sql-schema-toggle">📋 Xem cấu trúc bảng</button>
+                          <button class="sql-btn" id="sql-reset-btn">Reset dữ liệu</button>
+                        </div>
+                      </div>
+                      <div class="sql-schema-panel" id="sql-schema-panel">
+                        <h4>
+                          TechMart
+                          <span style="color: #6c7086">(4 bảng, nạp sẵn — customers/products/orders/order_items)</span>
+                        </h4>
+                        <table>
+                          <tr>
+                            <th>Bảng</th>
+                            <th>Rootpage</th>
+                          </tr>
+                          <tr>
+                            <td>customers</td>
+                            <td>2</td>
+                          </tr>
+                          <tr>
+                            <td>products</td>
+                            <td>3</td>
+                          </tr>
+                          <tr>
+                            <td>orders</td>
+                            <td>4</td>
+                          </tr>
+                          <tr>
+                            <td>order_items</td>
+                            <td>5</td>
+                          </tr>
+                        </table>
+                        <h4 style="margin-top: 10px">
+                          demo_orders / demo_overflow
+                          <span style="color: #6c7086">(bấm 3️⃣/4️⃣ để tạo)</span>
+                        </h4>
+                        <table>
+                          <tr>
+                            <th>Bảng</th>
+                            <th>Mục đích</th>
+                          </tr>
+                          <tr>
+                            <td>demo_orders</td>
+                            <td>2.000 dòng — ép sinh interior page</td>
+                          </tr>
+                          <tr>
+                            <td>demo_overflow</td>
+                            <td>1 giá trị TEXT 6.000 ký tự — ép sinh overflow page</td>
+                          </tr>
+                        </table>
+                      </div>
+                      <div class="sql-results-container" id="sql-results">
+                        <div class="sql-results-empty">Bấm "1️⃣" bên dưới để bắt đầu...</div>
+                      </div>
+                      <div class="sql-status-line" id="sql-status-line">Đang tải SQLite-WASM engine...</div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">sql-internals-btree-file-format.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="sql-js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Page/Byte Explorer -->
+                <div class="page-explorer">
+                  <h3 style="margin-top: 0; color: #10b981; font-family: monospace">
+                    🔍 Page/Byte Explorer — đọc thẳng bytes thật của file .sqlite
+                  </h3>
+                  <div class="page-explorer__controls">
+                    <label for="page-explorer-input" style="color: #cdd6f4; font-size: 13px">Số trang:</label>
+                    <input type="number" id="page-explorer-input" value="1" min="1" />
+                    <button class="sql-btn sql-btn--primary" id="page-explorer-btn">🔍 Phân tích trang</button>
+                  </div>
+                  <div id="page-explorer-output">
+                    <div class="sql-results-empty">Đang tải engine...</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Interactive Quizzes -->
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">Câu 1: 100 byte đầu tiên của file <code>.sqlite</code> chứa thông tin gì?</p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'Header 100 byte có cấu trúc CỐ ĐỊNH, giống hệt nhau ở mọi file .sqlite bất kể dữ liệu bên trong — chứa magic string, page size, số trang, thông tin freelist, schema cookie, phiên bản SQLite...'
+                      )
+                    "
+                  >
+                    A. Header cố định chứa magic string, page size, số trang, thông tin freelist, phiên bản SQLite — cấu
+                    trúc giống hệt nhau ở mọi file <code>.sqlite</code>.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Dữ liệu thật của các bảng (hàng/cột) nằm ở CÁC TRANG SAU, không phải trong 100 byte header — header chỉ chứa metadata mô tả toàn bộ file.'
+                      )
+                    "
+                  >
+                    B. 100 byte đầu chứa toàn bộ dữ liệu của bảng đầu tiên trong database.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Header 100 byte không hề thay đổi cấu trúc theo page size — nó luôn nằm ở 100 byte đầu tiên bất kể page size được cấu hình là bao nhiêu.'
+                      )
+                    "
+                  >
+                    C. Kích thước header thay đổi tuỳ theo page size của database.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 2: Với bảng <code>demo_orders</code> 2.000 dòng, trang nội (interior) gốc có 18 cell, mỗi cell
+                  chứa khoá + con trỏ trang con trái, cộng thêm 1 "con trỏ phải cùng". Ý nghĩa của cấu trúc này là gì?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'Mỗi cell (khoá K, con trỏ trái P) nghĩa là mọi rowid <= K nằm trong nhánh P; con trỏ phải cùng dẫn tới nhánh chứa mọi rowid LỚN HƠN khoá cuối cùng — đây chính là cơ chế cho phép tra 1 rowid cụ thể chỉ với vài bước rẽ nhánh thay vì dò tuần tự.'
+                      )
+                    "
+                  >
+                    A. Mỗi khoá phân chia rowid vào đúng nhánh con (≤ khoá đi trái, phần còn lại đi phải cùng) — cho
+                    phép nhảy thẳng tới đúng trang lá chỉ với vài bước rẽ nhánh.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Trang nội không lưu dữ liệu hàng thật (không có cột customer_id/status/total_amount) — nó chỉ lưu khoá định tuyến và con trỏ trang con, dữ liệu thật nằm ở trang lá.'
+                      )
+                    "
+                  >
+                    B. Mỗi cell lưu 1 dòng dữ liệu đầy đủ của bảng <code>demo_orders</code>.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Con trỏ phải cùng KHÔNG phải cơ chế sao lưu — nó là 1 phần bắt buộc của cấu trúc b-tree, trỏ tới nhánh chứa rowid lớn hơn mọi khoá đã liệt kê trong cell.'
+                      )
+                    "
+                  >
+                    C. Con trỏ phải cùng là bản sao lưu (backup) của toàn bộ trang, phòng khi trang gốc hỏng.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 3: Trong record của <code>customers</code>, cột <code>customer_id</code> (khai báo
+                  <code>INTEGER PRIMARY KEY</code>) có serial type <code>0</code> (NULL) — dù giá trị thật là 1, 2, 3...
+                  Vì sao?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'customer_id là alias của rowid (đã học ở Bài 1) — giá trị đó đã lưu RIÊNG ngay đầu mỗi cell (chính là rowid), nên SQLite không lưu lại lần nữa trong phần record để tiết kiệm không gian.'
+                      )
+                    "
+                  >
+                    A. <code>customer_id</code> chính là <code>rowid</code>, đã được lưu riêng ở đầu mỗi cell — SQLite
+                    không lưu trùng lặp giá trị đó lần nữa trong record.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Đây không phải lỗi hay dữ liệu bị mất — mọi giá trị customer_id vẫn truy vấn đúng bình thường qua rowid, chỉ là cách LƯU TRỮ tối ưu, không ảnh hưởng kết quả SELECT.'
+                      )
+                    "
+                  >
+                    B. Đây là 1 lỗi dữ liệu — giá trị <code>customer_id</code> đã bị mất khi ghi vào đĩa.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'INTEGER PRIMARY KEY hoàn toàn hợp lệ để NOT NULL/PRIMARY KEY như bình thường — hành vi rowid-alias này là thiết kế cố ý, không phải kiểu dữ liệu không hợp lệ.'
+                      )
+                    "
+                  >
+                    C. Vì <code>INTEGER PRIMARY KEY</code> không phải kiểu dữ liệu hợp lệ trong SQLite.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 4: Chèn 1 giá trị TEXT dài 6.000 ký tự vào bảng chỉ có 1 trang (4096 byte). Điều gì xảy ra?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'SQLite hoàn toàn hỗ trợ giá trị TEXT dài hơn 1 trang — không hề báo lỗi, chỉ cần cơ chế overflow page để lưu phần vượt quá.'
+                      )
+                    "
+                  >
+                    A. SQLite báo lỗi ngay lập tức, từ chối chèn giá trị lớn hơn kích thước 1 trang.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'Đã kiểm chứng thật: chỉ ~1.912 byte đầu lưu cục bộ trên trang gốc, phần còn lại tràn sang 1 (hoặc nhiều) overflow page riêng, nối nhau bằng con trỏ 4 byte ở đầu mỗi overflow page — kết thúc bằng con trỏ 0.'
+                      )
+                    "
+                  >
+                    B. Chỉ 1 phần giá trị lưu cục bộ trên trang gốc, phần còn lại tràn sang (các) overflow page nối tiếp
+                    nhau bằng con trỏ 4 byte.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'SQLite không tự động cắt bớt dữ liệu — toàn bộ 6.000 ký tự vẫn được lưu đầy đủ và đọc lại chính xác, chỉ là trải trên nhiều trang.'
+                      )
+                    "
+                  >
+                    C. SQLite tự động cắt bớt giá trị xuống còn vừa đúng 1 trang, phần thừa bị mất.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 5: Sau <code>DROP TABLE demo_orders</code> (giải phóng 20 trang), <code>PRAGMA page_count</code>
+                  vẫn trả về 21 — không giảm. Vì sao?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'Các trang cũ chỉ được đánh dấu free trong danh sách freelist-trunk/leaf để TÁI SỬ DỤNG cho lần ghi sau — file không tự co lại. Muốn thật sự thu nhỏ file cần chạy VACUUM.'
+                      )
+                    "
+                  >
+                    A. 20 trang cũ chỉ được đánh dấu "free" (đưa vào freelist) để tái sử dụng sau — file không tự động
+                    co lại, cần <code>VACUUM</code> mới thật sự thu nhỏ.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'PRAGMA freelist_count đã kiểm chứng cho thấy 20 trang THẬT SỰ được đánh dấu free — DROP TABLE hoạt động đúng, chỉ là file không tự co lại ngay.'
+                      )
+                    "
+                  >
+                    B. <code>DROP TABLE</code> chưa thực sự xoá dữ liệu, cần chạy thêm lệnh khác để hoàn tất.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'sql.js hoạt động đúng chuẩn hành vi SQLite thật — đây không phải giới hạn riêng của WASM, mọi bản SQLite (kể cả server) đều giữ nguyên page_count sau DROP TABLE cho tới khi VACUUM.'
+                      )
+                    "
+                  >
+                    C. Đây là giới hạn riêng của phiên bản sql.js/WASM, SQLite server thật sẽ co file ngay lập tức.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 6: Chuỗi <code>"Vietnam"</code> (7 ký tự) có serial type <code>27</code> trong record. Công thức
+                  nào tính ra con số này?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'Công thức serial type cho TEXT là 13 + 2×độ_dài. Với Vietnam dài 7 ký tự: 13 + 2×7 = 27, khớp chính xác giá trị đọc được thật từ record.'
+                      )
+                    "
+                  >
+                    A. <code>13 + 2 × độ_dài</code> — với 7 ký tự: <code>13 + 2×7 = 27</code>.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Công thức 12 + 2×độ_dài (số CHẴN) dùng cho BLOB, không phải TEXT — Vietnam là TEXT nên dùng công thức 13 + 2×độ_dài (số LẺ).'
+                      )
+                    "
+                  >
+                    B. <code>12 + 2 × độ_dài</code> — công thức này áp dụng cho mọi kiểu dữ liệu chuỗi.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Serial type không đơn giản bằng độ dài cộng thêm 20 — công thức thật (13 + 2×độ_dài) đảm bảo mọi serial type TEXT luôn là số LẺ >= 13, phân biệt rõ với BLOB (số chẵn) và các kiểu số nguyên/thực cố định (0-9).'
+                      )
+                    "
+                  >
+                    C. Serial type luôn bằng độ dài chuỗi cộng thêm 20.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://www.sqlite.org/fileformat2.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — Database File Format</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/fileformat2.html#varint" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — Variable-Length Integers</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://www.sqlite.org/fileformat2.html#record_format"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >SQLite Official Docs — Record Format &amp; Serial Types</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/lang_vacuum.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — VACUUM</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://sql.js.org/" target="_blank" rel="noopener noreferrer"
+                      >sql.js — SQLite compiled to WebAssembly</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 11: Transaction &amp; ACID 🐳 (sắp ra mắt)
+                  </span>
+                  <a href="sql-query-optimizer-deep-dive" class="article-related__link article-related__link--prev">
+                    Bài 9: Query Optimizer Sâu 🐳
+                  </a>
+                  <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="vendor/sql-wasm.js" defer></script>
+    <script src="sql-internals-btree-file-format.js" defer></script>
+  </body>
+</html>
