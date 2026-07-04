@@ -14,7 +14,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | Series 1                         | WebAssembly & Rust                  | 0/10           | 10       | 0%          |
 | Series 4                         | WebRTC & WebSocket                  | 0/8            | 8        | 0%          |
 | Series 5                         | Toy JS Engine (Trình thông dịch JS) | 0/?            | TBD      | 0%          |
-| Series 7                         | SQL trong Trình duyệt (SQLite-WASM) | 0/?            | TBD      | 0%          |
+| 🚧 Series 7                      | SQL trong Trình duyệt (SQLite-WASM) | 0/16           | 16       | 0%          |
 | 🎉 **Series 8: Web Audio**       | **Âm Thanh & Visualizer**           | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 9: Git**             | **Mô Hình & Quy Trình Làm Việc**    | **13/13**      | **13**   | **100%** ✅ |
 
@@ -262,9 +262,10 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
 
-- **Engine:** `sql.js` (SQLite biên dịch sang WebAssembly) — commit sẵn artifact `.wasm`, không build runtime.
+- **Engine:** `sql.js` (SQLite biên dịch sang WebAssembly) — commit sẵn artifact `.wasm`, không build runtime. Bài 15 giới thiệu thêm official SQLite WASM (OPFS) ở mức khái niệm/so sánh.
 - **Lưu trữ:** IndexedDB/`localStorage` để persist DB giữa các phiên; import/export file `.sqlite`.
 - **Giao diện:** Vanilla JS + bảng HTML render kết quả, tái dùng pattern IDE console sẵn có.
+- **Định hướng đối tượng:** nửa đầu (Bài 1-7) nền tảng có chiều sâu; nửa sau (Bài 8-15) chuyên sâu cho người có kinh nghiệm — optimizer, internals, virtual table, FTS5, performance, WAL/OPFS.
 
 ### 2. Thiết kế Demo tương tác cốt lõi (Core Visualizer Demo)
 
@@ -276,16 +277,24 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học                         | Nội dung chuyên sâu                                                | Dự án/Demo đi kèm                                            |
-| --- | ----------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------ |
-| 1   | **Mô hình quan hệ & SELECT**        | Bảng/hàng/cột, `WHERE`, `ORDER BY`, `LIMIT`, kiểu dữ liệu SQLite.  | Chạy query đầu tiên trên dataset mẫu trong browser.          |
-| 2   | **JOIN toàn tập**                   | INNER/LEFT/RIGHT/FULL/CROSS, khoá ngoại, lỗi tích Descartes.       | Visualizer Venn minh hoạ từng loại JOIN trên dữ liệu thật.   |
-| 3   | **Aggregate & GROUP BY**            | `COUNT/SUM/AVG`, `GROUP BY`, `HAVING` vs `WHERE`.                  | Bảng tổng hợp doanh thu + biểu đồ cột từ kết quả query.      |
-| 4   | **Subquery & CTE**                  | Subquery tương quan, `WITH`, đệ quy CTE (cây phả hệ).              | Demo CTE đệ quy duyệt cây danh mục lồng nhau.                |
-| 5   | **Index & Query Plan**              | B-Tree index, `EXPLAIN QUERY PLAN`, full scan vs index seek.       | So sánh thời gian query trước/sau khi tạo index.             |
-| 6   | **Window Functions**                | `ROW_NUMBER`, `RANK`, `LAG/LEAD`, `OVER(PARTITION BY)`.            | Bảng xếp hạng & running total trực quan.                     |
-| 7   | **Transaction & ACID**              | `BEGIN/COMMIT/ROLLBACK`, tính nguyên tử, ràng buộc toàn vẹn.       | Demo mô phỏng rollback khi vi phạm ràng buộc.                |
-| 8   | **Dự án: Mini Analytics Dashboard** | Ghép query + render chart, lưu DB vào IndexedDB, export `.sqlite`. | Dashboard phân tích dữ liệu chạy 100% offline trong browser. |
+| Bài | Tên bài học                                | Nội dung chuyên sâu                                                           | Dự án/Demo đi kèm                                                        |
+| --- | ------------------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 1   | **Mô hình quan hệ & SELECT**               | Bảng/hàng/cột, `WHERE`, `ORDER BY`, `LIMIT`, kiểu dữ liệu SQLite.             | Chạy query đầu tiên trên dataset mẫu trong browser.                      |
+| 2   | **JOIN toàn tập**                          | INNER/LEFT/RIGHT/FULL/CROSS, khoá ngoại, lỗi tích Descartes.                  | Visualizer Venn minh hoạ từng loại JOIN trên dữ liệu thật.               |
+| 3   | **Aggregate & GROUP BY**                   | `COUNT/SUM/AVG`, `GROUP BY`, `HAVING` vs `WHERE`.                             | Bảng tổng hợp doanh thu + biểu đồ cột từ kết quả query.                  |
+| 4   | **Subquery & CTE**                         | Subquery tương quan, `WITH`, đệ quy CTE (cây phả hệ).                         | Demo CTE đệ quy duyệt cây danh mục lồng nhau.                            |
+| 5   | **Graph Queries bằng CTE Đệ Quy**          | Transitive closure, đường đi ngắn nhất, phát hiện chu trình thuần SQL.        | Đồ thị mạng lưới chuyến bay: tìm đường bay rẻ nhất bằng 1 câu SQL.       |
+| 6   | **Window Functions**                       | `ROW_NUMBER`, `RANK`, `LAG/LEAD`, `OVER(PARTITION BY)`.                       | Bảng xếp hạng & running total trực quan.                                 |
+| 7   | **Index & Query Plan**                     | B-Tree index, `EXPLAIN QUERY PLAN`, full scan vs index seek.                  | So sánh thời gian query trước/sau khi tạo index.                         |
+| 8   | **Query Optimizer Sâu**                    | `ANALYZE` & statistics, thứ tự join, partial/expression index, bytecode VDBE. | Trình xem bytecode `EXPLAIN` từng opcode + so sánh plan trước/sau.       |
+| 9   | **SQLite Internals: B-Tree & File Format** | Cấu trúc page, varint, record format, overflow page, freelist.                | Page viewer đọc hex thật của file `.sqlite` ngay trong browser.          |
+| 10  | **Transaction & ACID**                     | `BEGIN/COMMIT/ROLLBACK`, tính nguyên tử, ràng buộc toàn vẹn.                  | Demo mô phỏng rollback khi vi phạm ràng buộc.                            |
+| 11  | **Trigger, View & Virtual Table**          | Trigger audit log, view như lớp trừu tượng, cơ chế virtual table.             | Audit log tự động ghi mọi thay đổi + custom virtual table đơn giản.      |
+| 12  | **JSON & Generated Columns**               | Hàm JSON, `json_each`/`json_tree`, generated columns, index trên expression.  | Kho document JSON có index — truy vấn semi-structured nhanh như cột.     |
+| 13  | **FTS5 Full-Text Search**                  | Inverted index, tokenizer, BM25 ranking, `highlight()`/`snippet()`.           | Search engine mini: tìm kiếm toàn văn tức thì trên nghìn bài viết.       |
+| 14  | **Performance Engineering**                | Prepared statements, batch insert, PRAGMA tuning, đo lường đúng cách.         | Benchmark 1 triệu dòng trong browser: từng kỹ thuật nhanh hơn bao nhiêu. |
+| 15  | **WAL & Persistence trong Browser**        | WAL mode, OPFS + Worker, sql.js vs wa-sqlite vs official WASM, COOP/COEP.     | So sánh trực quan các chiến lược persist DB giữa các phiên làm việc.     |
+| 16  | **Dự án: Mini Analytics Dashboard**        | Ghép query + render chart, lưu DB vào IndexedDB/OPFS, export `.sqlite`.       | Dashboard phân tích dữ liệu chạy 100% offline trong browser.             |
 
 ---
 
@@ -395,7 +404,7 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 | 4   | WebRTC & WebSocket        | `blog/realtime/` | `realtime-programming-series.html` | `--rtc`       | 8      |
 | 5   | Toy JS Engine             | `blog/toyjs/`    | `toyjs-programming-series.html`    | `--toyjs`     | 8      |
 | 6   | CSS & Animation           | `blog/css/`      | `css-programming-series.html`      | `--css`       | 10     |
-| 7   | SQL (SQLite-WASM)         | `blog/sql/`      | `sql-programming-series.html`      | `--sql`       | 8      |
+| 7   | SQL (SQLite-WASM)         | `blog/sql/`      | `sql-programming-series.html`      | `--sql`       | 16     |
 | 8   | Web Audio API             | `blog/audio/`    | `audio-programming-series.html`    | `--audio`     | 8      |
 | 9   | Git                       | `blog/git/`      | `git-programming-series.html`      | `--git`       | 13     |
 
@@ -585,10 +594,18 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - **Bài 2 — JOIN toàn tập:** 2.1 Khoá chính/ngoại · 2.2 INNER/LEFT/RIGHT/FULL · 2.3 CROSS JOIN & tích Descartes · 2.4 Self-join & alias.
 - **Bài 3 — Aggregate & GROUP BY:** 3.1 `COUNT/SUM/AVG/MIN/MAX` · 3.2 `GROUP BY` nhóm dữ liệu · 3.3 `HAVING` vs `WHERE` · 3.4 Biểu đồ từ kết quả.
 - **Bài 4 — Subquery & CTE:** 4.1 Subquery vô hướng/tương quan · 4.2 `IN`/`EXISTS` · 4.3 `WITH` (CTE) · 4.4 CTE đệ quy (cây danh mục).
-- **Bài 5 — Index & Query Plan:** 5.1 B-Tree index hoạt động · 5.2 `EXPLAIN QUERY PLAN` · 5.3 Full scan vs index seek · 5.4 Composite & covering index.
+- **Bài 5 — Graph Queries bằng CTE Đệ Quy:** 5.1 Mô hình đồ thị trong bảng quan hệ (edge list) · 5.2 Transitive closure · 5.3 Đường đi ngắn nhất & tránh chu trình vô hạn · 5.4 Demo mạng chuyến bay tìm đường rẻ nhất.
 - **Bài 6 — Window Functions:** 6.1 `OVER(PARTITION BY)` · 6.2 `ROW_NUMBER/RANK/DENSE_RANK` · 6.3 `LAG/LEAD` · 6.4 Running total/moving average.
-- **Bài 7 — Transaction & ACID:** 7.1 `BEGIN/COMMIT/ROLLBACK` · 7.2 Tính nguyên tử & isolation · 7.3 Ràng buộc (UNIQUE/FK/CHECK) · 7.4 Demo rollback khi vi phạm.
-- **Bài 8 — Dự án: Mini Analytics Dashboard:** 8.1 Lưu DB vào IndexedDB · 8.2 Query→chart pipeline · 8.3 Import/export `.sqlite` · 8.4 Chạy 100% offline.
+- **Bài 7 — Index & Query Plan:** 7.1 B-Tree index hoạt động · 7.2 `EXPLAIN QUERY PLAN` · 7.3 Full scan vs index seek · 7.4 Composite & covering index.
+- **Bài 8 — Query Optimizer Sâu:** 8.1 `ANALYZE` & sqlite_stat1 · 8.2 Thứ tự join & selectivity · 8.3 Partial/expression index · 8.4 Đọc bytecode VDBE qua `EXPLAIN` đầy đủ.
+- **Bài 9 — SQLite Internals: B-Tree & File Format:** 9.1 Header 100 byte & page size · 9.2 B-Tree interior/leaf page · 9.3 Record format & varint · 9.4 Overflow page & freelist — page viewer đọc hex thật.
+- **Bài 10 — Transaction & ACID:** 10.1 `BEGIN/COMMIT/ROLLBACK` · 10.2 Tính nguyên tử & isolation · 10.3 Ràng buộc (UNIQUE/FK/CHECK) · 10.4 Demo rollback khi vi phạm.
+- **Bài 11 — Trigger, View & Virtual Table:** 11.1 Trigger BEFORE/AFTER & audit log · 11.2 View như lớp trừu tượng · 11.3 Cơ chế virtual table (module xtable) · 11.4 Virtual table tuỳ biến đơn giản.
+- **Bài 12 — JSON & Generated Columns:** 12.1 Hàm JSON (`json_extract`, `->`/`->>`) · 12.2 `json_each`/`json_tree` lateral · 12.3 Generated columns (VIRTUAL/STORED) · 12.4 Index trên expression cho document store.
+- **Bài 13 — FTS5 Full-Text Search:** 13.1 Inverted index hoạt động · 13.2 Tokenizer (unicode61, trigram) · 13.3 BM25 ranking · 13.4 `highlight()`/`snippet()` — search engine mini.
+- **Bài 14 — Performance Engineering:** 14.1 Prepared statement & bind · 14.2 Batch insert trong 1 transaction · 14.3 PRAGMA tuning (journal_mode, synchronous, cache_size) · 14.4 Benchmark 1 triệu dòng đúng phương pháp.
+- **Bài 15 — WAL & Persistence trong Browser:** 15.1 Rollback journal vs WAL · 15.2 OPFS + Worker & official SQLite WASM · 15.3 sql.js vs wa-sqlite vs official · 15.4 COOP/COEP & SharedArrayBuffer.
+- **Bài 16 — Dự án: Mini Analytics Dashboard:** 16.1 Lưu DB vào IndexedDB/OPFS · 16.2 Query→chart pipeline · 16.3 Import/export `.sqlite` · 16.4 Chạy 100% offline.
 
 ## Series 8 — Web Audio API
 
