@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 6: Spatial &amp; Stereo Audio — js-tools</title>
+    <title>Bài 7: AudioWorklet &amp; DSP Tuỳ Biến — js-tools</title>
     <meta
       name="description"
-      content="StereoPannerNode cân bằng trái/phải đơn giản, PannerNode + mô hình HRTF định vị âm thanh 3D thật sự, vị trí/hướng nguồn âm và listener, mô hình suy giảm theo khoảng cách. Sân chơi tương tác: nguồn âm tự xoay quanh người nghe."
+      content="AudioWorklet chạy xử lý mẫu âm trên luồng riêng tách biệt khỏi main thread. Viết AudioWorkletProcessor tuỳ biến, truyền tham số qua AudioParam và port.postMessage, và xây bộ bitcrusher/noise generator thật chạy trong trình duyệt."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/audio/audio-spatial-stereo" />
+    <link rel="canonical" href="https://js-tools.org/blog/audio/audio-worklet-dsp" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -33,7 +33,7 @@
       });
     </script>
     <style>
-      /* Web Audio Spatial/Stereo Sandbox styles */
+      /* Web Audio Worklet/DSP Sandbox styles */
       .graph-sandbox {
         background: #181825;
         border: 1px solid var(--border);
@@ -64,16 +64,6 @@
         font-size: 12px;
         display: block;
         margin-bottom: 4px;
-      }
-      .graph-controls select {
-        width: 100%;
-        padding: 6px 8px;
-        border-radius: 6px;
-        border: 1px solid var(--border);
-        background: #1e1e2e;
-        color: #cdd6f4;
-        font-size: 12px;
-        box-sizing: border-box;
       }
       .graph-controls input[type='range'] {
         width: 100%;
@@ -119,12 +109,6 @@
       .graph-btn--stop:hover {
         background: #8a3040;
       }
-      .graph-btn.is-active {
-        background: #3b82f6;
-        border-color: #3b82f6;
-        color: #fff;
-        font-weight: 600;
-      }
       .graph-log {
         background: #0f0f1b;
         border: 1px solid var(--border);
@@ -133,7 +117,7 @@
         font-family: monospace;
         font-size: 11px;
         color: #a6e3a1;
-        max-height: 120px;
+        max-height: 140px;
         overflow-y: auto;
         line-height: 1.5;
       }
@@ -166,9 +150,6 @@
         color: #cdd6f4;
         text-align: center;
         line-height: 1.6;
-      }
-      .sp-hide {
-        display: none;
       }
       @media (max-width: 880px) {
         .graph-sandbox {
@@ -258,8 +239,8 @@
         <div class="container">
           <a href="audio-programming-series" class="article-hero__back">← Quay lại Lộ trình Web Audio API</a>
           <div class="article-hero__tag article-hero__tag--audio">Web Audio API</div>
-          <h1 class="article-hero__title">Bài 6: Spatial &amp; Stereo Audio</h1>
-          <div class="article-hero__meta">4 tháng 7, 2026 · 14 phút đọc</div>
+          <h1 class="article-hero__title">Bài 7: AudioWorklet &amp; DSP Tuỳ Biến</h1>
+          <div class="article-hero__meta">4 tháng 7, 2026 · 15 phút đọc</div>
         </div>
       </section>
 
@@ -269,153 +250,161 @@
             <div class="article-body">
               <div>
                 <p>
-                  5 bài trước, âm thanh luôn phát ra "ở giữa" — không có khái niệm trái/phải hay gần/xa. Bài này thêm
-                  chiều không gian: từ cân bằng trái-phải đơn giản (<code>StereoPannerNode</code>) tới định vị 3D đầy đủ
-                  mô phỏng cách tai người thật nghe hướng âm thanh (<code>PannerNode</code> + HRTF).
+                  6 bài trước đều dùng node có sẵn của Web Audio API. Bài này đi xa hơn: tự viết thuật toán xử lý từng
+                  <strong>mẫu âm (sample)</strong> một, chạy thật trên luồng audio thời gian thực của trình duyệt —
+                  không phải mô phỏng, không phải demo giả lập.
                 </p>
 
-                <h2>1. <code>StereoPannerNode</code>: Cân Bằng Trái/Phải Đơn Giản</h2>
+                <h2>1. Vì Sao Cần Một Luồng Audio Riêng?</h2>
                 <p>
-                  <code>audioContext.createStereoPanner()</code> chỉ có đúng 1 tham số: <code>pan</code>, nhận giá trị
-                  từ <code>-1</code> (hoàn toàn trái) tới <code>1</code> (hoàn toàn phải), <code>0</code> là chính giữa.
-                  Đây là dạng "không gian" đơn giản nhất — không mô phỏng khoảng cách, không mô phỏng chiều sâu, chỉ đơn
-                  thuần chia tỉ lệ âm lượng giữa 2 kênh loa.
+                  Cách cũ để xử lý mẫu âm tuỳ biến — <code>ScriptProcessorNode</code> (nay đã
+                  <strong>deprecated</strong>) — chạy callback xử lý ngay trên <strong>main thread</strong>, cùng luồng
+                  với việc render UI, chạy animation, xử lý sự kiện chuột... Nếu main thread bận dù chỉ vài chục
+                  mili-giây (garbage collection, layout nặng), âm thanh bị giật/click nghe rất khó chịu.
+                  <code>AudioWorklet</code> giải quyết đúng vấn đề này: code xử lý mẫu chạy trên
+                  <strong>1 luồng riêng</strong> dành cho audio rendering, có độ ưu tiên cao và tách biệt hoàn toàn khỏi
+                  mọi thứ đang xảy ra ở main thread.
                 </p>
 
-                <div class="callout callout--note">
-                  <div class="callout__title">ℹ️ Khi nào dùng StereoPannerNode thay vì PannerNode?</div>
-                  <div class="callout__content">
-                    Nếu ứng dụng chỉ cần "kéo" âm thanh sang trái/phải (mixer nhạc, hiệu ứng UI đơn giản),
-                    <code>StereoPannerNode</code> nhẹ hơn nhiều về mặt tính toán và code ngắn gọn hơn hẳn. Chỉ cần
-                    <code>PannerNode</code> khi thực sự cần mô phỏng nguồn âm tồn tại ở 1 VỊ TRÍ trong không gian 3D
-                    (game, trải nghiệm VR/AR, mô phỏng môi trường thật).
-                  </div>
-                </div>
-
-                <h2>2. <code>PannerNode</code> &amp; Mô Hình HRTF: Không Gian 3D Thật Sự</h2>
+                <h2>2. Viết <code>AudioWorkletProcessor</code></h2>
                 <p>
-                  <code>audioContext.createPanner()</code> định vị nguồn âm bằng toạ độ 3 chiều
-                  (<code>positionX/Y/Z</code>) trong không gian, kết hợp với vị trí và hướng của
-                  <code>audioContext.listener</code> (đại diện cho "tai" người nghe) để tính ra âm thanh cuối cùng.
-                  Thuộc tính <code>panningModel</code> quyết định thuật toán tính toán:
-                </p>
-                <ul>
-                  <li>
-                    <code>'equalpower'</code> (mặc định) — chỉ điều chỉnh âm lượng tương đối giữa 2 tai theo góc, tương
-                    tự StereoPannerNode nhưng có thêm khái niệm khoảng cách.
-                  </li>
-                  <li>
-                    <code>'HRTF'</code> (Head-Related Transfer Function) — áp bộ lọc được đo thực nghiệm trên hình dạng
-                    đầu/tai người mẫu, mô phỏng cả <strong>độ trễ thời gian đến 2 tai</strong> (ITD) lẫn
-                    <strong>khác biệt cường độ giữa 2 tai</strong> (ILD) — giúp não bộ định vị được cả hướng
-                    trước/sau/trên/dưới, không chỉ trái/phải.
-                  </li>
-                </ul>
-
-                <div class="callout callout--deep">
-                  <div class="callout__title">
-                    🔬 Đào sâu: Vì sao chỉ chỉnh âm lượng 2 tai (ILD) không đủ để định vị "trước/sau"?
-                  </div>
-                  <div class="callout__content">
-                    Một nguồn âm ở ngay trước mặt và một nguồn ở ngay sau gáy có thể tạo ra ILD gần như giống hệt nhau
-                    (cùng khoảng cách tới 2 tai). Não bộ con người phân biệt được 2 trường hợp này chủ yếu nhờ
-                    <strong>hình dạng vành tai</strong> lọc tần số cao khác nhau tuỳ hướng tới — đây chính xác là thứ
-                    HRTF mô phỏng (bằng bộ lọc đo thực nghiệm), còn ILD/ITD đơn thuần (equalpower) thì không thể tái tạo
-                    được hiệu ứng lọc theo hình dạng tai này.
-                  </div>
-                </div>
-
-                <h2>3. Vị Trí &amp; Hướng: Nguồn Âm và Listener</h2>
-                <p>
-                  Cả nguồn âm (<code>PannerNode</code>) và người nghe (<code>audioContext.listener</code>) đều có toạ độ
-                  vị trí (<code>positionX/Y/Z</code>) và hướng nhìn (<code>orientationX/Y/Z</code>) — đây đều là
-                  <code>AudioParam</code> (từ <a href="audio-context-graph">Bài 1</a>), có thể lập lịch mượt bằng
-                  <code>setValueAtTime</code>/<code>linearRampToValueAtTime</code> giống mọi tham số khác đã học:
+                  Một processor tuỳ biến là 1 class kế thừa <code>AudioWorkletProcessor</code>, đặt trong
+                  <strong>1 file JS riêng</strong> (chạy trên luồng audio, không truy cập được DOM). Phương thức
+                  <code>process()</code> được gọi tự động, mỗi lần xử lý đúng 1 khối 128 mẫu (~2.9 mili-giây ở 44.1kHz):
                 </p>
                 <div class="code-window">
                   <div class="code-header">
-                    <span class="code-filename">panner-position.js</span>
+                    <span class="code-filename">bitcrusher-processor.js</span>
                     <button class="code-copy" onclick="copyCode(this)">Copy</button>
                   </div>
-                  <pre><code class="language-js">const panner = audioContext.createPanner();
-panner.panningModel = 'HRTF';
-panner.positionX.setValueAtTime(3, audioContext.currentTime); // 3 mét sang phải
-panner.positionZ.setValueAtTime(-2, audioContext.currentTime); // 2 mét phía trước
-
-// Vị trí/hướng người nghe — mặc định (0,0,0), nhìn theo trục -Z
-const listener = audioContext.listener;
-listener.positionX.setValueAtTime(0, audioContext.currentTime);
-listener.forwardX.setValueAtTime(0, audioContext.currentTime);
-listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
+                  <pre><code class="language-js">class BitcrusherProcessor extends AudioWorkletProcessor {
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    const output = outputs[0];
+    for (let ch = 0; ch < output.length; ch++) {
+      for (let i = 0; i < output[ch].length; i++) {
+        output[ch][i] = input[ch][i]; // pass-through đơn giản nhất
+      }
+    }
+    return true; // false sẽ HUỶ processor ngay lập tức
+  }
+}
+registerProcessor('bitcrusher-processor', BitcrusherProcessor);</code></pre>
                 </div>
 
-                <h2>4. Mô Hình Suy Giảm Theo Khoảng Cách</h2>
-                <p>
-                  <code>PannerNode</code> còn tự động giảm âm lượng theo khoảng cách qua 3 tham số:
-                  <code>refDistance</code> (khoảng cách "chuẩn" chưa suy giảm), <code>maxDistance</code>, và
-                  <code>rolloffFactor</code> (tốc độ suy giảm). Với <code>distanceModel = 'inverse'</code> (mặc định,
-                  giống vật lý thật của sóng âm cầu):
-                </p>
-                <p style="text-align: center">
-                  $$\text{gain} = \dfrac{\text{refDistance}}{\text{refDistance} + \text{rolloff} \times (\text{distance}
-                  - \text{refDistance})}$$
-                </p>
-
-                <div class="callout callout--pitfall">
-                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Quên mô hình 3D dùng đơn vị "mét" trừu tượng</div>
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Vì sao <code>process()</code> phải cực nhanh?</div>
                   <div class="callout__content">
-                    <code>positionX/Y/Z</code> không có đơn vị vật lý bắt buộc — bạn tự quyết định 1 đơn vị "khoảng
-                    cách" nghĩa là gì trong ứng dụng của mình. Nếu <code>refDistance</code> mặc định (1) không khớp với
-                    thang đo bạn đang dùng (vd toạ độ game tính bằng hàng trăm đơn vị pixel), âm lượng sẽ suy giảm gần
-                    như về 0 ngay ở khoảng cách rất gần — luôn chỉnh <code>refDistance</code>/
-                    <code>maxDistance</code> khớp với đơn vị toạ độ thực tế của ứng dụng.
+                    Mỗi khối 128 mẫu chỉ có ~2.9ms (ở 44.1kHz) trước khi luồng audio cần khối tiếp theo. Nếu
+                    <code>process()</code> tính toán lâu hơn khoảng thời gian đó, sẽ không kịp cấp dữ liệu đúng hạn —
+                    gây ra tiếng "click/pop" hoặc khoảng lặng đột ngột (audio dropout/underrun), y hệt hiện tượng giật
+                    hình khi render 1 khung hình mất quá lâu. Đây là lý do code trong <code>process()</code>
+                    tuyệt đối không được có thao tác chậm (fetch, DOM, cấp phát bộ nhớ lớn) — chỉ toán học thuần trên
+                    mảng số đã cấp phát sẵn.
                   </div>
                 </div>
 
-                <h2>5. So Sánh StereoPannerNode vs PannerNode</h2>
+                <h2>3. Nạp Module &amp; Tạo <code>AudioWorkletNode</code></h2>
+                <p>Trước khi dùng được processor, phải nạp file chứa nó (bất đồng bộ) rồi mới tạo node tương ứng:</p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">main-thread.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">await audioContext.audioWorklet.addModule('bitcrusher-processor.js');
+const node = new AudioWorkletNode(audioContext, 'bitcrusher-processor');
+source.connect(node).connect(audioContext.destination);</code></pre>
+                </div>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">
+                    🕳️ Cạm bẫy thường gặp: Tạo node trước khi <code>addModule</code> xong
+                  </div>
+                  <div class="callout__content">
+                    <code>addModule()</code> trả về 1 <code>Promise</code> — nó tải file, thực thi, và đăng ký tên
+                    processor một cách <strong>bất đồng bộ</strong>. Nếu gọi
+                    <code>new AudioWorkletNode(ctx, 'tên')</code> trước khi <code>await</code> xong
+                    <code>addModule()</code>, Web Audio API chưa hề biết processor tên đó tồn tại — ném lỗi ngay lập
+                    tức. Luôn <code>await</code> đầy đủ trước khi tạo node.
+                  </div>
+                </div>
+
+                <h2>4. Truyền Tham Số Qua Port: 2 Cách Khác Nhau</h2>
+                <p>Có 2 cách hoàn toàn khác nhau để đưa dữ liệu vào processor đang chạy trên luồng riêng:</p>
+                <ul>
+                  <li>
+                    <strong><code>AudioParam</code></strong> (qua <code>static parameterDescriptors</code>) — dùng cho
+                    giá trị <strong>liên tục</strong>, tự động nội suy mượt theo thời gian giống mọi AudioParam khác (<a
+                      href="audio-context-graph"
+                      >Bài 1</a
+                    >). Đọc trong <code>process()</code> qua <code>parameters.tenTso</code>.
+                  </li>
+                  <li>
+                    <strong><code>port.postMessage()</code></strong> — kênh nhắn tin 2 chiều (giống Web Worker) cho dữ
+                    liệu <strong>rời rạc, bất kỳ lúc nào</strong>: lệnh kích hoạt 1 lần, cấu hình phức tạp, hay dữ liệu
+                    không phải số đơn thuần. Xử lý qua <code>this.port.onmessage</code> bên trong processor.
+                  </li>
+                </ul>
+
+                <h2>5. Xây Bitcrusher: Giảm Bit Depth + Giảm Sample Rate</h2>
+                <p>Bitcrusher tạo hiệu ứng âm thanh "lo-fi 8-bit" qua 2 kỹ thuật kết hợp:</p>
+                <ul>
+                  <li>
+                    <strong>Giảm độ sâu bit (bit depth reduction):</strong> lượng tử hoá mỗi mẫu về 1 trong số
+                    $2^{\text{bits}}$ mức rời rạc, với bước lượng tử $step = 2^{-\text{bits}}$: $$x_{\text{quantized}} =
+                    step \times \text{round}\left(\dfrac{x}{step}\right)$$ càng ít bit, sóng càng "bậc thang" thô ráp.
+                  </li>
+                  <li>
+                    <strong>Giảm tần số lấy mẫu hiệu dụng (sample-and-hold):</strong> chỉ lấy mẫu mới mỗi
+                    <code>N</code> mẫu gốc, giữ nguyên giá trị cũ cho các mẫu ở giữa — mô phỏng phát ở tần số lấy mẫu
+                    thấp hơn nhiều mà không cần resample thật.
+                  </li>
+                </ul>
+
+                <h2>6. So Sánh ScriptProcessorNode vs AudioWorkletNode</h2>
                 <table class="comparison-table">
                   <thead>
                     <tr>
                       <th>Tiêu chí</th>
-                      <th>StereoPannerNode</th>
-                      <th>PannerNode</th>
+                      <th>ScriptProcessorNode (deprecated)</th>
+                      <th>AudioWorkletNode</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>Số chiều không gian</td>
-                      <td>1 (trái ↔ phải)</td>
-                      <td>3 (x, y, z đầy đủ)</td>
+                      <td>Chạy trên luồng nào?</td>
+                      <td>Main thread</td>
+                      <td>Luồng audio riêng, ưu tiên cao</td>
                     </tr>
                     <tr>
-                      <td>Mô phỏng khoảng cách?</td>
+                      <td>Ảnh hưởng bởi UI/GC bận?</td>
+                      <td>Có — dễ giật/click</td>
                       <td>Không</td>
-                      <td>Có (distance model)</td>
                     </tr>
                     <tr>
-                      <td>Mô hình HRTF?</td>
-                      <td>Không hỗ trợ</td>
-                      <td>Có (<code>panningModel: 'HRTF'</code>)</td>
+                      <td>Truy cập DOM trong xử lý?</td>
+                      <td>Có (cùng thread)</td>
+                      <td>Không — phải qua <code>port</code></td>
                     </tr>
                     <tr>
-                      <td>Chi phí tính toán</td>
-                      <td>Rất thấp</td>
-                      <td>Cao hơn (đặc biệt với HRTF)</td>
+                      <td>Trạng thái chuẩn hiện tại</td>
+                      <td>Deprecated, chỉ còn tương thích ngược</td>
+                      <td>Khuyến nghị dùng cho mọi DSP tuỳ biến</td>
                     </tr>
                   </tbody>
                 </table>
 
-                <h2>Sân chơi tương tác: Spatial Audio Playground</h2>
+                <h2>Sân chơi tương tác: Bitcrusher Live</h2>
                 <p>
-                  Phát 1 âm liên tục, chọn kiểu định vị, kéo slider hoặc bấm "Tự động xoay" để nguồn âm di chuyển quanh
-                  người nghe — nghe (đeo tai nghe để cảm nhận rõ nhất với chế độ HRTF) và quan sát trực quan vị trí trên
-                  canvas.
+                  Phát 1 âm sawtooth liên tục qua <code>AudioWorkletNode</code> thật, kéo slider bit depth/giảm mẫu để
+                  nghe và nhìn dạng sóng biến đổi, hoặc bấm "Gây nhiễu" để gửi 1 thông điệp rời rạc qua
+                  <code>port.postMessage</code> kích hoạt burst nhiễu trắng.
                 </p>
 
                 <!-- Interactive Sandbox -->
                 <div class="code-tabs">
                   <div class="code-tabs__nav">
-                    <span class="code-tabs__title">🎧 Sân chơi tương tác: Spatial Audio Playground</span>
+                    <span class="code-tabs__title">🔧 Sân chơi tương tác: Bitcrusher Live</span>
                     <div class="code-tabs__btns">
                       <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
                       <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
@@ -426,46 +415,31 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                     <div class="graph-sandbox">
                       <!-- Controls Panel -->
                       <div class="graph-controls">
-                        <h3>Kiểu định vị</h3>
-                        <select id="sp-mode-select">
-                          <option value="stereo">StereoPannerNode (trái/phải)</option>
-                          <option value="panner">PannerNode + HRTF (3D)</option>
-                        </select>
+                        <h3>Bitcrusher (AudioWorklet thật)</h3>
+                        <label for="bc-bits-range">bits (<span class="graph-value" id="bc-bits-value">8</span>)</label>
+                        <input type="range" id="bc-bits-range" min="1" max="16" step="1" value="8" />
 
-                        <div id="sp-stereo-controls">
-                          <label for="sp-pan-range"
-                            >pan (<span class="graph-value" id="sp-pan-value">0.00</span>)</label
-                          >
-                          <input type="range" id="sp-pan-range" min="-1" max="1" step="0.01" value="0" />
-                        </div>
-
-                        <div id="sp-panner-controls" class="sp-hide">
-                          <label for="sp-x-range"
-                            >positionX (<span class="graph-value" id="sp-x-value">0.0</span>)</label
-                          >
-                          <input type="range" id="sp-x-range" min="-5" max="5" step="0.1" value="0" />
-                          <label for="sp-z-range"
-                            >positionZ (<span class="graph-value" id="sp-z-value">0.0</span>)</label
-                          >
-                          <input type="range" id="sp-z-range" min="-5" max="5" step="0.1" value="0" />
-                        </div>
+                        <label for="bc-reduction-range">
+                          reduction (<span class="graph-value" id="bc-reduction-value">1</span>)
+                        </label>
+                        <input type="range" id="bc-reduction-range" min="1" max="50" step="1" value="1" />
 
                         <div class="graph-btn-row">
-                          <button class="graph-btn graph-btn--primary" id="sp-play-btn">▶️ Phát</button>
-                          <button class="graph-btn graph-btn--stop" id="sp-stop-btn">⏹ Dừng</button>
+                          <button class="graph-btn graph-btn--primary" id="bc-play-btn">▶️ Phát</button>
+                          <button class="graph-btn graph-btn--stop" id="bc-stop-btn">⏹ Dừng</button>
                         </div>
-                        <button class="graph-btn" id="sp-orbit-btn">🔄 Tự động xoay</button>
-                        <button class="graph-btn" id="sp-reset-btn">Reset demo</button>
+                        <button class="graph-btn" id="bc-burst-btn">⚡ Gây nhiễu (port.postMessage)</button>
+                        <button class="graph-btn" id="bc-reset-btn">Reset demo</button>
                         <div>
                           <h3>Nhật ký</h3>
-                          <div class="graph-log" id="sp-log"></div>
+                          <div class="graph-log" id="bc-log"></div>
                         </div>
                       </div>
 
                       <!-- Canvas Stage -->
                       <div class="graph-viewport-container">
-                        <canvas id="sp-canvas" class="graph-canvas" width="560" height="260"></canvas>
-                        <div class="graph-status-line" id="sp-status-line"></div>
+                        <canvas id="bc-canvas" class="graph-canvas" width="560" height="220"></canvas>
+                        <div class="graph-status-line" id="bc-status-line"></div>
                       </div>
                     </div>
                   </div>
@@ -473,10 +447,10 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                   <div class="code-tabs__panel" data-panel="js">
                     <div class="code-window">
                       <div class="code-header">
-                        <span class="code-filename">audio-spatial-stereo-live.js</span>
+                        <span class="code-filename">audio-worklet-dsp-live.js</span>
                         <button class="code-copy" onclick="copyCode(this)">Copy</button>
                       </div>
-                      <pre><code class="language-js" id="sp-js-code-display"></code></pre>
+                      <pre><code class="language-js" id="bc-js-code-display"></code></pre>
                     </div>
                   </div>
                 </div>
@@ -485,7 +459,8 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Khác biệt cơ bản nhất giữa <code>StereoPannerNode</code> và <code>PannerNode</code> là gì?
+                    Câu 1: Vì sao <code>AudioWorkletNode</code> thay thế <code>ScriptProcessorNode</code> (đã
+                    deprecated)?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -495,12 +470,12 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! StereoPannerNode chỉ có 1 tham số pan điều chỉnh cân bằng trái-phải (1 chiều). PannerNode định vị nguồn âm bằng toạ độ 3D đầy đủ (x, y, z), kết hợp vị trí/hướng của listener, hỗ trợ cả mô hình suy giảm khoảng cách và HRTF.'
+                          'Chính xác! ScriptProcessorNode chạy callback xử lý mẫu NGAY TRÊN MAIN THREAD — dễ bị giật/click khi main thread bận (render UI, garbage collection...). AudioWorkletNode chạy code xử lý trên 1 LUỒNG RIÊNG dành cho audio, ưu tiên cao và tách biệt hoàn toàn khỏi tắc nghẽn main thread.'
                         )
                       "
                     >
-                      A. StereoPannerNode chỉ cân bằng trái-phải 1 chiều; PannerNode định vị nguồn âm trong không gian 3
-                      chiều đầy đủ, kết hợp vị trí/hướng của listener.
+                      A. ScriptProcessorNode chạy trên main thread, dễ giật khi main thread bận; AudioWorkletNode chạy
+                      trên luồng audio riêng, tách biệt hoàn toàn khỏi main thread.
                     </button>
                     <button
                       class="quiz-option"
@@ -508,11 +483,11 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Cả 2 loại node đều xử lý âm thanh trong THỜI GIAN THỰC, không có khái niệm &quot;trễ xử lý&quot; khác biệt giữa chúng theo nghĩa này.'
+                          'Sai. Cả 2 đều hỗ trợ xử lý âm thanh ĐA KÊNH (stereo, 5.1...) — đây không phải điểm khác biệt thực sự giữa chúng.'
                         )
                       "
                     >
-                      B. StereoPannerNode xử lý theo thời gian thực, còn PannerNode cần xử lý trước (offline).
+                      B. Vì ScriptProcessorNode chỉ hỗ trợ âm thanh mono, không hỗ trợ stereo.
                     </button>
                     <button
                       class="quiz-option"
@@ -520,11 +495,11 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Cả 2 node đều hoạt động độc lập với định dạng nguồn âm — không liên quan gì tới file nén hay không nén.'
+                          'Sai. Cả 2 API đều hoạt động 100% cục bộ trong trình duyệt, không liên quan gì tới kết nối mạng.'
                         )
                       "
                     >
-                      C. StereoPannerNode chỉ hoạt động với file nén, PannerNode chỉ hoạt động với file WAV.
+                      C. Vì ScriptProcessorNode cần kết nối mạng để xử lý mẫu âm.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -533,10 +508,23 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Mô hình HRTF giúp ích gì mà <code>panningModel: 'equalpower'</code> (mặc định) không làm
-                    được?
+                    Câu 2: Vì sao phải <code>await audioContext.audioWorklet.addModule(...)</code> xong TRƯỚC khi tạo
+                    <code>new AudioWorkletNode(...)</code>?
                   </p>
                   <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. addModule() không nạp AudioContext — nó nạp và ĐĂNG KÝ file chứa processor tuỳ biến, một khái niệm hoàn toàn khác.'
+                        )
+                      "
+                    >
+                      A. Vì <code>addModule</code> khởi tạo <code>AudioContext</code>, chưa gọi thì context chưa tồn
+                      tại.
+                    </button>
                     <button
                       class="quiz-option"
                       data-correct="true"
@@ -544,12 +532,12 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! equalpower chỉ điều chỉnh âm lượng tương đối 2 tai theo góc — không phân biệt được các hướng có ILD giống nhau (vd trước mặt vs sau gáy). HRTF áp bộ lọc mô phỏng hình dạng vành tai người thật, giúp não bộ phân biệt được cả hướng trước/sau/trên/dưới, không chỉ trái/phải.'
+                          'Chính xác! addModule() tải và registerProcessor() một cách BẤT ĐỒNG BỘ. Nếu tạo AudioWorkletNode với 1 tên processor trước khi quá trình đăng ký đó hoàn tất, Web Audio API chưa biết tên processor này tồn tại và sẽ ném lỗi ngay lập tức.'
                         )
                       "
                     >
-                      A. HRTF mô phỏng bộ lọc theo hình dạng đầu/tai người thật, giúp định vị được cả hướng
-                      trước/sau/trên/dưới — điều mà chỉ điều chỉnh âm lượng 2 tai (equalpower) không làm được.
+                      B. Vì <code>addModule</code> tải và đăng ký tên processor một cách bất đồng bộ — tạo node trước
+                      khi đăng ký xong sẽ không tìm thấy processor, ném lỗi.
                     </button>
                     <button
                       class="quiz-option"
@@ -557,23 +545,11 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. HRTF không liên quan gì tới việc tăng âm lượng tổng thể — nó là bộ lọc mô phỏng ĐỊNH VỊ KHÔNG GIAN, không phải bộ khuếch đại.'
+                          'Sai. Không có bước cấp quyền microphone nào liên quan tới AudioWorklet — đây là 2 API hoàn toàn độc lập.'
                         )
                       "
                     >
-                      B. HRTF làm âm thanh to hơn tổng thể so với equalpower.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. HRTF hoạt động độc lập với định dạng file — nó là 1 giai đoạn xử lý TRONG đồ thị Web Audio, áp dụng sau khi âm thanh đã được giải mã, không liên quan tới định dạng nén.'
-                        )
-                      "
-                    >
-                      C. HRTF cho phép phát các định dạng file mà equalpower không hỗ trợ.
+                      C. Vì trình duyệt cần xin quyền microphone trước khi nạp module.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -582,8 +558,8 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Vì sao <code>PannerNode</code> cần biết cả vị trí của <code>audioContext.listener</code>
-                    chứ không chỉ vị trí của chính nguồn âm?
+                    Câu 3: Khi nào nên dùng <code>AudioParam</code> thay vì <code>port.postMessage()</code> để truyền dữ
+                    liệu vào processor?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -593,12 +569,12 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Cảm nhận không gian âm thanh luôn mang tính TƯƠNG ĐỐI — cùng 1 nguồn âm sẽ nghe hoàn toàn khác tuỳ vị trí và hướng nhìn của người nghe so với nó. PannerNode phải tính khoảng cách và góc TƯƠNG ĐỐI giữa 2 điểm (nguồn và listener), không thể chỉ dựa vào toạ độ tuyệt đối của riêng nguồn âm.'
+                          'Chính xác! AudioParam tự động nội suy mượt giá trị theo thời gian — lý tưởng cho tham số LIÊN TỤC như tần số, độ lợi, hay số bit trong bitcrusher. port.postMessage phù hợp hơn cho lệnh RỜI RẠC một-lần (trigger, cấu hình phức tạp) không cần nội suy.'
                         )
                       "
                     >
-                      A. Vì cảm nhận âm thanh không gian mang tính tương đối — PannerNode phải tính khoảng cách/góc giữa
-                      nguồn âm và listener, không chỉ dựa vào vị trí tuyệt đối của nguồn.
+                      A. Khi tham số cần thay đổi liên tục và mượt theo thời gian (tần số, độ lợi...) — AudioParam tự
+                      động nội suy, còn port.postMessage phù hợp hơn cho lệnh rời rạc một-lần.
                     </button>
                     <button
                       class="quiz-option"
@@ -606,11 +582,11 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. audioContext.listener không phải yêu cầu bảo mật — nó là dữ liệu vị trí/hướng cần thiết cho phép TÍNH TOÁN không gian tương đối, hoàn toàn không liên quan tới quyền hạn hay bảo mật trình duyệt.'
+                          'Sai. AudioParam hoàn toàn tương thích với mọi phiên bản Web Audio API hỗ trợ AudioWorklet — đây không phải khác biệt về hỗ trợ trình duyệt.'
                         )
                       "
                     >
-                      B. Vì trình duyệt yêu cầu khai báo listener để cấp quyền phát âm thanh không gian.
+                      B. Khi cần hỗ trợ trình duyệt cũ hơn không có <code>port.postMessage</code>.
                     </button>
                     <button
                       class="quiz-option"
@@ -618,11 +594,11 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Sai. listener không liên quan gì tới hiệu năng CPU/GPU — vai trò của nó thuần tuý là cung cấp điểm tham chiếu để tính toán không gian tương đối.'
+                          'Sai. AudioParam chỉ truyền được GIÁ TRỊ SỐ (number) — nó không thể gửi văn bản hay object phức tạp, đó chính xác là việc port.postMessage làm được mà AudioParam không làm được.'
                         )
                       "
                     >
-                      C. Vì listener giúp trình duyệt tối ưu hiệu năng render đồ hoạ.
+                      C. Khi cần gửi văn bản hoặc object phức tạp vào processor.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -634,34 +610,31 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
                 <ul>
                   <li>
                     <a
-                      href="https://developer.mozilla.org/en-US/docs/Web/API/PannerNode"
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/AudioWorklet"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >MDN — PannerNode</a
+                      >MDN — AudioWorklet</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://developer.mozilla.org/en-US/docs/Web/API/StereoPannerNode"
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/AudioWorkletProcessor"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >MDN — StereoPannerNode</a
+                      >MDN — AudioWorkletProcessor</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://developer.mozilla.org/en-US/docs/Web/API/AudioListener"
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/AudioWorkletNode"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >MDN — AudioListener</a
+                      >MDN — AudioWorkletNode</a
                     >
                   </li>
                   <li>
-                    <a
-                      href="https://en.wikipedia.org/wiki/Head-related_transfer_function"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >Wikipedia — Head-Related Transfer Function (HRTF)</a
+                    <a href="https://developer.chrome.com/blog/audio-worklet" target="_blank" rel="noopener noreferrer"
+                      >Chrome Developers — Enter Audio Worklet</a
                     >
                   </li>
                 </ul>
@@ -671,11 +644,11 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="audio-worklet-dsp" class="article-related__link article-related__link--next">
-                    Bài 7: AudioWorklet &amp; DSP Tuỳ Biến
-                  </a>
-                  <a href="audio-file-mic-input" class="article-related__link article-related__link--prev">
-                    Bài 5: Phát &amp; Xử Lý File/Mic
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 8: Dự Án — Music Visualizer (sắp ra mắt)
+                  </span>
+                  <a href="audio-spatial-stereo" class="article-related__link article-related__link--prev">
+                    Bài 6: Spatial &amp; Stereo Audio
                   </a>
                   <a href="audio-programming-series" class="article-related__link"
                     >Quay lại Lộ trình Series Web Audio API</a
@@ -812,6 +785,6 @@ listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
-    <script src="audio-spatial-stereo.js" defer></script>
+    <script src="audio-worklet-dsp.js" defer></script>
   </body>
 </html>
