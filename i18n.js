@@ -230,6 +230,9 @@ const TRANSLATIONS = {
     'learn.audio.title': 'Web Audio API',
     'learn.audio.desc':
       'AudioContext, oscillators, filters, FFT analysis and spatial sound — hands-on with a real audio node graph.',
+    'learn.sql.title': 'SQL In The Browser',
+    'learn.sql.desc':
+      'Real SQLite compiled to WebAssembly: relational model, JOIN, recursive CTEs, window functions, query optimizer, and internals — no server required.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -463,6 +466,9 @@ const TRANSLATIONS = {
     'learn.audio.title': 'Web Audio API',
     'learn.audio.desc':
       'AudioContext, oscillator, filter, phân tích FFT và âm thanh không gian — thực hành trên đồ thị node âm thanh thật.',
+    'learn.sql.title': 'SQL trong Trình duyệt',
+    'learn.sql.desc':
+      'SQLite thật biên dịch sang WebAssembly: mô hình quan hệ, JOIN, CTE đệ quy, window function, query optimizer và nội tại engine — không cần server.',
   },
 };
 
