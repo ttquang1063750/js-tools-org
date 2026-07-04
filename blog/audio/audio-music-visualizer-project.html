@@ -1,0 +1,916 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 8: Dự Án — Music Visualizer — js-tools</title>
+    <meta
+      name="description"
+      content="Dự án tổng kết series Web Audio API: ghép AnalyserNode/FFT với hệ particle trên Canvas, xây bộ trống máy tổng hợp thời gian thực bằng look-ahead scheduling, phát hiện nhịp qua năng lượng tức thời vs trung bình động, và ánh xạ tần số sang màu sắc."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/audio/audio-music-visualizer-project" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      /* Web Audio Music Visualizer Sandbox styles */
+      .graph-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+      }
+      .graph-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .graph-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .graph-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .graph-controls input[type='range'] {
+        width: 100%;
+      }
+      .graph-value {
+        font-family: monospace;
+        color: #a855f7;
+        font-size: 12px;
+      }
+      .graph-btn-row {
+        display: flex;
+        gap: 6px;
+      }
+      .graph-btn {
+        flex: 1;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .graph-btn:hover {
+        background: #313244;
+      }
+      .graph-btn--primary {
+        background: #a855f7;
+        border-color: #a855f7;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-btn--primary:hover {
+        background: #9333ea;
+      }
+      .graph-btn--stop {
+        background: #a13a4c;
+        border-color: #a13a4c;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-btn--stop:hover {
+        background: #8a3040;
+      }
+      .graph-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 140px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .graph-log div.err-line {
+        color: #f38ba8;
+      }
+      .graph-log div.ok-line {
+        color: #a6e3a1;
+        font-weight: bold;
+      }
+      .graph-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 380px;
+        overflow: auto;
+        padding: 10px 0;
+        gap: 10px;
+      }
+      .graph-canvas {
+        display: block;
+        background: #0f0f1b;
+      }
+      .graph-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #cdd6f4;
+        text-align: center;
+        line-height: 1.6;
+      }
+      @media (max-width: 880px) {
+        .graph-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+      .recap-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 13px;
+      }
+      .recap-table th,
+      .recap-table td {
+        padding: 8px 12px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .recap-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .recap-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--audio">
+        <div class="container">
+          <a href="audio-programming-series" class="article-hero__back">← Quay lại Lộ trình Web Audio API</a>
+          <div class="article-hero__tag article-hero__tag--audio">Web Audio API</div>
+          <h1 class="article-hero__title">Bài 8: Dự Án — Music Visualizer</h1>
+          <div class="article-hero__meta">4 tháng 7, 2026 · 18 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Đây là dự án tổng kết series Web Audio API: ghép mọi mảnh kiến thức 7 bài trước thành một
+                  <strong>music visualizer</strong> thật — bộ trống máy tổng hợp âm thanh thời gian thực, phân tích phổ
+                  tần số bằng FFT, phát hiện nhịp bằng thuật toán năng lượng, và vẽ hệ hạt (particle) phản ứng theo từng
+                  nhịp trên Canvas. Không có audio giả lập, không có animation lập trình sẵn theo timeline — mọi chuyển
+                  động trên màn hình đều tính trực tiếp từ dữ liệu âm thanh thật đang phát.
+                </p>
+
+                <h2>1. Kiến Trúc Tổng Thể & Ôn Lại 7 Bài Trước</h2>
+                <p>
+                  Dự án này không dùng API nào mới — nó là bài luyện tổng hợp, ghép lại các khối đã học qua từng bài
+                  trong series:
+                </p>
+                <table class="recap-table">
+                  <thead>
+                    <tr>
+                      <th>Bài</th>
+                      <th>Kiến thức tái sử dụng ở đây</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><a href="audio-context-graph">Bài 1</a></td>
+                      <td><code>AudioContext</code>, node graph, autoplay policy (khởi tạo sau user gesture).</td>
+                    </tr>
+                    <tr>
+                      <td><a href="audio-oscillator-synthesis">Bài 2</a></td>
+                      <td>
+                        <code>OscillatorNode</code> tổng hợp kick/bass/arpeggio, bao bì (envelope) qua
+                        <code>GainNode</code>.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><a href="audio-gain-filter-effects">Bài 3</a></td>
+                      <td><code>BiquadFilterNode</code> lọc highpass cho hi-hat, lowpass cho bass.</td>
+                    </tr>
+                    <tr>
+                      <td><a href="audio-analyser-fft">Bài 4</a></td>
+                      <td>
+                        <code>AnalyserNode</code>, <code>getByteFrequencyData</code> — xương sống của toàn bộ
+                        visualizer.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><a href="audio-file-mic-input">Bài 5</a></td>
+                      <td>
+                        Đo năng lượng tín hiệu (RMS-style) — áp dụng lại cho năng lượng dải bass khi phát hiện nhịp.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><a href="audio-spatial-stereo">Bài 6</a></td>
+                      <td>
+                        Vòng lặp <code>requestAnimationFrame</code> đọc dữ liệu audio mỗi khung hình để vẽ lại Canvas.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><a href="audio-worklet-dsp">Bài 7</a></td>
+                      <td>
+                        Tư duy "mỗi khối xử lý phải cực nhanh" — áp dụng cho vòng lặp vẽ particle (phải chạy được ở
+                        60fps).
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>Kiến trúc tín hiệu của toàn bộ demo:</p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">signal-flow.txt</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-text">[Kick/Bass/Hat/Arp oscillators] ──▶ masterGain ──▶ AnalyserNode ──▶ destination
+                                                              │
+                                                              ▼
+                                          getByteFrequencyData() mỗi khung hình
+                                                              │
+                                              ┌───────────────┼────────────────┐
+                                              ▼                                ▼
+                                    Vẽ vòng tần số → màu              Phát hiện nhịp → spawn particle</code></pre>
+                </div>
+
+                <h2>2. Nguồn Âm: Trống Máy Tổng Hợp Bằng Look-Ahead Scheduling</h2>
+                <p>
+                  Thay vì dùng file nhạc có sẵn, demo tự tổng hợp một đoạn nhạc điện tử đơn giản (kick, hi-hat, bass,
+                  arpeggio) bằng chính <code>OscillatorNode</code> đã học ở Bài 2 — visualizer phản ứng với âm thanh
+                  <strong>thật</strong> do trình duyệt tạo ra, không phải file có sẵn. Lịch phát nốt dùng kỹ thuật
+                  <strong>look-ahead scheduling</strong>: thay vì phát ngay lập tức từng nốt bằng
+                  <code>setTimeout</code> (không chính xác vì luồng JS có thể bị trễ), một hàm chạy định kỳ mỗi 25ms sẽ
+                  <em>lên lịch trước</em> mọi nốt rơi trong 100ms tới bằng thời gian chính xác của
+                  <code>audioContext.currentTime</code> — độ chính xác nhịp điệu do chính audio clock đảm nhiệm, không
+                  phụ thuộc độ trễ của JS timer.
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">scheduler.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">const STEP_DURATION = 60 / 120 / 4; // nốt 16, ở 120 BPM
+const LOOKAHEAD = 0.1; // giây — lên lịch trước 100ms
+
+function scheduler() {
+  while (nextStepTime < audioContext.currentTime + LOOKAHEAD) {
+    scheduleStep(currentStep, nextStepTime); // gọi playKick/playHat/playBass/playArp
+    nextStepTime += STEP_DURATION;
+    currentStep++;
+  }
+  setTimeout(scheduler, 25); // kiểm tra lại sau 25ms
+}</code></pre>
+                </div>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Vì sao không phát nốt ngay khi tới lượt?</div>
+                  <div class="callout__content">
+                    Nếu gọi <code>oscillator.start()</code> đúng lúc <code>setTimeout</code> bắn callback, thời điểm
+                    thực tế sẽ trễ vài đến vài chục mili-giây (do main thread bận việc khác) — tai người rất nhạy với độ
+                    lệch nhịp dù chỉ vài chục ms. Cách đúng: mỗi lần callback chạy, <strong>không phát ngay</strong>
+                    mà chỉ tính toán "nốt tiếp theo nên phát vào thời điểm nào" rồi gọi
+                    <code>oscillator.start(thời_điểm_chính_xác)</code> — trình duyệt tự lo phát đúng lúc bằng audio
+                    clock có độ chính xác cao hơn nhiều so với JS timer. Đây gọi là kỹ thuật
+                    <strong>"A Tale of Two Clocks"</strong> (Chris Wilson, Web Audio API).
+                  </div>
+                </div>
+
+                <h2>3. Trích Xuất Dải Tần & Vẽ Vòng Tần Số → Màu Sắc</h2>
+                <p>
+                  Mỗi khung hình, <code>getByteFrequencyData()</code> trả về mảng biên độ theo tần số (đã học ở
+                  <a href="audio-analyser-fft">Bài 4</a>). Demo nhóm các bin liền kề thành 64 "thanh" xếp theo vòng
+                  tròn, mỗi thanh có màu xác định theo vị trí tần số của nó — tần số thấp (bass) ánh xạ sang màu đỏ/cam
+                  ấm, tần số cao (treble) ánh xạ sang tím/hồng lạnh:
+                </p>
+                <p>$$\text{hue}(i) = \dfrac{i}{N_{\text{bars}}} \times 300$$</p>
+                <p>
+                  với $i$ là chỉ số thanh (0 đến $N_{\text{bars}}-1$), nhân với 300 thay vì 360 độ để tránh vòng màu
+                  quay lại đỏ ở đầu dải treble (giữ cảm giác "thấp = ấm, cao = lạnh" nhất quán).
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">frequency-ring.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">const bars = 64;
+const binsPerBar = Math.floor(freqData.length / bars);
+for (let i = 0; i < bars; i++) {
+  let sum = 0;
+  for (let j = 0; j < binsPerBar; j++) sum += freqData[i * binsPerBar + j];
+  const amplitude = sum / binsPerBar / 255; // chuẩn hoá 0..1
+  const hue = (i / bars) * 300;
+  ctx.strokeStyle = `hsl(${hue}, 90%, 60%)`;
+  // vẽ 1 đoạn thẳng hướng ra ngoài theo `amplitude`...
+}</code></pre>
+                </div>
+
+                <h2>4. Phát Hiện Nhịp: Năng Lượng Tức Thời vs Trung Bình Động</h2>
+                <p>
+                  Đây là thuật toán phát hiện nhịp (beat detection) đơn giản nhất còn hoạt động tốt: so sánh
+                  <strong>năng lượng dải bass ngay tại khung hình hiện tại</strong> với
+                  <strong>trung bình động của chính nó</strong> trong khoảng nửa giây gần nhất. Khi năng lượng hiện tại
+                  vọt cao hơn hẳn trung bình gần đây — đó chính là lúc tiếng kick/bass vừa "đánh" xuống, tức 1 nhịp.
+                </p>
+                <p>
+                  $$E_{\text{instant}} = \dfrac{1}{8}\sum_{i=0}^{7} \dfrac{f_i}{255}$$ $$E_{\text{avg}} =
+                  \dfrac{1}{M}\sum_{j=1}^{M} E_j$$ $$\text{beat} \iff E_{\text{instant}} > C \times E_{\text{avg}}$$
+                </p>
+                <p>
+                  trong đó $f_i$ là 8 bin tần số thấp nhất (xấp xỉ dải bass), $M$ là số khung hình lưu lại (~43 khung,
+                  tương đương khoảng nửa giây ở 60fps), $C$ là hệ số nhạy (slider "độ nhạy" trong sân chơi bên dưới, mặc
+                  định 1.3) — $C$ càng lớn, càng khó kích hoạt nhịp giả (false positive) nhưng cũng dễ bỏ sót nhịp nhẹ.
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">beat-detector.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">function detectBeat(bassEnergy, now) {
+  bassHistory.push(bassEnergy);
+  if (bassHistory.length > 43) bassHistory.shift(); // ~0.7s ở 60fps
+  const avg = bassHistory.reduce((a, b) => a + b, 0) / bassHistory.length;
+  const isBeat = bassEnergy > avg * sensitivity && bassEnergy > 0.15 && now - lastBeatTime > 0.2;
+  if (isBeat) lastBeatTime = now;
+  return isBeat;
+}</code></pre>
+                </div>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Quên "cooldown" giữa 2 lần bắt nhịp</div>
+                  <div class="callout__content">
+                    Khi 1 tiếng kick vang lên, năng lượng bass thường vượt ngưỡng trong
+                    <strong>nhiều khung hình liên tiếp</strong> (không chỉ đúng 1 frame) — nếu không giới hạn khoảng
+                    cách tối thiểu giữa 2 lần bắt nhịp (<code>now - lastBeatTime &gt; 0.2</code>), thuật toán sẽ bắn ra
+                    hàng chục "nhịp giả" liên tục chỉ từ 1 tiếng kick duy nhất, làm particle nổ ra dồn dập sai với nhạc.
+                  </div>
+                </div>
+
+                <h2>5. Hệ Particle: Sinh — Cập Nhật — Biến Mất</h2>
+                <p>
+                  Mỗi khi phát hiện nhịp, demo sinh ra một chùm particle bay toả ra từ tâm với hướng và tốc độ ngẫu
+                  nhiên, mỗi particle tự giảm dần độ sống (<code>life</code>) mỗi khung hình cho tới khi biến mất — mô
+                  hình particle system cổ điển:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">particles.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">function spawnBurst(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 3;
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, color });
+  }
+}
+function updateParticles() {
+  particles.forEach((p) => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.98; // ma sát — chậm dần
+    p.vy *= 0.98;
+    p.life -= 0.02; // mờ dần rồi biến mất
+  });
+  particles = particles.filter((p) => p.life > 0);
+}</code></pre>
+                </div>
+
+                <h2>6. So Sánh: Beat Detection Đơn Giản vs Nâng Cao</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Tiêu chí</th>
+                      <th>Năng lượng tức thời vs trung bình (bài này)</th>
+                      <th>Onset detection nâng cao (spectral flux, ML)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Độ phức tạp cài đặt</td>
+                      <td>Thấp — vài dòng code, chạy real-time dễ dàng</td>
+                      <td>Cao — cần phân tích phổ chi tiết hoặc model đã huấn luyện</td>
+                    </tr>
+                    <tr>
+                      <td>Độ chính xác</td>
+                      <td>Tốt với nhạc có kick/bass rõ ràng (EDM, pop, hip-hop)</td>
+                      <td>Tốt với mọi thể loại kể cả nhạc không có beat rõ (nhạc cổ điển, jazz)</td>
+                    </tr>
+                    <tr>
+                      <td>Chi phí tính toán mỗi khung hình</td>
+                      <td>Rất thấp — vài phép cộng/chia trên 8 số</td>
+                      <td>Cao hơn — FFT nhiều băng tần, cửa sổ trượt phức tạp hơn</td>
+                    </tr>
+                    <tr>
+                      <td>Phù hợp cho</td>
+                      <td>Visualizer, game rhythm đơn giản, hiệu ứng ánh sáng theo nhạc</td>
+                      <td>Phần mềm DJ chuyên nghiệp, phân tích nhạc học thuật</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h2>Sân chơi tương tác: Music Visualizer Studio</h2>
+                <p>
+                  Bấm "Phát nhạc demo" để nghe trống máy tổng hợp thật đang chạy, quan sát vòng tần số đổi màu theo từng
+                  dải âm và particle nổ ra đúng lúc nhịp trống rơi xuống. Kéo "độ nhạy" để chỉnh ngưỡng phát hiện nhịp —
+                  kéo cao quá sẽ bỏ sót nhịp, kéo thấp quá sẽ bắt cả nhịp giả.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🎧 Sân chơi tương tác: Music Visualizer Studio</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="graph-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="graph-controls">
+                        <h3>Music Visualizer (trống máy thật)</h3>
+                        <label for="mv-sensitivity-range">
+                          Độ nhạy phát hiện nhịp (<span class="graph-value" id="mv-sensitivity-value">1.3</span>)
+                        </label>
+                        <input type="range" id="mv-sensitivity-range" min="1.05" max="2.5" step="0.05" value="1.3" />
+
+                        <div class="graph-btn-row">
+                          <button class="graph-btn graph-btn--primary" id="mv-play-btn">▶️ Phát nhạc demo</button>
+                          <button class="graph-btn graph-btn--stop" id="mv-stop-btn">⏹ Dừng</button>
+                        </div>
+                        <button class="graph-btn" id="mv-reset-btn">Reset demo</button>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="graph-log" id="mv-log"></div>
+                        </div>
+                      </div>
+
+                      <!-- Canvas Stage -->
+                      <div class="graph-viewport-container">
+                        <canvas id="mv-canvas" class="graph-canvas" width="560" height="320"></canvas>
+                        <div class="graph-status-line" id="mv-status-line"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">audio-music-visualizer-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="mv-js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Vì sao lịch phát nốt trống máy dùng "look-ahead scheduling" (lên lịch trước 100ms) thay vì
+                    phát nốt ngay khi <code>setTimeout</code> bắn callback?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! setTimeout không đảm bảo chạy đúng thời điểm (main thread có thể bận). Bằng cách tính trước thời điểm chính xác rồi gọi start(thời_điểm), trình duyệt dùng audio clock có độ chính xác cao để phát đúng lúc, không phụ thuộc độ trễ JS timer.'
+                        )
+                      "
+                    >
+                      A. Vì audio clock chính xác hơn JS timer nhiều — lên lịch trước rồi để trình duyệt tự phát đúng
+                      thời điểm, tránh lệch nhịp do main thread bị trễ.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Web Audio API không giới hạn số lượng node tạo cùng lúc theo cách này — đây không phải lý do dùng look-ahead scheduling.'
+                        )
+                      "
+                    >
+                      B. Vì trình duyệt giới hạn số OscillatorNode được tạo trong 1 giây.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. AnalyserNode không liên quan gì tới việc lên lịch phát nốt của trống máy — 2 việc hoàn toàn độc lập trong đồ thị audio.'
+                        )
+                      "
+                    >
+                      C. Vì AnalyserNode chỉ đọc được dữ liệu nếu nốt được phát trước 100ms.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Trong thuật toán phát hiện nhịp của bài này, biến "cooldown" (<code
+                      >now - lastBeatTime &gt; 0.2</code
+                    >) dùng để làm gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cooldown không liên quan tới việc tiết kiệm CPU — getByteFrequencyData() vẫn được gọi đều mỗi khung hình bất kể cooldown.'
+                        )
+                      "
+                    >
+                      A. Để giảm tần suất gọi <code>getByteFrequencyData()</code>, tiết kiệm CPU.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! 1 tiếng kick khiến năng lượng bass vượt ngưỡng trong NHIỀU khung hình liên tiếp, không chỉ 1 frame. Nếu không giới hạn khoảng cách tối thiểu giữa 2 lần bắt nhịp, thuật toán sẽ bắn ra hàng chục nhịp giả chỉ từ 1 tiếng kick.'
+                        )
+                      "
+                    >
+                      B. Để tránh 1 tiếng kick duy nhất bị đếm thành nhiều nhịp liên tiếp (năng lượng vượt ngưỡng ở
+                      nhiều khung hình liền nhau).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cooldown không ảnh hưởng tới màu sắc của vòng tần số — màu luôn được tính lại mỗi khung hình từ dữ liệu FFT hiện tại.'
+                        )
+                      "
+                    >
+                      C. Để đổi màu vòng tần số mượt hơn giữa các khung hình.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Nếu tăng "độ nhạy" ($C$) trong công thức <code>beat ⟺ E_instant &gt; C × E_avg</code> lên rất
+                    cao (ví dụ 2.5), điều gì có khả năng xảy ra?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Tăng C làm điều kiện phát hiện nhịp KHÓ đạt hơn (cần năng lượng vọt cao hơn nhiều so với trung bình) — ngược lại với việc bắt nhiều nhịp giả hơn.'
+                        )
+                      "
+                    >
+                      A. Visualizer sẽ bắt nhiều nhịp giả hơn, particle nổ liên tục kể cả khi nhạc yên tĩnh.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! C càng lớn, năng lượng tức thời càng phải vọt cao hơn nhiều lần so với trung bình động mới được tính là nhịp — dễ bỏ sót các nhịp nhẹ (kick êm), chỉ bắt được những nhịp cực mạnh.'
+                        )
+                      "
+                    >
+                      B. Visualizer sẽ khó phát hiện nhịp hơn, dễ bỏ sót các nhịp kick nhẹ.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Hệ số C trong công thức phát hiện nhịp không liên quan gì tới cao độ (pitch) của bass do OscillatorNode phát ra.'
+                        )
+                      "
+                    >
+                      C. Tần số của nốt bass phát ra sẽ tăng lên.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >MDN — AnalyserNode</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://web.dev/articles/audio-scheduling" target="_blank" rel="noopener noreferrer"
+                      >web.dev — A Tale of Two Clocks: Scheduling Web Audio with Precision</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API/Visualizations_with_Web_Audio_API"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >MDN — Visualizations with Web Audio API</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >MDN — Canvas API</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="audio-programming-series" class="article-related__link article-related__link--next">
+                    🎉 Hoàn thành Series — Quay lại Lộ trình
+                  </a>
+                  <a href="audio-worklet-dsp" class="article-related__link article-related__link--prev">
+                    Bài 7: AudioWorklet &amp; DSP Tuỳ Biến
+                  </a>
+                  <a href="audio-programming-series" class="article-related__link"
+                    >Quay lại Lộ trình Series Web Audio API</a
+                  >
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="audio-music-visualizer-project.js" defer></script>
+  </body>
+</html>
