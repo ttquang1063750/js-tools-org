@@ -14,7 +14,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | Series 1                         | WebAssembly & Rust                  | 0/10           | 10       | 0%          |
 | Series 4                         | WebRTC & WebSocket                  | 0/8            | 8        | 0%          |
 | Series 5                         | Toy JS Engine (Trình thông dịch JS) | 0/?            | TBD      | 0%          |
-| 🚧 Series 7                      | SQL trong Trình duyệt (SQLite-WASM) | 10/17          | 17       | 58.8%       |
+| 🚧 Series 7                      | SQL trong Trình duyệt (SQLite-WASM) | 11/17          | 17       | 64.7%       |
 | 🎉 **Series 8: Web Audio**       | **Âm Thanh & Visualizer**           | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 9: Git**             | **Mô Hình & Quy Trình Làm Việc**    | **13/13**      | **13**   | **100%** ✅ |
 
@@ -288,25 +288,25 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
 
-| Bài | Tên bài học                                    | Nội dung chuyên sâu                                                           | Dự án/Demo đi kèm                                                                                        |
-| --- | ---------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 1   | **Mô hình quan hệ & SELECT**                   | Bảng/hàng/cột, `WHERE`, `ORDER BY`, `LIMIT`, kiểu dữ liệu SQLite.             | Chạy query đầu tiên trên dataset mẫu trong browser.                                                      |
-| 2   | **Môi trường thực hành kép: Browser + Docker** | Docker PostgreSQL + `psql`, `sqlite3` CLI, bản đồ dialect SQLite↔PostgreSQL.  | Setup 1 lần dùng cả series: workbench browser + lab Docker tại nhà.                                      |
-| 3   | **JOIN toàn tập**                              | INNER/LEFT/RIGHT/FULL/CROSS, khoá ngoại, lỗi tích Descartes.                  | Visualizer Venn minh hoạ từng loại JOIN trên dữ liệu thật.                                               |
-| 4   | **Aggregate & GROUP BY**                       | `COUNT/SUM/AVG`, `GROUP BY`, `HAVING` vs `WHERE`.                             | Bảng tổng hợp doanh thu + biểu đồ cột từ kết quả query.                                                  |
-| 5   | **Subquery & CTE**                             | Subquery tương quan, `WITH`, đệ quy CTE (cây phả hệ).                         | Demo CTE đệ quy duyệt cây danh mục lồng nhau.                                                            |
-| 6   | **Graph Queries bằng CTE Đệ Quy**              | Transitive closure, đường đi ngắn nhất, phát hiện chu trình thuần SQL.        | Đồ thị mạng lưới chuyến bay: tìm đường bay rẻ nhất bằng 1 câu SQL.                                       |
-| 7   | **Window Functions**                           | `ROW_NUMBER`, `RANK`, `LAG/LEAD`, `OVER(PARTITION BY)`.                       | Bảng xếp hạng & running total trực quan.                                                                 |
-| 8   | **Index & Query Plan**                         | B-Tree index, `EXPLAIN QUERY PLAN`, full scan vs index seek.                  | So sánh thời gian query trước/sau khi tạo index.                                                         |
-| 9   | **Query Optimizer Sâu** 🐳                     | `ANALYZE` & statistics, thứ tự join, partial/expression index, bytecode VDBE. | Bytecode viewer + Docker lab: so sánh `EXPLAIN ANALYZE` của PostgreSQL.                                  |
-| 10  | **SQLite Internals: B-Tree & File Format**     | Cấu trúc page, varint, record format, overflow page, freelist.                | Page viewer đọc hex thật của file `.sqlite` ngay trong browser.                                          |
-| 11  | **Transaction & ACID** 🐳                      | `BEGIN/COMMIT/ROLLBACK`, isolation level, ràng buộc toàn vẹn.                 | Demo rollback browser + Docker lab: 2 terminal `psql` tranh chấp lock, dirty read, isolation level thật. |
-| 12  | **Trigger, View & Virtual Table**              | Trigger audit log, view như lớp trừu tượng, cơ chế virtual table.             | Audit log tự động ghi mọi thay đổi + custom virtual table đơn giản.                                      |
-| 13  | **JSON & Generated Columns**                   | Hàm JSON, `json_each`/`json_tree`, generated columns, index trên expression.  | Kho document JSON có index — truy vấn semi-structured nhanh như cột.                                     |
-| 14  | **FTS5 Full-Text Search**                      | Inverted index, tokenizer, BM25 ranking, `highlight()`/`snippet()`.           | Search engine mini: tìm kiếm toàn văn tức thì trên nghìn bài viết.                                       |
-| 15  | **Performance Engineering** 🐳                 | Prepared statements, batch insert, PRAGMA tuning, đo lường đúng cách.         | Benchmark 1 triệu dòng browser + Docker lab: disk I/O, fsync, page cache thật.                           |
-| 16  | **WAL & Persistence trong Browser** 🐳         | WAL mode, OPFS + Worker, sql.js vs wa-sqlite vs official WASM, COOP/COEP.     | So sánh chiến lược persist + Docker lab: reader/writer đồng thời trên WAL thật.                          |
-| 17  | **Dự án: Mini Analytics Dashboard**            | Ghép query + render chart, lưu DB vào IndexedDB/OPFS, export `.sqlite`.       | Dashboard phân tích dữ liệu chạy 100% offline trong browser.                                             |
+| Bài | Tên bài học                                    | Nội dung chuyên sâu                                                           | Dự án/Demo đi kèm                                                                                                 |
+| --- | ---------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1   | **Mô hình quan hệ & SELECT**                   | Bảng/hàng/cột, `WHERE`, `ORDER BY`, `LIMIT`, kiểu dữ liệu SQLite.             | Chạy query đầu tiên trên dataset mẫu trong browser.                                                               |
+| 2   | **Môi trường thực hành kép: Browser + Docker** | Docker PostgreSQL + `psql`, `sqlite3` CLI, bản đồ dialect SQLite↔PostgreSQL.  | Setup 1 lần dùng cả series: workbench browser + lab Docker tại nhà.                                               |
+| 3   | **JOIN toàn tập**                              | INNER/LEFT/RIGHT/FULL/CROSS, khoá ngoại, lỗi tích Descartes.                  | Visualizer Venn minh hoạ từng loại JOIN trên dữ liệu thật.                                                        |
+| 4   | **Aggregate & GROUP BY**                       | `COUNT/SUM/AVG`, `GROUP BY`, `HAVING` vs `WHERE`.                             | Bảng tổng hợp doanh thu + biểu đồ cột từ kết quả query.                                                           |
+| 5   | **Subquery & CTE**                             | Subquery tương quan, `WITH`, đệ quy CTE (cây phả hệ).                         | Demo CTE đệ quy duyệt cây danh mục lồng nhau.                                                                     |
+| 6   | **Graph Queries bằng CTE Đệ Quy**              | Transitive closure, đường đi ngắn nhất, phát hiện chu trình thuần SQL.        | Đồ thị mạng lưới chuyến bay: tìm đường bay rẻ nhất bằng 1 câu SQL.                                                |
+| 7   | **Window Functions**                           | `ROW_NUMBER`, `RANK`, `LAG/LEAD`, `OVER(PARTITION BY)`.                       | Bảng xếp hạng & running total trực quan.                                                                          |
+| 8   | **Index & Query Plan**                         | B-Tree index, `EXPLAIN QUERY PLAN`, full scan vs index seek.                  | So sánh thời gian query trước/sau khi tạo index.                                                                  |
+| 9   | **Query Optimizer Sâu** 🐳                     | `ANALYZE` & statistics, thứ tự join, partial/expression index, bytecode VDBE. | Bytecode viewer + Docker lab: so sánh `EXPLAIN ANALYZE` của PostgreSQL.                                           |
+| 10  | **SQLite Internals: B-Tree & File Format**     | Cấu trúc page, varint, record format, overflow page, freelist.                | Page viewer đọc hex thật của file `.sqlite` ngay trong browser.                                                   |
+| 11  | **Transaction & ACID** 🐳                      | `BEGIN/COMMIT/ROLLBACK`, isolation level, ràng buộc toàn vẹn.                 | Demo rollback browser + Docker lab: 2 terminal `psql` tranh chấp lock, non-repeatable read, isolation level thật. |
+| 12  | **Trigger, View & Virtual Table**              | Trigger audit log, view như lớp trừu tượng, cơ chế virtual table.             | Audit log tự động ghi mọi thay đổi + custom virtual table đơn giản.                                               |
+| 13  | **JSON & Generated Columns**                   | Hàm JSON, `json_each`/`json_tree`, generated columns, index trên expression.  | Kho document JSON có index — truy vấn semi-structured nhanh như cột.                                              |
+| 14  | **FTS5 Full-Text Search**                      | Inverted index, tokenizer, BM25 ranking, `highlight()`/`snippet()`.           | Search engine mini: tìm kiếm toàn văn tức thì trên nghìn bài viết.                                                |
+| 15  | **Performance Engineering** 🐳                 | Prepared statements, batch insert, PRAGMA tuning, đo lường đúng cách.         | Benchmark 1 triệu dòng browser + Docker lab: disk I/O, fsync, page cache thật.                                    |
+| 16  | **WAL & Persistence trong Browser** 🐳         | WAL mode, OPFS + Worker, sql.js vs wa-sqlite vs official WASM, COOP/COEP.     | So sánh chiến lược persist + Docker lab: reader/writer đồng thời trên WAL thật.                                   |
+| 17  | **Dự án: Mini Analytics Dashboard**            | Ghép query + render chart, lưu DB vào IndexedDB/OPFS, export `.sqlite`.       | Dashboard phân tích dữ liệu chạy 100% offline trong browser.                                                      |
 
 > 🐳 = bài có mục "Thực hành với Docker" chuyên sâu (bài tập trên PostgreSQL/sqlite3 CLI thật, những gì browser không demo nổi). Các bài còn lại thuần browser, zero-setup.
 
@@ -614,7 +614,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - **Bài 8 — Index & Query Plan:** 8.1 B-Tree index hoạt động · 8.2 `EXPLAIN QUERY PLAN` · 8.3 Full scan vs index seek · 8.4 Composite & covering index.
 - **Bài 9 — Query Optimizer Sâu 🐳:** 9.1 `ANALYZE` & sqlite_stat1 · 9.2 Thứ tự join & selectivity · 9.3 Partial/expression index · 9.4 Đọc bytecode VDBE qua `EXPLAIN` đầy đủ · 9.5 Docker lab: `EXPLAIN ANALYZE` PostgreSQL & so sánh 2 optimizer.
 - **Bài 10 — SQLite Internals: B-Tree & File Format:** 10.1 Header 100 byte & page size · 10.2 B-Tree interior/leaf page · 10.3 Record format & varint · 10.4 Overflow page & freelist — page viewer đọc hex thật.
-- **Bài 11 — Transaction & ACID 🐳:** 11.1 `BEGIN/COMMIT/ROLLBACK` · 11.2 Tính nguyên tử & isolation level · 11.3 Ràng buộc (UNIQUE/FK/CHECK) · 11.4 Demo rollback khi vi phạm · 11.5 Docker lab: 2 terminal `psql` — lock contention, dirty/non-repeatable read, READ COMMITTED vs SERIALIZABLE thật.
+- **Bài 11 — Transaction & ACID 🐳:** 11.1 `BEGIN/COMMIT/ROLLBACK` · 11.2 Tính nguyên tử & isolation level · 11.3 Ràng buộc (UNIQUE/FK/CHECK) · 11.4 Demo rollback khi vi phạm · 11.5 Docker lab: 2 terminal `psql` — lock contention, non-repeatable read, READ COMMITTED vs SERIALIZABLE thật.
 - **Bài 12 — Trigger, View & Virtual Table:** 12.1 Trigger BEFORE/AFTER & audit log · 12.2 View như lớp trừu tượng · 12.3 Cơ chế virtual table (module xtable) · 12.4 Virtual table tuỳ biến đơn giản.
 - **Bài 13 — JSON & Generated Columns:** 13.1 Hàm JSON (`json_extract`, `->`/`->>`) · 13.2 `json_each`/`json_tree` lateral · 13.3 Generated columns (VIRTUAL/STORED) · 13.4 Index trên expression cho document store.
 - **Bài 14 — FTS5 Full-Text Search:** 14.1 Inverted index hoạt động · 14.2 Tokenizer (unicode61, trigram) · 14.3 BM25 ranking · 14.4 `highlight()`/`snippet()` — search engine mini.
