@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 5: Phát &amp; Xử Lý File/Mic — js-tools</title>
+    <title>Bài 6: Spatial &amp; Stereo Audio — js-tools</title>
     <meta
       name="description"
-      content="decodeAudioData giải mã file âm thanh thành AudioBuffer, MediaElementSourceNode bọc thẻ audio HTML5, getUserMedia lấy đầu vào micro, và đo âm lượng RMS. Sân chơi tương tác: visualizer nhạc upload + đo âm lượng từ micro."
+      content="StereoPannerNode cân bằng trái/phải đơn giản, PannerNode + mô hình HRTF định vị âm thanh 3D thật sự, vị trí/hướng nguồn âm và listener, mô hình suy giảm theo khoảng cách. Sân chơi tương tác: nguồn âm tự xoay quanh người nghe."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/audio/audio-file-mic-input" />
+    <link rel="canonical" href="https://js-tools.org/blog/audio/audio-spatial-stereo" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -33,7 +33,7 @@
       });
     </script>
     <style>
-      /* Web Audio File/Mic Input Sandbox styles */
+      /* Web Audio Spatial/Stereo Sandbox styles */
       .graph-sandbox {
         background: #181825;
         border: 1px solid var(--border);
@@ -65,11 +65,30 @@
         display: block;
         margin-bottom: 4px;
       }
+      .graph-controls select {
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        box-sizing: border-box;
+      }
+      .graph-controls input[type='range'] {
+        width: 100%;
+      }
+      .graph-value {
+        font-family: monospace;
+        color: #a855f7;
+        font-size: 12px;
+      }
       .graph-btn-row {
         display: flex;
         gap: 6px;
       }
       .graph-btn {
+        flex: 1;
         padding: 8px 10px;
         border-radius: 6px;
         border: 1px solid var(--border);
@@ -78,16 +97,9 @@
         font-size: 12px;
         cursor: pointer;
         transition: background 0.15s;
-        flex: 1;
       }
       .graph-btn:hover {
         background: #313244;
-      }
-      .graph-btn.is-active {
-        background: #3b82f6;
-        border-color: #3b82f6;
-        color: #fff;
-        font-weight: 600;
       }
       .graph-btn--primary {
         background: #a855f7;
@@ -107,10 +119,11 @@
       .graph-btn--stop:hover {
         background: #8a3040;
       }
-      .graph-file-input {
-        width: 100%;
-        font-size: 11px;
-        color: #cdd6f4;
+      .graph-btn.is-active {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #fff;
+        font-weight: 600;
       }
       .graph-log {
         background: #0f0f1b;
@@ -120,7 +133,7 @@
         font-family: monospace;
         font-size: 11px;
         color: #a6e3a1;
-        max-height: 140px;
+        max-height: 120px;
         overflow-y: auto;
         line-height: 1.5;
       }
@@ -154,12 +167,8 @@
         text-align: center;
         line-height: 1.6;
       }
-      .graph-section-title {
-        color: #a6adc8;
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin: 4px 0 -4px;
+      .sp-hide {
+        display: none;
       }
       @media (max-width: 880px) {
         .graph-sandbox {
@@ -249,7 +258,7 @@
         <div class="container">
           <a href="audio-programming-series" class="article-hero__back">← Quay lại Lộ trình Web Audio API</a>
           <div class="article-hero__tag article-hero__tag--audio">Web Audio API</div>
-          <h1 class="article-hero__title">Bài 5: Phát &amp; Xử Lý File/Mic</h1>
+          <h1 class="article-hero__title">Bài 6: Spatial &amp; Stereo Audio</h1>
           <div class="article-hero__meta">4 tháng 7, 2026 · 14 phút đọc</div>
         </div>
       </section>
@@ -260,100 +269,153 @@
             <div class="article-body">
               <div>
                 <p>
-                  4 bài trước dùng <code>OscillatorNode</code> làm nguồn — tiện cho học, nhưng thực tế thường cần phát
-                  file nhạc thật hoặc bắt âm thanh từ micro. Bài này thêm 2 nguồn mới cùng cách đo độ to (loudness)
-                  chuẩn hơn biên độ đỉnh đơn thuần.
+                  5 bài trước, âm thanh luôn phát ra "ở giữa" — không có khái niệm trái/phải hay gần/xa. Bài này thêm
+                  chiều không gian: từ cân bằng trái-phải đơn giản (<code>StereoPannerNode</code>) tới định vị 3D đầy đủ
+                  mô phỏng cách tai người thật nghe hướng âm thanh (<code>PannerNode</code> + HRTF).
                 </p>
 
-                <h2>1. <code>decodeAudioData</code>: Giải Mã File Thành <code>AudioBuffer</code></h2>
+                <h2>1. <code>StereoPannerNode</code>: Cân Bằng Trái/Phải Đơn Giản</h2>
                 <p>
-                  Đọc file âm thanh (upload hoặc <code>fetch</code>) dưới dạng <code>ArrayBuffer</code>, rồi
-                  <code>audioContext.decodeAudioData(arrayBuffer)</code> giải mã toàn bộ (MP3, WAV, OGG...) thành 1
-                  <code>AudioBuffer</code> — PCM thô nằm sẵn trong bộ nhớ, sẵn sàng phát qua
-                  <code>AudioBufferSourceNode</code>. Giống <code>OscillatorNode</code>, source node này cũng chỉ
-                  <code>start()</code> được đúng 1 lần — phát lại phải tạo node mới (buffer gốc thì tái sử dụng thoải
-                  mái).
+                  <code>audioContext.createStereoPanner()</code> chỉ có đúng 1 tham số: <code>pan</code>, nhận giá trị
+                  từ <code>-1</code> (hoàn toàn trái) tới <code>1</code> (hoàn toàn phải), <code>0</code> là chính giữa.
+                  Đây là dạng "không gian" đơn giản nhất — không mô phỏng khoảng cách, không mô phỏng chiều sâu, chỉ đơn
+                  thuần chia tỉ lệ âm lượng giữa 2 kênh loa.
                 </p>
 
                 <div class="callout callout--note">
-                  <div class="callout__title">
-                    ℹ️ <code>decodeAudioData</code> giải mã TOÀN BỘ file vào bộ nhớ cùng lúc
-                  </div>
+                  <div class="callout__title">ℹ️ Khi nào dùng StereoPannerNode thay vì PannerNode?</div>
                   <div class="callout__content">
-                    Phù hợp cho hiệu ứng ngắn (tiếng click, hit game) — nhưng với 1 bản nhạc dài vài phút, giải mã toàn
-                    bộ trước khi phát được gì cả vừa tốn thời gian chờ vừa tốn RAM đáng kể. Với file dài, mục 2
-                    (<code>MediaElementSourceNode</code>) là lựa chọn hợp lý hơn nhiều.
+                    Nếu ứng dụng chỉ cần "kéo" âm thanh sang trái/phải (mixer nhạc, hiệu ứng UI đơn giản),
+                    <code>StereoPannerNode</code> nhẹ hơn nhiều về mặt tính toán và code ngắn gọn hơn hẳn. Chỉ cần
+                    <code>PannerNode</code> khi thực sự cần mô phỏng nguồn âm tồn tại ở 1 VỊ TRÍ trong không gian 3D
+                    (game, trải nghiệm VR/AR, mô phỏng môi trường thật).
                   </div>
                 </div>
 
-                <h2>2. <code>MediaElementSourceNode</code>: Bọc Thẻ <code>&lt;audio&gt;</code> HTML5</h2>
+                <h2>2. <code>PannerNode</code> &amp; Mô Hình HRTF: Không Gian 3D Thật Sự</h2>
                 <p>
-                  <code>audioContext.createMediaElementSource(audioElement)</code> biến 1 thẻ
-                  <code>&lt;audio&gt;</code>/<code>&lt;video&gt;</code> bình thường thành 1 node trong đồ thị Web Audio
-                  — tận dụng luôn cơ chế streaming/buffer tăng dần sẵn có của trình duyệt (không cần chờ tải/giải mã
-                  xong toàn bộ), trong khi vẫn áp được filter/analyser/hiệu ứng như mọi node khác đã học.
+                  <code>audioContext.createPanner()</code> định vị nguồn âm bằng toạ độ 3 chiều
+                  (<code>positionX/Y/Z</code>) trong không gian, kết hợp với vị trí và hướng của
+                  <code>audioContext.listener</code> (đại diện cho "tai" người nghe) để tính ra âm thanh cuối cùng.
+                  Thuộc tính <code>panningModel</code> quyết định thuật toán tính toán:
                 </p>
+                <ul>
+                  <li>
+                    <code>'equalpower'</code> (mặc định) — chỉ điều chỉnh âm lượng tương đối giữa 2 tai theo góc, tương
+                    tự StereoPannerNode nhưng có thêm khái niệm khoảng cách.
+                  </li>
+                  <li>
+                    <code>'HRTF'</code> (Head-Related Transfer Function) — áp bộ lọc được đo thực nghiệm trên hình dạng
+                    đầu/tai người mẫu, mô phỏng cả <strong>độ trễ thời gian đến 2 tai</strong> (ITD) lẫn
+                    <strong>khác biệt cường độ giữa 2 tai</strong> (ILD) — giúp não bộ định vị được cả hướng
+                    trước/sau/trên/dưới, không chỉ trái/phải.
+                  </li>
+                </ul>
 
-                <h2>3. <code>getUserMedia</code>: Đầu Vào Micro</h2>
+                <div class="callout callout--deep">
+                  <div class="callout__title">
+                    🔬 Đào sâu: Vì sao chỉ chỉnh âm lượng 2 tai (ILD) không đủ để định vị "trước/sau"?
+                  </div>
+                  <div class="callout__content">
+                    Một nguồn âm ở ngay trước mặt và một nguồn ở ngay sau gáy có thể tạo ra ILD gần như giống hệt nhau
+                    (cùng khoảng cách tới 2 tai). Não bộ con người phân biệt được 2 trường hợp này chủ yếu nhờ
+                    <strong>hình dạng vành tai</strong> lọc tần số cao khác nhau tuỳ hướng tới — đây chính xác là thứ
+                    HRTF mô phỏng (bằng bộ lọc đo thực nghiệm), còn ILD/ITD đơn thuần (equalpower) thì không thể tái tạo
+                    được hiệu ứng lọc theo hình dạng tai này.
+                  </div>
+                </div>
+
+                <h2>3. Vị Trí &amp; Hướng: Nguồn Âm và Listener</h2>
                 <p>
-                  <code>navigator.mediaDevices.getUserMedia({ audio: true })</code> xin quyền micro, trả về 1
-                  <code>MediaStream</code>. <code>audioContext.createMediaStreamSource(stream)</code> biến stream đó
-                  thành 1 <code>AudioNode</code> — nối tiếp vào <code>AnalyserNode</code> y hệt mọi nguồn khác đã học.
+                  Cả nguồn âm (<code>PannerNode</code>) và người nghe (<code>audioContext.listener</code>) đều có toạ độ
+                  vị trí (<code>positionX/Y/Z</code>) và hướng nhìn (<code>orientationX/Y/Z</code>) — đây đều là
+                  <code>AudioParam</code> (từ <a href="audio-context-graph">Bài 1</a>), có thể lập lịch mượt bằng
+                  <code>setValueAtTime</code>/<code>linearRampToValueAtTime</code> giống mọi tham số khác đã học:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">panner-position.js</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">const panner = audioContext.createPanner();
+panner.panningModel = 'HRTF';
+panner.positionX.setValueAtTime(3, audioContext.currentTime); // 3 mét sang phải
+panner.positionZ.setValueAtTime(-2, audioContext.currentTime); // 2 mét phía trước
+
+// Vị trí/hướng người nghe — mặc định (0,0,0), nhìn theo trục -Z
+const listener = audioContext.listener;
+listener.positionX.setValueAtTime(0, audioContext.currentTime);
+listener.forwardX.setValueAtTime(0, audioContext.currentTime);
+listener.forwardZ.setValueAtTime(-1, audioContext.currentTime);</code></pre>
+                </div>
+
+                <h2>4. Mô Hình Suy Giảm Theo Khoảng Cách</h2>
+                <p>
+                  <code>PannerNode</code> còn tự động giảm âm lượng theo khoảng cách qua 3 tham số:
+                  <code>refDistance</code> (khoảng cách "chuẩn" chưa suy giảm), <code>maxDistance</code>, và
+                  <code>rolloffFactor</code> (tốc độ suy giảm). Với <code>distanceModel = 'inverse'</code> (mặc định,
+                  giống vật lý thật của sóng âm cầu):
+                </p>
+                <p style="text-align: center">
+                  $$\text{gain} = \dfrac{\text{refDistance}}{\text{refDistance} + \text{rolloff} \times (\text{distance}
+                  - \text{refDistance})}$$
                 </p>
 
                 <div class="callout callout--pitfall">
-                  <div class="callout__title">
-                    🕳️ Cạm bẫy thường gặp: nối mic thẳng tới <code>destination</code> gây hú rít (feedback loop)
-                  </div>
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Quên mô hình 3D dùng đơn vị "mét" trừu tượng</div>
                   <div class="callout__content">
-                    Nếu vô tình nối <code>micSource.connect(audioContext.destination)</code>, âm thanh từ loa sẽ bị
-                    chính micro thu lại, khuếch đại, phát ra loa, thu lại tiếp... tạo vòng lặp hú rít (audio feedback)
-                    giống hệt micro để gần loa ngoài đời thật. Với ứng dụng chỉ cần <strong>phân tích</strong> mic (VU
-                    meter, spectrum), chỉ nối <code>micSource → analyser</code> — dừng lại ở đó, không nối tiếp ra
-                    <code>destination</code>.
+                    <code>positionX/Y/Z</code> không có đơn vị vật lý bắt buộc — bạn tự quyết định 1 đơn vị "khoảng
+                    cách" nghĩa là gì trong ứng dụng của mình. Nếu <code>refDistance</code> mặc định (1) không khớp với
+                    thang đo bạn đang dùng (vd toạ độ game tính bằng hàng trăm đơn vị pixel), âm lượng sẽ suy giảm gần
+                    như về 0 ngay ở khoảng cách rất gần — luôn chỉnh <code>refDistance</code>/
+                    <code>maxDistance</code> khớp với đơn vị toạ độ thực tế của ứng dụng.
                   </div>
                 </div>
 
-                <div class="callout callout--tip">
-                  <div class="callout__title">💡 Mẹo: luôn dừng track mic khi dùng xong</div>
-                  <div class="callout__content">
-                    <code>stream.getTracks().forEach(track =&gt; track.stop())</code> giải phóng thiết bị mic hoàn toàn
-                    — nếu quên, icon/đèn báo mic trên tab trình duyệt vẫn sáng, mic vẫn bị đọc dữ liệu liên tục dù ứng
-                    dụng không còn cần nữa, vừa tốn tài nguyên vừa là mối lo về quyền riêng tư.
-                  </div>
-                </div>
+                <h2>5. So Sánh StereoPannerNode vs PannerNode</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Tiêu chí</th>
+                      <th>StereoPannerNode</th>
+                      <th>PannerNode</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Số chiều không gian</td>
+                      <td>1 (trái ↔ phải)</td>
+                      <td>3 (x, y, z đầy đủ)</td>
+                    </tr>
+                    <tr>
+                      <td>Mô phỏng khoảng cách?</td>
+                      <td>Không</td>
+                      <td>Có (distance model)</td>
+                    </tr>
+                    <tr>
+                      <td>Mô hình HRTF?</td>
+                      <td>Không hỗ trợ</td>
+                      <td>Có (<code>panningModel: 'HRTF'</code>)</td>
+                    </tr>
+                    <tr>
+                      <td>Chi phí tính toán</td>
+                      <td>Rất thấp</td>
+                      <td>Cao hơn (đặc biệt với HRTF)</td>
+                    </tr>
+                  </tbody>
+                </table>
 
-                <h2>4. Đo Âm Lượng Bằng RMS (Root Mean Square)</h2>
+                <h2>Sân chơi tương tác: Spatial Audio Playground</h2>
                 <p>
-                  Biên độ đỉnh (giá trị lớn nhất tức thời) không phản ánh đúng độ to <em>cảm nhận</em> — 1 tín hiệu có
-                  thể đạt đỉnh cao trong tích tắc mà nghe không hề to. <strong>RMS</strong> lấy trung bình bình phương
-                  biên độ trên cả cửa sổ mẫu rồi khai căn, phản ánh sát hơn nhiều năng lượng liên tục mà tai người cảm
-                  nhận là "to" (với <code>x_i</code> là biên độ mẫu thứ <code>i</code>, <code>N</code> là số mẫu trong
-                  cửa sổ đang xét):
-                </p>
-                <p style="text-align: center">$$\text{RMS} = \sqrt{\dfrac{1}{N}\sum_{i=1}^{N} x_i^2}$$</p>
-
-                <div class="callout callout--deep">
-                  <div class="callout__title">🔬 Đào sâu: vì sao RMS chính xác hơn peak cho VU meter</div>
-                  <div class="callout__content">
-                    Peak chỉ là 1 con số — dễ bị "đánh lừa" bởi 1 xung nhiễu ngắn không đại diện cho cảm nhận tổng thể.
-                    RMS bình phương từng mẫu trước khi lấy trung bình, khiến các giá trị lớn đóng góp nhiều hơn tỉ lệ
-                    thuận (bình phương phóng đại chênh lệch), rồi khai căn để đưa về đúng đơn vị biên độ ban đầu — kết
-                    quả là 1 con số ổn định phản ánh năng lượng trung bình, đúng là cách hầu hết đồng hồ VU chuyên
-                    nghiệp đo độ to.
-                  </div>
-                </div>
-
-                <h2>Sân chơi tương tác: Visualizer File Upload + Mic</h2>
-                <p>
-                  Chọn nguồn: tải lên 1 file âm thanh để phát qua <code>decodeAudioData</code>, hoặc bật micro qua
-                  <code>getUserMedia</code>. Cả 2 dùng chung 1 đường ống phân tích: waveform + thanh đo RMS bên dưới.
+                  Phát 1 âm liên tục, chọn kiểu định vị, kéo slider hoặc bấm "Tự động xoay" để nguồn âm di chuyển quanh
+                  người nghe — nghe (đeo tai nghe để cảm nhận rõ nhất với chế độ HRTF) và quan sát trực quan vị trí trên
+                  canvas.
                 </p>
 
                 <!-- Interactive Sandbox -->
                 <div class="code-tabs">
                   <div class="code-tabs__nav">
-                    <span class="code-tabs__title">🎙️ Sân chơi tương tác: File Upload &amp; Mic Visualizer</span>
+                    <span class="code-tabs__title">🎧 Sân chơi tương tác: Spatial Audio Playground</span>
                     <div class="code-tabs__btns">
                       <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
                       <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
@@ -364,27 +426,46 @@
                     <div class="graph-sandbox">
                       <!-- Controls Panel -->
                       <div class="graph-controls">
-                        <div class="graph-section-title">Nguồn: File</div>
-                        <input type="file" id="fm-file-input" class="graph-file-input" accept="audio/*" />
-                        <div class="graph-btn-row">
-                          <button class="graph-btn graph-btn--primary" id="fm-play-file-btn">▶️ Phát file</button>
-                          <button class="graph-btn graph-btn--stop" id="fm-stop-file-btn">⏹ Dừng</button>
+                        <h3>Kiểu định vị</h3>
+                        <select id="sp-mode-select">
+                          <option value="stereo">StereoPannerNode (trái/phải)</option>
+                          <option value="panner">PannerNode + HRTF (3D)</option>
+                        </select>
+
+                        <div id="sp-stereo-controls">
+                          <label for="sp-pan-range"
+                            >pan (<span class="graph-value" id="sp-pan-value">0.00</span>)</label
+                          >
+                          <input type="range" id="sp-pan-range" min="-1" max="1" step="0.01" value="0" />
                         </div>
 
-                        <div class="graph-section-title">Nguồn: Micro</div>
-                        <button class="graph-btn" id="fm-mic-btn">🎤 Bật mic</button>
+                        <div id="sp-panner-controls" class="sp-hide">
+                          <label for="sp-x-range"
+                            >positionX (<span class="graph-value" id="sp-x-value">0.0</span>)</label
+                          >
+                          <input type="range" id="sp-x-range" min="-5" max="5" step="0.1" value="0" />
+                          <label for="sp-z-range"
+                            >positionZ (<span class="graph-value" id="sp-z-value">0.0</span>)</label
+                          >
+                          <input type="range" id="sp-z-range" min="-5" max="5" step="0.1" value="0" />
+                        </div>
 
-                        <button class="graph-btn" id="fm-reset-btn">Reset demo</button>
+                        <div class="graph-btn-row">
+                          <button class="graph-btn graph-btn--primary" id="sp-play-btn">▶️ Phát</button>
+                          <button class="graph-btn graph-btn--stop" id="sp-stop-btn">⏹ Dừng</button>
+                        </div>
+                        <button class="graph-btn" id="sp-orbit-btn">🔄 Tự động xoay</button>
+                        <button class="graph-btn" id="sp-reset-btn">Reset demo</button>
                         <div>
                           <h3>Nhật ký</h3>
-                          <div class="graph-log" id="fm-log"></div>
+                          <div class="graph-log" id="sp-log"></div>
                         </div>
                       </div>
 
                       <!-- Canvas Stage -->
                       <div class="graph-viewport-container">
-                        <canvas id="fm-canvas" class="graph-canvas" width="560" height="220"></canvas>
-                        <div class="graph-status-line" id="fm-status-line"></div>
+                        <canvas id="sp-canvas" class="graph-canvas" width="560" height="260"></canvas>
+                        <div class="graph-status-line" id="sp-status-line"></div>
                       </div>
                     </div>
                   </div>
@@ -392,10 +473,10 @@
                   <div class="code-tabs__panel" data-panel="js">
                     <div class="code-window">
                       <div class="code-header">
-                        <span class="code-filename">audio-file-mic-input-live.js</span>
+                        <span class="code-filename">audio-spatial-stereo-live.js</span>
                         <button class="code-copy" onclick="copyCode(this)">Copy</button>
                       </div>
-                      <pre><code class="language-js" id="fm-js-code-display"></code></pre>
+                      <pre><code class="language-js" id="sp-js-code-display"></code></pre>
                     </div>
                   </div>
                 </div>
@@ -404,7 +485,7 @@
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Vì sao <code>decodeAudioData</code> không phù hợp để phát ngay 1 bản nhạc dài vài phút?
+                    Câu 1: Khác biệt cơ bản nhất giữa <code>StereoPannerNode</code> và <code>PannerNode</code> là gì?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -414,12 +495,12 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! decodeAudioData giải mã TOÀN BỘ file thành PCM thô trong bộ nhớ trước khi phát được gì cả — tốn thời gian chờ và RAM lớn với file dài. MediaElementSourceNode phù hợp hơn vì tận dụng streaming/buffer tăng dần sẵn có của thẻ audio HTML5.'
+                          'Chính xác! StereoPannerNode chỉ có 1 tham số pan điều chỉnh cân bằng trái-phải (1 chiều). PannerNode định vị nguồn âm bằng toạ độ 3D đầy đủ (x, y, z), kết hợp vị trí/hướng của listener, hỗ trợ cả mô hình suy giảm khoảng cách và HRTF.'
                         )
                       "
                     >
-                      A. Vì nó giải mã toàn bộ file vào bộ nhớ trước khi phát được gì, tốn thời gian chờ và RAM lớn với
-                      file dài.
+                      A. StereoPannerNode chỉ cân bằng trái-phải 1 chiều; PannerNode định vị nguồn âm trong không gian 3
+                      chiều đầy đủ, kết hợp vị trí/hướng của listener.
                     </button>
                     <button
                       class="quiz-option"
@@ -427,11 +508,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. decodeAudioData hỗ trợ đầy đủ các định dạng phổ biến (MP3, WAV, OGG...) — đây không phải giới hạn định dạng, mà là vấn đề về cách nó xử lý TOÀN BỘ file cùng lúc.'
+                          'Sai. Cả 2 loại node đều xử lý âm thanh trong THỜI GIAN THỰC, không có khái niệm &quot;trễ xử lý&quot; khác biệt giữa chúng theo nghĩa này.'
                         )
                       "
                     >
-                      B. Vì nó chỉ hỗ trợ định dạng WAV, không hỗ trợ MP3.
+                      B. StereoPannerNode xử lý theo thời gian thực, còn PannerNode cần xử lý trước (offline).
                     </button>
                     <button
                       class="quiz-option"
@@ -439,11 +520,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. decodeAudioData không yêu cầu kết nối server nào cả — nó xử lý hoàn toàn cục bộ trên ArrayBuffer đã có sẵn trong bộ nhớ trình duyệt.'
+                          'Sai. Cả 2 node đều hoạt động độc lập với định dạng nguồn âm — không liên quan gì tới file nén hay không nén.'
                         )
                       "
                     >
-                      C. Vì nó cần gửi file lên server để giải mã trước.
+                      C. StereoPannerNode chỉ hoạt động với file nén, PannerNode chỉ hoạt động với file WAV.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -452,8 +533,8 @@
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Vì sao phải luôn gọi <code>stream.getTracks().forEach(t =&gt; t.stop())</code> sau khi dùng
-                    xong micro?
+                    Câu 2: Mô hình HRTF giúp ích gì mà <code>panningModel: 'equalpower'</code> (mặc định) không làm
+                    được?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -463,12 +544,12 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Nếu không dừng track, trình duyệt vẫn giữ mic ở trạng thái đang ghi (icon mic trên tab vẫn sáng), tiếp tục tiêu tốn tài nguyên và gây lo ngại quyền riêng tư dù ứng dụng không còn cần dữ liệu mic nữa.'
+                          'Chính xác! equalpower chỉ điều chỉnh âm lượng tương đối 2 tai theo góc — không phân biệt được các hướng có ILD giống nhau (vd trước mặt vs sau gáy). HRTF áp bộ lọc mô phỏng hình dạng vành tai người thật, giúp não bộ phân biệt được cả hướng trước/sau/trên/dưới, không chỉ trái/phải.'
                         )
                       "
                     >
-                      A. Nếu không, trình duyệt vẫn giữ mic ở trạng thái đang ghi, tiếp tục tốn tài nguyên và gây lo
-                      ngại quyền riêng tư.
+                      A. HRTF mô phỏng bộ lọc theo hình dạng đầu/tai người thật, giúp định vị được cả hướng
+                      trước/sau/trên/dưới — điều mà chỉ điều chỉnh âm lượng 2 tai (equalpower) không làm được.
                     </button>
                     <button
                       class="quiz-option"
@@ -476,11 +557,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Không dừng track không hề làm crash AudioContext — chỉ đơn giản là mic vẫn tiếp tục được đọc dữ liệu không cần thiết.'
+                          'Sai. HRTF không liên quan gì tới việc tăng âm lượng tổng thể — nó là bộ lọc mô phỏng ĐỊNH VỊ KHÔNG GIAN, không phải bộ khuếch đại.'
                         )
                       "
                     >
-                      B. Vì không dừng sẽ làm crash toàn bộ <code>AudioContext</code>.
+                      B. HRTF làm âm thanh to hơn tổng thể so với equalpower.
                     </button>
                     <button
                       class="quiz-option"
@@ -488,11 +569,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Không có giới hạn cứng nào như vậy trong Web Audio API — vấn đề thực sự là tài nguyên/quyền riêng tư, không phải giới hạn số lượng track.'
+                          'Sai. HRTF hoạt động độc lập với định dạng file — nó là 1 giai đoạn xử lý TRONG đồ thị Web Audio, áp dụng sau khi âm thanh đã được giải mã, không liên quan tới định dạng nén.'
                         )
                       "
                     >
-                      C. Vì trình duyệt giới hạn tối đa 1 track mic trong toàn bộ phiên làm việc.
+                      C. HRTF cho phép phát các định dạng file mà equalpower không hỗ trợ.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -501,7 +582,8 @@
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Vì sao RMS phản ánh độ to cảm nhận (loudness) chính xác hơn biên độ đỉnh (peak) đơn thuần?
+                    Câu 3: Vì sao <code>PannerNode</code> cần biết cả vị trí của <code>audioContext.listener</code>
+                    chứ không chỉ vị trí của chính nguồn âm?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -511,12 +593,12 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! RMS lấy trung bình năng lượng bình phương trên cả cửa sổ mẫu, còn peak chỉ là 1 giá trị tức thời cao nhất. Một tín hiệu có thể đạt đỉnh cao trong tích tắc nhưng phần lớn thời gian nhỏ — RMS phản ánh đúng mức năng lượng trung bình liên tục mà tai người cảm nhận là độ to.'
+                          'Chính xác! Cảm nhận không gian âm thanh luôn mang tính TƯƠNG ĐỐI — cùng 1 nguồn âm sẽ nghe hoàn toàn khác tuỳ vị trí và hướng nhìn của người nghe so với nó. PannerNode phải tính khoảng cách và góc TƯƠNG ĐỐI giữa 2 điểm (nguồn và listener), không thể chỉ dựa vào toạ độ tuyệt đối của riêng nguồn âm.'
                         )
                       "
                     >
-                      A. RMS lấy trung bình năng lượng bình phương trên cả cửa sổ mẫu, trong khi peak chỉ là 1 giá trị
-                      tức thời cao nhất, dễ không đại diện cho cảm nhận tổng thể.
+                      A. Vì cảm nhận âm thanh không gian mang tính tương đối — PannerNode phải tính khoảng cách/góc giữa
+                      nguồn âm và listener, không chỉ dựa vào vị trí tuyệt đối của nguồn.
                     </button>
                     <button
                       class="quiz-option"
@@ -524,11 +606,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. RMS không liên quan gì tới tần số lấy mẫu — nó là 1 phép toán thống kê áp dụng lên các mẫu biên độ đã có, hoàn toàn độc lập với sample rate.'
+                          'Sai. audioContext.listener không phải yêu cầu bảo mật — nó là dữ liệu vị trí/hướng cần thiết cho phép TÍNH TOÁN không gian tương đối, hoàn toàn không liên quan tới quyền hạn hay bảo mật trình duyệt.'
                         )
                       "
                     >
-                      B. Vì RMS được tính ở tần số lấy mẫu cao hơn peak.
+                      B. Vì trình duyệt yêu cầu khai báo listener để cấp quyền phát âm thanh không gian.
                     </button>
                     <button
                       class="quiz-option"
@@ -536,11 +618,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. RMS hoàn toàn tính được từ getByteTimeDomainData (miền thời gian) — không cần bất kỳ dữ liệu miền tần số (FFT) nào cả.'
+                          'Sai. listener không liên quan gì tới hiệu năng CPU/GPU — vai trò của nó thuần tuý là cung cấp điểm tham chiếu để tính toán không gian tương đối.'
                         )
                       "
                     >
-                      C. Vì RMS chỉ tính được từ dữ liệu miền tần số (FFT), chính xác hơn miền thời gian.
+                      C. Vì listener giúp trình duyệt tối ưu hiệu năng render đồ hoạ.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -552,23 +634,34 @@
                 <ul>
                   <li>
                     <a
-                      href="https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData"
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/PannerNode"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >MDN — decodeAudioData()</a
+                      >MDN — PannerNode</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia"
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/StereoPannerNode"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >MDN — getUserMedia()</a
+                      >MDN — StereoPannerNode</a
                     >
                   </li>
                   <li>
-                    <a href="https://en.wikipedia.org/wiki/Root_mean_square" target="_blank" rel="noopener noreferrer"
-                      >Wikipedia — Root Mean Square</a
+                    <a
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/AudioListener"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >MDN — AudioListener</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://en.wikipedia.org/wiki/Head-related_transfer_function"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Wikipedia — Head-Related Transfer Function (HRTF)</a
                     >
                   </li>
                 </ul>
@@ -578,11 +671,11 @@
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="audio-spatial-stereo" class="article-related__link article-related__link--next">
-                    Bài 6: Spatial &amp; Stereo Audio
-                  </a>
-                  <a href="audio-analyser-fft" class="article-related__link article-related__link--prev">
-                    Bài 4: AnalyserNode &amp; FFT
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 7: AudioWorklet &amp; DSP Tuỳ Biến (sắp ra mắt)
+                  </span>
+                  <a href="audio-file-mic-input" class="article-related__link article-related__link--prev">
+                    Bài 5: Phát &amp; Xử Lý File/Mic
                   </a>
                   <a href="audio-programming-series" class="article-related__link"
                     >Quay lại Lộ trình Series Web Audio API</a
@@ -719,6 +812,6 @@
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
-    <script src="audio-file-mic-input.js" defer></script>
+    <script src="audio-spatial-stereo.js" defer></script>
   </body>
 </html>
