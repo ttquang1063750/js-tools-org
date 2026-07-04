@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: Remote &amp; Collaboration — fetch, pull, push — js-tools</title>
+    <meta
+      name="description"
+      content="Vì sao git fetch không đụng tới branch cục bộ, remote-tracking branch origin/main là gì, khi nào push bị từ chối non-fast-forward, và so sánh merge vs rebase khi pull cùng đồng đội. Sân chơi tương tác mô phỏng repo local và remote diverge rồi đồng bộ lại."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-remote-collaboration" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* Git Remote & Collaboration Simulator Sandbox styles */
+      .graph-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+      }
+      .graph-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .graph-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .graph-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .graph-cmd-row {
+        display: flex;
+        gap: 6px;
+      }
+      .graph-cmd-row input {
+        flex: 1;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #a6e3a1;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
+      .graph-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .graph-btn:hover {
+        background: #313244;
+      }
+      .graph-btn--primary {
+        background: #64748b;
+        border-color: #64748b;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-btn--primary:hover {
+        background: #475569;
+      }
+      .graph-hint-list {
+        margin: 0;
+        padding-left: 16px;
+        color: #a6adc8;
+        font-size: 11px;
+        line-height: 1.7;
+      }
+      .graph-hint-list code {
+        color: #cdd6f4;
+      }
+      .graph-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 160px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .graph-log div.cmd-line {
+        color: #f9e2af;
+        padding-top: 6px;
+      }
+      .graph-log div.err-line {
+        color: #f38ba8;
+      }
+      .graph-log div.ok-line {
+        color: #a6e3a1;
+        font-weight: bold;
+      }
+      .graph-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 380px;
+        overflow: auto;
+        padding: 10px 0;
+        gap: 10px;
+      }
+      .graph-canvas {
+        display: block;
+      }
+      .graph-status-line {
+        font-family: monospace;
+        font-size: 11px;
+        color: #cdd6f4;
+        text-align: center;
+        line-height: 1.6;
+      }
+      @media (max-width: 880px) {
+        .graph-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--git">
+        <div class="container">
+          <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
+          <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
+          <h1 class="article-hero__title">Bài 9: Remote &amp; Collaboration — fetch, pull, push</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Tám bài trước xoay quanh 1 repo cục bộ duy nhất. Bài này mở rộng ra tình huống thực tế nhất: nhiều
+                  người cùng làm việc trên 1 remote (thường là GitHub/GitLab). <code>fetch</code>, <code>pull</code>,
+                  <code>push</code> chỉ là các cách khác nhau để đồng bộ 2 đồ thị commit — repo cục bộ của bạn và repo
+                  trên server — vốn có thể phân kỳ (diverge) bất cứ lúc nào đồng nghiệp push trước bạn.
+                </p>
+
+                <h2>1. <code>git fetch</code> vs <code>git pull</code>: Tải Về Nhưng Không (Hoặc Có) Trộn</h2>
+                <p>
+                  <code>git fetch</code> tải các commit mới từ remote về máy bạn và cập nhật con trỏ
+                  <code>origin/main</code> — nhưng
+                  <strong>không đụng tới branch <code>main</code> cục bộ hay Working Directory</strong> của bạn. Đây là
+                  lệnh 100% an toàn, có thể chạy bất cứ lúc nào chỉ để "xem đồng nghiệp đã làm gì" mà không ảnh hưởng
+                  việc bạn đang làm dở.
+                </p>
+                <p>
+                  <code>git pull</code> đơn giản là <code>git fetch</code> rồi tự động <strong>trộn</strong>
+                  <code>origin/main</code> vào branch hiện tại của bạn — mặc định bằng <code>merge</code> (tạo commit
+                  hợp nhất nếu đã phân kỳ, xem lại <a href="git-merge-conflict">Bài 4</a>), hoặc bằng
+                  <code>rebase</code> nếu bạn chạy <code>git pull --rebase</code>.
+                </p>
+
+                <h2>2. Remote-tracking Branch: <code>origin/main</code> Là Gì?</h2>
+                <p>
+                  <code>origin/main</code> không phải là branch trên remote — nó là một
+                  <strong>bản sao cục bộ, chỉ đọc</strong>, ghi nhớ "lần cuối tôi fetch, remote đang ở commit nào".
+                  Local <code>main</code> và local <code>origin/main</code> hoàn toàn có thể trỏ tới 2 commit khác nhau
+                  cùng lúc — đó chính xác là lúc bạn "phía trước" hoặc "phía sau" remote, giống hệt cơ chế con trỏ đã
+                  học ở <a href="git-branch-head">Bài 3</a>.
+                </p>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ <code>git fetch</code> tuyệt đối không làm hỏng thứ gì</div>
+                  <div class="callout__content">
+                    Vì fetch chỉ tải object mới và di chuyển con trỏ <code>origin/main</code> (không đụng
+                    <code>main</code> hay Working Directory), nó không thể gây conflict hay mất dữ liệu. Thói quen tốt:
+                    <code>git fetch</code> thường xuyên để luôn biết trạng thái remote, rồi tự quyết định khi nào
+                    <code>merge</code> hoặc <code>rebase</code> — thay vì để <code>pull</code> tự động quyết định hộ
+                    bạn.
+                  </div>
+                </div>
+
+                <h2>3. <code>git push</code>: Fast-forward Hay Bị Từ Chối?</h2>
+                <p>
+                  <code>git push</code> chỉ thành công khi lịch sử remote là <strong>tổ tiên trực tiếp</strong> của lịch
+                  sử bạn đang push — tức remote có thể "tiến nhanh" (fast-forward, xem lại
+                  <a href="git-branch-head">Bài 3</a>) tới đúng commit bạn gửi lên. Nếu ai đó đã push trước bạn kể từ
+                  lần fetch gần nhất, remote chứa commit bạn chưa có — Git từ chối với lỗi <em>non-fast-forward</em>,
+                  buộc bạn <code>fetch</code>/<code>pull</code> để tích hợp trước.
+                </p>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">
+                    🕳️ Cạm bẫy thường gặp: <code>git push --force</code> ghi đè lịch sử người khác
+                  </div>
+                  <div class="callout__content">
+                    <code>--force</code> bỏ qua kiểm tra fast-forward, ép remote nhận đúng lịch sử của bạn — kể cả khi
+                    nó xoá mất commit của đồng nghiệp. Đây là vi phạm trực tiếp <strong>Golden Rule</strong> đã học ở
+                    <a href="git-rebase-history">Bài 5</a>: không viết lại lịch sử đã chia sẻ. Nếu thực sự cần (ví dụ
+                    sau khi rebase 1 nhánh cá nhân), luôn dùng <code>--force-with-lease</code> — nó từ chối ghi đè nếu
+                    ai đó đã push thêm gì mà bạn chưa fetch, an toàn hơn <code>--force</code> thường rất nhiều.
+                  </div>
+                </div>
+
+                <h2>4. Rebase vs Merge Khi Làm Việc Nhóm</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th><code>git pull</code> (merge, mặc định)</th>
+                      <th><code>git pull --rebase</code></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Lịch sử kết quả</td>
+                      <td>Có commit hợp nhất (2 cha) khi phân kỳ</td>
+                      <td>Tuyến tính — commit cục bộ được phát lại (replay) trên đỉnh remote</td>
+                    </tr>
+                    <tr>
+                      <td>Hash commit cục bộ</td>
+                      <td>Giữ nguyên</td>
+                      <td>Đổi mới (giống cherry-pick ở <a href="git-cherry-pick">Bài 6</a>)</td>
+                    </tr>
+                    <tr>
+                      <td>An toàn khi nào</td>
+                      <td>Luôn an toàn, kể cả commit đã push</td>
+                      <td>
+                        Chỉ an toàn với commit <strong>CHƯA push</strong> — đúng Golden Rule ở
+                        <a href="git-rebase-history">Bài 5</a>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Nhiều team đặt <code>git config pull.rebase true</code> làm mặc định để giữ lịch sử tuyến tính, dễ đọc
+                  hơn khi nhiều người cùng push liên tục vào 1 branch.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Pull Request không phải khái niệm của Git</div>
+                  <div class="callout__content">
+                    <strong>Pull Request</strong> (GitHub) / <strong>Merge Request</strong> (GitLab) hoàn toàn là quy
+                    ước của nền tảng lưu trữ, <strong>không tồn tại</strong> trong chính Git. Về bản chất, PR chỉ là "đề
+                    xuất merge nhánh A vào nhánh B, kèm review/comment/CI check" — khi bấm nút "Merge", nền tảng chỉ đơn
+                    giản chạy đúng <code>git merge</code> (hoặc rebase/squash tuỳ cấu hình) mà bạn đã học ở
+                    <a href="git-merge-conflict">Bài 4</a> và <a href="git-rebase-history">Bài 5</a> — không có phép màu
+                    Git nào khác đứng sau nó.
+                  </div>
+                </div>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">💡 Mẹo: xem trạng thái ahead/behind bằng <code>git branch -vv</code></div>
+                  <div class="callout__content">
+                    Lệnh này liệt kê mỗi local branch cùng branch remote-tracking nó bám theo (upstream), và số commit
+                    "ahead"/"behind" — biết ngay cần <code>push</code>, <code>pull</code>, hay cả 2 mà không cần đoán.
+                    Lần đầu push 1 branch mới, dùng <code>git push -u origin &lt;tên-branch&gt;</code> để thiết lập quan
+                    hệ upstream này.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Demo Diverge &amp; Sync Giữa Local Và Remote</h2>
+                <p>
+                  Kịch bản khởi đầu: bạn đã commit 1 thay đổi cục bộ, nhưng <strong>chưa fetch</strong> — trong lúc đó 1
+                  đồng nghiệp đã âm thầm push 1 commit khác lên remote. Hãy thử <code>git push</code> ngay xem điều gì
+                  xảy ra, rồi <code>git fetch</code>, rồi thử cả <code>git pull</code> lẫn
+                  <code>git pull --rebase</code> (reset demo giữa 2 lần thử) để so sánh kết quả.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🌐 Sân chơi tương tác: Remote Sync Simulator</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="graph-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="graph-controls">
+                        <h3>Terminal giả lập (local)</h3>
+                        <div class="graph-cmd-row">
+                          <input
+                            type="text"
+                            id="graph-cmd-input"
+                            placeholder="git push"
+                            autocomplete="off"
+                            spellcheck="false"
+                          />
+                          <button class="graph-btn graph-btn--primary" id="graph-run-btn">Chạy</button>
+                        </div>
+                        <ul class="graph-hint-list">
+                          <li><code>git commit -m "..."</code></li>
+                          <li><code>git fetch</code></li>
+                          <li><code>git pull</code></li>
+                          <li><code>git pull --rebase</code></li>
+                          <li><code>git push</code></li>
+                          <li><code>git log</code></li>
+                        </ul>
+                        <button class="graph-btn" id="graph-teammate-btn">👥 Mô phỏng: đồng nghiệp push</button>
+                        <button class="graph-btn" id="graph-reset-btn">Reset demo</button>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="graph-log" id="graph-log"></div>
+                        </div>
+                      </div>
+
+                      <!-- Canvas Stage -->
+                      <div class="graph-viewport-container">
+                        <canvas id="graph-canvas" class="graph-canvas" width="650" height="300"></canvas>
+                        <div class="graph-status-line" id="graph-status-line"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">git-remote-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Sau khi chạy <code>git fetch</code>, điều gì chắc chắn KHÔNG thay đổi?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! fetch chỉ tải object mới và cập nhật con trỏ origin/main — branch main cục bộ và Working Directory hoàn toàn không bị đụng tới. Đây là lý do fetch luôn an toàn để chạy bất cứ lúc nào.'
+                        )
+                      "
+                    >
+                      A. Branch <code>main</code> cục bộ và nội dung Working Directory.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Con trỏ origin/main CHÍNH LÀ thứ mà fetch cập nhật — nó luôn đổi để phản ánh đúng trạng thái remote tại thời điểm fetch.'
+                        )
+                      "
+                    >
+                      B. Con trỏ <code>origin/main</code>.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Object database cục bộ CÓ nhận thêm các commit mới tải về từ remote — đó chính là việc mà fetch thực hiện.'
+                        )
+                      "
+                    >
+                      C. Object database cục bộ (không có commit mới nào được tải về).
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Vì sao <code>git push</code> đôi khi bị từ chối với lỗi "non-fast-forward"?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Push chỉ thành công khi remote có thể tiến nhanh (fast-forward) tới đúng commit bạn gửi. Nếu đồng nghiệp đã push trước, remote chứa commit không nằm trong lịch sử của bạn — Git từ chối để tránh vô tình xoá mất công việc của họ, buộc bạn fetch/pull tích hợp trước.'
+                        )
+                      "
+                    >
+                      A. Vì remote đã có commit mới (do đồng nghiệp push trước) mà lịch sử cục bộ của bạn chưa chứa —
+                      không thể tiến nhanh (fast-forward) tới commit bạn đang gửi.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Dung lượng file không liên quan gì tới lỗi non-fast-forward — đây thuần tuý là vấn đề về thứ tự lịch sử commit.'
+                        )
+                      "
+                    >
+                      B. Vì file bạn thay đổi quá lớn để upload.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Push không yêu cầu quyền admin đặc biệt cho thao tác thông thường — lỗi non-fast-forward xảy ra với bất kỳ ai, kể cả admin, khi lịch sử phân kỳ.'
+                        )
+                      "
+                    >
+                      C. Vì bạn thiếu quyền admin trên repository.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Pull Request (GitHub) hay Merge Request (GitLab) có phải là 1 khái niệm cốt lõi của Git
+                    không?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! PR/MR hoàn toàn là quy ước của nền tảng lưu trữ (GitHub/GitLab), không tồn tại trong chính Git. Khi bấm Merge, nền tảng chỉ chạy đúng git merge/rebase/squash phía sau — không có cơ chế Git nào khác biệt.'
+                        )
+                      "
+                    >
+                      A. Không — đây là quy ước của nền tảng lưu trữ (GitHub/GitLab), khi merge chỉ chạy đúng git
+                      merge/rebase như bình thường phía sau.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. git CLI không có lệnh nào tên là pull-request hay merge-request — đây là tính năng riêng của các nền tảng như GitHub/GitLab, không phải Git core.'
+                        )
+                      "
+                    >
+                      B. Có — <code>git pull-request</code> là 1 lệnh Git tiêu chuẩn.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git không lưu trữ review/comment trong object database (blob/tree/commit) — đó là dữ liệu riêng của nền tảng lưu trữ, tách biệt hoàn toàn khỏi lịch sử Git.'
+                        )
+                      "
+                    >
+                      C. Có — mọi comment review được lưu thành 1 loại Git object riêng.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Basics-Working-with-Remotes"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Working with Remotes</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-push" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-push Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >GitHub Docs — About Pull Requests</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="git-subtree-submodule" class="article-related__link article-related__link--next">
+                    Bài 10: Subtree &amp; Submodule
+                  </a>
+                  <a href="git-bisect" class="article-related__link article-related__link--prev">
+                    Bài 8: Git Bisect — Tìm Commit Lỗi
+                  </a>
+                  <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="git-remote-collaboration.js" defer></script>
+  </body>
+</html>

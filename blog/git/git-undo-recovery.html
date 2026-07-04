@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 7: Undo &amp; Phục Hồi — reset, revert, reflog — js-tools</title>
+    <meta
+      name="description"
+      content="Ba mức độ của git reset (soft/mixed/hard), vì sao revert an toàn hơn reset cho nhánh public, và cách reflog cứu một commit tưởng đã mất. Sân chơi tương tác demo làm hỏng rồi tự cứu bằng reflog."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-undo-recovery" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* Git Graph Simulator (Undo & Recovery) Sandbox styles */
+      .graph-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+      }
+      .graph-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .graph-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .graph-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .graph-cmd-row {
+        display: flex;
+        gap: 6px;
+      }
+      .graph-cmd-row input {
+        flex: 1;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #a6e3a1;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
+      .graph-controls input[type='text'].graph-file-input {
+        color: #cdd6f4;
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
+      .graph-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .graph-btn:hover {
+        background: #313244;
+      }
+      .graph-btn--primary {
+        background: #64748b;
+        border-color: #64748b;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-btn--primary:hover {
+        background: #475569;
+      }
+      .graph-hint-list {
+        margin: 0;
+        padding-left: 16px;
+        color: #a6adc8;
+        font-size: 11px;
+        line-height: 1.7;
+      }
+      .graph-hint-list code {
+        color: #cdd6f4;
+      }
+      .graph-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 140px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .graph-log div.cmd-line {
+        color: #f9e2af;
+        padding-top: 6px;
+      }
+      .graph-log div.err-line {
+        color: #f38ba8;
+      }
+      .graph-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 380px;
+        overflow: auto;
+        padding: 10px 0;
+        gap: 10px;
+      }
+      .graph-canvas {
+        display: block;
+      }
+      .graph-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #cdd6f4;
+      }
+      @media (max-width: 880px) {
+        .graph-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--git">
+        <div class="container">
+          <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
+          <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
+          <h1 class="article-hero__title">Bài 7: Undo &amp; Phục Hồi — reset, revert, reflog</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Sau <a href="git-rebase-history">Bài 5</a> và <a href="git-cherry-pick">Bài 6</a> viết lại/di chuyển
+                  lịch sử, bài này trả lời câu hỏi mọi người dùng Git đều từng hoảng loạn hỏi ít nhất 1 lần:
+                  <em>"tôi vừa làm hỏng mọi thứ, cứu tôi với!"</em>. Tin vui: nhờ mọi object trong Git đều bất biến (<a
+                    href="git-object-model"
+                    >Bài 1</a
+                  >), gần như mọi thứ đều cứu được — miễn bạn biết công cụ đúng.
+                </p>
+
+                <h2>1. <code>git reset</code>: Ba Mức Độ "Xoá"</h2>
+                <p>
+                  <code>git reset &lt;commit&gt;</code> di chuyển con trỏ branch hiện tại về 1 commit khác — nhưng có 3
+                  chế độ khác nhau về việc <strong>Working Directory</strong> bị ảnh hưởng ra sao:
+                </p>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Chế độ</th>
+                      <th>Con trỏ branch</th>
+                      <th>Staging Index</th>
+                      <th>Working Directory</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>--soft</code></td>
+                      <td>Di chuyển</td>
+                      <td>Giữ nguyên</td>
+                      <td>Giữ nguyên</td>
+                    </tr>
+                    <tr>
+                      <td><code>--mixed</code> (mặc định)</td>
+                      <td>Di chuyển</td>
+                      <td>Reset về commit đích</td>
+                      <td>Giữ nguyên</td>
+                    </tr>
+                    <tr>
+                      <td><code>--hard</code></td>
+                      <td>Di chuyển</td>
+                      <td>Reset về commit đích</td>
+                      <td><strong>Ghi đè</strong> — mất thay đổi chưa commit</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Nhớ lại 3 cây từ <a href="git-three-trees-staging">Bài 2</a>: càng xuống dưới bảng, reset càng "lan"
+                  sâu hơn qua 3 cây. <code>--soft</code> chỉ đụng tới HEAD; <code>--hard</code> đụng tới
+                  <strong>cả 3</strong>.
+                </p>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">
+                    🕳️ Cạm bẫy thường gặp: <code>reset --hard</code> mất vĩnh viễn thứ CHƯA commit
+                  </div>
+                  <div class="callout__content">
+                    Reflog (mục 3) chỉ cứu được những gì đã từng là 1 <strong>commit</strong> — vì object trong Git bất
+                    biến và reflog theo dõi lịch sử di chuyển HEAD giữa các commit. Thay đổi trong Working Directory
+                    <strong>chưa bao giờ commit</strong> thì chưa từng là object — <code>reset --hard</code> ghi đè
+                    chúng và <strong>không có cách nào cứu lại</strong>. Luôn <code>git stash</code> (mục 4) trước khi
+                    chạy <code>reset --hard</code> nếu còn thay đổi dở dang.
+                  </div>
+                </div>
+
+                <h2>2. <code>git revert</code>: Undo An Toàn Cho Nhánh Công Khai</h2>
+                <p>
+                  Khác hẳn <code>reset</code> (di chuyển con trỏ, có thể làm mồ côi commit),
+                  <code>git revert &lt;commit&gt;</code> tạo ra <strong>1 commit MỚI</strong> áp dụng đúng thay đổi
+                  ngược lại của commit đó — lịch sử cũ được giữ nguyên vẹn, không branch nào bị "lùi lại". Đây là lựa
+                  chọn an toàn khi cần undo trên nhánh đã push, đúng theo Golden Rule đã học ở
+                  <a href="git-rebase-history">Bài 5</a>.
+                </p>
+
+                <h2>3. <code>git reflog</code>: Nhật Ký Cứu Sinh</h2>
+                <p>
+                  Mỗi lần HEAD di chuyển — commit, checkout, reset, rebase — Git âm thầm ghi lại vào
+                  <strong>reflog</strong>, một nhật ký cục bộ hoàn toàn tách biệt với các branch ref. Ngay cả sau
+                  <code>reset --hard</code> khiến 1 commit trông như "biến mất" (không branch nào trỏ tới, mồ côi giống
+                  cơ chế ở <a href="git-branch-head">Bài 3</a>), reflog vẫn nhớ hash của nó — bạn chỉ cần
+                  <code>git branch &lt;tên&gt; &lt;hash-từ-reflog&gt;</code> để "cứu" nó trở lại reachable.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Vì sao reflog không đồng bộ qua remote?</div>
+                  <div class="callout__content">
+                    Reflog <strong>không phải</strong> 1 ref thực sự nằm trong <code>.git/refs</code> mà Git đồng bộ khi
+                    <code>push</code>/<code>pull</code> — nó là 1 file log riêng (<code>.git/logs/HEAD</code>) chỉ ghi
+                    lại lịch sử thao tác <strong>trên chính máy bạn</strong>. Đây là lý do reflog là công cụ cứu hộ
+                    tuyệt vời cho lỗi cục bộ, nhưng vô dụng nếu bạn cần khôi phục thứ gì đó chỉ tồn tại trên máy đồng
+                    nghiệp — mặc định reflog cũng tự dọn dẹp các entry cũ (thường sau 90 ngày), không phải kho lưu trữ
+                    vĩnh viễn.
+                  </div>
+                </div>
+
+                <h2>4. <code>git stash</code>: Cất Tạm Thay Đổi Chưa Commit</h2>
+                <p>
+                  Khi cần chuyển nhánh gấp nhưng thay đổi hiện tại chưa đủ hoàn chỉnh để commit,
+                  <code>git stash</code> cất toàn bộ Working Directory + Staging Index vào 1 "ngăn kéo" riêng, trả
+                  Working Directory về trạng thái sạch của HEAD. <code>git stash pop</code> lấy lại đúng những gì vừa
+                  cất, tiếp tục làm việc như chưa hề rời đi.
+                </p>
+
+                <h2>Sân chơi tương tác: Demo "Làm Hỏng Rồi Tự Cứu"</h2>
+                <p>
+                  Tiếp nối engine từ các bài trước. Thử đúng kịch bản kinh điển: commit vài lần,
+                  <code>reset --hard</code> lùi về 1 commit cũ (các commit sau "biến mất" — mồ côi), rồi dùng
+                  <code>git reflog</code> tìm lại hash và <code>git branch</code> cứu chúng trở lại.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🧯 Sân chơi tương tác: Undo &amp; Recovery Simulator</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="graph-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="graph-controls">
+                        <h3>Terminal giả lập</h3>
+                        <div class="graph-cmd-row">
+                          <input
+                            type="text"
+                            id="graph-cmd-input"
+                            placeholder="git reset --hard C1"
+                            autocomplete="off"
+                            spellcheck="false"
+                          />
+                          <button class="graph-btn graph-btn--primary" id="graph-run-btn">Chạy</button>
+                        </div>
+                        <ul class="graph-hint-list">
+                          <li><code>git commit -m "..."</code></li>
+                          <li><code>git reset --soft|--mixed|--hard &lt;ref&gt;</code></li>
+                          <li><code>git revert &lt;ref&gt;</code></li>
+                          <li><code>git reflog</code></li>
+                          <li><code>git stash</code> / <code>git stash pop</code></li>
+                          <li><code>git branch &lt;tên&gt; &lt;ref&gt;</code></li>
+                        </ul>
+                        <div>
+                          <label for="graph-file-input">Nội dung file app.js (Working Directory)</label>
+                          <input type="text" id="graph-file-input" class="graph-file-input" value="version = 1" />
+                        </div>
+                        <button class="graph-btn" id="graph-reset-btn">Reset demo</button>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="graph-log" id="graph-log"></div>
+                        </div>
+                      </div>
+
+                      <!-- Canvas Stage -->
+                      <div class="graph-viewport-container">
+                        <canvas id="graph-canvas" class="graph-canvas" width="600" height="300"></canvas>
+                        <div class="graph-status-line" id="graph-status-line"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">git-undo-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Bạn <code>git reset --hard HEAD~1</code> trong khi đang sửa dở 1 file (chưa
+                    <code>git add</code>, chưa commit). Chuyện gì xảy ra với phần đang sửa dở đó?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! reset --hard ghi đè Working Directory về đúng nội dung tại commit đích. Vì thay đổi dở dang CHƯA BAO GIỜ được commit (chưa từng là 1 Git object), nó không tồn tại ở đâu khác để reflog cứu lại — mất vĩnh viễn.'
+                        )
+                      "
+                    >
+                      A. Mất vĩnh viễn — vì chưa từng được commit nên không tồn tại dưới dạng object nào để cứu lại bằng
+                      reflog.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. reflog chỉ ghi lại lịch sử di chuyển HEAD giữa các COMMIT đã tồn tại — nó không có cách nào lưu trạng thái Working Directory chưa commit.'
+                        )
+                      "
+                    >
+                      B. Vẫn cứu được bằng <code>git reflog</code>, giống mọi commit khác.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git không tự động stash trước khi reset --hard — đây chính là lý do lệnh này nguy hiểm nếu dùng không cẩn thận.'
+                        )
+                      "
+                    >
+                      C. Git tự động stash lại trước khi reset, không mất gì cả.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Điều gì khiến <code>git revert</code> an toàn hơn <code>git reset --hard</code> khi cần undo
+                    trên 1 nhánh đã push lên remote?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! revert THÊM 1 commit mới đảo ngược thay đổi, giữ nguyên toàn bộ lịch sử cũ — không hash nào đổi, không commit nào mồ côi. reset --hard di chuyển branch pointer, có thể làm mồ côi các commit phía sau và gây phân kỳ lịch sử với bất kỳ ai đã pull bản cũ (đúng Golden Rule ở Bài 5).'
+                        )
+                      "
+                    >
+                      A. Revert tạo 1 commit mới đảo ngược thay đổi mà không xoá/viết lại lịch sử cũ, trong khi reset
+                      --hard di chuyển con trỏ branch và có thể làm phân kỳ lịch sử với người đã pull bản cũ.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cả 2 lệnh đều chạy hoàn toàn cục bộ (local) — không lệnh nào tự động kết nối remote để kiểm tra quyền.'
+                        )
+                      "
+                    >
+                      B. Revert tự động kiểm tra quyền truy cập remote trước khi thực thi.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Không lệnh nào trong 2 lệnh này liên quan gì tới việc mã hoá dữ liệu — đây không phải khác biệt thực sự giữa chúng.'
+                        )
+                      "
+                    >
+                      C. Revert mã hoá commit trước khi gửi lên remote, còn reset thì không.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Vì sao <code>git reflog</code> không đồng bộ khi bạn push/pull với đồng nghiệp?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Reflog không phải 1 ref/object mà Git đồng bộ qua network — nó chỉ là 1 file log nội bộ (.git/logs/HEAD) theo dõi lịch sử di chuyển HEAD TRÊN CHÍNH MÁY BẠN. Đây là lý do nó cứu được lỗi cục bộ nhưng không giúp gì cho commit chỉ tồn tại trên máy người khác.'
+                        )
+                      "
+                    >
+                      A. Vì reflog chỉ là 1 nhật ký nội bộ theo dõi lịch sử HEAD trên máy cục bộ, không phải ref/object
+                      mà Git đồng bộ qua push/pull.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Kích thước file không phải lý do — reflog không đồng bộ vì bản chất nó KHÔNG PHẢI 1 ref được thiết kế để chia sẻ, dù dung lượng lớn hay nhỏ.'
+                        )
+                      "
+                    >
+                      B. Vì reflog quá lớn để truyền qua mạng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Không có cấu hình nào bật đồng bộ reflog — đây là giới hạn THIẾT KẾ cố định, không phải tuỳ chọn có thể bật/tắt.'
+                        )
+                      "
+                    >
+                      C. Vì cần bật 1 cấu hình đặc biệt (<code>git config reflog.sync true</code>) mà mặc định tắt.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Reset Demystified</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-revert" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-revert Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-reflog" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-reflog Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Stashing-and-Cleaning"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Stashing and Cleaning</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="git-bisect" class="article-related__link article-related__link--next">
+                    Bài 8: Git Bisect — Tìm Commit Lỗi
+                  </a>
+                  <a href="git-cherry-pick" class="article-related__link article-related__link--prev">
+                    Bài 6: Cherry-pick — Chọn Lọc Commit
+                  </a>
+                  <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="git-undo-recovery.js" defer></script>
+  </body>
+</html>

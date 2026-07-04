@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 4: Merge &amp; Conflict — Three-Way Merge Hoạt Động Thế Nào — js-tools</title>
+    <meta
+      name="description"
+      content="Vì sao Git cần một tổ tiên chung (merge base) để merge 2 nhánh, khi nào tạo merge commit thay vì fast-forward, cơ chế three-way merge sinh xung đột và cách giải quyết. Sân chơi tương tác merge trực tiếp trên đồ thị commit."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-merge-conflict" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* Git Graph Simulator (Merge) Sandbox styles */
+      .graph-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+      }
+      .graph-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .graph-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .graph-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .graph-cmd-row {
+        display: flex;
+        gap: 6px;
+      }
+      .graph-cmd-row input {
+        flex: 1;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #a6e3a1;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
+      .graph-controls input[type='text'].graph-file-input {
+        color: #cdd6f4;
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
+      .graph-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .graph-btn:hover {
+        background: #313244;
+      }
+      .graph-btn--primary {
+        background: #64748b;
+        border-color: #64748b;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-btn--primary:hover {
+        background: #475569;
+      }
+      .graph-hint-list {
+        margin: 0;
+        padding-left: 16px;
+        color: #a6adc8;
+        font-size: 11px;
+        line-height: 1.7;
+      }
+      .graph-hint-list code {
+        color: #cdd6f4;
+      }
+      .graph-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 140px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .graph-log div.cmd-line {
+        color: #f9e2af;
+        padding-top: 6px;
+      }
+      .graph-log div.err-line {
+        color: #f38ba8;
+      }
+      .graph-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 380px;
+        overflow: auto;
+        padding: 10px 0;
+        gap: 10px;
+      }
+      .graph-canvas {
+        display: block;
+      }
+      .graph-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #cdd6f4;
+      }
+      .conflict-panel {
+        display: none;
+        width: 90%;
+        background: #1e1e2e;
+        border: 1px solid #f38ba8;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .conflict-panel.is-visible {
+        display: block;
+      }
+      .conflict-panel h4 {
+        margin: 0 0 8px 0;
+        color: #f38ba8;
+        font-size: 12px;
+      }
+      .conflict-panel textarea {
+        width: 100%;
+        min-height: 90px;
+        box-sizing: border-box;
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: #f9e2af;
+        font-family: monospace;
+        font-size: 12px;
+        padding: 8px;
+        resize: vertical;
+      }
+      @media (max-width: 880px) {
+        .graph-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--git">
+        <div class="container">
+          <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
+          <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
+          <h1 class="article-hero__title">Bài 4: Merge &amp; Conflict — Three-Way Merge Hoạt Động Thế Nào</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Ở <a href="git-branch-head">Bài 3</a> chúng ta tách nhánh ra để làm việc song song. Bài này khép lại
+                  vòng lặp: đưa 2 dòng lịch sử đã phân kỳ <strong>hợp nhất lại</strong>. Điều thú vị là Git không so
+                  sánh 2 nhánh trực tiếp với nhau — nó cần một "trọng tài" thứ ba: điểm mà 2 nhánh từng tách ra.
+                </p>
+
+                <h2>1. Vì Sao Cần "Ba Bên" Để Merge? (Merge Base)</h2>
+                <p>
+                  Giả sử <code>main</code> và <code>feature</code> đều sửa dòng cuối của 1 file, nhưng theo 2 cách khác
+                  nhau. Nếu chỉ so sánh trực tiếp <code>main</code> với <code>feature</code>, Git chỉ biết
+                  <strong>2 bản khác nhau</strong> — không thể biết bên nào mới thực sự "thay đổi" so với ban đầu. Git
+                  cần điểm thứ ba: <strong>merge base</strong> — commit tổ tiên chung gần nhất, tức chính xác nơi 2
+                  nhánh tách ra. Có base, Git mới trả lời được: "so với base, <code>main</code> đổi gì, và
+                  <code>feature</code> đổi gì?" — đây gọi là <strong>three-way merge</strong>.
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">terminal</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash">$ git merge-base main feature
+a1b2c3d          # hash của commit tổ tiên chung gần nhất — nơi 2 nhánh tách ra</code></pre>
+                </div>
+
+                <h2>2. Fast-Forward vs Merge Commit</h2>
+                <p>
+                  Nhắc lại fast-forward từ <a href="git-branch-head">Bài 3</a>: nếu merge base
+                  <strong>trùng với</strong> commit hiện tại của <code>main</code> (tức <code>main</code> chưa hề đổi gì
+                  kể từ lúc tách nhánh), Git chỉ cần <strong>di chuyển con trỏ</strong> — không tạo commit mới. Nếu
+                  merge base <strong>khác</strong> cả 2 đầu nhánh (cả 2 bên đều có commit mới kể từ lúc tách), Git bắt
+                  buộc phải tạo 1 <strong>merge commit</strong> — commit đặc biệt duy nhất có
+                  <strong>2 commit cha</strong> thay vì 1.
+                </p>
+
+                <h2>3. Three-Way Merge: So Sánh Base, Ours, Theirs</h2>
+                <p>
+                  Với mỗi phần nội dung (Git làm việc ở cấp độ dòng), thuật toán so sánh 3 phiên bản —
+                  <strong>base</strong> (gốc chung), <strong>ours</strong> (HEAD hiện tại), <strong>theirs</strong>
+                  (nhánh đang merge vào) — và áp dụng đúng 4 quy tắc:
+                </p>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>So với base</th>
+                      <th>Kết quả</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Cả ours và theirs đều KHÔNG đổi</td>
+                      <td>Giữ nguyên nội dung base</td>
+                    </tr>
+                    <tr>
+                      <td>Chỉ ours đổi, theirs không đổi</td>
+                      <td>Lấy bản ours</td>
+                    </tr>
+                    <tr>
+                      <td>Chỉ theirs đổi, ours không đổi</td>
+                      <td>Lấy bản theirs</td>
+                    </tr>
+                    <tr>
+                      <td>Cả 2 đều đổi, và đổi GIỐNG NHAU</td>
+                      <td>Lấy bản đó (không xung đột)</td>
+                    </tr>
+                    <tr>
+                      <td>Cả 2 đều đổi, nhưng đổi KHÁC NHAU</td>
+                      <td><strong>XUNG ĐỘT (conflict)</strong> — cần con người quyết định</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h2>4. Khi Xung Đột Phát Sinh: Git Đánh Dấu Ngay Trong File</h2>
+                <p>
+                  Khi rơi vào trường hợp cuối, Git không đoán mò — nó ghi
+                  <strong>cả 2 phiên bản</strong> thẳng vào file trên Working Directory, kẹp giữa các dấu đánh dấu xung
+                  đột, rồi dừng lại chờ bạn quyết định:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">app.js (đang có conflict)</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD (main)
+const version = "v2-main";
+=======
+const version = "v2-feature";
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; feature</code></pre>
+                </div>
+                <p>
+                  Đồng thời, Staging Index (<a href="git-three-trees-staging">Bài 2</a>) tạm thời lưu
+                  <strong>3 phiên bản song song</strong> của file đó (gọi là stage 1/2/3: base/ours/theirs) thay vì 1
+                  bản duy nhất — đây là cách Git "nhớ" đủ thông tin để bạn (hoặc công cụ merge tool) tra cứu lại nếu cần
+                  trong lúc giải quyết.
+                </p>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Quên xoá dấu đánh dấu xung đột</div>
+                  <div class="callout__content">
+                    Dấu <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>/<code>=======</code>/<code
+                      >&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code
+                    >
+                    chỉ là văn bản thường được Git chèn vào — nếu bạn <code>git add</code> rồi commit mà quên xoá, chúng
+                    sẽ nằm nguyên trong code, thường gây lỗi cú pháp (với code) hoặc dữ liệu rác (với file khác). Luôn
+                    build/chạy lại code sau khi giải quyết xung đột, trước khi commit.
+                  </div>
+                </div>
+
+                <h2>5. Giải Quyết Xung Đột: Sửa, Add, Rồi Commit</h2>
+                <p>
+                  Giải quyết chỉ đơn giản là mở file, xoá 3 dòng đánh dấu, giữ lại đúng nội dung bạn muốn (có thể là bản
+                  ours, bản theirs, hoặc kết hợp cả 2), rồi <code>git add</code> để báo "xung đột này đã giải quyết
+                  xong" — <code>git commit</code> lúc này sẽ tự tạo <strong>merge commit</strong> với message mặc định
+                  kiểu <code>"Merge branch 'feature' into main"</code>.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Vì sao merge commit cần 2 cha?</div>
+                  <div class="callout__content">
+                    Ghi cả 2 commit cha giữ nguyên vẹn <strong>toàn bộ lịch sử của cả 2 nhánh</strong> — sau này
+                    <code>git log</code> hay công cụ blame vẫn truy ngược được chính xác dòng code nào tới từ nhánh nào.
+                    Nếu merge commit chỉ có 1 cha (giống commit thường), Git sẽ "quên" mất rằng đã từng có 2 dòng phát
+                    triển song song — đây chính là điểm khác biệt cấu trúc duy nhất giữa merge commit và commit thường,
+                    không phải nội dung mà nó lưu.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Merge &amp; Conflict Simulator</h2>
+                <p>
+                  Tiếp nối engine đồ thị commit từ <a href="git-branch-head">Bài 3</a>, giờ hỗ trợ thêm
+                  <code>git merge</code>. Tạo 2 nhánh, sửa "nội dung file" khác nhau trên mỗi nhánh rồi commit, sau đó
+                  <code>git merge</code> để thử cả 2 kịch bản: hợp nhất êm đẹp và xung đột thật sự.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🔀 Sân chơi tương tác: Merge &amp; Conflict Simulator</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="graph-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="graph-controls">
+                        <h3>Terminal giả lập</h3>
+                        <div class="graph-cmd-row">
+                          <input
+                            type="text"
+                            id="graph-cmd-input"
+                            placeholder="git merge feature"
+                            autocomplete="off"
+                            spellcheck="false"
+                          />
+                          <button class="graph-btn graph-btn--primary" id="graph-run-btn">Chạy</button>
+                        </div>
+                        <ul class="graph-hint-list">
+                          <li><code>git branch &lt;tên&gt;</code></li>
+                          <li><code>git checkout &lt;tên&gt;</code></li>
+                          <li><code>git commit -m "..."</code></li>
+                          <li><code>git merge &lt;tên&gt;</code></li>
+                          <li><code>git log</code></li>
+                        </ul>
+                        <div>
+                          <label for="graph-file-input">Nội dung file app.js (áp dụng khi commit)</label>
+                          <input type="text" id="graph-file-input" class="graph-file-input" value="version = 1" />
+                        </div>
+                        <button class="graph-btn" id="graph-reset-btn">Reset</button>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="graph-log" id="graph-log"></div>
+                        </div>
+                      </div>
+
+                      <!-- Canvas Stage -->
+                      <div class="graph-viewport-container">
+                        <canvas id="graph-canvas" class="graph-canvas" width="600" height="300"></canvas>
+                        <div class="graph-status-line" id="graph-status-line"></div>
+                        <div class="conflict-panel" id="graph-conflict-panel">
+                          <h4>⚠️ XUNG ĐỘT — sửa nội dung bên dưới rồi bấm "Hoàn tất Merge"</h4>
+                          <textarea id="graph-conflict-textarea"></textarea>
+                          <div class="graph-btn-row" style="margin-top: 8px">
+                            <button class="graph-btn graph-btn--primary" id="graph-resolve-btn">Hoàn tất Merge</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">git-merge-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Vì sao Git cần biết "merge base" (tổ tiên chung) thay vì chỉ so sánh trực tiếp 2 branch với
+                    nhau?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! So sánh trực tiếp 2 branch chỉ cho biết CHÚNG KHÁC NHAU ở đâu — không cho biết bên nào thực sự đã THAY ĐỔI so với trạng thái ban đầu. Merge base là điểm tham chiếu ban đầu đó, cần thiết để phân biệt &quot;ai đổi cái gì&quot; và áp đúng 4 quy tắc three-way merge.'
+                        )
+                      "
+                    >
+                      A. Vì so sánh trực tiếp chỉ biết 2 branch khác nhau ở đâu, không biết bên nào thực sự đã thay đổi
+                      so với trạng thái ban đầu — cần base làm điểm tham chiếu.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Merge base không liên quan gì tới tốc độ merge — nó là yêu cầu THUẬT TOÁN, không phải tối ưu hiệu năng.'
+                        )
+                      "
+                    >
+                      B. Vì so sánh 3 bên luôn nhanh hơn so sánh 2 bên về mặt tốc độ tính toán.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Merge base là 1 commit CÓ THẬT trong lịch sử (tổ tiên chung), không phải bước xác thực quyền hạn.'
+                        )
+                      "
+                    >
+                      C. Vì Git cần xác thực quyền merge của người dùng trước khi cho phép hợp nhất.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: <code>ours</code> đã thay đổi so với base, nhưng <code>theirs</code> giống hệt base. Kết quả
+                    three-way merge là gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! theirs giống hệt base nghĩa là nhánh kia KHÔNG hề sửa gì — chỉ ours có thay đổi thực sự. Không có gì để &quot;xung đột&quot; cả vì chỉ 1 bên thay đổi, Git tự tin lấy bản ours mà không cần hỏi bạn.'
+                        )
+                      "
+                    >
+                      A. Không xung đột — lấy bản <code>ours</code>, vì <code>theirs</code> không hề thay đổi gì so với
+                      base.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Xung đột chỉ xảy ra khi CẢ HAI bên đều thay đổi và thay đổi KHÁC NHAU — ở đây chỉ 1 bên (ours) thay đổi, nên không có cơ sở nào để xung đột.'
+                        )
+                      "
+                    >
+                      B. Luôn luôn xung đột vì có ít nhất 1 bên đã thay đổi.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Merge sẽ lấy bản ĐÃ THAY ĐỔI thực sự (ours), không bao giờ quay lại bản base cũ trong trường hợp này — quay về base sẽ làm MẤT thay đổi hợp lệ của ours.'
+                        )
+                      "
+                    >
+                      C. Giữ nguyên bản base, bỏ qua thay đổi của <code>ours</code>.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Điều gì làm merge commit khác biệt về CẤU TRÚC so với 1 commit thường?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cả 2 loại commit đều lưu đúng 1 tree gốc như bình thường — không có tree &quot;kép&quot; nào ở đây. Khác biệt nằm ở số lượng commit CHA, không phải cấu trúc tree.'
+                        )
+                      "
+                    >
+                      A. Merge commit trỏ tới 2 tree object thay vì 1.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Merge commit có đúng 1 tree (snapshot kết quả sau khi hợp nhất — giống mọi commit khác), nhưng lại có 2 THAM CHIẾU COMMIT CHA thay vì 1. Đây là điểm khác biệt cấu trúc DUY NHẤT, giữ lại dấu vết rằng lịch sử từng phân kỳ thành 2 dòng trước khi hợp nhất.'
+                        )
+                      "
+                    >
+                      B. Merge commit có 2 commit cha (parent) thay vì 1, dù vẫn chỉ trỏ tới đúng 1 tree kết quả như mọi
+                      commit khác.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Không có giới hạn kích thước đặc biệt nào cho merge commit — message có thể ngắn hay dài tuỳ ý, giống hệt commit thường.'
+                        )
+                      "
+                    >
+                      C. Merge commit bắt buộc phải có message dài hơn 100 ký tự.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-and-Merging"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Basic Branching and Merging</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Advanced-Merging"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Advanced Merging</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-merge" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-merge Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-merge-base" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-merge-base Documentation</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="git-rebase-history" class="article-related__link article-related__link--next">
+                    Bài 5: Rebase &amp; Viết Lại Lịch Sử
+                  </a>
+                  <a href="git-branch-head" class="article-related__link article-related__link--prev">
+                    Bài 3: Branch &amp; HEAD
+                  </a>
+                  <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="git-merge-conflict.js" defer></script>
+  </body>
+</html>

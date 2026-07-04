@@ -224,6 +224,9 @@ const TRANSLATIONS = {
     'learn.webgpu.desc': 'Modern GPU compute shaders, WGSL, real-time 3D rendering and interactive graphics.',
     'learn.algo.title': 'Data Structures & Algorithms',
     'learn.algo.desc': 'AVL/Red-Black trees, pathfinding, dynamic programming and hashing — visualized step by step.',
+    'learn.git.title': 'Git Internals',
+    'learn.git.desc':
+      'Object model, branches as pointers, merge/rebase, reflog recovery and remote collaboration — visualized commit graph.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -451,6 +454,9 @@ const TRANSLATIONS = {
     'learn.webgpu.desc': 'Compute shader GPU hiện đại, WGSL, dựng hình 3D thời gian thực và đồ họa tương tác.',
     'learn.algo.title': 'Cấu Trúc Dữ Liệu & Giải Thuật',
     'learn.algo.desc': 'Cây AVL/Red-Black, tìm đường, quy hoạch động và băm — trực quan hoá từng bước.',
+    'learn.git.title': 'Git Nội Bộ',
+    'learn.git.desc':
+      'Mô hình đối tượng, branch là con trỏ, merge/rebase, phục hồi bằng reflog và hợp tác qua remote — trực quan hoá đồ thị commit.',
   },
 };
 

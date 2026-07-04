@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 2: Three Trees &amp; Staging — Working Dir, Index, HEAD — js-tools</title>
+    <meta
+      name="description"
+      content="Git quản lý 3 cây song song: Working Directory, Staging Index, và HEAD. Tìm hiểu git add/commit di chuyển file qua 3 cây thế nào, và git status/diff so sánh chúng ra sao. Sân chơi tương tác trực quan hoá cả 3 cây cùng lúc."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-three-trees-staging" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* Three Trees Visualizer Sandbox styles */
+      .tree3-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+      }
+      .tree3-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .tree3-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .tree3-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .tree3-controls input[type='text'],
+      .tree3-controls textarea {
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+        resize: vertical;
+      }
+      .tree3-file-row {
+        display: flex;
+        gap: 6px;
+        align-items: flex-end;
+      }
+      .tree3-file-row > div:first-child {
+        flex: 1;
+      }
+      .tree3-btn {
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 11px;
+        cursor: pointer;
+        transition: background 0.15s;
+        white-space: nowrap;
+      }
+      .tree3-btn:hover {
+        background: #313244;
+      }
+      .tree3-btn--primary {
+        background: #64748b;
+        border-color: #64748b;
+        color: #fff;
+        font-weight: 600;
+      }
+      .tree3-btn--primary:hover {
+        background: #475569;
+      }
+      .tree3-btn-row {
+        display: flex;
+        gap: 8px;
+      }
+      .tree3-btn-row .tree3-btn {
+        flex: 1;
+      }
+      .tree3-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 110px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .tree3-log div {
+        border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+        padding: 3px 0;
+      }
+      .tree3-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: center;
+        min-height: 380px;
+        overflow: auto;
+        padding: 10px 0;
+      }
+      .tree3-canvas {
+        display: block;
+      }
+      .tree3-status-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        font-family: monospace;
+        color: #cdd6f4;
+      }
+      .tree3-status-table th,
+      .tree3-status-table td {
+        padding: 5px 10px;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .tree3-hint {
+        margin: 0;
+        color: #a6adc8;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      @media (max-width: 880px) {
+        .tree3-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--git">
+        <div class="container">
+          <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
+          <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
+          <h1 class="article-hero__title">Bài 2: Three Trees &amp; Staging — Working Dir, Index, HEAD</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 13 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Ở <a href="git-object-model">Bài 1</a> chúng ta thấy commit trỏ tới 1 tree snapshot. Nhưng giữa lúc
+                  bạn sửa file trên đĩa và lúc snapshot đó thực sự được tạo, Git không nhảy thẳng một bước — nó đi qua
+                  <strong>3 cây (three trees)</strong> tách biệt. Hiểu rõ 3 cây này giải thích được gần như mọi câu hỏi
+                  "tại sao <code>git status</code> lại nói vậy" mà người mới hay gặp.
+                </p>
+
+                <h2>1. Ba Cây Của Git: Working Directory, Staging Index, HEAD</h2>
+                <p>Tại bất kỳ thời điểm nào, Git đang theo dõi <strong>3 phiên bản song song</strong> của repo:</p>
+                <ul>
+                  <li>
+                    <strong>Working Directory</strong> — các file thật trên đĩa, nơi bạn mở editor và gõ code. Đây là
+                    thứ duy nhất bạn có thể sửa trực tiếp.
+                  </li>
+                  <li>
+                    <strong>Staging Index</strong> (còn gọi là "the index", lưu tại <code>.git/index</code>) — một
+                    <strong>bản nháp</strong> của snapshot tiếp theo, được xây dần bằng lệnh <code>git add</code>.
+                  </li>
+                  <li>
+                    <strong>HEAD</strong> — snapshot của <strong>commit gần nhất</strong>, tức nội dung repo tại lần
+                    commit cuối cùng.
+                  </li>
+                </ul>
+                <p>
+                  Luồng đi luôn theo một chiều: Working Directory → (add) → Staging Index → (commit) → HEAD. Không có
+                  đường tắt nào bỏ qua Staging Index.
+                </p>
+
+                <h2>2. Working Directory — Nơi Bạn Thực Sự Chỉnh Sửa File</h2>
+                <p>
+                  Working Directory chỉ là các file bình thường trên ổ đĩa. Git liên tục so sánh nội dung ở đây với
+                  Staging Index để biết file nào "đã sửa nhưng chưa add" — nhưng bản thân việc sửa file
+                  <strong>không</strong> tự động ghi gì vào <code>.git/objects</code> cả. Cho tới khi bạn chạy
+                  <code>git add</code>, Git coi như chưa có chuyện gì xảy ra.
+                </p>
+
+                <h2>3. Staging Index — Bản Nháp Trước Khi Commit</h2>
+                <p>
+                  Đây là khái niệm hay bị bỏ qua nhất: Staging Index
+                  <strong>là một file thật</strong> (<code>.git/index</code>), không phải một khái niệm trừu tượng. Nó
+                  lưu một danh sách phẳng: mỗi entry gồm đường dẫn file + hash blob tương ứng + vài metadata (mode, kích
+                  thước, thời gian sửa đổi gần nhất). Khi bạn <code>git add</code>, Git
+                  <strong>hash nội dung NGAY LÚC ĐÓ</strong> và ghi entry mới vào index — nó không giữ tham chiếu "sống"
+                  tới file trên đĩa.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Vì sao Git cần lưu cả mtime/kích thước trong index?</div>
+                  <div class="callout__content">
+                    Nếu <code>git status</code> phải băm lại NỘI DUNG của mọi file trong Working Directory mỗi lần chạy
+                    để so sánh với index, thao tác này sẽ chậm dần theo số lượng file trong repo. Thay vào đó, Git lưu
+                    kèm <strong>mtime + kích thước</strong> của file tại thời điểm stage. Lần <code>status</code> tiếp
+                    theo, nếu mtime/kích thước trên đĩa khớp với giá trị đã lưu, Git
+                    <strong>bỏ qua việc băm lại</strong> và coi như "chắc chắn không đổi" — chỉ băm lại khi có dấu hiệu
+                    khả nghi. Đây là lý do <code>git status</code> vẫn nhanh trên repo hàng chục nghìn file.
+                  </div>
+                </div>
+
+                <h2>4. <code>git add</code> — Chụp Nhanh Một File Vào Staging</h2>
+                <p>
+                  Chạy <code>git add &lt;file&gt;</code> làm đúng 2 việc: (1) băm nội dung file hiện tại và ghi 1 blob
+                  object mới vào <code>.git/objects</code> (nếu nội dung đó chưa tồn tại — xem lại content-addressable ở
+                  <a href="git-object-model">Bài 1</a>), và (2) cập nhật entry tương ứng trong
+                  <code>.git/index</code> để trỏ tới blob hash đó:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">terminal</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash">$ echo "version 1" > notes.txt
+$ git add notes.txt        # hash "version 1" NGAY LÚC NÀY, ghi vào index
+
+$ echo "version 2" >> notes.txt   # sửa TIẾP file trên đĩa
+$ git status
+# notes.txt xuất hiện ở CẢ 2 mục:
+#   Changes to be committed:    notes.txt   (staging vs HEAD — bản "version 1")
+#   Changes not staged for commit: notes.txt (working dir vs staging — bản "version 2")</code></pre>
+                </div>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: "Tôi add rồi, sao commit thiếu dòng mới?"</div>
+                  <div class="callout__content">
+                    Đây là cạm bẫy phổ biến nhất với người mới: <code>git add</code> chụp nhanh nội dung file
+                    <strong>tại đúng thời điểm chạy lệnh</strong>. Nếu bạn sửa thêm file sau đó rồi
+                    <code>git commit</code> ngay mà <strong>không add lại</strong>, commit sẽ chỉ chứa phiên bản đã add
+                    trước đó — hoàn toàn bỏ sót các dòng sửa thêm gần nhất. Luôn <code>git add</code> lại (hoặc dùng
+                    <code>git commit -a</code> cho file đã theo dõi) trước khi commit lần cuối.
+                  </div>
+                </div>
+
+                <h2>5. <code>git commit</code> — Đóng Băng Staging Thành Một Snapshot Vĩnh Viễn</h2>
+                <p>
+                  Khi chạy <code>git commit</code>, Git xây một tree object từ toàn bộ entry hiện có trong Staging Index
+                  (xem cách xây tree ở <a href="git-object-model">Bài 1</a>), tạo commit object trỏ tới tree đó và
+                  commit cha là HEAD hiện tại, rồi <strong>di chuyển con trỏ HEAD/branch</strong> tới commit mới. Ngay
+                  sau bước này, Staging Index và HEAD lại khớp nhau hoàn toàn — cho tới lần <code>add</code> kế tiếp.
+                </p>
+
+                <h2>6. <code>git status</code> &amp; <code>git diff</code>: So Sánh 3 Cây</h2>
+                <p>
+                  Mọi thông tin <code>git status</code> hiển thị đều là kết quả so sánh cặp giữa 3 cây — không có phép
+                  màu nào khác:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Changes not staged for commit</strong> = so sánh <em>Working Directory</em> với
+                    <em>Staging Index</em> (đúng như <code>git diff</code> không tham số làm).
+                  </li>
+                  <li>
+                    <strong>Changes to be committed</strong> = so sánh <em>Staging Index</em> với <em>HEAD</em> (đúng
+                    như <code>git diff --staged</code> làm).
+                  </li>
+                </ul>
+
+                <h2>7. So Sánh 3 Cây</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Cây</th>
+                      <th>Đại diện cho</th>
+                      <th>Cập nhật bởi lệnh nào</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Working Directory</td>
+                      <td>File thật trên đĩa, đang chỉnh sửa</td>
+                      <td>Editor của bạn (Git không can thiệp)</td>
+                    </tr>
+                    <tr>
+                      <td>Staging Index</td>
+                      <td>Bản nháp của snapshot tiếp theo</td>
+                      <td><code>git add</code>, <code>git rm --cached</code>, <code>git reset</code></td>
+                    </tr>
+                    <tr>
+                      <td>HEAD</td>
+                      <td>Snapshot của commit gần nhất</td>
+                      <td><code>git commit</code>, <code>git checkout</code>, <code>git reset --hard</code></td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h2>Sân chơi tương tác: Three Trees Visualizer</h2>
+                <p>
+                  Sửa nội dung 2 file, bấm "Add" cho từng file rồi "Commit", và quan sát cả 3 cây cập nhật trực tiếp.
+                  Thử đúng kịch bản cạm bẫy ở mục 4: add 1 file, sửa thêm nội dung, rồi xem trạng thái "vừa staged vừa
+                  unstaged" xuất hiện thế nào.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🌳 Sân chơi tương tác: Three Trees Visualizer</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="tree3-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="tree3-controls">
+                        <h3>Working Directory</h3>
+                        <div class="tree3-file-row">
+                          <div>
+                            <label for="tree3-file1">README.md</label>
+                            <textarea id="tree3-file1" rows="2">Xin chào Git!</textarea>
+                          </div>
+                          <button class="tree3-btn" id="tree3-add1-btn">Add</button>
+                        </div>
+                        <div class="tree3-file-row">
+                          <div>
+                            <label for="tree3-file2">app.js</label>
+                            <textarea id="tree3-file2" rows="2">console.log("hello");</textarea>
+                          </div>
+                          <button class="tree3-btn" id="tree3-add2-btn">Add</button>
+                        </div>
+                        <div>
+                          <label for="tree3-commit-msg">Commit message</label>
+                          <input type="text" id="tree3-commit-msg" value="Cập nhật nội dung" />
+                        </div>
+                        <div class="tree3-btn-row">
+                          <button class="tree3-btn tree3-btn--primary" id="tree3-commit-btn">Commit</button>
+                          <button class="tree3-btn" id="tree3-reset-btn">Reset</button>
+                        </div>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="tree3-log" id="tree3-log"></div>
+                        </div>
+                        <p class="tree3-hint">Sửa file KHÔNG tự add — bấm "Add" mới cập nhật Staging Index.</p>
+                      </div>
+
+                      <!-- Canvas + Status table -->
+                      <div class="tree3-viewport-container">
+                        <canvas id="tree3-canvas" class="tree3-canvas" width="600" height="260"></canvas>
+                        <table class="tree3-status-table" id="tree3-status-table"></table>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">three-trees-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Bạn <code>git add file.txt</code>, sau đó sửa thêm 1 dòng trong <code>file.txt</code> (KHÔNG
+                    add lại), rồi <code>git commit</code> ngay. Commit chứa nội dung nào?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! git add chụp nhanh nội dung NGAY THỜI ĐIỂM chạy lệnh và ghi vào Staging Index — đây là bản đóng băng, không phải tham chiếu sống tới file trên đĩa. commit luôn build tree từ Staging Index, nên dòng sửa thêm SAU khi add sẽ hoàn toàn bị bỏ sót.'
+                        )
+                      "
+                    >
+                      A. Nội dung tại thời điểm chạy <code>git add</code> — dòng sửa thêm sau đó bị bỏ sót vì chưa được
+                      add lại.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Staging Index là 1 snapshot ĐÓNG BĂNG tại thời điểm add — nó không tự động theo dõi các thay đổi tiếp theo trên Working Directory.'
+                        )
+                      "
+                    >
+                      B. Nội dung mới nhất trên đĩa — Git luôn tự động cập nhật staging trước khi commit.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git commit không báo lỗi trong tình huống này — nó âm thầm commit đúng nội dung đã staging, không phải phiên bản mới nhất. Đây chính là lý do cạm bẫy này dễ bị bỏ sót.'
+                        )
+                      "
+                    >
+                      C. Git sẽ báo lỗi và từ chối commit cho tới khi bạn add lại.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: <code>git diff</code> (không tham số) và <code>git diff --staged</code> so sánh những cặp cây
+                    nào?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! git diff mặc định trả lời câu hỏi &quot;tôi đã sửa gì mà CHƯA add?&quot; (Working Dir vs Staging). git diff --staged trả lời &quot;tôi đã add gì mà CHƯA commit?&quot; (Staging vs HEAD).'
+                        )
+                      "
+                    >
+                      A. <code>git diff</code> = Working Directory vs Staging Index; <code>git diff --staged</code> =
+                      Staging Index vs HEAD.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Đây là chiều ngược lại — git diff mặc định KHÔNG so sánh với HEAD, nó so sánh Working Dir với Staging Index.'
+                        )
+                      "
+                    >
+                      B. <code>git diff</code> = Working Directory vs HEAD; <code>git diff --staged</code> = Working
+                      Directory vs Staging Index.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cả 2 lệnh đều không liên quan gì tới remote — chúng chỉ so sánh các cây cục bộ (local).'
+                        )
+                      "
+                    >
+                      C. Cả 2 lệnh đều so sánh Working Directory với remote repository.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Vì sao Git cần một Staging Index riêng, thay vì commit thẳng mọi thứ đang có trên Working
+                    Directory?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Staging Index cho phép bạn XÂY DỰNG commit một cách có chọn lọc: chỉ add 2 trong 5 file đã sửa, hoặc dùng git add -p để chọn từng khối (hunk) trong cùng 1 file. Không có staging, mỗi commit buộc phải chứa TOÀN BỘ trạng thái hiện tại của Working Directory — không thể tách commit theo chủ đề logic.'
+                        )
+                      "
+                    >
+                      A. Để cho phép chọn lọc chính xác thay đổi nào đưa vào commit tiếp theo (vd chỉ add 1 phần file đã
+                      sửa), thay vì bắt buộc commit toàn bộ trạng thái Working Directory.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Staging Index không phải cơ chế backup — nó không tồn tại để chống mất dữ liệu, mà để kiểm soát nội dung commit.'
+                        )
+                      "
+                    >
+                      B. Để tự động sao lưu (backup) Working Directory phòng khi máy tính bị hỏng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Staging Index tồn tại từ những phiên bản Git đầu tiên — nó không liên quan gì tới hỗ trợ merge conflict, vốn được xử lý ở bước merge riêng biệt.'
+                        )
+                      "
+                    >
+                      C. Để hỗ trợ merge conflict giữa 2 branch khác nhau.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Basics-Recording-Changes-to-the-Repository"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Recording Changes to the Repository</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-add" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-add Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-status" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-status Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Internals-The-Refspec"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Git Internals</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="git-branch-head" class="article-related__link article-related__link--next">
+                    Bài 3: Branch &amp; HEAD
+                  </a>
+                  <a href="git-object-model" class="article-related__link article-related__link--prev">
+                    Bài 1: Mô Hình Đối Tượng Git
+                  </a>
+                  <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="git-three-trees-staging.js" defer></script>
+  </body>
+</html>

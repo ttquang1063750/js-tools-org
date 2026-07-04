@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 6: Cherry-pick — Chọn Lọc Commit Cụ Thể — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu git cherry-pick: nhặt 1 commit cụ thể từ nhánh khác mà không merge cả nhánh, cơ chế tạo commit mới cùng diff nhưng khác hash, xử lý xung đột khi pick, và so sánh với rebase/merge."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-cherry-pick" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* Git Graph Simulator (Cherry-pick) Sandbox styles */
+      .graph-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+      }
+      .graph-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .graph-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .graph-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .graph-cmd-row {
+        display: flex;
+        gap: 6px;
+      }
+      .graph-cmd-row input {
+        flex: 1;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #a6e3a1;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
+      .graph-controls input[type='text'].graph-file-input {
+        color: #cdd6f4;
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
+      .graph-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .graph-btn:hover {
+        background: #313244;
+      }
+      .graph-btn--primary {
+        background: #64748b;
+        border-color: #64748b;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-btn--primary:hover {
+        background: #475569;
+      }
+      .graph-hint-list {
+        margin: 0;
+        padding-left: 16px;
+        color: #a6adc8;
+        font-size: 11px;
+        line-height: 1.7;
+      }
+      .graph-hint-list code {
+        color: #cdd6f4;
+      }
+      .graph-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 140px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .graph-log div.cmd-line {
+        color: #f9e2af;
+        padding-top: 6px;
+      }
+      .graph-log div.err-line {
+        color: #f38ba8;
+      }
+      .graph-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 380px;
+        overflow: auto;
+        padding: 10px 0;
+        gap: 10px;
+      }
+      .graph-canvas {
+        display: block;
+      }
+      .graph-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #cdd6f4;
+      }
+      .conflict-panel {
+        display: none;
+        width: 90%;
+        background: #1e1e2e;
+        border: 1px solid #f38ba8;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .conflict-panel.is-visible {
+        display: block;
+      }
+      .conflict-panel h4 {
+        margin: 0 0 8px 0;
+        color: #f38ba8;
+        font-size: 12px;
+      }
+      .conflict-panel textarea {
+        width: 100%;
+        min-height: 90px;
+        box-sizing: border-box;
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: #f9e2af;
+        font-family: monospace;
+        font-size: 12px;
+        padding: 8px;
+        resize: vertical;
+      }
+      @media (max-width: 880px) {
+        .graph-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--git">
+        <div class="container">
+          <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
+          <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
+          <h1 class="article-hero__title">Bài 6: Cherry-pick — Chọn Lọc Commit Cụ Thể</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 13 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Ở <a href="git-rebase-history">Bài 5</a>, rebase phát lại <strong>toàn bộ</strong> chuỗi commit riêng
+                  của 1 nhánh lên nền mới. Nhưng đôi khi bạn chỉ cần đúng <strong>1 commit cụ thể</strong> từ nhánh khác
+                  — không phải cả nhánh. Đó là lúc <code>git cherry-pick</code> phát huy tác dụng.
+                </p>
+
+                <h2>1. Bài toán: Chỉ Muốn 1 Commit, Không Phải Cả Nhánh</h2>
+                <p>
+                  Tình huống kinh điển: một lập trình viên vô tình commit bản sửa lỗi bảo mật khẩn cấp lên nhánh
+                  <code>feature</code> đang phát triển dở (chưa sẵn sàng release). Bạn cần bản vá đó trên
+                  <code>main</code> <strong>ngay lập tức</strong>, nhưng merge cả <code>feature</code> vào
+                  <code>main</code> sẽ kéo theo toàn bộ code dở dang chưa hoàn thiện.
+                  <code>git cherry-pick &lt;hash&gt;</code> cho phép "nhặt" đúng commit sửa lỗi đó sang
+                  <code>main</code>, bỏ qua mọi commit khác trên <code>feature</code>.
+                </p>
+
+                <h2>2. Cơ Chế: Tạo Commit Mới Cùng Diff, Khác Hash</h2>
+                <p>
+                  Giống hệt nguyên lý rebase đã thấy ở Bài 5: cherry-pick <strong>không di chuyển</strong> commit gốc.
+                  Nó tính <strong>diff</strong> mà commit đó giới thiệu (so với commit cha của nó), rồi áp diff đó lên
+                  đỉnh nhánh hiện tại — tạo ra 1 <strong>commit hoàn toàn mới</strong> với cha khác, nên hash cũng khác.
+                  Commit gốc trên nhánh nguồn vẫn còn nguyên, không bị ảnh hưởng gì.
+                </p>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Lưu ý: Message thường ghi rõ nguồn gốc</div>
+                  <div class="callout__content">
+                    Theo mặc định, Git thêm dòng <code>(cherry picked from commit &lt;hash&gt;)</code> vào cuối message
+                    của commit mới — giúp bất kỳ ai đọc log sau này biết thay đổi này vốn đến từ đâu, dù commit gốc và
+                    bản sao chép có hash hoàn toàn khác nhau.
+                  </div>
+                </div>
+
+                <h2>3. Xử Lý Xung Đột Khi Cherry-pick</h2>
+                <p>
+                  Cherry-pick vẫn có thể <strong>xung đột</strong> — nếu nhánh hiện tại đã thay đổi cùng phần nội dung
+                  theo cách khác kể từ điểm phân kỳ, Git không biết chọn phiên bản nào. Về bản chất, cơ chế giải xung
+                  đột giống hệt three-way merge đã học ở <a href="git-merge-conflict">Bài 4</a> — chỉ khác
+                  <strong>base</strong> lúc này là commit cha của commit được pick, còn <strong>theirs</strong> chính là
+                  commit đó:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">terminal</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash">$ git cherry-pick a1b2c3d
+# Nếu xung đột:
+Auto-merging app.js
+CONFLICT (content): Merge conflict in app.js
+
+# Sửa file thủ công, rồi:
+$ git add app.js
+$ git cherry-pick --continue</code></pre>
+                </div>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: Cherry-pick lặp lại gây trùng lặp lịch sử</div>
+                  <div class="callout__content">
+                    Nếu bạn cherry-pick 1 commit từ <code>feature</code> sang <code>main</code>, rồi sau này vẫn merge
+                    <code>feature</code> vào <code>main</code>, thay đổi đó tồn tại <strong>2 lần</strong> trong lịch sử
+                    dưới 2 hash khác nhau (dù nội dung cây thường giống hệt nên Git thường tự merge êm, không báo
+                    conflict). Kết quả: <code>git log</code> hiện 2 commit riêng biệt mang cùng nội dung — gây khó hiểu
+                    khi tra cứu lịch sử về sau. Cân nhắc kỹ trước khi cherry-pick từ 1 nhánh vẫn còn dự định merge đầy
+                    đủ sau này.
+                  </div>
+                </div>
+
+                <h2>4. So Sánh Cherry-pick, Rebase, và Merge</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Tiêu chí</th>
+                      <th>Cherry-pick</th>
+                      <th>Rebase</th>
+                      <th>Merge</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Số commit bị ảnh hưởng</td>
+                      <td>Đúng 1 commit chỉ định</td>
+                      <td>Toàn bộ commit riêng của nhánh</td>
+                      <td>Không tạo lại commit nào</td>
+                    </tr>
+                    <tr>
+                      <td>Commit mới tạo ra</td>
+                      <td>1 commit mới (hash mới)</td>
+                      <td>N commit mới (N = số commit replay)</td>
+                      <td>1 merge commit (2 cha)</td>
+                    </tr>
+                    <tr>
+                      <td>Trường hợp dùng điển hình</td>
+                      <td>Backport 1 hotfix cụ thể sang nhánh khác</td>
+                      <td>Dọn lịch sử thẳng hàng trước khi chia sẻ</td>
+                      <td>Hợp nhất đầy đủ lịch sử 2 nhánh</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Cherry-pick chỉ là 1 trường hợp đặc biệt của Merge</div>
+                  <div class="callout__content">
+                    Về mặt thuật toán, cherry-pick dùng đúng <strong>three-way merge</strong> đã học ở Bài 4 — chỉ khác
+                    cách chọn 3 điểm so sánh: <strong>base</strong> = commit cha của commit được pick,
+                    <strong>ours</strong> = HEAD hiện tại, <strong>theirs</strong> = chính commit được pick. Vì vậy mọi
+                    quy tắc phát hiện xung đột ở Bài 4 áp dụng y hệt ở đây — Git không có 2 thuật toán merge khác nhau,
+                    chỉ có 2 cách khác nhau để <em>chọn đầu vào</em> cho cùng 1 thuật toán.
+                  </div>
+                </div>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">💡 Mẹo: Khi nào nên dùng cherry-pick?</div>
+                  <div class="callout__content">
+                    Cherry-pick lý tưởng cho: backport 1 bản vá bảo mật khẩn cấp sang nhiều nhánh release cùng lúc; cứu
+                    1 commit hữu ích từ 1 Pull Request đã bị đóng/từ chối mà không muốn merge toàn bộ; hoặc chuyển 1
+                    commit bị commit nhầm nhánh sang đúng nhánh nó thuộc về.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Cherry-pick Simulator</h2>
+                <p>
+                  Kịch bản mẫu đã dựng sẵn 2 nhánh phân kỳ với 1 commit "Fix security bug" trên nhánh
+                  <code>hotfix</code>. Thử <code>git cherry-pick C2</code> khi đang ở <code>main</code> để xem cách nhặt
+                  commit đó — và xử lý xung đột thực sự xảy ra vì <code>main</code> cũng đã thay đổi nội dung khác kể từ
+                  điểm phân kỳ.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🍒 Sân chơi tương tác: Cherry-pick Simulator</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="graph-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="graph-controls">
+                        <h3>Terminal giả lập</h3>
+                        <div class="graph-cmd-row">
+                          <input
+                            type="text"
+                            id="graph-cmd-input"
+                            placeholder="git cherry-pick C2"
+                            autocomplete="off"
+                            spellcheck="false"
+                          />
+                          <button class="graph-btn graph-btn--primary" id="graph-run-btn">Chạy</button>
+                        </div>
+                        <ul class="graph-hint-list">
+                          <li><code>git branch/checkout &lt;tên&gt;</code></li>
+                          <li><code>git commit -m "..."</code></li>
+                          <li><code>git cherry-pick &lt;id&gt;</code></li>
+                          <li><code>git log</code></li>
+                        </ul>
+                        <div>
+                          <label for="graph-file-input">Nội dung file app.js (áp dụng khi commit)</label>
+                          <input
+                            type="text"
+                            id="graph-file-input"
+                            class="graph-file-input"
+                            value="version = 1 + featureX"
+                          />
+                        </div>
+                        <button class="graph-btn" id="graph-reset-btn">Reset</button>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="graph-log" id="graph-log"></div>
+                        </div>
+                      </div>
+
+                      <!-- Canvas Stage -->
+                      <div class="graph-viewport-container">
+                        <canvas id="graph-canvas" class="graph-canvas" width="600" height="300"></canvas>
+                        <div class="graph-status-line" id="graph-status-line"></div>
+                        <div class="conflict-panel" id="graph-conflict-panel">
+                          <h4>⚠️ XUNG ĐỘT KHI CHERRY-PICK — sửa nội dung bên dưới rồi bấm "Hoàn tất"</h4>
+                          <textarea id="graph-conflict-textarea"></textarea>
+                          <div class="graph-btn-row" style="margin-top: 8px">
+                            <button class="graph-btn graph-btn--primary" id="graph-resolve-btn">
+                              Hoàn tất Cherry-pick
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">git-cherry-pick-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Sau khi <code>git cherry-pick C2</code> thành công, commit C2 gốc trên nhánh
+                    <code>hotfix</code> có bị thay đổi hay xoá không?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Cherry-pick không hề đụng tới commit gốc — nó chỉ ĐỌC diff của C2 rồi tạo ra 1 commit MỚI áp diff đó lên nhánh hiện tại. C2 trên hotfix vẫn y nguyên, không bị xoá hay sửa.'
+                        )
+                      "
+                    >
+                      A. Không — C2 vẫn y nguyên trên hotfix, cherry-pick chỉ tạo thêm 1 commit mới ở nhánh đích.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git object bất biến — cherry-pick không bao giờ sửa đổi hay xoá commit gốc.'
+                        )
+                      "
+                    >
+                      B. Có — C2 bị di chuyển sang nhánh main, không còn trên hotfix nữa.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cherry-pick không xoá commit gốc — commit mới được tạo THÊM vào, không thay thế commit cũ ở nhánh nguồn.'
+                        )
+                      "
+                    >
+                      C. Có — C2 bị xoá hoàn toàn khỏi lịch sử sau khi cherry-pick.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Vì sao commit tạo ra bởi cherry-pick có hash khác hoàn toàn với commit gốc, dù nội dung thay
+                    đổi giống hệt nhau?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Hash commit được tính từ nhiều thành phần, bao gồm commit CHA. Commit mới do cherry-pick tạo ra có cha khác (đỉnh nhánh đích) so với commit gốc (cha trên nhánh nguồn) — dù nội dung tree giống hệt, chuỗi dữ liệu được băm khác đi vì phần parent khác, nên hash cũng khác hoàn toàn.'
+                        )
+                      "
+                    >
+                      A. Vì commit mới có cha (parent) khác với commit gốc — hash được tính từ cả thông tin commit cha,
+                      nên khác cha thì khác hash dù nội dung tree giống hệt.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git luôn dùng cùng 1 thuật toán băm (SHA) cho mọi commit — không có phiên bản băm riêng cho cherry-pick.'
+                        )
+                      "
+                    >
+                      B. Vì Git cố tình dùng thuật toán băm khác cho commit được cherry-pick.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Timestamp có ảnh hưởng tới hash, nhưng đây không phải lý do CHÍNH được nhấn mạnh trong bài — điểm mấu chốt là commit cha khác nhau, một hệ quả trực tiếp và luôn đúng của việc gắn vào nhánh khác.'
+                        )
+                      "
+                    >
+                      C. Vì hash được random hoàn toàn mỗi lần tạo commit, không liên quan tới nội dung.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">Câu 3: Khi nào cherry-pick 1 commit KHÔNG gây xung đột (áp dụng êm)?</p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Nếu HEAD hiện tại có nội dung GIỐNG HỆT commit cha của commit được pick (nghĩa là phần liên quan chưa bị ai thay đổi thêm kể từ đó), diff của commit được pick áp thẳng vào mà không có gì mâu thuẫn — Git chỉ đơn giản phát lại thay đổi đó lên trên.'
+                        )
+                      "
+                    >
+                      A. Khi nội dung hiện tại của HEAD giống hệt nội dung của commit CHA của commit được pick (chưa ai
+                      thay đổi phần đó thêm).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Cherry-pick hoàn toàn có thể xung đột — không có sự khác biệt kỹ thuật giữa cherry-pick trong ngày và cherry-pick sau nhiều ngày, chỉ khác là càng để lâu càng dễ phân kỳ nhiều hơn.'
+                        )
+                      "
+                    >
+                      B. Cherry-pick không bao giờ xung đột nếu thực hiện trong cùng ngày commit được tạo.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Không có giới hạn số dòng thay đổi để tránh xung đột — xung đột phụ thuộc vào việc 2 bên có sửa CÙNG PHẦN nội dung theo cách khác nhau hay không, không phụ thuộc kích thước thay đổi.'
+                        )
+                      "
+                    >
+                      C. Khi commit được pick chỉ thay đổi ít hơn 5 dòng code.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-cherry-pick" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-cherry-pick Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Tools-Rewriting-History"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Rewriting History</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://www.atlassian.com/git/tutorials/cherry-pick"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Atlassian Git Tutorial — Cherry Pick</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="git-undo-recovery" class="article-related__link article-related__link--next">
+                    Bài 7: Undo &amp; Phục Hồi
+                  </a>
+                  <a href="git-rebase-history" class="article-related__link article-related__link--prev">
+                    Bài 5: Rebase &amp; Viết Lại Lịch Sử
+                  </a>
+                  <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
+                  <a href="git-merge-conflict" class="article-related__link">
+                    Bài 4: Merge &amp; Conflict (three-way merge nền tảng)
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="git-cherry-pick.js" defer></script>
+  </body>
+</html>

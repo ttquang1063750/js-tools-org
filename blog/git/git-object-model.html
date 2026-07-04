@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 1: Mô Hình Đối Tượng Git — Blob, Tree, Commit — js-tools</title>
+    <meta
+      name="description"
+      content="Git không lưu file, nó lưu đối tượng: Blob (nội dung), Tree (thư mục), Commit (snapshot + lịch sử). Tìm hiểu content-addressable storage bằng SHA, vì sao Git lưu snapshot chứ không lưu diff, và trình khám phá .git/objects tương tác dùng SHA-1 thật."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-object-model" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* Git Object Explorer Sandbox styles */
+      .obj-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 24px;
+      }
+      .obj-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .obj-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .obj-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .obj-controls input[type='text'],
+      .obj-controls textarea {
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+        resize: vertical;
+      }
+      .obj-btn-row {
+        display: flex;
+        gap: 8px;
+      }
+      .obj-btn {
+        flex: 1;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .obj-btn:hover {
+        background: #313244;
+      }
+      .obj-btn--primary {
+        background: #64748b;
+        border-color: #64748b;
+        color: #fff;
+        font-weight: 600;
+      }
+      .obj-btn--primary:hover {
+        background: #475569;
+      }
+      .obj-stat {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        font-size: 12px;
+      }
+      .obj-stat .label {
+        color: #a6adc8;
+      }
+      .obj-stat .value {
+        color: #cdd6f4;
+        font-family: monospace;
+        font-weight: 700;
+      }
+      .obj-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 130px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .obj-log div {
+        border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+        padding: 3px 0;
+      }
+      .obj-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: center;
+        min-height: 380px;
+        overflow: auto;
+        padding: 10px 0;
+      }
+      .obj-canvas {
+        display: block;
+      }
+      .obj-store-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+        font-family: monospace;
+        color: #cdd6f4;
+      }
+      .obj-store-table th,
+      .obj-store-table td {
+        padding: 4px 8px;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .obj-badge {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 700;
+      }
+      .obj-badge--blob {
+        background: rgba(59, 130, 246, 0.15);
+        color: #3b82f6;
+      }
+      .obj-badge--tree {
+        background: rgba(245, 158, 11, 0.15);
+        color: #f59e0b;
+      }
+      .obj-badge--commit {
+        background: rgba(100, 116, 139, 0.2);
+        color: #94a3b8;
+      }
+      .obj-hint {
+        margin: 0;
+        color: #a6adc8;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      @media (max-width: 880px) {
+        .obj-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--git">
+        <div class="container">
+          <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
+          <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
+          <h1 class="article-hero__title">Bài 1: Mô Hình Đối Tượng Git — Blob, Tree, Commit</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Rất nhiều người dùng Git nhiều năm nhưng chưa từng mở thử thư mục <code>.git</code> xem bên trong có
+                  gì. Sự thật khá bất ngờ: <strong>Git không hề biết "file" hay "thư mục" là gì</strong> theo nghĩa
+                  thông thường. Với Git, toàn bộ repository chỉ là một cơ sở dữ liệu khoá-giá trị chứa 3 loại
+                  <strong>đối tượng</strong> — Blob, Tree, Commit — và mọi lệnh bạn gõ chỉ là cách tạo đối tượng mới
+                  hoặc di chuyển vài con trỏ trỏ vào chúng.
+                </p>
+
+                <h2>1. Git Không Lưu File — Nó Lưu Đối Tượng</h2>
+                <p>
+                  Mỗi khi Git cần lưu một thứ gì đó (nội dung file, cấu trúc thư mục, hay một lần commit), nó tạo ra một
+                  <strong>đối tượng (object)</strong> mới và lưu vào <code>.git/objects</code>. Mỗi đối tượng có một
+                  hash làm định danh, và một khi đã tạo, <strong>đối tượng đó không bao giờ bị sửa đổi</strong> — chỉ có
+                  thể tạo đối tượng mới. Có 3 loại đối tượng chính:
+                </p>
+                <ul>
+                  <li><strong>Blob</strong> (Binary Large OBject) — lưu nội dung thô của 1 file.</li>
+                  <li><strong>Tree</strong> — lưu cấu trúc 1 thư mục: ánh xạ tên → blob hoặc tree con.</li>
+                  <li><strong>Commit</strong> — lưu 1 lần chụp lịch sử: trỏ tới 1 tree gốc + (các) commit cha.</li>
+                </ul>
+
+                <h2>2. Blob — Đối Tượng Nội Dung Thuần Tuý</h2>
+                <p>
+                  Điều quan trọng nhất cần nhớ về blob: <strong>nó không lưu tên file</strong>. Blob chỉ là nội dung thô
+                  của file, không hơn không kém. Hai file tên khác nhau nhưng nội dung giống hệt nhau (vd 2 file
+                  <code>LICENSE</code> giống hệt ở 2 thư mục con) sẽ tạo ra <strong>đúng 1 blob</strong> — vì hash chỉ
+                  phụ thuộc nội dung, không phụ thuộc tên hay vị trí:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">terminal</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash"># git hash-object tính hash mà KHÔNG cần tên file làm đầu vào
+$ echo "Xin chào Git!" | git hash-object --stdin
+a1b2c3d4e5f6...  # hash chỉ phụ thuộc nội dung "Xin chào Git!\n"
+
+# Đổi tên file không tạo blob mới — nội dung không đổi, hash không đổi
+$ git cat-file -p a1b2c3d4   # xem lại nội dung thô của blob theo hash</code></pre>
+                </div>
+
+                <h2>3. Tree — Ảnh Chụp Một Thư Mục</h2>
+                <p>
+                  Tree là nơi tên file thực sự xuất hiện. Một tree object liệt kê các entry, mỗi entry gồm
+                  <strong>mode</strong> (quyền + loại: file thường, file thực thi, thư mục con...),
+                  <strong>tên</strong>, và <strong>hash</strong> trỏ tới 1 blob (nếu là file) hoặc 1 tree khác (nếu là
+                  thư mục con) — đệ quy hoá toàn bộ cấu trúc thư mục thành một cây các đối tượng:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">tree-object.txt</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash">100644 blob a1b2c3d...   README.md
+100644 blob 9f8e7d6...   app.js
+040000 tree 5c4b3a2...   src        <- thư mục con là 1 TREE khác, đệ quy</code></pre>
+                </div>
+
+                <h2>4. Commit — Con Trỏ Tới 1 Tree Và (Các) Commit Cha</h2>
+                <p>
+                  Commit là lớp mỏng nhất nhưng quan trọng nhất: nó chỉ chứa hash của
+                  <strong>1 tree gốc</strong> (snapshot toàn bộ repo tại thời điểm đó), hash của
+                  <strong>(các) commit cha</strong> (rỗng nếu là commit đầu tiên, 2 cha nếu là merge commit), cùng tác
+                  giả, thời gian, và message. Chuỗi các commit nối với nhau qua con trỏ cha chính là
+                  <strong>lịch sử</strong> mà <code>git log</code> hiển thị:
+                </p>
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">commit-object.txt</span>
+                    <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-bash">tree 7d3f9c1...
+parent 4a8b2e0...
+author Tang Thanh Quang &lt;quang@example.com&gt; 1751500000 +0700
+committer Tang Thanh Quang &lt;quang@example.com&gt; 1751500000 +0700
+
+Sửa lỗi hiển thị sai ở trang chủ</code></pre>
+                </div>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ Lưu ý: Branch chỉ là 1 file trỏ tới hash commit này</div>
+                  <div class="callout__content">
+                    Nhìn vào cấu trúc commit ở trên, dễ thấy commit hoàn toàn không "biết" nó thuộc branch nào. Branch
+                    (vd <code>.git/refs/heads/main</code>) chỉ là 1 file văn bản chứa đúng 1 dòng: hash của commit mới
+                    nhất trên nhánh đó. Đây là nền tảng cho <a href="git-branch-head">Bài 3</a> — branch rẻ tới mức tạo
+                    hàng trăm nhánh không tốn gì đáng kể.
+                  </div>
+                </div>
+
+                <h2>5. Content-Addressable Storage: Vì Sao Định Danh Bằng Hash?</h2>
+                <p>
+                  Git dùng SHA-1 (và đang chuyển dần sang SHA-256) để định danh mọi đối tượng — gọi là
+                  <strong>content-addressable storage</strong>: địa chỉ lưu trữ của 1 đối tượng chính là hash nội dung
+                  của nó. Cách chọn này giải quyết đồng thời 3 vấn đề:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Chống trùng lặp tự động (deduplication):</strong> nội dung giống hệt luôn cho cùng 1 hash →
+                    chỉ lưu 1 bản duy nhất, bất kể xuất hiện ở bao nhiêu file/thư mục/commit.
+                  </li>
+                  <li>
+                    <strong>Kiểm tra toàn vẹn miễn phí:</strong> chỉ cần băm lại nội dung và so hash — phát hiện ngay dữ
+                    liệu bị hỏng hoặc bị thay đổi trái phép.
+                  </li>
+                  <li>
+                    <strong>So sánh nhanh không cần đọc nội dung:</strong> 2 cây thư mục giống hệt nhau sẽ luôn có cùng
+                    tree hash — Git có thể bỏ qua toàn bộ cây con mà không cần duyệt sâu vào bên trong.
+                  </li>
+                </ul>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: Hash thực chất được tính trên gì?</div>
+                  <div class="callout__content">
+                    Git không băm trực tiếp nội dung file — nó băm một chuỗi gồm
+                    <strong><code>"&lt;loại&gt; &lt;kích-thước-byte&gt;\0&lt;nội-dung&gt;"</code></strong
+                    >. Ví dụ blob nội dung <code>"hi\n"</code> (3 byte) sẽ băm chuỗi <code>"blob 3\0hi\n"</code>, không
+                    phải chỉ <code>"hi\n"</code>. Tiền tố loại + kích thước này là lý do 1 blob, 1 tree, và 1 commit
+                    không bao giờ va chạm hash dù có thể có cùng "nội dung thô" — chúng thuộc 2 không gian băm khác nhau
+                    ngay từ tiền tố.
+                  </div>
+                </div>
+
+                <h2>6. Snapshot, Không Phải Diff</h2>
+                <p>
+                  Đây là khác biệt triết lý lớn nhất giữa Git và các hệ quản lý phiên bản cũ hơn (CVS, Subversion):
+                  <strong>mỗi commit trỏ tới một snapshot ĐẦY ĐỦ</strong> của toàn bộ cây thư mục tại thời điểm đó —
+                  không phải một "bản vá" (diff) so với commit trước. Khi bạn chạy <code>git log -p</code> và thấy diff
+                  đẹp đẽ giữa 2 commit, đó là vì <strong>Git tính toán</strong> diff đó ngay lúc hiển thị bằng cách so
+                  sánh 2 tree, chứ không phải Git đã lưu sẵn diff đó ở đâu.
+                </p>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: "Vậy mỗi commit tốn dung lượng gấp đôi à?"</div>
+                  <div class="callout__content">
+                    Không — vì cơ chế content-addressable ở mục 5, nếu 1 file không đổi giữa 2 commit,
+                    <strong>blob của file đó được tái sử dụng nguyên vẹn</strong> giữa 2 tree khác nhau, không hề tốn
+                    thêm dung lượng. Chỉ những blob/tree thực sự thay đổi mới cần đối tượng mới. Kết quả là bạn nhận
+                    được cả 2 lợi ích: mô hình "snapshot toàn bộ" đơn giản để suy luận, và dung lượng lưu trữ hiệu quả
+                    gần như "chỉ lưu phần thay đổi" — mà không cần thuật toán diff phức tạp.
+                  </div>
+                </div>
+
+                <h2>7. So Sánh Blob, Tree, Commit</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Đối tượng</th>
+                      <th>Lưu gì</th>
+                      <th>Trỏ tới</th>
+                      <th>Biết tên file?</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Blob</td>
+                      <td>Nội dung thô 1 file</td>
+                      <td>Không trỏ tới đâu (là lá)</td>
+                      <td>Không</td>
+                    </tr>
+                    <tr>
+                      <td>Tree</td>
+                      <td>Danh sách entry (mode + tên + hash)</td>
+                      <td>Blob hoặc Tree con</td>
+                      <td>Có</td>
+                    </tr>
+                    <tr>
+                      <td>Commit</td>
+                      <td>Metadata + message</td>
+                      <td>1 Tree gốc + (các) Commit cha</td>
+                      <td>Không (gián tiếp qua tree)</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h2>Sân chơi tương tác: Git Object Explorer</h2>
+                <p>
+                  Sửa nội dung 2 file bên dưới rồi bấm "Commit Snapshot" nhiều lần. Quan sát: file
+                  <strong>không đổi</strong> → blob được <strong>tái sử dụng</strong> (không tạo object mới); file đổi →
+                  blob mới xuất hiện, nhưng tree gốc <strong>luôn</strong> phải tạo mới vì nó phụ thuộc hash của mọi
+                  blob con. Hash trong demo dùng <strong>SHA-1 thật</strong> qua Web Crypto API của trình duyệt.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🗂️ Sân chơi tương tác: Git Object Explorer</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="obj-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="obj-controls">
+                        <h3>Working Directory</h3>
+                        <div>
+                          <label for="obj-file1-content">README.md</label>
+                          <textarea id="obj-file1-content" rows="2">Xin chào Git!</textarea>
+                        </div>
+                        <div>
+                          <label for="obj-file2-content">app.js</label>
+                          <textarea id="obj-file2-content" rows="2">console.log("hello");</textarea>
+                        </div>
+                        <div>
+                          <label for="obj-commit-msg">Commit message</label>
+                          <input type="text" id="obj-commit-msg" value="Cập nhật nội dung" />
+                        </div>
+                        <div class="obj-btn-row">
+                          <button class="obj-btn obj-btn--primary" id="obj-commit-btn">Commit Snapshot</button>
+                          <button class="obj-btn" id="obj-reset-btn">Reset</button>
+                        </div>
+                        <div>
+                          <div class="obj-stat">
+                            <span class="label">Tổng commit</span><span class="value" id="obj-stat-commits">0</span>
+                          </div>
+                          <div class="obj-stat">
+                            <span class="label">Tổng object đã tạo</span
+                            ><span class="value" id="obj-stat-objects">0</span>
+                          </div>
+                        </div>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="obj-log" id="obj-log"></div>
+                        </div>
+                        <p class="obj-hint">Click 1 commit trên đồ thị để xem cây tree/blob của nó.</p>
+                      </div>
+
+                      <!-- Canvas + Object Store -->
+                      <div class="obj-viewport-container">
+                        <canvas id="obj-canvas" class="obj-canvas" width="600" height="230"></canvas>
+                        <table class="obj-store-table" id="obj-store-table"></table>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">git-object-model-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Vì sao 2 file có tên khác nhau nhưng nội dung giống hệt nhau chỉ tạo ra đúng 1 blob object?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Blob được định danh bằng hash của NỘI DUNG (content-addressable) — tên file hoàn toàn không nằm trong blob, nó chỉ được lưu trong tree object trỏ tới blob đó. Nội dung giống hệt → hash giống hệt → cùng 1 blob, bất kể tên file gì.'
+                        )
+                      "
+                    >
+                      A. Vì blob được định danh bằng hash nội dung, không liên quan tới tên file — tên file được lưu
+                      riêng trong tree object.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git không so sánh tên file để quyết định tái sử dụng blob — tên file thậm chí còn không được lưu trong blob object.'
+                        )
+                      "
+                    >
+                      B. Vì Git tự động đổi tên file trùng nội dung về cùng 1 tên.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Đây không phải giới hạn dung lượng — đó là chủ đích thiết kế content-addressable storage, hoạt động ở mọi kích thước repo.'
+                        )
+                      "
+                    >
+                      C. Vì Git giới hạn số blob tối đa trong 1 repo nên phải gộp bớt.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Bạn commit sau khi chỉ sửa 1 trong 5 file. Vì sao tree gốc (root tree) luôn phải tạo object
+                    mới, dù 4 blob còn lại không hề thay đổi?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git không cố ý ép buộc điều này để tối ưu tốc độ — đây là hệ quả tất yếu của cách hash tree được tính, không phải một chính sách tuỳ chọn.'
+                        )
+                      "
+                    >
+                      A. Vì Git luôn tạo tree mới mỗi commit để tăng tốc độ truy vấn lịch sử sau này.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Hash của tree được tính từ TOÀN BỘ danh sách entry (tên + hash) của nó. Chỉ cần 1 blob con đổi hash, chuỗi entry của tree cũng đổi theo, kéo theo hash tree đổi — dù 4 blob kia y nguyên và ĐƯỢC TÁI SỬ DỤNG, tree cha vẫn phải là 1 object hoàn toàn mới.'
+                        )
+                      "
+                    >
+                      B. Vì hash của tree phụ thuộc vào hash của TẤT CẢ entry con — 1 blob con đổi hash sẽ kéo theo hash
+                      tree đổi theo (hiệu ứng dây chuyền), dù các blob khác vẫn được tái sử dụng nguyên vẹn.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git không nén lại toàn bộ working directory mỗi lần commit theo nghĩa này — cơ chế thực sự nằm ở cách tính hash tree, không phải bước nén dữ liệu.'
+                        )
+                      "
+                    >
+                      C. Vì Git nén lại toàn bộ working directory thành 1 file zip mỗi lần commit.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: "Git lưu diff (bản vá) giữa các commit, giống SVN/CVS." Nhận định này đúng hay sai?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Mỗi commit của Git trỏ tới 1 SNAPSHOT ĐẦY ĐỦ của cây thư mục, không phải 1 bản vá. Diff mà bạn thấy khi chạy git log -p hoàn toàn được TÍNH TOÁN ĐỘNG lúc hiển thị, bằng cách so sánh 2 tree — Git không hề lưu sẵn diff đó ở bất kỳ đâu trong .git/objects.'
+                        )
+                      "
+                    >
+                      A. Sai — mỗi commit trỏ tới 1 snapshot đầy đủ của cây thư mục; diff hiển thị trong
+                      <code>git log -p</code> được tính toán động lúc xem, không phải lưu sẵn.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Đây chính xác là cách CVS/Subversion hoạt động (lưu diff nối tiếp) — Git cố tình thiết kế NGƯỢC LẠI, đó là lý do Git nhanh hơn nhiều khi checkout 1 commit bất kỳ (không cần &quot;replay&quot; hàng loạt diff).'
+                        )
+                      "
+                    >
+                      B. Đúng — Git lưu diff nối tiếp giống hệt SVN/CVS để tiết kiệm dung lượng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git không có 2 chế độ lưu trữ khác nhau tuỳ kích thước file — mọi commit luôn trỏ tới snapshot đầy đủ, bất kể file lớn hay nhỏ.'
+                        )
+                      "
+                    >
+                      C. Đúng, nhưng chỉ với file nhỏ hơn 1MB — file lớn hơn được lưu dạng snapshot.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a
+                      href="https://git-scm.com/book/en/v2/Git-Internals-Git-Objects"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Pro Git Book — Git Internals: Git Objects</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-hash-object" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-hash-object Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://git-scm.com/docs/hash-function-transition"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >git-scm.com — SHA-1/SHA-256 Hash Function Transition</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://en.wikipedia.org/wiki/SHA-1" target="_blank" rel="noopener noreferrer"
+                      >Wikipedia — SHA-1</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="git-three-trees-staging" class="article-related__link article-related__link--next">
+                    Bài 2: Three Trees &amp; Staging
+                  </a>
+                  <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
+                  <a href="../algo/algo-hash-table-collision" class="article-related__link">
+                    Series DSA: Hash Table &amp; Va Chạm
+                  </a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="git-object-model.js" defer></script>
+  </body>
+</html>

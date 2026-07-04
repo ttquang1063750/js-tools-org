@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 11: Hooks &amp; Worktree — Tự Động Hoá &amp; Làm Việc Song Song — js-tools</title>
+    <meta
+      name="description"
+      content="Git hooks (pre-commit/commit-msg/pre-push) tự động chặn commit lỗi bằng exit code, vì sao .git/hooks không được version-control, và git worktree cho phép checkout nhiều branch song song mà không cần clone lại. 2 sân chơi tương tác: pre-commit hook simulator và worktree visualizer."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/git/git-hooks-worktree" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* Git Hooks & Worktree Simulator Sandbox styles */
+      .graph-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+      }
+      .graph-controls {
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 13px;
+      }
+      .graph-controls h3 {
+        color: #cdd6f4;
+        margin: 0 0 4px 0;
+        font-size: 14px;
+      }
+      .graph-controls label {
+        color: #a6adc8;
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .graph-cmd-row {
+        display: flex;
+        gap: 6px;
+      }
+      .graph-cmd-row input {
+        flex: 1;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #a6e3a1;
+        font-size: 12px;
+        box-sizing: border-box;
+        font-family: monospace;
+      }
+      .graph-toggle-row {
+        display: flex;
+        gap: 6px;
+      }
+      .graph-toggle-row button {
+        flex: 1;
+      }
+      .graph-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .graph-btn:hover {
+        background: #313244;
+      }
+      .graph-btn--primary {
+        background: #64748b;
+        border-color: #64748b;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-btn--primary:hover {
+        background: #475569;
+      }
+      .graph-btn.is-active {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-btn.is-active-bad {
+        background: #a13a4c;
+        border-color: #a13a4c;
+        color: #fff;
+        font-weight: 600;
+      }
+      .graph-hint-list {
+        margin: 0;
+        padding-left: 16px;
+        color: #a6adc8;
+        font-size: 11px;
+        line-height: 1.7;
+      }
+      .graph-hint-list code {
+        color: #cdd6f4;
+      }
+      .graph-log {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #a6e3a1;
+        max-height: 160px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+      .graph-log div.cmd-line {
+        color: #f9e2af;
+        padding-top: 6px;
+      }
+      .graph-log div.err-line {
+        color: #f38ba8;
+      }
+      .graph-log div.ok-line {
+        color: #a6e3a1;
+        font-weight: bold;
+      }
+      .graph-viewport-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 380px;
+        overflow: auto;
+        padding: 10px 0;
+        gap: 10px;
+      }
+      .graph-canvas {
+        display: block;
+      }
+      .graph-status-line {
+        font-family: monospace;
+        font-size: 11px;
+        color: #cdd6f4;
+        text-align: center;
+        line-height: 1.6;
+      }
+      @media (max-width: 880px) {
+        .graph-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--git">
+        <div class="container">
+          <a href="git-programming-series" class="article-hero__back">← Quay lại Lộ trình Git</a>
+          <div class="article-hero__tag article-hero__tag--git">Git Internals</div>
+          <h1 class="article-hero__title">Bài 11: Hooks &amp; Worktree — Tự Động Hoá &amp; Làm Việc Song Song</h1>
+          <div class="article-hero__meta">3 tháng 7, 2026 · 14 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Sau <a href="git-subtree-submodule">Bài 10</a> ghép nhiều repo lại với nhau, bài này xoay quanh 2 công
+                  cụ vận hành hằng ngày ít được để ý: <strong>hooks</strong> — script tự động chạy tại các mốc cố định
+                  trong vòng đời commit, và <strong>worktree</strong> — cách checkout nhiều branch song song mà không
+                  cần clone lại repo.
+                </p>
+
+                <h2>1. Git Hooks: Tự Động Hoá Tại Các Mốc Cố Định</h2>
+                <p>
+                  Mỗi repo Git có 1 thư mục <code>.git/hooks/</code> chứa các script (thường là shell/Node) được Git tự
+                  động chạy tại đúng thời điểm nhất định — trước khi commit, sau khi nhận message commit, trước khi
+                  push... Quy ước rất đơn giản: script <strong>exit code 0</strong> nghĩa là "cho qua", bất kỳ mã khác 0
+                  nào nghĩa là "chặn lại, huỷ thao tác".
+                </p>
+
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Hook</th>
+                      <th>Chạy khi nào</th>
+                      <th>Dùng để làm gì</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>pre-commit</code></td>
+                      <td>Ngay trước khi tạo commit</td>
+                      <td>Chạy lint/format, chặn commit nếu code chưa đạt chuẩn</td>
+                    </tr>
+                    <tr>
+                      <td><code>commit-msg</code></td>
+                      <td>Sau khi message được viết, trước khi commit hoàn tất</td>
+                      <td>Kiểm tra định dạng message (VD: bắt buộc theo Conventional Commits)</td>
+                    </tr>
+                    <tr>
+                      <td><code>pre-push</code></td>
+                      <td>Ngay trước khi push lên remote</td>
+                      <td>Chạy test suite, chặn push nếu có test fail</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">ℹ️ <code>.git/hooks</code> KHÔNG được version-control cùng repo</div>
+                  <div class="callout__content">
+                    Thư mục <code>.git/</code> hoàn toàn nằm ngoài phạm vi theo dõi của chính Git — clone 1 repo sẽ
+                    không mang theo hook nào cả. Đây là lý do các công cụ như <strong>Husky</strong> tồn tại: chúng lưu
+                    script hook dưới dạng file thường trong repo (được version-control bình thường), rồi tự cài đặt vào
+                    <code>.git/hooks</code> qua 1 bước <code>postinstall</code>, đảm bảo mọi thành viên team đều có cùng
+                    hook sau khi <code>npm install</code>.
+                  </div>
+                </div>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy thường gặp: lạm dụng <code>--no-verify</code></div>
+                  <div class="callout__content">
+                    <code>git commit --no-verify</code> (hoặc <code>git push --no-verify</code>) bỏ qua hoàn toàn mọi
+                    hook — hữu ích trong tình huống khẩn cấp thực sự, nhưng nếu trở thành thói quen, nó vô hiệu hoá mọi
+                    lớp bảo vệ chất lượng mà team đã thiết lập. Coi đây là "van xả khẩn cấp", không phải lối tắt hàng
+                    ngày.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Pre-commit/Pre-push Hook Simulator</h2>
+                <p>
+                  Bật/tắt từng hook, đổi trạng thái "chất lượng" code hoặc test, rồi thử <code>git commit</code> và
+                  <code>git push</code> — quan sát hook chặn thao tác đúng lúc dựa theo exit code, và thử
+                  <code>--no-verify</code> để thấy nó bỏ qua hoàn toàn.
+                </p>
+
+                <!-- Interactive Sandbox: Hooks -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🪝 Sân chơi tương tác: Pre-commit/Pre-push Hook Simulator</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="graph-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="graph-controls">
+                        <h3>Terminal giả lập</h3>
+                        <div class="graph-cmd-row">
+                          <input
+                            type="text"
+                            id="hook-cmd-input"
+                            placeholder='git commit -m "fix bug"'
+                            autocomplete="off"
+                            spellcheck="false"
+                          />
+                          <button class="graph-btn graph-btn--primary" id="hook-run-btn">Chạy</button>
+                        </div>
+                        <ul class="graph-hint-list">
+                          <li><code>git commit -m "..."</code></li>
+                          <li><code>git commit --no-verify -m "..."</code></li>
+                          <li><code>git push</code></li>
+                          <li><code>git push --no-verify</code></li>
+                        </ul>
+                        <div>
+                          <label>Hook pre-commit (lint)</label>
+                          <div class="graph-toggle-row">
+                            <button class="graph-btn is-active" id="hook-precommit-on-btn">Bật</button>
+                            <button class="graph-btn" id="hook-precommit-off-btn">Tắt</button>
+                          </div>
+                        </div>
+                        <div>
+                          <label>Code hiện tại</label>
+                          <div class="graph-toggle-row">
+                            <button class="graph-btn is-active" id="hook-code-clean-btn">✅ Sạch</button>
+                            <button class="graph-btn" id="hook-code-dirty-btn">❌ Lỗi lint</button>
+                          </div>
+                        </div>
+                        <div>
+                          <label>Hook pre-push (test)</label>
+                          <div class="graph-toggle-row">
+                            <button class="graph-btn is-active" id="hook-prepush-on-btn">Bật</button>
+                            <button class="graph-btn" id="hook-prepush-off-btn">Tắt</button>
+                          </div>
+                        </div>
+                        <div>
+                          <label>Test suite hiện tại</label>
+                          <div class="graph-toggle-row">
+                            <button class="graph-btn is-active" id="hook-test-pass-btn">✅ Pass</button>
+                            <button class="graph-btn" id="hook-test-fail-btn">❌ Fail</button>
+                          </div>
+                        </div>
+                        <button class="graph-btn" id="hook-reset-btn">Reset demo</button>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="graph-log" id="hook-log"></div>
+                        </div>
+                      </div>
+
+                      <!-- Status Stage -->
+                      <div class="graph-viewport-container">
+                        <canvas id="hook-canvas" class="graph-canvas" width="560" height="200"></canvas>
+                        <div class="graph-status-line" id="hook-status-line"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">git-hooks-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="hook-js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <h2>2. Git Worktree: Nhiều Working Directory, 1 Repo</h2>
+                <p>
+                  Bình thường, 1 working directory chỉ có thể checkout <strong>đúng 1 branch</strong> tại 1 thời điểm —
+                  muốn xem branch khác phải <code>checkout</code>/<code>switch</code>, kèm rủi ro phải
+                  <code>stash</code> thay đổi dở dang trước.
+                  <code>git worktree add &lt;path&gt; &lt;branch&gt;</code> tạo ra 1 thư mục làm việc
+                  <strong>hoàn toàn mới</strong>, checkout sẵn 1 branch khác, nhưng vẫn dùng chung đúng 1 object
+                  database (<code>.git/</code>) với working directory gốc — không cần clone lại, gần như tức thời.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">
+                    🔬 Đào sâu: vì sao 1 branch không thể checkout ở 2 worktree cùng lúc?
+                  </div>
+                  <div class="callout__content">
+                    Mọi worktree của cùng 1 repo chia sẻ chung object database và refs (<code>.git/refs/heads/*</code>).
+                    Nếu 2 worktree cùng checkout 1 branch, cả 2 sẽ cùng ghi vào đúng 1 con trỏ branch khi commit — dẫn
+                    tới xung đột cập nhật con trỏ không thể giải quyết nhất quán. Vì vậy Git chặn thẳng: mỗi branch chỉ
+                    được checkout tại <strong>đúng 1 worktree</strong> tại 1 thời điểm (trừ khi ở chế độ detached HEAD,
+                    xem lại <a href="git-branch-head">Bài 3</a>).
+                  </div>
+                </div>
+
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th><code>git checkout</code>/<code>switch</code> thông thường</th>
+                      <th><code>git worktree add</code></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Số branch xem cùng lúc</td>
+                      <td>Chỉ 1 (working directory duy nhất)</td>
+                      <td>Nhiều, mỗi worktree 1 branch riêng</td>
+                    </tr>
+                    <tr>
+                      <td>Thay đổi dở dang khi chuyển branch</td>
+                      <td>Phải commit hoặc <code>stash</code> trước</td>
+                      <td>Không cần — mỗi worktree độc lập hoàn toàn</td>
+                    </tr>
+                    <tr>
+                      <td>Chi phí thiết lập</td>
+                      <td>Tức thời (chỉ đổi con trỏ HEAD)</td>
+                      <td>Tức thời — dùng chung object database, không clone lại</td>
+                    </tr>
+                    <tr>
+                      <td>Use case điển hình</td>
+                      <td>Chuyển việc tuần tự trên 1 nhánh tại 1 thời điểm</td>
+                      <td>Vừa code feature vừa build/test song song 1 hotfix khác</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">
+                    💡 Mẹo: <code>git worktree list</code> và dọn dẹp bằng <code>remove</code>
+                  </div>
+                  <div class="callout__content">
+                    <code>git worktree list</code> liệt kê mọi worktree đang hoạt động cùng branch/commit của chúng. Khi
+                    xong việc, <code>git worktree remove &lt;path&gt;</code> gỡ bỏ sạch sẽ, giải phóng lại branch đó để
+                    có thể checkout ở nơi khác.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Worktree Visualizer</h2>
+                <p>
+                  Thử tạo thêm 1 worktree cho branch <code>hotfix</code> trong khi worktree gốc vẫn đang ở
+                  <code>main</code>, rồi thử tạo 1 worktree KHÁC cũng trỏ tới <code>main</code> — xem Git chặn lại vì
+                  sao.
+                </p>
+
+                <!-- Interactive Sandbox: Worktree -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title">🌲 Sân chơi tương tác: Worktree Visualizer</span>
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="graph-sandbox">
+                      <!-- Controls Panel -->
+                      <div class="graph-controls">
+                        <h3>Terminal giả lập</h3>
+                        <div class="graph-cmd-row">
+                          <input
+                            type="text"
+                            id="wt-cmd-input"
+                            placeholder="git worktree add ../hotfix-wt hotfix"
+                            autocomplete="off"
+                            spellcheck="false"
+                          />
+                          <button class="graph-btn graph-btn--primary" id="wt-run-btn">Chạy</button>
+                        </div>
+                        <ul class="graph-hint-list">
+                          <li><code>git worktree add &lt;path&gt; &lt;branch&gt;</code></li>
+                          <li><code>git worktree list</code></li>
+                          <li><code>git worktree remove &lt;path&gt;</code></li>
+                        </ul>
+                        <button class="graph-btn" id="wt-reset-btn">Reset demo</button>
+                        <div>
+                          <h3>Nhật ký</h3>
+                          <div class="graph-log" id="wt-log"></div>
+                        </div>
+                      </div>
+
+                      <!-- Canvas Stage -->
+                      <div class="graph-viewport-container">
+                        <canvas id="wt-canvas" class="graph-canvas" width="560" height="220"></canvas>
+                        <div class="graph-status-line" id="wt-status-line"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">git-worktree-live.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="wt-js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Nếu script <code>pre-commit</code> kết thúc với exit code khác 0, điều gì xảy ra?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Quy ước của mọi Git hook: exit code 0 nghĩa là cho qua, bất kỳ mã khác 0 nào nghĩa là chặn lại. Với pre-commit, điều đó nghĩa là commit bị huỷ hoàn toàn, không có object commit nào được tạo ra.'
+                        )
+                      "
+                    >
+                      A. Git huỷ thao tác commit, không tạo commit nào cả.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Exit code khác 0 nghĩa là CHẶN LẠI, không phải bỏ qua — commit sẽ bị huỷ chứ không tiếp tục như không có gì xảy ra.'
+                        )
+                      "
+                    >
+                      B. Git bỏ qua lỗi và vẫn tạo commit bình thường.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Git hooks hoạt động hoàn toàn cục bộ, không liên quan gì tới remote hay việc xoá branch trên server.'
+                        )
+                      "
+                    >
+                      C. Git tự động xoá branch hiện tại trên remote.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Vì sao clone 1 repo về máy khác sẽ KHÔNG mang theo các hook đã cấu hình?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! .git/ nằm hoàn toàn ngoài phạm vi theo dõi của chính Git — nó là nơi Git LƯU TRỮ dữ liệu quản lý, không phải nội dung được commit/track. Đây là lý do các công cụ như Husky lưu hook dưới dạng file thường trong repo rồi tự cài đặt qua bước postinstall.'
+                        )
+                      "
+                    >
+                      A. Vì thư mục <code>.git/hooks</code> nằm ngoài phạm vi theo dõi của chính Git, không được commit
+                      cùng nội dung repo.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Không có giới hạn dung lượng nào ngăn hook được đồng bộ — lý do thực sự là hook nằm trong .git/, khu vực hoàn toàn không được Git version-control.'
+                        )
+                      "
+                    >
+                      B. Vì hook luôn có dung lượng quá lớn để đồng bộ qua clone.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Đây không phải hành vi mặc định của git clone — clone không có bước xác nhận nào về hook cả, vì đơn giản là hook không nằm trong phạm vi được đồng bộ.'
+                        )
+                      "
+                    >
+                      C. Vì cần xác nhận thủ công có muốn tải hook về hay không mỗi lần clone.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Vì sao 1 branch không thể được checkout ở 2 worktree khác nhau cùng lúc?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! Mọi worktree của cùng 1 repo chia sẻ chung object database và refs. Nếu 2 worktree cùng checkout 1 branch, cả 2 sẽ có thể cùng ghi vào đúng 1 con trỏ branch khi commit, gây xung đột cập nhật không thể giải quyết nhất quán — nên Git chặn thẳng từ đầu.'
+                        )
+                      "
+                    >
+                      A. Vì mọi worktree dùng chung 1 object database/refs — 2 worktree cùng ghi vào 1 con trỏ branch sẽ
+                      gây xung đột không thể giải quyết nhất quán.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. worktree không sao chép lại toàn bộ object database — đó chính là điểm mạnh của nó so với clone (dùng chung, không tốn thêm dung lượng object).'
+                        )
+                      "
+                    >
+                      B. Vì mỗi worktree cần dung lượng ổ đĩa gấp đôi cho object database.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. Đây không phải giới hạn về giấy phép — Git worktree là tính năng mở, miễn phí, không có giới hạn số lượng theo license.'
+                        )
+                      "
+                    >
+                      C. Vì giấy phép Git chỉ cho phép 1 worktree hoạt động tại 1 thời điểm.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://git-scm.com/docs/githooks" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — githooks Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://git-scm.com/docs/git-worktree" target="_blank" rel="noopener noreferrer"
+                      >git-scm.com — git-worktree Documentation</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://typicode.github.io/husky/" target="_blank" rel="noopener noreferrer"
+                      >Husky — Modern Native Git Hooks</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <a href="git-tags-aliases" class="article-related__link article-related__link--next">
+                    Bài 12: Tags &amp; Aliases Nâng Cao
+                  </a>
+                  <a href="git-subtree-submodule" class="article-related__link article-related__link--prev">
+                    Bài 10: Subtree &amp; Submodule
+                  </a>
+                  <a href="git-programming-series" class="article-related__link">Quay lại Lộ trình Series Git</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="git-hooks-worktree.js" defer></script>
+  </body>
+</html>
