@@ -1,0 +1,978 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 8: Index &amp; Query Plan — js-tools</title>
+    <meta
+      name="description"
+      content="B-Tree index hoạt động thế nào, EXPLAIN QUERY PLAN đọc kế hoạch thực thi, full table scan vs index seek đo bằng số thật trên 100.000 dòng, composite index và quy tắc left-prefix, covering index — kèm workbench SQLite-WASM thật trong trình duyệt."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-index-query-plan" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* SQL Workbench Sandbox styles (giống Bài 1/3/4/5/7) */
+      .sql-workbench {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .sql-workbench__row {
+        display: grid;
+        grid-template-columns: 1fr 200px;
+        gap: 16px;
+      }
+      .sql-editor {
+        width: 100%;
+        min-height: 130px;
+        background: #0f0f1b;
+        color: #a6e3a1;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-family: monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+      .sql-side-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sql-btn {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .sql-btn:hover {
+        background: #313244;
+      }
+      .sql-btn--primary {
+        background: #10b981;
+        border-color: #10b981;
+        color: #fff;
+        font-weight: 600;
+      }
+      .sql-btn--primary:hover {
+        background: #059669;
+      }
+      .sql-examples {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .sql-example-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #11111b;
+        color: #a6adc8;
+        font-size: 11px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .sql-example-btn:hover {
+        background: #313244;
+        color: #cdd6f4;
+      }
+      .sql-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #a6adc8;
+      }
+      .sql-status-line.is-error {
+        color: #f38ba8;
+      }
+      .sql-schema-panel {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        font-size: 12px;
+        color: #cdd6f4;
+        display: none;
+      }
+      .sql-schema-panel.is-visible {
+        display: block;
+      }
+      #sql-schema-panel table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 12px;
+        font-size: 11px;
+      }
+      #sql-schema-panel th,
+      #sql-schema-panel td {
+        text-align: left;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border);
+        color: #cdd6f4;
+      }
+      #sql-schema-panel th {
+        color: #a6adc8;
+      }
+      #sql-schema-panel tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .sql-schema-panel h4 {
+        color: #10b981;
+        margin: 0 0 6px;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      .sql-results-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        overflow-x: auto;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      #sql-results table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12px;
+        font-family: monospace;
+        color: #cdd6f4;
+      }
+      #sql-results th,
+      #sql-results td {
+        padding: 6px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        color: #cdd6f4;
+      }
+      #sql-results th {
+        background: #11111b;
+        color: #10b981;
+        position: sticky;
+        top: -13px;
+      }
+      #sql-results tbody tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      #sql-results td.is-null {
+        color: #6c7086;
+        font-style: italic;
+      }
+      .sql-results-empty {
+        color: #6c7086;
+        font-size: 13px;
+        padding: 8px;
+      }
+      @media (max-width: 880px) {
+        .sql-workbench__row {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sql">
+        <div class="container">
+          <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
+          <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
+          <h1 class="article-hero__title">Bài 8: Index &amp; Query Plan</h1>
+          <div class="article-hero__meta">4 tháng 7, 2026 · 27 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Dataset TechMart chỉ có 28 đơn hàng — dù thêm hay bỏ index, mọi truy vấn đều nhanh tới mức không thể
+                  đo được sự khác biệt. Đây chính là lý do bài này cần 1 dataset lớn hơn hẳn: bài học tự sinh
+                  <strong>100.000 dòng dữ liệu giả</strong> ngay trong phiên làm việc để bạn
+                  <strong>tự mắt thấy và tự đo</strong> chênh lệch tốc độ thật giữa quét toàn bảng và tra cứu qua index
+                  — không phải lý thuyết suông.
+                </p>
+
+                <h2>1. B-Tree Index Hoạt Động Thế Nào?</h2>
+                <p>
+                  Không có index, tìm 1 hàng trong bảng 100.000 dòng đồng nghĩa engine phải
+                  <strong>đọc lần lượt từng dòng</strong> để kiểm tra điều kiện — giống lật từng trang sách để tìm 1 từ.
+                  Index là 1 <strong>cấu trúc dữ liệu B-Tree riêng</strong>, lưu sẵn giá trị cột đã
+                  <strong>sắp xếp</strong> kèm con trỏ trỏ ngược về đúng hàng gốc — giống mục lục cuối sách: tra thẳng
+                  tới đúng trang, không cần đọc hết. Chi phí: index chiếm thêm dung lượng đĩa, và
+                  <strong>mỗi lần ghi</strong> (INSERT/UPDATE/DELETE) engine phải cập nhật thêm cả cấu trúc B-Tree đó,
+                  không chỉ bảng gốc.
+                </p>
+                <p>
+                  Để có dữ liệu đủ lớn minh hoạ, sân chơi bên dưới tự tạo bảng <code>big_orders</code> với 100.000 dòng
+                  bằng 1 kỹ thuật SQL thuần, không cần vòng lặp JavaScript chậm chạp — CTE đệ quy sinh dãy số liên tiếp
+                  rồi <code>INSERT ... SELECT</code> trực tiếp từ dãy đó:
+                </p>
+                <pre><code class="language-sql">CREATE TABLE big_orders (
+  order_id INTEGER PRIMARY KEY,
+  customer_id INTEGER,
+  order_date TEXT,
+  status TEXT,
+  total_amount REAL
+);
+
+WITH RECURSIVE seq(x) AS (
+  SELECT 1
+  UNION ALL
+  SELECT x + 1 FROM seq WHERE x < 100000
+)
+INSERT INTO big_orders (order_id, customer_id, order_date, status, total_amount)
+SELECT
+  x,
+  1 + (abs(random()) % 5000),                                    -- customer_id ngẫu nhiên 1-5000
+  date('2024-01-01', '+' || (abs(random()) % 700) || ' days'),   -- ngày ngẫu nhiên trong ~2 năm
+  CASE abs(random()) % 5
+    WHEN 0 THEN 'delivered' WHEN 1 THEN 'shipped' WHEN 2 THEN 'cancelled'
+    WHEN 3 THEN 'refunded' ELSE 'pending' END,
+  ROUND(10 + (abs(random()) % 40000) / 100.0, 2)
+FROM seq;</code></pre>
+                <p>
+                  <code>random()</code> của SQLite trả về số nguyên có dấu — <code>abs()</code> đảm bảo luôn dương trước
+                  khi lấy phần dư (<code>%</code>). Đây là bảng bonus riêng cho bài này (giống
+                  <code>category_tree</code> ở Bài 5, <code>routes</code> ở Bài 6) — không phải phần cố định của dataset
+                  TechMart.
+                </p>
+
+                <h2>2. <code>EXPLAIN QUERY PLAN</code>: Nhìn Thấy Engine Đang Nghĩ Gì</h2>
+                <p>
+                  Đặt <code>EXPLAIN QUERY PLAN</code> trước bất kỳ câu <code>SELECT</code> nào để xem engine
+                  <strong>dự định thực thi như thế nào</strong>, không chạy thật câu lệnh:
+                </p>
+                <pre><code class="language-sql">EXPLAIN QUERY PLAN
+SELECT * FROM big_orders WHERE customer_id = 2500;</code></pre>
+                <p>Trên bảng <code>big_orders</code> vừa tạo (chưa có index nào ngoài khoá chính), kết quả là:</p>
+                <pre><code class="language-text">SCAN big_orders</code></pre>
+                <p>
+                  <code>SCAN</code> nghĩa là <strong>quét toàn bảng</strong> — đọc tuần tự cả 100.000 dòng, kiểm tra
+                  từng dòng có khớp <code>customer_id = 2500</code> hay không. Đây chính xác là "lật từng trang sách" đã
+                  nói ở mục 1.
+                </p>
+
+                <h2>3. Full Scan vs Index Seek: Đo Bằng Số Thật</h2>
+                <p>Tạo index trên cột đang lọc, rồi chạy lại đúng <code>EXPLAIN QUERY PLAN</code> ở trên:</p>
+                <pre><code class="language-sql">CREATE INDEX idx_customer ON big_orders(customer_id);
+
+EXPLAIN QUERY PLAN
+SELECT * FROM big_orders WHERE customer_id = 2500;</code></pre>
+                <pre><code class="language-text">SEARCH big_orders USING INDEX idx_customer (customer_id=?)</code></pre>
+                <p>
+                  <code>SEARCH ... USING INDEX</code> nghĩa là engine tra thẳng B-Tree của <code>idx_customer</code> để
+                  nhảy ngay tới đúng vị trí, không quét toàn bảng nữa. Chạy thử trong sân chơi bên dưới và tự đo: trên
+                  máy phát triển bài này, quét toàn bảng mất <strong>~4-6ms</strong>, tra qua index chỉ còn
+                  <strong>~0.03-0.3ms</strong> — nhanh hơn <strong>10-100 lần</strong>. Với bảng 100 triệu dòng thay vì
+                  100.000, chênh lệch này còn kịch tính hơn nữa: sự khác biệt giữa "tức thì" và "treo hàng giây, thậm
+                  chí hàng phút".
+                </p>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">
+                    ℹ️ Vì sao dataset TechMart (28 đơn) không thể minh hoạ được điều này?
+                  </div>
+                  <div class="callout__content">
+                    Với 28 dòng, cả quét toàn bảng lẫn tra index đều xong trong chưa tới 0.1ms — độ trễ do overhead gọi
+                    hàm JS/WASM còn lớn hơn cả bản thân phép tính, khiến 2 con số gần như giống hệt nhau dù đo nhiều
+                    lần. Đây chính xác là lý do B-Tree index chỉ thực sự tạo khác biệt
+                    <strong>khi dữ liệu đủ lớn</strong> — với bảng nhỏ, chi phí quản lý thêm 1 cấu trúc index có khi còn
+                    không đáng, đó cũng là lý do SQLite (và mọi engine khác) không tự động đánh index mọi cột.
+                  </div>
+                </div>
+
+                <h2>4. Composite Index: Nhiều Cột Trong 1 Index, Thứ Tự Quan Trọng</h2>
+                <p>
+                  Index cũng gộp được nhiều cột — nhưng thứ tự cột lúc khai báo quyết định index có
+                  <strong>giúp được truy vấn nào</strong>, theo quy tắc gọi là <strong>left-prefix</strong> (tiền tố bên
+                  trái): index <code>(A, B)</code> giúp được truy vấn lọc theo <code>A</code>, hoặc <code>A</code> và
+                  <code>B</code> cùng lúc — nhưng <strong>không giúp được</strong> truy vấn chỉ lọc theo
+                  <code>B</code> đơn lẻ (giống mục lục sách sắp theo "chương rồi tới trang" — muốn tìm 1 trang cụ thể mà
+                  không biết chương nào thì mục lục đó vô dụng).
+                </p>
+                <pre><code class="language-sql">CREATE INDEX idx_status_date ON big_orders(status, order_date);</code></pre>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Truy vấn lọc theo</th>
+                      <th>Kế hoạch thực thi</th>
+                      <th>Index có giúp không?</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>WHERE status = 'delivered'</code></td>
+                      <td><code>SEARCH ... USING INDEX idx_status_date (status=?)</code></td>
+                      <td>✅ Có — <code>status</code> là cột đầu (left-prefix)</td>
+                    </tr>
+                    <tr>
+                      <td><code>WHERE status = 'delivered' AND order_date &gt; '2024-06-01'</code></td>
+                      <td><code>SEARCH ... USING INDEX idx_status_date (status=? AND order_date&gt;?)</code></td>
+                      <td>✅ Có — cả 2 cột theo đúng thứ tự khai báo</td>
+                    </tr>
+                    <tr>
+                      <td><code>WHERE order_date &gt; '2024-06-01'</code> (chỉ lọc cột thứ 2)</td>
+                      <td><code>SCAN big_orders</code></td>
+                      <td>❌ Không — thiếu điều kiện trên cột đầu tiên (<code>status</code>)</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Kết quả đo thật khớp chính xác quy tắc left-prefix: lọc theo <code>order_date</code> đơn lẻ vẫn quay
+                  về <code>SCAN big_orders</code> dù index <code>idx_status_date</code> đã tồn tại — vì
+                  <code>order_date</code> không phải cột đầu. Muốn cả 2 hướng lọc đều nhanh, cần
+                  <strong>2 index riêng</strong> (hoặc đảo thứ tự tuỳ query nào chạy thường xuyên hơn).
+                </p>
+
+                <h2>5. Covering Index: Không Cần Chạm Vào Bảng Gốc</h2>
+                <p>
+                  Khi index chứa <strong>đủ mọi cột</strong> câu lệnh cần (cả cột lọc lẫn cột hiển thị), engine không
+                  cần quay lại đọc bảng gốc nữa — chỉ đọc index là đủ trả lời toàn bộ câu hỏi. Đây gọi là
+                  <strong>covering index</strong> (index bao phủ):
+                </p>
+                <pre><code class="language-sql">-- Với idx_status_date(status, order_date) đã có ở mục 4:
+EXPLAIN QUERY PLAN
+SELECT customer_id, order_date FROM big_orders WHERE status = 'delivered';
+-- → SEARCH ... USING INDEX idx_status_date (status=?)
+--   VẪN PHẢI đọc bảng gốc để lấy customer_id (không có trong index này)
+
+CREATE INDEX idx_covering ON big_orders(status, customer_id, order_date);
+
+EXPLAIN QUERY PLAN
+SELECT customer_id, order_date FROM big_orders WHERE status = 'delivered';
+-- → SEARCH ... USING COVERING INDEX idx_covering (status=?)
+--   Không cần đọc bảng gốc nữa — mọi cột cần đều có sẵn trong index</code></pre>
+                <p>
+                  Chú ý từ khoá <strong><code>COVERING</code></strong> xuất hiện thêm trong dòng kế hoạch thứ 2 — đây là
+                  tín hiệu trực tiếp từ SQLite xác nhận truy vấn không cần động tới bảng gốc, chỉ cần quét index. Đánh
+                  đổi: index càng nhiều cột càng chiếm thêm dung lượng và làm chậm thao tác ghi — không nên biến mọi
+                  index thành covering index cho mọi truy vấn có thể có, chỉ áp dụng cho các truy vấn thật sự chạy
+                  thường xuyên và quan trọng về tốc độ.
+                </p>
+
+                <h2>Bảng Tổng Kết: Khi Nào Nên/Không Nên Tạo Index</h2>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Tình huống</th>
+                      <th>Khuyến nghị</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Cột thường xuất hiện trong <code>WHERE</code>/<code>JOIN ON</code>, bảng lớn</td>
+                      <td>Nên đánh index — lợi ích đọc vượt xa chi phí ghi</td>
+                    </tr>
+                    <tr>
+                      <td>Cột có ít giá trị khác nhau (ví dụ <code>is_active</code> chỉ 0/1)</td>
+                      <td>Thường không đáng — index không giúp nhiều khi 1 giá trị chiếm phần lớn bảng</td>
+                    </tr>
+                    <tr>
+                      <td>Bảng nhỏ (như 4 bảng TechMart, &lt;100 dòng)</td>
+                      <td>Không cần thiết — full scan đã đủ nhanh, thêm index chỉ tốn công quản lý</td>
+                    </tr>
+                    <tr>
+                      <td>Bảng ghi liên tục (insert/update tần suất cao), ít đọc</td>
+                      <td>Cân nhắc kỹ — mỗi index thêm là 1 cấu trúc phải cập nhật mỗi lần ghi</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h2>Sân chơi tương tác: So Sánh Full Scan vs Index Seek Trên 100.000 Dòng</h2>
+                <p>
+                  Bấm "Tạo bảng 100k dòng" trước (mất khoảng vài trăm mili-giây), rồi thử các câu lệnh
+                  <code>EXPLAIN QUERY PLAN</code> và đo thời gian thực thi trước/sau khi tạo index.
+                </p>
+
+                <!-- Interactive Sandbox -->
+                <div class="code-tabs">
+                  <div class="code-tabs__nav">
+                    <span class="code-tabs__title"
+                      >🗄️ Sân chơi tương tác: SQL Workbench (big_orders — 100.000 dòng)</span
+                    >
+                    <div class="code-tabs__btns">
+                      <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                      <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel is-active" data-panel="preview">
+                    <div class="sql-workbench">
+                      <div>
+                        <div class="sql-examples" id="sql-examples"></div>
+                      </div>
+                      <div class="sql-workbench__row">
+                        <textarea
+                          id="sql-editor"
+                          class="sql-editor"
+                          spellcheck="false"
+                          placeholder="Bấm 'Tạo bảng 100k dòng' trước, sau đó thử EXPLAIN QUERY PLAN..."
+                        ></textarea>
+                        <div class="sql-side-panel">
+                          <button class="sql-btn sql-btn--primary" id="sql-run-btn">▶ Chạy (Ctrl+Enter)</button>
+                          <button class="sql-btn" id="sql-schema-toggle">📋 Xem cấu trúc bảng</button>
+                          <button class="sql-btn" id="sql-reset-btn">Reset dữ liệu</button>
+                        </div>
+                      </div>
+                      <div class="sql-schema-panel" id="sql-schema-panel">
+                        <h4>big_orders <span style="color: #6c7086">(bấm "Tạo bảng 100k dòng" để tạo)</span></h4>
+                        <table>
+                          <tr>
+                            <th>Cột</th>
+                            <th>Kiểu</th>
+                          </tr>
+                          <tr>
+                            <td>order_id</td>
+                            <td>INTEGER PRIMARY KEY</td>
+                          </tr>
+                          <tr>
+                            <td>customer_id</td>
+                            <td>INTEGER (1-5000, ngẫu nhiên)</td>
+                          </tr>
+                          <tr>
+                            <td>order_date</td>
+                            <td>TEXT (ISO-8601, ~2 năm)</td>
+                          </tr>
+                          <tr>
+                            <td>status</td>
+                            <td>TEXT (5 giá trị)</td>
+                          </tr>
+                          <tr>
+                            <td>total_amount</td>
+                            <td>REAL</td>
+                          </tr>
+                        </table>
+                      </div>
+                      <div class="sql-results-container" id="sql-results">
+                        <div class="sql-results-empty">Bấm "Tạo bảng 100k dòng" bên dưới để bắt đầu...</div>
+                      </div>
+                      <div class="sql-status-line" id="sql-status-line">Đang tải SQLite-WASM engine...</div>
+                    </div>
+                  </div>
+
+                  <div class="code-tabs__panel" data-panel="js">
+                    <div class="code-window">
+                      <div class="code-header">
+                        <span class="code-filename">sql-index-query-plan.js</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                      </div>
+                      <pre><code class="language-js" id="sql-js-code-display"></code></pre>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interactive Quizzes -->
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: <code>EXPLAIN QUERY PLAN</code> trả về dòng <code>SCAN big_orders</code>. Điều này nghĩa là
+                    gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'SCAN nghĩa là engine đọc tuần tự TOÀN BỘ dòng trong bảng để kiểm tra điều kiện WHERE, không dùng bất kỳ index nào để tra thẳng tới đúng vị trí.'
+                        )
+                      "
+                    >
+                      A. Engine đang quét tuần tự toàn bộ bảng, không dùng index nào để tra thẳng tới hàng cần tìm.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Đây là hành vi của SEARCH ... USING INDEX, không phải SCAN — SCAN chính xác là dấu hiệu KHÔNG có index nào được dùng.'
+                        )
+                      "
+                    >
+                      B. Engine đang dùng index để tra thẳng tới đúng hàng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'EXPLAIN QUERY PLAN không báo lỗi cú pháp gì cả ở đây — nó chỉ mô tả CÁCH engine sẽ thực thi câu lệnh, câu lệnh vẫn hoàn toàn hợp lệ.'
+                        )
+                      "
+                    >
+                      C. Câu lệnh SQL có lỗi cú pháp.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Vì sao dataset TechMart (28 đơn hàng) không thể minh hoạ được chênh lệch tốc độ giữa full
+                    scan và index seek, buộc bài học phải tạo bảng 100.000 dòng riêng?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Với chỉ 28 dòng, cả quét toàn bảng lẫn tra index đều xong trong chưa tới 0.1ms — độ trễ do overhead gọi hàm còn lớn hơn bản thân phép tính, nên B-Tree index chỉ thực sự tạo khác biệt đo được khi dữ liệu đủ lớn.'
+                        )
+                      "
+                    >
+                      A. Với chỉ 28 dòng, cả 2 cách đều nhanh tới mức không đo được khác biệt — index chỉ thể hiện rõ
+                      lợi ích khi dữ liệu đủ lớn.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'SQLite hoàn toàn hỗ trợ CREATE INDEX trên mọi bảng, bất kể kích thước — đây không phải giới hạn kỹ thuật của SQLite.'
+                        )
+                      "
+                    >
+                      B. Vì SQLite không cho phép tạo index trên bảng nhỏ.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'EXPLAIN QUERY PLAN hoạt động bình thường trên bảng ở mọi kích thước, kể cả bảng chỉ có vài dòng — đây không phải vấn đề tương thích.'
+                        )
+                      "
+                    >
+                      C. Vì <code>EXPLAIN QUERY PLAN</code> chỉ hoạt động trên bảng có trên 1000 dòng.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Với index <code>idx_status_date ON big_orders(status, order_date)</code>, truy vấn
+                    <code>WHERE order_date > '2024-06-01'</code> (chỉ lọc theo <code>order_date</code>, không lọc
+                    <code>status</code>) có dùng được index này không?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Đây chính là điểm dễ hiểu nhầm nhất về composite index — index (status, order_date) không giúp được truy vấn chỉ lọc order_date, đo thực tế cho thấy plan vẫn là SCAN.'
+                        )
+                      "
+                    >
+                      A. Có — index chứa <code>order_date</code> nên bất kỳ truy vấn nào lọc theo cột đó đều dùng được.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Theo quy tắc left-prefix, index (status, order_date) chỉ giúp được khi truy vấn có điều kiện trên status (cột đầu) — riêng hoặc kèm order_date. Lọc order_date đơn lẻ (thiếu status) khiến index này vô dụng, plan vẫn là SCAN big_orders — đã xác minh bằng đo thực tế.'
+                        )
+                      "
+                    >
+                      B. Không — theo quy tắc left-prefix, thiếu điều kiện trên cột đầu (<code>status</code>) khiến
+                      index này không giúp được, plan vẫn là <code>SCAN</code>.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Việc dùng được index hay không không phụ thuộc kích thước bảng — nó phụ thuộc CẤU TRÚC index (thứ tự cột khai báo) so với điều kiện WHERE của truy vấn.'
+                        )
+                      "
+                    >
+                      C. Chỉ có với bảng dưới 50.000 dòng.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 4: <code>EXPLAIN QUERY PLAN</code> hiện dòng
+                    <code>SEARCH ... USING COVERING INDEX idx_covering</code>. Từ khoá <code>COVERING</code> ở đây có ý
+                    nghĩa gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'COVERING nghĩa là index chứa ĐỦ mọi cột câu lệnh cần (cả cột lọc lẫn cột hiển thị trong SELECT) — engine chỉ cần đọc index, không cần quay lại đọc bảng gốc để lấy thêm dữ liệu nào.'
+                        )
+                      "
+                    >
+                      A. Index chứa đủ mọi cột câu lệnh cần, engine không cần đọc bảng gốc nữa — chỉ đọc index là đủ.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'COVERING không có nghĩa liên quan tới ràng buộc dữ liệu (UNIQUE) — đây là 1 đặc tính riêng biệt của cách thực thi truy vấn, không phải ràng buộc schema.'
+                        )
+                      "
+                    >
+                      B. Index này đảm bảo mọi giá trị trong cột đều duy nhất (UNIQUE).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'COVERING index không liên quan gì tới việc mã hoá dữ liệu — đây là khái niệm về tối ưu hoá đọc dữ liệu, không phải bảo mật.'
+                        )
+                      "
+                    >
+                      C. Index này được mã hoá để bảo mật dữ liệu nhạy cảm.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">Câu 5: Vì sao không nên đánh index lên mọi cột của mọi bảng "cho chắc"?</p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Mỗi index là 1 cấu trúc B-Tree riêng cần được CẬP NHẬT mỗi khi bảng có INSERT/UPDATE/DELETE — càng nhiều index, thao tác ghi càng chậm, cộng thêm chi phí dung lượng đĩa lưu trữ. Lợi ích index chỉ đáng đánh đổi cho các cột thực sự được lọc/join thường xuyên trên bảng đủ lớn.'
+                        )
+                      "
+                    >
+                      A. Mỗi index thêm là 1 cấu trúc phải cập nhật mỗi lần ghi dữ liệu — quá nhiều index làm chậm
+                      INSERT/UPDATE/DELETE và tốn thêm dung lượng đĩa.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'SQLite không giới hạn cứng số lượng index trên 1 bảng theo cách này — vấn đề thực sự là CHI PHÍ vận hành (ghi chậm hơn, tốn dung lượng), không phải giới hạn kỹ thuật cứng.'
+                        )
+                      "
+                    >
+                      B. SQLite giới hạn tối đa 5 index trên 1 bảng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Việc đọc dữ liệu (SELECT) không hề chậm đi khi có thêm index — ngược lại, index chỉ có thể giúp SELECT nhanh hơn hoặc không đổi, chi phí thực sự nằm ở các thao tác GHI.'
+                        )
+                      "
+                    >
+                      C. Có nhiều index khiến câu lệnh <code>SELECT</code> chạy chậm hơn.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://www.sqlite.org/queryplanner.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — Query Planning</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/eqp.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — EXPLAIN QUERY PLAN</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://www.sqlite.org/queryplanner-ng.html#covidx"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >SQLite Official Docs — Covering Indexes</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://sql.js.org/" target="_blank" rel="noopener noreferrer"
+                      >sql.js — SQLite compiled to WebAssembly</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 9: Query Optimizer Sâu 🐳 (sắp ra mắt)
+                  </span>
+                  <a href="sql-window-functions" class="article-related__link article-related__link--prev">
+                    Bài 7: Window Functions
+                  </a>
+                  <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="vendor/sql-wasm.js" defer></script>
+    <script src="sql-index-query-plan.js" defer></script>
+  </body>
+</html>
