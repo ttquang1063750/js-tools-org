@@ -107,6 +107,11 @@
     }
     const trimmed = sql.trim();
     if (!trimmed) return;
+    // Đóng panel cấu trúc bảng lại — nếu không, nó nằm TRÊN bảng kết quả trong
+    // layout và người dùng dễ tưởng nhầm "chạy xong mà vẫn thấy cấu trúc bảng,
+    // không thấy dữ liệu" trong khi kết quả thực ra đã cập nhật, chỉ là bị đẩy
+    // xuống dưới, khuất tầm nhìn.
+    schemaPanel.classList.remove('is-visible');
     const start = performance.now();
     let result;
     try {
@@ -118,10 +123,12 @@
       empty.textContent = 'Lỗi SQL: ' + err.message;
       resultsEl.appendChild(empty);
       setStatus('Lỗi khi thực thi.', true);
+      resultsEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       return;
     }
     const elapsed = performance.now() - start;
     renderResults(result, elapsed);
+    resultsEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   function buildExampleButtons() {
