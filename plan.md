@@ -384,15 +384,15 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
 
-- **Engine:** Trình tính toán và giải lập mạch điện Modified Nodal Analysis (MNA) viết bằng vanilla JavaScript — tự động hóa việc tính điện áp nút và dòng điện nhánh bằng phương pháp giải hệ phương trình tuyến tính $A \cdot x = B$.
+- **Engine:** Trình tính toán và giải lập mạch điện Modified Nodal Analysis (MNA) viết bằng vanilla JavaScript — tự động hóa việc tính điện áp nút và dòng điện nhánh bằng phương pháp giải hệ phương trình tuyến tính $A \cdot x = B$. _Lưu ý thiết kế: Đối với các bài học có mạch điện phi tuyến phức tạp (như transistor, mạch thu phát RF, ô nhớ SRAM), thay vì cố gắng xây dựng một engine CAD vạn năng cực kỳ phức tạp và dễ lỗi, dự án sẽ thiết kế các bộ giả lập chuyên dụng (Dedicated Simulators) được tối ưu hóa riêng cho sơ đồ mạch cụ thể của bài đó. Điều này giúp đảm bảo hiệu năng tối đa, chạy mượt mà trên trình duyệt và hiển thị chính xác các giản đồ sóng toán học để người đọc đối chiếu._
 - **Hiển thị:** HTML5 Canvas 2D vẽ đồ họa linh kiện tĩnh, nối dây và hạt electron di chuyển thể hiện chiều dòng điện. Biểu đồ máy hiện sóng (Oscilloscope) vẽ bằng đồ họa vector SVG hoặc Canvas động.
-- **Tương tác:** Drag & drop linh kiện trên grid lưới, vẽ kết nối dây, click điều chỉnh thông số linh kiện (trở kháng, điện áp nguồn, tần số xung), tắt mở công tắc.
+- **Tương tác:** Kéo thả linh kiện trên grid lưới (với các bài mạch cơ bản), hoặc tương tác trực tiếp với các núm chỉnh/thanh trượt thông số trên sơ đồ mạch có sẵn (với các bài mạch phức tạp), tắt mở công tắc và thay đổi các giá trị linh kiện.
 
 ### 2. Thiết kế Demo tương tác cốt lõi (Core Visualizer Demo)
 
 - **Tên: "Interactive Circuit Builder & Waveform Scope"**
 - **Mô tả giao diện:**
-  - **Khung chính (Grid):** Khu vực lưới kéo thả linh kiện (Nguồn DC/AC, Điện trở, Tụ điện, Cuộn cảm, Đi-ốt, Transistor, Đèn LED, Cổng logic). Người dùng có thể nhấp chuột để vẽ dây nối tạo mạch kín. Khi mạch hoạt động, các chấm tròn electron sẽ di chuyển dọc theo dây dẫn. Tốc độ di chuyển tỉ lệ thuận với cường độ dòng điện $I$, chiều di chuyển chỉ hướng của dòng điện.
+  - **Khung chính (Grid):** Khu vực lưới tương tác linh kiện (Nguồn DC/AC, Điện trở, Tụ điện, Cuộn cảm, Đi-ốt, Transistor, Đèn LED, Cổng logic). Người dùng có thể nhấp chuột để vẽ nối dây hoặc thay đổi thông số. Khi mạch hoạt động, các chấm tròn electron sẽ di chuyển dọc theo dây dẫn. Tốc độ di chuyển tỉ lệ thuận với cường độ dòng điện $I$, chiều di chuyển chỉ hướng của dòng điện.
   - **Bên phải (Oscilloscope & Control):** Máy hiện sóng hiển thị giản đồ điện áp $V(t)$ và dòng điện $I(t)$ của linh kiện đang được chọn dạng đồ thị hình sin/xung vuông động. Bộ điều chỉnh tham số (như thanh trượt đổi giá trị điện trở $R$, điện áp nguồn $V$).
 
 ### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
