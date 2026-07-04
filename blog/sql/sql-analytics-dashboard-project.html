@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 16: WAL &amp; Persistence Trong Browser 🐳 — js-tools</title>
+    <title>Bài 17: Dự Án Mini Analytics Dashboard — js-tools</title>
     <meta
       name="description"
-      content="Tìm hiểu chế độ Write-Ahead Log (WAL) của SQLite, các giải pháp lưu trữ bền vững (Persistence) trong trình duyệt sử dụng IndexedDB và Origin Private File System (OPFS), so sánh các thư viện sql.js vs wa-sqlite và lab Docker mô phỏng đọc ghi đồng thời."
+      content="Dự án tổng kết khóa học SQL trong trình duyệt. Xây dựng một trang Dashboard phân tích dữ liệu bán hàng TechMart chạy 100% offline, tích hợp kết quả truy vấn SQL với biểu đồ SVG động, lưu trữ bền vững với IndexedDB và hỗ trợ xuất/nhập file .sqlite."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-wal-persistence-browser" />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-analytics-dashboard-project" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -222,6 +222,64 @@
         background: #f1f3f5;
         color: #242424;
       }
+      /* Dashboard-specific visualization layouts */
+      .dashboard-charts {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .chart-card {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .chart-card h5 {
+        color: #10b981;
+        margin: 0 0 12px;
+        font-family: sans-serif;
+        font-size: 13px;
+        width: 100%;
+        text-align: left;
+      }
+      .chart-svg {
+        width: 100%;
+        height: 200px;
+      }
+      @media (max-width: 600px) {
+        .dashboard-charts {
+          grid-template-columns: 1fr;
+        }
+      }
+      .dashboard-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        background: #1e1e2e;
+        padding: 12px 16px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+      }
+      .file-input-wrapper {
+        position: relative;
+        overflow: hidden;
+        display: inline-block;
+      }
+      .file-input {
+        position: absolute;
+        left: 0;
+        top: 0;
+        opacity: 0;
+        cursor: pointer;
+        width: 100%;
+        height: 100%;
+      }
     </style>
   </head>
   <body>
@@ -285,8 +343,8 @@
         <div class="container">
           <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
           <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
-          <h1 class="article-hero__title">Bài 16: WAL &amp; Persistence Trong Browser 🐳</h1>
-          <div class="article-hero__meta">5 tháng 7, 2026 · 30 phút đọc</div>
+          <h1 class="article-hero__title">Bài 17: Dự Án Mini Analytics Dashboard</h1>
+          <div class="article-hero__meta">5 tháng 7, 2026 · 40 phút đọc</div>
         </div>
       </section>
 
@@ -296,152 +354,147 @@
             <div class="article-body">
               <div>
                 <p>
-                  Khi chạy cơ sở dữ liệu trên máy chủ, hệ thống có toàn quyền tương tác với hệ thống file của hệ điều
-                  hành. Nhưng khi đưa SQL vào trong trình duyệt (Client-side), chúng ta phải đối mặt với hai thử thách
-                  lớn: làm thế nào để dữ liệu được lưu trữ bền vững (Persistence) qua các phiên tải lại trang, và làm
-                  thế nào để tối ưu hóa tốc độ ghi đĩa thông qua cơ chế
-                  <strong>Write-Ahead Log (WAL)</strong> trong môi trường hộp cát (sandbox) bảo mật. Bài viết này sẽ
-                  phân tích các cơ chế lưu trữ client-side hiện đại nhất, so sánh các thư viện SQLite WASM và cung cấp
-                  bài lab Docker mô phỏng đọc/ghi song song.
+                  Chào mừng bạn đến với bài học cuối cùng trong series SQL trong Trình duyệt. Suốt 16 bài học qua, chúng
+                  ta đã đi từ những câu lệnh truy vấn cơ bản, kỹ thuật JOIN phức tạp, tối ưu hóa Index, đọc cấu trúc
+                  file nhị phân, cho tới các cơ chế lưu trữ bền vững cấp trang. Trong bài học thực chiến tổng kết này,
+                  chúng ta sẽ kết hợp tất cả các kiến thức đó để xây dựng một
+                  <strong>Mini Analytics Dashboard</strong> chạy 100% offline ở client. Hệ thống cho phép nạp dữ liệu
+                  bán hàng, lưu trữ tự động vào IndexedDB, kết nối kết quả SQL với biểu đồ SVG động, và xuất cơ sở dữ
+                  liệu dưới dạng file <code>.sqlite</code>.
                 </p>
 
-                <h2>1. Cơ Chế Hoạt Động Của Chế Độ WAL (Write-Ahead Log)</h2>
-                <p>
-                  Trong chế độ lưu nhật ký giao dịch truyền thống (như <code>DELETE</code> hay <code>TRUNCATE</code>),
-                  khi có một phiên ghi (writer) bắt đầu, SQLite sẽ thực hiện khóa độc quyền (Exclusive Lock) trên toàn
-                  bộ file cơ sở dữ liệu. Mọi tiến trình đọc (readers) khác đều bị chặn hoàn toàn và báo lỗi
-                  <code>database is locked</code> cho tới khi writer hoàn tất và giải phóng khóa.
-                </p>
-                <p>
-                  Chế độ **WAL (Write-Ahead Log)** giải quyết bài toán nghẽn cổ chai này bằng cách thay đổi quy trình
-                  ghi dữ liệu:
-                </p>
+                <h2>1. Kiến Trúc Ứng Dụng Analytics Dashboard Client-Side</h2>
+                <p>Một hệ thống Dashboard phân tích dữ liệu tại client được cấu thành từ 3 lớp kiến trúc chính:</p>
                 <ol>
                   <li>
-                    File cơ sở dữ liệu chính (ví dụ: <code>mydb.sqlite</code>) chỉ chứa dữ liệu đã được cam kết ổn định.
+                    <strong>Tầng Dữ Liệu (Data Layer)</strong>: Quản lý bởi thư viện WebAssembly <code>sql.js</code>. Nó
+                    chịu trách nhiệm khởi chạy cơ sở dữ liệu trong bộ nhớ RAM ảo và thực thi trực tiếp các truy vấn phân
+                    tích SQL.
                   </li>
                   <li>
-                    Khi có transaction ghi mới, SQLite ghi trực tiếp thay đổi vào một file log ghi trước riêng biệt có
-                    hậu tố <strong>`-wal`</strong> (ví dụ: <code>mydb.sqlite-wal</code>).
+                    <strong>Tầng Lưu Trữ (Persistence Layer)</strong>: Kết nối thông qua API
+                    <strong>IndexedDB</strong> của trình duyệt. Mỗi khi cơ sở dữ liệu có sự thay đổi (như thêm đơn hàng
+                    hoặc nạp dữ liệu mới), mảng byte nhị phân của cơ sở dữ liệu sẽ được xuất ra bằng
+                    <code>db.export()</code> và lưu đè vào IndexedDB theo cơ chế Async. Khi tải lại trang, hệ thống tự
+                    động đọc mảng byte này lên và khởi tạo lại database để đảm bảo tính liên tục của dữ liệu.
                   </li>
                   <li>
-                    Các tiến trình đọc dữ liệu không cần đợi tiến trình ghi. Chúng đọc trực tiếp dữ liệu cũ từ file
-                    chính. Đồng thời, writer ghi tiếp vào file WAL mà không hề xảy ra xung đột khóa.
+                    <strong>Tầng Trực Quan Hóa (Visualization Layer)</strong>: Chuyển đổi mảng kết quả của câu lệnh SQL
+                    (dạng bảng hàng/cột) thành các cấu trúc thẻ đồ họa
+                    <strong>SVG (Scalable Vector Graphics)</strong> động. Việc này giúp chúng ta vẽ biểu đồ cột (Bar
+                    Chart) hay biểu đồ đường (Line Chart) mà không cần nạp thêm bất kỳ thư viện vẽ biểu đồ nặng nề nào
+                    khác từ bên ngoài.
                   </li>
                 </ol>
-                <p>
-                  Khi file WAL tích tụ đủ số lượng trang thay đổi (mặc định trong SQLite là khi đạt $1000$ trang, tức
-                  khoảng $4\text{MB}$ dữ liệu), SQLite sẽ thực hiện một thao tác gọi là **Checkpoint**. Checkpoint di
-                  chuyển tất cả các trang dữ liệu mới từ file WAL quay trở lại file chính và xóa trắng file WAL để tái
-                  sử dụng.
-                </p>
-                <p>Cú pháp ép buộc thực hiện checkpoint thủ công trong SQL:</p>
-                <pre><code class="language-sql">-- Thực hiện checkpoint thụ động, chuyển tối đa các trang có thể mà không chặn kết nối khác
-PRAGMA wal_checkpoint(PASSIVE);
 
--- Thực hiện checkpoint triệt để, thu gọn file WAL về kích thước 0
-PRAGMA wal_checkpoint(TRUNCATE);</code></pre>
-
-                <h2>2. Persistence trong Browser: Từ Ghi Đè Nguyên Khối Đến Ghi Theo Trang (OPFS)</h2>
+                <h2>2. Các Truy Vấn Phân Tích Thực Chiến (Analytics Queries)</h2>
                 <p>
-                  Trình duyệt web không cho phép JavaScript ghi trực tiếp vào ổ đĩa vật lý của người dùng vì lý do bảo
-                  mật. Do đó, để lưu trữ bền vững dữ liệu SQLite, các nhà phát triển web đã trải qua nhiều thế hệ giải
-                  pháp:
+                  Để cung cấp số liệu cho Dashboard, chúng ta cần chuẩn bị sẵn 3 câu truy vấn SQL phân tích chính trên
+                  dataset kinh doanh **TechMart** đã dùng xuyên suốt khóa học:
                 </p>
 
-                <table class="comparison-table">
-                  <thead>
-                    <tr>
-                      <th>Giải pháp lưu trữ</th>
-                      <th>Cơ chế hoạt động</th>
-                      <th>Ưu điểm</th>
-                      <th>Nhược điểm (Hiệu năng)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td><strong>RAM thô (sql.js)</strong></td>
-                      <td>Dữ liệu lưu hoàn toàn trên bộ nhớ RAM ảo của WASM.</td>
-                      <td>Dễ tích hợp, không phụ thuộc trình duyệt.</td>
-                      <td>Mất hoàn toàn dữ liệu khi F5/reload trang. Phải xuất/nhập thủ công dạng Blob.</td>
-                    </tr>
-                    <tr>
-                      <td><strong>Ghi đè IndexedDB</strong></td>
-                      <td>
-                        Mỗi khi thay đổi, ứng dụng sao chép (serialize) toàn bộ file DB thành mảng byte lớn và ghi đè
-                        vào IndexedDB.
-                      </td>
-                      <td>Dữ liệu được lưu trữ lại qua các phiên tải trang.</td>
-                      <td>
-                        Cực kỳ chậm khi file DB phình to. File 50MB sẽ tốn ~2-3 giây chỉ để ghi đè dù chỉ thay đổi 1
-                        dòng dữ liệu.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td><strong>Origin Private File System (OPFS)</strong></td>
-                      <td>
-                        Hệ thống file ảo tốc độ cao của trình duyệt (File System Access API). Cho phép ghi ngẫu nhiên
-                        (random-write) từng page dữ liệu nhỏ ngầm qua Web Worker.
-                      </td>
-                      <td>
-                        Tốc độ đọc ghi tương đương ứng dụng native. Chỉ ghi đúng trang 4KB bị thay đổi. Hỗ trợ đầy đủ
-                        WAL.
-                      </td>
-                      <td>
-                        Chỉ hoạt động trên trình duyệt hiện đại. Yêu cầu thiết lập CORS Headers phức tạp (COOP/COEP).
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-
+                <h3>Truy vấn 1: Tổng Doanh Thu Theo Tháng (Monthly Revenue)</h3>
                 <p>
-                  Với <strong>OPFS (Origin Private File System)</strong>, SQLite-WASM có thể mở một kết nối ghi trực
-                  tiếp ở tầng thấp. Khi một giao dịch commit, hệ thống chỉ ghi đúng một vài trang dữ liệu 4KB bị thay
-                  đổi xuống đĩa ảo thay vì phải copy lại toàn bộ file DB. Điều này giúp hiệu năng ghi tăng vọt lên hàng
-                  nghìn lần trên các file cơ sở dữ liệu lớn.
+                  Câu lệnh này trích xuất năm-tháng từ trường <code>order_date</code>, gom nhóm và tính tổng tiền đơn
+                  hàng thành công để vẽ biểu đồ đường xu hướng doanh thu qua các tháng:
                 </p>
+                <pre><code class="language-sql">SELECT strftime('%Y-%m', order_date) AS month_period,
+       ROUND(SUM(total_amount), 2) AS revenue
+FROM orders
+WHERE status != 'cancelled'
+GROUP BY month_period
+ORDER BY month_period ASC;</code></pre>
 
-                <h2>3. Yêu Cầu CORS Để Kích Hoạt OPFS: Thiết Lập COOP và COEP</h2>
+                <h3>Truy vấn 2: Top 5 Sản Phẩm Bán Chạy Nhất (Top 5 Best Sellers)</h3>
                 <p>
-                  Để OPFS hoạt động với SQLite-WASM một cách hiệu quả và an toàn, trình duyệt yêu cầu môi trường chạy
-                  phải được thiết lập cô lập bộ nhớ nâng cao (Cross-Origin Isolation). Điều này đòi hỏi máy chủ web (Web
-                  Server) của bạn phải cấu hình trả về hai HTTP Response Headers bắt buộc sau:
+                  Truy vấn thực hiện JOIN 3 bảng <code>order_items</code>, <code>products</code> và
+                  <code>orders</code> để thống kê tổng số lượng bán ra của từng sản phẩm, phục vụ việc vẽ biểu đồ cột
+                  đứng:
                 </p>
-                <pre><code class="language-http">Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp</code></pre>
-                <p>
-                  Nếu thiếu hai tiêu đề này, trình duyệt sẽ khóa tính năng <strong>SharedArrayBuffer</strong> (bộ nhớ
-                  chia sẻ giữa Main Thread và Web Worker). Thiếu SharedArrayBuffer, SQLite-WASM sẽ không thể truy cập
-                  vào AccessHandle đồng thì của hệ thống file OPFS và sẽ tự động fallback về chế độ lưu trữ tạm thời
-                  trên RAM.
-                </p>
+                <pre><code class="language-sql">SELECT p.product_name,
+       SUM(oi.quantity) AS total_sold
+FROM order_items oi
+JOIN products p ON oi.product_id = p.product_id
+JOIN orders o ON oi.order_id = o.order_id
+WHERE o.status = 'delivered'
+GROUP BY p.product_id
+ORDER BY total_sold DESC
+LIMIT 5;</code></pre>
 
-                <h2>4. So Sánh Các Thư Viện SQLite WASM Hiện Nay</h2>
-                <p>Khi tích hợp SQLite vào dự án Web Frontend, bạn cần cân nhắc lựa chọn giữa các thư viện phổ biến:</p>
+                <h3>Truy vấn 3: Tỷ Lệ Doanh Thu Theo Danh Mục Sản Phẩm (Revenue Share by Category)</h3>
+                <p>
+                  Câu query gom nhóm theo danh mục sản phẩm, tính toán tổng doanh số của từng nhóm để giúp nhà quản lý
+                  phân tích cơ cấu ngành hàng đóng góp chính cho TechMart:
+                </p>
+                <pre><code class="language-sql">SELECT p.category,
+       ROUND(SUM(oi.quantity * oi.unit_price), 2) AS category_revenue
+FROM order_items oi
+JOIN products p ON oi.product_id = p.product_id
+JOIN orders o ON oi.order_id = o.order_id
+WHERE o.status != 'cancelled'
+GROUP BY p.category
+ORDER BY category_revenue DESC;</code></pre>
+
+                <h2>3. Import và Export File Cơ Sở Dữ Liệu Nhị Phân <code>.sqlite</code></h2>
+                <p>
+                  Một điểm thú vị của SQLite là toàn bộ cơ sở dữ liệu được gói gọn trong
+                  <strong>một file duy nhất</strong>. Nhờ đó ở client, chúng ta có thể dễ dàng hiện thực hóa hai chức
+                  năng:
+                </p>
                 <ul>
                   <li>
-                    <strong><code>sql.js</code></strong
-                    >: Thư viện lâu đời, gọn nhẹ. Hoạt động 100% trên bộ nhớ RAM. Thích hợp cho các công cụ nhỏ, xử lý
-                    dữ liệu một lần (như chính trang web js-tools.org này).
+                    <strong>Nhập file (Import)</strong>: Sử dụng thẻ HTML <code>&lt;input type="file"&gt;</code> để đọc
+                    file database từ máy người dùng dưới dạng <code>ArrayBuffer</code> bằng <code>FileReader</code>, rồi
+                    truyền thẳng vào hàm khởi tạo <code>new SQL.Database(new Uint8Array(arrayBuffer))</code>.
                   </li>
                   <li>
-                    <strong><code>wa-sqlite</code></strong
-                    >: Thư viện tối ưu hóa cao của Roy Hashimoto. Nó tự viết một lớp ảo VFS kết nối SQLite-WASM với
-                    IndexedDB thông qua cơ chế ghi theo trang (Page-level Virtual File System), mang lại sự cân bằng
-                    hoàn hảo giữa tính bền vững và tính tương thích cao (không bắt buộc CORS headers).
-                  </li>
-                  <li>
-                    <strong><code>SQLite Official WASM</code></strong
-                    >: Bản phát hành chính thức từ đội ngũ SQLite Core (kể từ bản 3.40.0). Tích hợp sẵn OPFS VFS tối ưu
-                    tuyệt đối về mặt tốc độ ghi nhưng bắt buộc phải có cấu hình COOP/COEP headers từ phía máy chủ web.
+                    <strong>Xuất file (Export)</strong>: Gọi hàm <code>db.export()</code> để nhận về một mảng byte nhị
+                    phân <code>Uint8Array</code>. Sau đó bọc mảng này vào đối tượng <code>Blob</code> với kiểu MIME là
+                    <code>application/x-sqlite3</code> và tạo một đường link tải xuống ảo (virtual download link) để lưu
+                    file về máy tính.
                   </li>
                 </ul>
 
-                <h2>5. Mô Phỏng Checkpoint Trên Trình Duyệt</h2>
+                <h2>4. Thiết Kế Trực Quan Hóa Bằng SVG Động (Dynamic SVG Charts)</h2>
                 <p>
-                  Sân chơi tương tác dưới đây mô phỏng hoạt động của chế độ WAL và checkpoint. Bạn có thể chèn dữ liệu
-                  ghi nhận và gọi lệnh checkpoint để theo dõi trạng thái.
+                  Đồ họa SVG là một phần của tiêu chuẩn HTML5. Chúng ta có thể tạo ra các thẻ đồ họa như
+                  <code>&lt;rect&gt;</code> (vẽ cột), <code>&lt;polyline&gt;</code> (vẽ đường nối các tọa độ) hay
+                  <code>&lt;text&gt;</code> (viết chữ nhãn) trực tiếp từ JavaScript.
                 </p>
+                <p>
+                  Công thức tính toán tọa độ cột cho biểu đồ SVG có kích thước $W \times H$: Nếu giá trị lớn nhất trong
+                  tập dữ liệu là \(V_{\max}\), và giá trị của phần tử hiện tại là $V$, chiều cao thực tế của cột \(h\)
+                  được chuẩn hóa theo tỷ lệ: \[ h = \frac{V}{V_{\max}} \times (H - \text{padding}) \] Tọa độ gốc trên
+                  màn hình $y$ để vẽ cột từ dưới lên (vì hệ tọa độ SVG có gốc ở góc trên bên trái): \[ y = H - h -
+                  \text{offset\_bottom} \]
+                </p>
+                <p>
+                  Việc này giúp chúng ta tạo ra các biểu đồ cực kỳ nhẹ, phản hồi tương tác mượt mà và tương thích tốt
+                  với mọi thiết kế responsive của giao diện di động.
+                </p>
+
+                <h2>5. Trải Nghiệm Dự Án Analytics Dashboard</h2>
+                <p>
+                  Dưới đây là khu vực làm việc của dự án. Giao diện được thiết kế gồm bảng điều khiển nhập xuất file,
+                  trình gõ query SQL tùy chọn, bảng hiển thị kết quả và bộ đôi biểu đồ SVG tự động cập nhật theo kết quả
+                  query.
+                </p>
+
+                <!-- Dashboard Controls and File Ops -->
+                <div class="dashboard-controls">
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                    <div class="file-input-wrapper">
+                      <button class="sql-btn sql-btn--primary">📥 Nạp File .sqlite</button>
+                      <input type="file" id="db-file-input" class="file-input" accept=".sqlite,.db" />
+                    </div>
+                    <button id="db-export-btn" class="sql-btn" style="border-color: #10b981; color: #10b981">
+                      📤 Xuất File .sqlite
+                    </button>
+                  </div>
+                  <div style="font-size: 12px; color: #a6adc8" id="db-storage-status">
+                    Trạng thái lưu trữ IndexedDB: Đang kiểm tra...
+                  </div>
+                </div>
 
                 <!-- SQL Workbench Sandbox -->
                 <div class="sql-workbench">
@@ -454,7 +507,7 @@ Cross-Origin-Embedder-Policy: require-corp</code></pre>
                         id="sql-editor"
                         class="sql-editor"
                         spellcheck="false"
-                        placeholder="Nhập câu lệnh SQL tại đây..."
+                        placeholder="Nhập câu lệnh SQL phân tích..."
                       ></textarea>
                     </div>
                     <div class="sql-side-panel">
@@ -470,65 +523,45 @@ Cross-Origin-Embedder-Policy: require-corp</code></pre>
                     <h4>📋 Sơ đồ bảng hiện có (Schema)</h4>
                     <div id="sql-schema-content"></div>
                   </div>
+
+                  <!-- Charts Grid Visualizer -->
+                  <div class="dashboard-charts">
+                    <div class="chart-card">
+                      <h5>📊 Biểu Đồ Cột: Thống Kê Sản Lượng/Doanh Số</h5>
+                      <svg class="chart-svg" id="chart-bar" viewBox="0 0 400 200">
+                        <text x="200" y="100" fill="#6c7086" text-anchor="middle" font-size="12">
+                          Bấm chạy query để vẽ biểu đồ cột...
+                        </text>
+                      </svg>
+                    </div>
+                    <div class="chart-card">
+                      <h5>📈 Biểu Đồ Đường: Xu Hướng Theo Thời Gian</h5>
+                      <svg class="chart-svg" id="chart-line" viewBox="0 0 400 200">
+                        <text x="200" y="100" fill="#6c7086" text-anchor="middle" font-size="12">
+                          Bấm chạy query để vẽ biểu đồ đường...
+                        </text>
+                      </svg>
+                    </div>
+                  </div>
+
                   <div class="sql-results-container">
                     <div id="sql-results">
-                      <div class="sql-results-empty">Kết quả truy vấn sẽ hiển thị ở đây...</div>
+                      <div class="sql-results-empty">Kết quả bảng số liệu sẽ hiển thị ở đây...</div>
                     </div>
                   </div>
                 </div>
 
-                <h2>6. Thực Hành Nâng Cao Với Docker: Đọc Ghi Song Song Trên WAL Thật</h2>
-                <p>
-                  Do WASM chạy trong môi trường đơn luồng của sandbox trình duyệt nên chúng ta khó lòng tự tay kiểm
-                  chứng việc đọc ghi song song (đồng thời). Bạn hãy thực hiện lab Docker tại nhà bằng SQLite CLI để cảm
-                  nhận sự khác biệt.
-                </p>
-
                 <div class="callout callout--deep">
-                  <div class="callout__title">🐳 Lab tại nhà: Kiểm chứng đọc ghi song song giữa journal thô và WAL</div>
+                  <div class="callout__title">🔬 Đào sâu: Persist bằng IndexedDB hoạt động thế nào dưới nắp máy?</div>
                   <div class="callout__content">
-                    Hãy chuẩn bị một file database SQLite trống <code>test.db</code> trong thư mục local và mở hai
-                    Terminal cùng trỏ vào thư mục đó:
-                    <ol>
-                      <li>
-                        <strong>Mô phỏng với chế độ DELETE mặc định:</strong>
-                        <ul>
-                          <li>
-                            <strong>Terminal 1:</strong> Khởi tạo bảng và chạy một giao dịch ghi dài:
-                            <pre><code class="language-sql">sqlite3 test.db
-PRAGMA journal_mode = DELETE;
-CREATE TABLE logs (val TEXT);
-BEGIN;
-INSERT INTO logs VALUES ('log_data');
--- Giữ nguyên Terminal 1 chưa gọi COMMIT!</code></pre>
-                          </li>
-                          <li>
-                            <strong>Terminal 2:</strong> Thử thực hiện đọc dữ liệu:
-                            <pre><code class="language-sql">sqlite3 test.db
-SELECT * FROM logs;
--- → Kết quả: Bị chặn hoàn toàn và báo lỗi: Error: database is locked</code></pre>
-                          </li>
-                        </ul>
-                      </li>
-                      <li style="margin-top: 12px">
-                        <strong>Mô phỏng với chế độ WAL:</strong>
-                        <ul>
-                          <li>Quay lại <strong>Terminal 1</strong> gõ <code>COMMIT;</code> để giải phóng khóa.</li>
-                          <li>
-                            Thiết lập chế độ WAL:
-                            <pre><code class="language-sql">PRAGMA journal_mode = WAL;
-BEGIN;
-INSERT INTO logs VALUES ('new_log_data');
--- Vẫn giữ nguyên chưa COMMIT!</code></pre>
-                          </li>
-                          <li>
-                            Sang <strong>Terminal 2</strong> chạy lại câu lệnh đọc:
-                            <pre><code class="language-sql">SELECT * FROM logs;
--- → Kết quả: ĐỌC ĐƯỢC NGAY LẬP TỨC dữ liệu cũ ('log_data') mà không hề bị chặn! Ghi và Đọc đã diễn ra song song hoàn hảo.</code></pre>
-                          </li>
-                        </ul>
-                      </li>
-                    </ol>
+                    Ứng dụng của chúng ta mở một cơ sở dữ liệu IndexedDB tên là <code>TechMartDashboardDB</code>, tạo
+                    một object store tên là <code>db_store</code>. Khi bạn sửa dữ liệu (ví dụ chạy lệnh update, insert),
+                    một hàm async sẽ xuất database ra mảng byte và thực hiện transaction ghi vào IndexedDB:
+                    <pre><code class="language-js">const transaction = idb.transaction(['db_store'], 'readwrite');
+const store = transaction.objectStore('db_store');
+store.put(db.export(), 'current_sqlite_db');</code></pre>
+                    Quy trình này diễn ra hoàn toàn offline, độc lập và bảo mật cao do dữ liệu không bao giờ rời khỏi
+                    trình duyệt của người dùng.
                   </div>
                 </div>
               </div>
@@ -540,8 +573,8 @@ INSERT INTO logs VALUES ('new_log_data');
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Điểm cải tiến cốt lõi nhất của chế độ Write-Ahead Log (WAL) so với các chế độ lưu nhật ký
-                    truyền thống trong SQLite là gì?
+                    Câu 1: Điểm mạnh lớn nhất khi sử dụng SVG để tự thiết kế biểu đồ thay vì dùng các thư viện lớn như
+                    Chart.js là gì?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -551,11 +584,12 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           true,
-                          'WAL tách biệt thay đổi vào file log phụ -wal, cho phép các tiến trình đọc (readers) và ghi (writer) hoạt động song song mà không khóa lẫn nhau.'
+                          'SVG là tiêu chuẩn HTML5 có sẵn trong trình duyệt, giúp biểu đồ vô cùng nhẹ, dễ tùy biến bằng DOM API và CSS mà không cần tải thêm bất kỳ file script ngoài nào.'
                         )
                       "
                     >
-                      A. Cho phép tác vụ đọc và tác vụ ghi diễn ra song song cùng lúc mà không xảy ra xung đột khóa.
+                      A. Nhẹ tuyệt đối, tương thích ngược tốt, không phụ thuộc thư viện ngoài và có thể css trực tiếp
+                      bằng class thông thường.
                     </button>
                     <button
                       class="quiz-option"
@@ -563,11 +597,11 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           false,
-                          'WAL không mã hóa dữ liệu, việc bảo mật phải được xử lý ở tầng ứng dụng hoặc phần cứng.'
+                          'Thực tế, Chart.js hỗ trợ nhiều hiệu ứng 3D và thuật toán phức tạp được tối ưu sẵn hơn SVG thô.'
                         )
                       "
                     >
-                      B. Tự động mã hóa file cơ sở dữ liệu bằng thuật toán AES-256.
+                      B. Hỗ trợ vẽ các mô hình đồ họa 3D xoay chiều phức tạp hơn canvas.
                     </button>
                     <button
                       class="quiz-option"
@@ -575,11 +609,11 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           false,
-                          'Index B-Tree hoạt động bình thường trên mọi chế độ journal_mode của SQLite.'
+                          'SVG chạy hoàn toàn ở luồng CPU chính, không được tự động tính toán bằng GPU giống như WebGL/WebGPU.'
                         )
                       "
                     >
-                      C. Nó loại bỏ hoàn toàn việc tạo chỉ mục B-Tree để tiết kiệm bộ nhớ.
+                      C. Tự động chuyển toàn bộ tác vụ render biểu đồ sang GPU để chạy nhanh hơn 100 lần.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -588,8 +622,8 @@ INSERT INTO logs VALUES ('new_log_data');
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Tại sao giải pháp lưu trữ Origin Private File System (OPFS) lại có hiệu năng vượt trội hơn
-                    phương pháp lưu đè nguyên khối IndexedDB khi dữ liệu phình to?
+                    Câu 2: Tại sao chúng ta cần lưu trữ file cơ sở dữ liệu nhị phân dưới dạng ArrayBuffer vào IndexedDB
+                    thay vì LocalStorage?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -598,11 +632,11 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           false,
-                          'IndexedDB hoàn toàn lưu trên đĩa cứng chứ không phải chạy trên đám mây.'
+                          'Ngược lại, LocalStorage mới là đồng bộ (synchronous), gây lag trình duyệt khi ghi file lớn.'
                         )
                       "
                     >
-                      A. Vì IndexedDB lưu dữ liệu trên máy chủ đám mây nên bị ảnh hưởng bởi tốc độ mạng.
+                      A. Vì LocalStorage là lưu trữ bất đồng bộ nên không bảo đảm tính toàn vẹn ACID của transaction.
                     </button>
                     <button
                       class="quiz-option"
@@ -611,12 +645,12 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           true,
-                          'OPFS hỗ trợ ghi ngẫu nhiên (random-access), cho phép SQLite ghi trực tiếp đúng các trang page dữ liệu 4KB bị thay đổi xuống ổ đĩa ảo, bỏ qua bước serialize và ghi đè nguyên cả file DB lớn của IndexedDB.'
+                          'IndexedDB cho phép lưu trữ dữ liệu nhị phân dung lượng lớn (lên tới hàng trăm MB hoặc GB) bất đồng bộ. LocalStorage giới hạn dung lượng tối đa 5MB và bắt buộc phải mã hóa dữ liệu thành chuỗi string Base64 gây phình dung lượng và làm đơ UI.'
                         )
                       "
                     >
-                      B. Vì OPFS hỗ trợ ghi ngẫu nhiên từng trang page dữ liệu 4KB bị thay đổi, tránh được việc phải sao
-                      chép ghi đè toàn bộ file DB khổng lồ mỗi lần có thay đổi nhỏ.
+                      B. Vì IndexedDB hỗ trợ lưu trữ dữ liệu nhị phân bất đồng bộ với dung lượng lớn (hàng trăm MB),
+                      trong khi LocalStorage giới hạn 5MB và bắt buộc phải chuyển sang dạng chuỗi văn bản.
                     </button>
                     <button
                       class="quiz-option"
@@ -624,11 +658,11 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           false,
-                          'Cả hai giải pháp đều chạy 100% dưới local client, không sử dụng tài nguyên CPU bên ngoài.'
+                          'Cả hai giải pháp đều lưu trữ dữ liệu offline tại client cục bộ, không tự động đồng bộ lên đám mây.'
                         )
                       "
                     >
-                      C. Vì OPFS chuyển toàn bộ các phép tính toán truy vấn SQL lên luồng xử lý của card đồ họa GPU.
+                      C. Vì LocalStorage tự động gửi toàn bộ file DB về máy chủ mỗi khi reload làm lộ thông tin bảo mật.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -637,8 +671,8 @@ INSERT INTO logs VALUES ('new_log_data');
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Tại sao trình duyệt lại yêu cầu cấu hình các HTTP response headers COOP và COEP để sử dụng
-                    OPFS AccessHandle?
+                    Câu 3: Làm thế nào để ứng dụng Analytics Dashboard này có thể chạy hoàn toàn offline không cần kết
+                    nối mạng?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -647,11 +681,11 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           false,
-                          'CORS thông thường không đủ để cấp quyền SharedArrayBuffer do các lỗ hổng bảo mật mức CPU như Spectre.'
+                          'WASM chạy hoàn toàn offline tại trình duyệt client sau khi đã tải file về máy.'
                         )
                       "
                     >
-                      A. Để cấp quyền cho trình duyệt kết nối với các API cơ sở dữ liệu bên ngoài qua cổng CORS.
+                      A. Nhờ công nghệ WebAssembly tự động đồng bộ hóa dữ liệu với các vệ tinh định vị toàn cầu.
                     </button>
                     <button
                       class="quiz-option"
@@ -660,18 +694,24 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           true,
-                          'Các header COOP/COEP cô lập trang web ở mức bộ nhớ phần cứng, cho phép trình duyệt kích hoạt SharedArrayBuffer một cách an toàn để trao đổi dữ liệu tốc độ cao giữa Web Worker và Main Thread.'
+                          'Toàn bộ tài nguyên (HTML/CSS/JS), thư viện engine SQLite WASM, và dữ liệu lưu trữ IndexedDB đều nằm cục bộ tại trình duyệt của thiết bị client, không cần gọi bất kỳ API server bên ngoài nào.'
                         )
                       "
                     >
-                      B. Để đưa trang web vào trạng thái cô lập Cross-Origin Isolation, cho phép kích hoạt tính năng
-                      SharedArrayBuffer vốn cần thiết cho việc đồng bộ dữ liệu tốc độ cao ngầm dưới Worker.
+                      B. Do engine biên dịch SQLite WASM chạy trực tiếp trên bộ nhớ trình duyệt kết hợp lưu trữ
+                      IndexedDB cục bộ tại máy khách.
                     </button>
                     <button
                       class="quiz-option"
-                      onclick="checkQuiz(this, false, 'COOP/COEP hoàn toàn không liên quan đến việc nén ảnh.')"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Cookie không dùng để lưu trữ file database nhị phân và không liên quan đến khả năng chạy offline.'
+                        )
+                      "
                     >
-                      C. Để nén các file hình ảnh và âm thanh trong bộ đệm nhằm tiết kiệm băng thông.
+                      C. Ứng dụng tự động lưu vết các truy vấn vào bộ nhớ đệm Cookie của hệ thống.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -680,7 +720,8 @@ INSERT INTO logs VALUES ('new_log_data');
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 4: Thao tác Checkpoint trong chế độ WAL của SQLite thực chất làm công việc gì?
+                    Câu 4: Khi người dùng chọn tải lên một file database <code>.sqlite</code> mới, làm thế nào để engine
+                    WASM cập nhật dữ liệu mới này?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -690,12 +731,12 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           true,
-                          'Checkpoint sao chép các trang thay đổi tích tụ trong file -wal ngược về file database chính để đồng nhất dữ liệu và giải phóng file log.'
+                          'FileReader đọc file thành ArrayBuffer, chuyển đổi thành mảng byte Uint8Array và khởi tạo một đối tượng SQL.Database mới thay thế cho đối tượng database cũ.'
                         )
                       "
                     >
-                      A. Đồng bộ hóa, di chuyển các trang dữ liệu mới từ file log phụ hậu tố <code>-wal</code> trở lại
-                      file cơ sở dữ liệu chính.
+                      A. FileReader đọc file thành một ArrayBuffer nhị phân, chuyển sang mảng byte và khởi tạo lại đối
+                      tượng SQL.Database mới.
                     </button>
                     <button
                       class="quiz-option"
@@ -703,11 +744,11 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           false,
-                          'Checkpoint là quy trình đồng bộ dữ liệu nội bộ dưới đĩa, không liên quan đến việc kiểm tra lỗi chính tả SQL.'
+                          'SQLite WASM không thể đọc trực tiếp đường dẫn file cục bộ mà phải thông qua FileReader.'
                         )
                       "
                     >
-                      B. Quét toàn bộ mã SQL của ứng dụng để tìm kiếm các lỗi bảo mật SQL Injection.
+                      B. SQLite WASM tự động gửi đường dẫn tuyệt đối của file về máy chủ để phân tích và chèn ngược lại.
                     </button>
                     <button
                       class="quiz-option"
@@ -715,11 +756,11 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           false,
-                          'Mục tiêu của checkpoint là ghi dữ liệu về file chính và dọn dẹp file WAL, không phải để tạo thêm file bản sao lưu backup.'
+                          'SQLite WASM không có lệnh IMPORT DATABASE, việc thay thế được thực hiện bằng cách khởi tạo lại đối tượng db.'
                         )
                       "
                     >
-                      C. Tạo một bản sao lưu (backup) nén dạng ZIP của cơ sở dữ liệu gửi lên máy chủ.
+                      C. Engine chạy câu lệnh SQL đặc biệt <code>IMPORT DATABASE FROM 'file_path';</code>.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -728,33 +769,23 @@ INSERT INTO logs VALUES ('new_log_data');
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 5: Trong thư viện <code>wa-sqlite</code>, làm thế nào để nó giải quyết bài toán lưu trữ bền vững
-                    mà không bắt buộc máy chủ phải cấu hình CORS Headers COOP/COEP phức tạp?
+                    Câu 5: Nhược điểm lớn nhất của việc lưu trữ nguyên khối cơ sở dữ liệu vào IndexedDB khi file
+                    database lớn hơn 100MB là gì?
                   </p>
                   <div class="quiz-options">
                     <button
                       class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Nó vẫn lưu trữ dữ liệu bền vững dưới IndexedDB của trình duyệt người dùng.'
-                        )
-                      "
+                      onclick="checkQuiz(this, false, 'IndexedDB hoàn toàn cho phép lưu trữ file lớn hơn 100MB.')"
                     >
-                      A. Nó từ bỏ hoàn toàn việc lưu trữ dữ liệu lâu dài và chỉ chạy tạm thời trên bộ nhớ RAM.
+                      A. Trình duyệt tự động chặn và báo lỗi bảo mật không cho phép lưu file lớn hơn 50MB.
                     </button>
                     <button
                       class="quiz-option"
                       onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Không có dịch vụ đám mây trung gian nào được wa-sqlite sử dụng, toàn bộ dữ liệu lưu trữ offline tại client.'
-                        )
+                        checkQuiz(this, false, 'Dữ liệu ghi vào IndexedDB hoàn toàn được lưu giữ bền vững lâu dài.')
                       "
                     >
-                      B. Nó gửi dữ liệu qua một websocket tới máy chủ đám mây của Roy Hashimoto để lưu trữ hộ.
+                      B. Dữ liệu sẽ tự động bị xóa đi sau mỗi 24 giờ để dọn dẹp bộ nhớ đệm của hệ điều hành.
                     </button>
                     <button
                       class="quiz-option"
@@ -763,12 +794,12 @@ INSERT INTO logs VALUES ('new_log_data');
                         checkQuiz(
                           this,
                           true,
-                          'wa-sqlite tự viết một lớp ảo VFS tùy chỉnh trong JavaScript để đọc/ghi từng page 4KB riêng lẻ trực tiếp xuống IndexedDB thay vì ghi đè nguyên khối, nhờ đó không cần dùng tới SharedArrayBuffer và tránh được ràng buộc CORS.'
+                          'Mỗi lần có thay đổi nhỏ, ta phải xuất toàn bộ 100MB ra mảng byte và ghi đè nguyên khối vào IndexedDB, gây nghẽn luồng xử lý và làm đơ giao diện người dùng do quá tải I/O. Đây là lúc ta cần nâng cấp lên OPFS ghi theo từng trang.'
                         )
                       "
                     >
-                      C. Nó tự triển khai một lớp Virtual File System (VFS) bằng JavaScript để thực hiện đọc/ghi dữ liệu
-                      theo trang trực tiếp xuống IndexedDB mà không cần dùng đến SharedArrayBuffer.
+                      C. Gây nghẽn luồng xử lý (CPU block) và đơ giao diện do phải serialize xuất ghi đè toàn bộ mảng
+                      byte 100MB mỗi lần có thay đổi dữ liệu nhỏ.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -779,21 +810,21 @@ INSERT INTO logs VALUES ('new_log_data');
                 <h3>📖 Tài liệu tham khảo / References</h3>
                 <ul>
                   <li>
-                    <a href="https://www.sqlite.org/wal.html" target="_blank" rel="noopener noreferrer"
-                      >SQLite Official Docs — Write-Ahead Log</a
-                    >
-                  </li>
-                  <li>
                     <a
-                      href="https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API/Origin_private_file_system"
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >MDN Web Docs — Origin Private File System (OPFS)</a
+                      >MDN Web Docs — IndexedDB API</a
                     >
                   </li>
                   <li>
-                    <a href="https://github.com/rhashimoto/wa-sqlite" target="_blank" rel="noopener noreferrer"
-                      >GitHub — Roy Hashimoto wa-sqlite VFS Implementation</a
+                    <a href="https://developer.mozilla.org/en-US/docs/Web/SVG" target="_blank" rel="noopener noreferrer"
+                      >MDN Web Docs — Scalable Vector Graphics (SVG)</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://github.com/sql-js/sql.js" target="_blank" rel="noopener noreferrer"
+                      >GitHub — sql.js (SQLite WebAssembly port)</a
                     >
                   </li>
                 </ul>
@@ -803,11 +834,11 @@ INSERT INTO logs VALUES ('new_log_data');
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="sql-analytics-dashboard-project" class="article-related__link article-related__link--next">
-                    Bài 17: Dự Án Mini Analytics Dashboard
-                  </a>
-                  <a href="sql-performance-engineering" class="article-related__link article-related__link--prev">
-                    Bài 15: Performance Engineering 🐳
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Chúc mừng bạn đã hoàn thành trọn vẹn Lộ trình SQL! 🎓
+                  </span>
+                  <a href="sql-wal-persistence-browser" class="article-related__link article-related__link--prev">
+                    Bài 16: WAL &amp; Persistence Trong Browser 🐳
                   </a>
                   <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
                 </div>
@@ -942,6 +973,6 @@ INSERT INTO logs VALUES ('new_log_data');
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
     <script src="vendor/sql-wasm.js" defer></script>
-    <script src="sql-wal-persistence-browser.js" defer></script>
+    <script src="sql-analytics-dashboard-project.js" defer></script>
   </body>
 </html>
