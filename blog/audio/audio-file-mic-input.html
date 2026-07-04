@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 4: AnalyserNode &amp; FFT — js-tools</title>
+    <title>Bài 5: Phát &amp; Xử Lý File/Mic — js-tools</title>
     <meta
       name="description"
-      content="Biến đổi Fourier (FFT) tách 1 tín hiệu thành các tần số thành phần, AnalyserNode với fftSize/smoothingTimeConstant, getByteFrequencyData và getByteTimeDomainData. Sân chơi tương tác: spectrum analyzer + waveform vẽ real-time trên Canvas."
+      content="decodeAudioData giải mã file âm thanh thành AudioBuffer, MediaElementSourceNode bọc thẻ audio HTML5, getUserMedia lấy đầu vào micro, và đo âm lượng RMS. Sân chơi tương tác: visualizer nhạc upload + đo âm lượng từ micro."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/audio/audio-analyser-fft" />
+    <link rel="canonical" href="https://js-tools.org/blog/audio/audio-file-mic-input" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="../ide.css" />
     <script defer src="../prism.js"></script>
     <style>
-      /* Web Audio AnalyserNode/FFT Sandbox styles */
+      /* Web Audio File/Mic Input Sandbox styles */
       .graph-sandbox {
         background: #181825;
         border: 1px solid var(--border);
@@ -48,23 +48,6 @@
         display: block;
         margin-bottom: 4px;
       }
-      .graph-controls input[type='range'] {
-        width: 100%;
-      }
-      .graph-controls select {
-        width: 100%;
-        padding: 6px 8px;
-        border-radius: 6px;
-        border: 1px solid var(--border);
-        background: #1e1e2e;
-        color: #cdd6f4;
-        font-size: 12px;
-      }
-      .graph-value {
-        font-family: monospace;
-        color: #a855f7;
-        font-size: 12px;
-      }
       .graph-btn-row {
         display: flex;
         gap: 6px;
@@ -83,6 +66,12 @@
       .graph-btn:hover {
         background: #313244;
       }
+      .graph-btn.is-active {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #fff;
+        font-weight: 600;
+      }
       .graph-btn--primary {
         background: #a855f7;
         border-color: #a855f7;
@@ -100,6 +89,11 @@
       }
       .graph-btn--stop:hover {
         background: #8a3040;
+      }
+      .graph-file-input {
+        width: 100%;
+        font-size: 11px;
+        color: #cdd6f4;
       }
       .graph-log {
         background: #0f0f1b;
@@ -238,8 +232,8 @@
         <div class="container">
           <a href="audio-programming-series" class="article-hero__back">← Quay lại Lộ trình Web Audio API</a>
           <div class="article-hero__tag article-hero__tag--audio">Web Audio API</div>
-          <h1 class="article-hero__title">Bài 4: AnalyserNode &amp; FFT</h1>
-          <div class="article-hero__meta">4 tháng 7, 2026 · 13 phút đọc</div>
+          <h1 class="article-hero__title">Bài 5: Phát &amp; Xử Lý File/Mic</h1>
+          <div class="article-hero__meta">4 tháng 7, 2026 · 14 phút đọc</div>
         </div>
       </section>
 
@@ -249,113 +243,99 @@
             <div class="article-body">
               <div>
                 <p>
-                  3 bài trước tạo và xử lý âm thanh; bài này <strong>quan sát</strong> nó. <code>AnalyserNode</code>
-                  không tạo ra hay biến đổi âm thanh — nó là 1 "điểm dò" (tap) đọc dữ liệu tín hiệu đang chạy qua, cho
-                  phép vẽ waveform và spectrum tần số thời gian thực — nền tảng của mọi visualizer nhạc.
+                  4 bài trước dùng <code>OscillatorNode</code> làm nguồn — tiện cho học, nhưng thực tế thường cần phát
+                  file nhạc thật hoặc bắt âm thanh từ micro. Bài này thêm 2 nguồn mới cùng cách đo độ to (loudness)
+                  chuẩn hơn biên độ đỉnh đơn thuần.
                 </p>
 
-                <h2>1. Biến Đổi Fourier (FFT): Trực Giác Cơ Bản</h2>
+                <h2>1. <code>decodeAudioData</code>: Giải Mã File Thành <code>AudioBuffer</code></h2>
                 <p>
-                  Mọi tín hiệu âm thanh phức tạp — dù là hợp âm, giọng nói, hay tiếng trống — về mặt toán học đều có thể
-                  phân tích thành <strong>tổng của nhiều sóng sine đơn giản</strong> ở các tần số, biên độ, và pha khác
-                  nhau. Biến đổi Fourier Nhanh (FFT — Fast Fourier Transform) là thuật toán tách 1 đoạn tín hiệu theo
-                  thời gian thành đúng những thành phần tần số đó — biến 1 dạng sóng rối rắm thành 1 biểu đồ rõ ràng:
-                  "tần số này có bao nhiêu năng lượng".
-                </p>
-
-                <h2>2. Thiết Lập <code>AnalyserNode</code>: <code>fftSize</code> Và Độ Phân Giải</h2>
-                <p>
-                  <code>audioContext.createAnalyser()</code> tạo 1 node đặc biệt — kết nối vào giữa đồ thị (như 1 điểm
-                  rẽ nhánh) để đọc dữ liệu mà không ảnh hưởng âm thanh thật sự phát ra.
-                  <code>analyser.fftSize</code> (phải là luỹ thừa của 2, từ 32 tới 32768) quyết định độ phân giải: FFT
-                  càng lớn, càng nhiều tần số phân biệt được, nhưng cũng chậm cập nhật hơn theo thời gian.
+                  Đọc file âm thanh (upload hoặc <code>fetch</code>) dưới dạng <code>ArrayBuffer</code>, rồi
+                  <code>audioContext.decodeAudioData(arrayBuffer)</code> giải mã toàn bộ (MP3, WAV, OGG...) thành 1
+                  <code>AudioBuffer</code> — PCM thô nằm sẵn trong bộ nhớ, sẵn sàng phát qua
+                  <code>AudioBufferSourceNode</code>. Giống <code>OscillatorNode</code>, source node này cũng chỉ
+                  <code>start()</code> được đúng 1 lần — phát lại phải tạo node mới (buffer gốc thì tái sử dụng thoải
+                  mái).
                 </p>
 
                 <div class="callout callout--note">
                   <div class="callout__title">
-                    ℹ️ Vì sao <code>frequencyBinCount</code> chỉ bằng đúng 1 nửa <code>fftSize</code>?
+                    ℹ️ <code>decodeAudioData</code> giải mã TOÀN BỘ file vào bộ nhớ cùng lúc
                   </div>
                   <div class="callout__content">
-                    Theo định lý Nyquist, tần số cao nhất có thể biểu diễn chính xác từ 1 tín hiệu lấy mẫu là
-                    <strong>đúng 1 nửa sample rate</strong> (VD sampleRate 48000 Hz → tối đa 24000 Hz). Nửa còn lại của
-                    kết quả FFT thô là ảnh đối xứng (mirror), không mang thêm thông tin mới — nên Web Audio chỉ trả về
-                    <code>analyser.frequencyBinCount = fftSize / 2</code> giá trị thực sự hữu ích.
+                    Phù hợp cho hiệu ứng ngắn (tiếng click, hit game) — nhưng với 1 bản nhạc dài vài phút, giải mã toàn
+                    bộ trước khi phát được gì cả vừa tốn thời gian chờ vừa tốn RAM đáng kể. Với file dài, mục 2
+                    (<code>MediaElementSourceNode</code>) là lựa chọn hợp lý hơn nhiều.
                   </div>
                 </div>
+
+                <h2>2. <code>MediaElementSourceNode</code>: Bọc Thẻ <code>&lt;audio&gt;</code> HTML5</h2>
+                <p>
+                  <code>audioContext.createMediaElementSource(audioElement)</code> biến 1 thẻ
+                  <code>&lt;audio&gt;</code>/<code>&lt;video&gt;</code> bình thường thành 1 node trong đồ thị Web Audio
+                  — tận dụng luôn cơ chế streaming/buffer tăng dần sẵn có của trình duyệt (không cần chờ tải/giải mã
+                  xong toàn bộ), trong khi vẫn áp được filter/analyser/hiệu ứng như mọi node khác đã học.
+                </p>
+
+                <h2>3. <code>getUserMedia</code>: Đầu Vào Micro</h2>
+                <p>
+                  <code>navigator.mediaDevices.getUserMedia({'{'} audio: true {'}'})</code> xin quyền micro, trả về 1
+                  <code>MediaStream</code>. <code>audioContext.createMediaStreamSource(stream)</code> biến stream đó
+                  thành 1 <code>AudioNode</code> — nối tiếp vào <code>AnalyserNode</code> y hệt mọi nguồn khác đã học.
+                </p>
 
                 <div class="callout callout--pitfall">
                   <div class="callout__title">
-                    🕳️ Cạm bẫy thường gặp: quên nối <code>analyser</code> tiếp tới <code>destination</code>
+                    🕳️ Cạm bẫy thường gặp: nối mic thẳng tới <code>destination</code> gây hú rít (feedback loop)
                   </div>
                   <div class="callout__content">
-                    <code>AnalyserNode</code> chỉ là 1 điểm dò dữ liệu — nó KHÔNG tự động phát tiếp âm thanh ra loa. Nếu
-                    chỉ <code>source.connect(analyser)</code> mà quên <code>analyser.connect(destination)</code>,
-                    visualizer vẫn vẽ được (vì đọc dữ liệu không cần phát ra loa) nhưng người dùng sẽ không nghe thấy gì
-                    cả — 1 lỗi rất dễ bỏ sót vì visualizer trông vẫn "chạy đúng".
-                  </div>
-                </div>
-
-                <h2>3. <code>getByteFrequencyData()</code> Và <code>getByteTimeDomainData()</code></h2>
-                <table class="comparison-table">
-                  <thead>
-                    <tr>
-                      <th>Phương thức</th>
-                      <th>Trả về gì</th>
-                      <th>Dùng để vẽ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td><code>getByteFrequencyData(array)</code></td>
-                      <td>Năng lượng (0–255) tại mỗi dải tần số (frequency bin)</td>
-                      <td>Spectrum analyzer (thanh cột theo tần số)</td>
-                    </tr>
-                    <tr>
-                      <td><code>getByteTimeDomainData(array)</code></td>
-                      <td>Biên độ mẫu thô (0–255, tâm ở 128) theo thời gian</td>
-                      <td>Waveform / oscilloscope (dạng sóng thô)</td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p>
-                  Cả 2 đều cần gọi lại <strong>mỗi frame</strong> trong vòng lặp <code>requestAnimationFrame</code> — dữ
-                  liệu chỉ phản ánh đúng khoảnh khắc hiện tại, không tự động cập nhật nếu không đọc lại.
-                </p>
-
-                <div class="callout callout--deep">
-                  <div class="callout__title">
-                    🔬 Đào sâu: <code>smoothingTimeConstant</code> làm mượt dữ liệu giữa các frame
-                  </div>
-                  <div class="callout__content">
-                    <code>analyser.smoothingTimeConstant</code> (0–1, mặc định 0.8) trộn kết quả FFT khung hình hiện tại
-                    với khung hình <strong>ngay trước đó</strong> theo tỉ lệ đó — giá trị càng cao, thanh spectrum càng
-                    mượt mà/ít giật, nhưng phản ứng càng chậm hơn với thay đổi thực tế của âm thanh. Giá trị 0 cho dữ
-                    liệu thô, giật nhưng phản ứng tức thời.
+                    Nếu vô tình nối <code>micSource.connect(audioContext.destination)</code>, âm thanh từ loa sẽ bị
+                    chính micro thu lại, khuếch đại, phát ra loa, thu lại tiếp... tạo vòng lặp hú rít (audio feedback)
+                    giống hệt micro để gần loa ngoài đời thật. Với ứng dụng chỉ cần <strong>phân tích</strong> mic (VU
+                    meter, spectrum), chỉ nối <code>micSource → analyser</code> — dừng lại ở đó, không nối tiếp ra
+                    <code>destination</code>.
                   </div>
                 </div>
 
                 <div class="callout callout--tip">
-                  <div class="callout__title">
-                    💡 Mẹo: luôn dùng <code>requestAnimationFrame</code>, không phải <code>setInterval</code>
-                  </div>
+                  <div class="callout__title">💡 Mẹo: luôn dừng track mic khi dùng xong</div>
                   <div class="callout__content">
-                    <code>requestAnimationFrame</code> tự động đồng bộ với tần số refresh màn hình và
-                    <strong>tự tạm dừng khi tab ẩn</strong> (tab không hiển thị) — tiết kiệm CPU/pin đáng kể so với
-                    <code>setInterval</code> chạy đều đặn dù người dùng không nhìn thấy gì.
+                    <code>stream.getTracks().forEach(track =&gt; track.stop())</code> giải phóng thiết bị mic hoàn toàn
+                    — nếu quên, icon/đèn báo mic trên tab trình duyệt vẫn sáng, mic vẫn bị đọc dữ liệu liên tục dù ứng
+                    dụng không còn cần nữa, vừa tốn tài nguyên vừa là mối lo về quyền riêng tư.
                   </div>
                 </div>
 
-                <h2>Sân chơi tương tác: Spectrum Analyzer + Waveform</h2>
+                <h2>4. Đo Âm Lượng Bằng RMS (Root Mean Square)</h2>
                 <p>
-                  Bấm "Phát" và kéo tần số/dạng sóng — quan sát waveform (nửa trên) phản ánh đúng hình dạng sóng bạn
-                  chọn, và spectrum (nửa dưới) hiện rõ tần số cơ bản cùng các họa âm bậc cao đã học ở
-                  <a href="audio-oscillator-synthesis">Bài 2</a>.
+                  Biên độ đỉnh (giá trị lớn nhất tức thời) không phản ánh đúng độ to <em>cảm nhận</em> — 1 tín hiệu có
+                  thể đạt đỉnh cao trong tích tắc mà nghe không hề to. <strong>RMS</strong> lấy trung bình bình phương
+                  biên độ trên cả cửa sổ mẫu rồi khai căn, phản ánh sát hơn nhiều năng lượng liên tục mà tai người cảm
+                  nhận là "to":
+                </p>
+                <p style="text-align: center"><code>RMS = √( (1/N) · Σ mẫu[i]² )</code></p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: vì sao RMS chính xác hơn peak cho VU meter</div>
+                  <div class="callout__content">
+                    Peak chỉ là 1 con số — dễ bị "đánh lừa" bởi 1 xung nhiễu ngắn không đại diện cho cảm nhận tổng thể.
+                    RMS bình phương từng mẫu trước khi lấy trung bình, khiến các giá trị lớn đóng góp nhiều hơn tỉ lệ
+                    thuận (bình phương phóng đại chênh lệch), rồi khai căn để đưa về đúng đơn vị biên độ ban đầu — kết
+                    quả là 1 con số ổn định phản ánh năng lượng trung bình, đúng là cách hầu hết đồng hồ VU chuyên
+                    nghiệp đo độ to.
+                  </div>
+                </div>
+
+                <h2>Sân chơi tương tác: Visualizer File Upload + Mic</h2>
+                <p>
+                  Chọn nguồn: tải lên 1 file âm thanh để phát qua <code>decodeAudioData</code>, hoặc bật micro qua
+                  <code>getUserMedia</code>. Cả 2 dùng chung 1 đường ống phân tích: waveform + thanh đo RMS bên dưới.
                 </p>
 
                 <!-- Interactive Sandbox -->
                 <div class="code-tabs">
                   <div class="code-tabs__nav">
-                    <span class="code-tabs__title">📊 Sân chơi tương tác: Spectrum Analyzer + Waveform</span>
+                    <span class="code-tabs__title">🎙️ Sân chơi tương tác: File Upload &amp; Mic Visualizer</span>
                     <div class="code-tabs__btns">
                       <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
                       <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
@@ -366,49 +346,27 @@
                     <div class="graph-sandbox">
                       <!-- Controls Panel -->
                       <div class="graph-controls">
+                        <div class="graph-section-title">Nguồn: File</div>
+                        <input type="file" id="fm-file-input" class="graph-file-input" accept="audio/*" />
                         <div class="graph-btn-row">
-                          <button class="graph-btn graph-btn--primary" id="fft-play-btn">▶️ Phát</button>
-                          <button class="graph-btn graph-btn--stop" id="fft-stop-btn">⏹ Dừng</button>
+                          <button class="graph-btn graph-btn--primary" id="fm-play-file-btn">▶️ Phát file</button>
+                          <button class="graph-btn graph-btn--stop" id="fm-stop-file-btn">⏹ Dừng</button>
                         </div>
-                        <select id="fft-waveform-select">
-                          <option value="sine">Sine</option>
-                          <option value="square">Square</option>
-                          <option value="sawtooth" selected>Sawtooth</option>
-                          <option value="triangle">Triangle</option>
-                        </select>
-                        <div>
-                          <label for="fft-freq-range"
-                            >Tần số: <span class="graph-value" id="fft-freq-value">220 Hz</span></label
-                          >
-                          <input type="range" id="fft-freq-range" min="80" max="1000" step="1" value="220" />
-                        </div>
-                        <div class="graph-section-title">AnalyserNode</div>
-                        <div>
-                          <label for="fft-size-select">fftSize</label>
-                          <select id="fft-size-select">
-                            <option value="256">256</option>
-                            <option value="512">512</option>
-                            <option value="1024" selected>1024</option>
-                            <option value="2048">2048</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label for="fft-smoothing-range"
-                            >Smoothing: <span class="graph-value" id="fft-smoothing-value">0.80</span></label
-                          >
-                          <input type="range" id="fft-smoothing-range" min="0" max="0.98" step="0.01" value="0.8" />
-                        </div>
-                        <button class="graph-btn" id="fft-reset-btn">Reset demo</button>
+
+                        <div class="graph-section-title">Nguồn: Micro</div>
+                        <button class="graph-btn" id="fm-mic-btn">🎤 Bật mic</button>
+
+                        <button class="graph-btn" id="fm-reset-btn">Reset demo</button>
                         <div>
                           <h3>Nhật ký</h3>
-                          <div class="graph-log" id="fft-log"></div>
+                          <div class="graph-log" id="fm-log"></div>
                         </div>
                       </div>
 
                       <!-- Canvas Stage -->
                       <div class="graph-viewport-container">
-                        <canvas id="fft-canvas" class="graph-canvas" width="560" height="260"></canvas>
-                        <div class="graph-status-line" id="fft-status-line"></div>
+                        <canvas id="fm-canvas" class="graph-canvas" width="560" height="220"></canvas>
+                        <div class="graph-status-line" id="fm-status-line"></div>
                       </div>
                     </div>
                   </div>
@@ -416,10 +374,10 @@
                   <div class="code-tabs__panel" data-panel="js">
                     <div class="code-window">
                       <div class="code-header">
-                        <span class="code-filename">audio-analyser-fft-live.js</span>
+                        <span class="code-filename">audio-file-mic-input-live.js</span>
                         <button class="code-copy" onclick="copyCode(this)">Copy</button>
                       </div>
-                      <pre><code class="language-js" id="fft-js-code-display"></code></pre>
+                      <pre><code class="language-js" id="fm-js-code-display"></code></pre>
                     </div>
                   </div>
                 </div>
@@ -428,7 +386,7 @@
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Vì sao <code>analyser.frequencyBinCount</code> chỉ bằng đúng 1 nửa <code>fftSize</code>?
+                    Câu 1: Vì sao <code>decodeAudioData</code> không phù hợp để phát ngay 1 bản nhạc dài vài phút?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -438,12 +396,12 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! Theo định lý Nyquist, tần số cao nhất biểu diễn chính xác được là 1 nửa sample rate. Nửa còn lại của kết quả FFT thô là ảnh đối xứng (mirror), không mang thêm thông tin — nên Web Audio chỉ trả về đúng nửa hữu ích.'
+                          'Chính xác! decodeAudioData giải mã TOÀN BỘ file thành PCM thô trong bộ nhớ trước khi phát được gì cả — tốn thời gian chờ và RAM lớn với file dài. MediaElementSourceNode phù hợp hơn vì tận dụng streaming/buffer tăng dần sẵn có của thẻ audio HTML5.'
                         )
                       "
                     >
-                      A. Vì theo định lý Nyquist, tần số cao nhất biểu diễn được chỉ bằng 1 nửa sample rate — nửa còn
-                      lại của FFT thô chỉ là ảnh đối xứng không mang thêm thông tin.
+                      A. Vì nó giải mã toàn bộ file vào bộ nhớ trước khi phát được gì, tốn thời gian chờ và RAM lớn với
+                      file dài.
                     </button>
                     <button
                       class="quiz-option"
@@ -451,11 +409,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Đây không phải giới hạn về bộ nhớ trình duyệt — đây là hệ quả toán học cố định của chính thuật toán FFT áp dụng lên tín hiệu đã lấy mẫu (định lý Nyquist).'
+                          'Sai. decodeAudioData hỗ trợ đầy đủ các định dạng phổ biến (MP3, WAV, OGG...) — đây không phải giới hạn định dạng, mà là vấn đề về cách nó xử lý TOÀN BỘ file cùng lúc.'
                         )
                       "
                     >
-                      B. Vì trình duyệt giới hạn bộ nhớ cấp cho mỗi <code>AnalyserNode</code>.
+                      B. Vì nó chỉ hỗ trợ định dạng WAV, không hỗ trợ MP3.
                     </button>
                     <button
                       class="quiz-option"
@@ -463,56 +421,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. fftSize không liên quan gì tới CPU đa lõi — con số 1/2 tới từ tính chất đối xứng toán học của kết quả FFT trên tín hiệu thực (real-valued), không phải cách phân luồng xử lý.'
+                          'Sai. decodeAudioData không yêu cầu kết nối server nào cả — nó xử lý hoàn toàn cục bộ trên ArrayBuffer đã có sẵn trong bộ nhớ trình duyệt.'
                         )
                       "
                     >
-                      C. Vì FFT luôn chạy song song trên 2 lõi CPU, mỗi lõi trả về 1 nửa kết quả.
-                    </button>
-                  </div>
-                  <div class="quiz-feedback hidden"></div>
-                </div>
-
-                <div class="quiz-container" style="margin-top: 20px">
-                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
-                  <p class="quiz-question">Câu 2: <code>smoothingTimeConstant</code> càng cao thì điều gì xảy ra?</p>
-                  <div class="quiz-options">
-                    <button
-                      class="quiz-option"
-                      data-correct="true"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          true,
-                          'Chính xác! Giá trị càng cao, dữ liệu hiển thị (thanh spectrum) càng mượt mà/ít giật do trộn nhiều với khung hình trước đó — nhưng đổi lại phản ứng chậm hơn với thay đổi âm thanh thực tế.'
-                        )
-                      "
-                    >
-                      A. Dữ liệu hiển thị mượt mà/ít giật hơn, nhưng phản ứng chậm hơn với thay đổi âm thanh thực tế.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. smoothingTimeConstant không ảnh hưởng độ phân giải tần số — đó là vai trò của fftSize, hoàn toàn tách biệt.'
-                        )
-                      "
-                    >
-                      B. Độ phân giải tần số (số bin) tăng lên.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Sai. Tham số này chỉ ảnh hưởng dữ liệu ĐỌC RA từ AnalyserNode để hiển thị — không hề tác động tới âm lượng thực tế phát ra loa.'
-                        )
-                      "
-                    >
-                      C. Âm lượng thực tế phát ra loa giảm dần.
+                      C. Vì nó cần gửi file lên server để giải mã trước.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -521,8 +434,8 @@
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Nếu chỉ <code>source.connect(analyser)</code> mà quên
-                    <code>analyser.connect(destination)</code>, điều gì xảy ra?
+                    Câu 2: Vì sao phải luôn gọi <code>stream.getTracks().forEach(t =&gt; t.stop())</code> sau khi dùng
+                    xong micro?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -532,11 +445,12 @@
                         checkQuiz(
                           this,
                           true,
-                          'Chính xác! AnalyserNode chỉ là 1 điểm dò dữ liệu, không tự động phát tiếp âm thanh — visualizer vẫn vẽ đúng (vì đọc dữ liệu không cần phát ra loa), nhưng người dùng sẽ hoàn toàn không nghe thấy gì.'
+                          'Chính xác! Nếu không dừng track, trình duyệt vẫn giữ mic ở trạng thái đang ghi (icon mic trên tab vẫn sáng), tiếp tục tiêu tốn tài nguyên và gây lo ngại quyền riêng tư dù ứng dụng không còn cần dữ liệu mic nữa.'
                         )
                       "
                     >
-                      A. Visualizer vẫn vẽ đúng nhưng người dùng sẽ không nghe thấy âm thanh nào cả.
+                      A. Nếu không, trình duyệt vẫn giữ mic ở trạng thái đang ghi, tiếp tục tốn tài nguyên và gây lo
+                      ngại quyền riêng tư.
                     </button>
                     <button
                       class="quiz-option"
@@ -544,11 +458,11 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. AnalyserNode không ném lỗi khi thiếu kết nối phía sau — code vẫn chạy bình thường, chỉ là im lặng ở phía loa.'
+                          'Sai. Không dừng track không hề làm crash AudioContext — chỉ đơn giản là mic vẫn tiếp tục được đọc dữ liệu không cần thiết.'
                         )
                       "
                     >
-                      B. Trình duyệt sẽ ném lỗi ngay lập tức và dừng script.
+                      B. Vì không dừng sẽ làm crash toàn bộ <code>AudioContext</code>.
                     </button>
                     <button
                       class="quiz-option"
@@ -556,11 +470,59 @@
                         checkQuiz(
                           this,
                           false,
-                          'Sai. Visualizer hoàn toàn không bị ảnh hưởng — nó đọc dữ liệu ngay tại AnalyserNode, không phụ thuộc việc node này có nối tiếp ra loa hay không.'
+                          'Sai. Không có giới hạn cứng nào như vậy trong Web Audio API — vấn đề thực sự là tài nguyên/quyền riêng tư, không phải giới hạn số lượng track.'
                         )
                       "
                     >
-                      C. Visualizer sẽ đứng yên, không vẽ được gì.
+                      C. Vì trình duyệt giới hạn tối đa 1 track mic trong toàn bộ phiên làm việc.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Vì sao RMS phản ánh độ to cảm nhận (loudness) chính xác hơn biên độ đỉnh (peak) đơn thuần?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Chính xác! RMS lấy trung bình năng lượng bình phương trên cả cửa sổ mẫu, còn peak chỉ là 1 giá trị tức thời cao nhất. Một tín hiệu có thể đạt đỉnh cao trong tích tắc nhưng phần lớn thời gian nhỏ — RMS phản ánh đúng mức năng lượng trung bình liên tục mà tai người cảm nhận là độ to.'
+                        )
+                      "
+                    >
+                      A. RMS lấy trung bình năng lượng bình phương trên cả cửa sổ mẫu, trong khi peak chỉ là 1 giá trị
+                      tức thời cao nhất, dễ không đại diện cho cảm nhận tổng thể.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. RMS không liên quan gì tới tần số lấy mẫu — nó là 1 phép toán thống kê áp dụng lên các mẫu biên độ đã có, hoàn toàn độc lập với sample rate.'
+                        )
+                      "
+                    >
+                      B. Vì RMS được tính ở tần số lấy mẫu cao hơn peak.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Sai. RMS hoàn toàn tính được từ getByteTimeDomainData (miền thời gian) — không cần bất kỳ dữ liệu miền tần số (FFT) nào cả.'
+                        )
+                      "
+                    >
+                      C. Vì RMS chỉ tính được từ dữ liệu miền tần số (FFT), chính xác hơn miền thời gian.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -572,26 +534,23 @@
                 <ul>
                   <li>
                     <a
-                      href="https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode"
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >MDN — AnalyserNode</a
+                      >MDN — decodeAudioData()</a
                     >
                   </li>
                   <li>
                     <a
-                      href="https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode/getByteFrequencyData"
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >MDN — getByteFrequencyData()</a
+                      >MDN — getUserMedia()</a
                     >
                   </li>
                   <li>
-                    <a
-                      href="https://en.wikipedia.org/wiki/Fast_Fourier_transform"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >Wikipedia — Fast Fourier Transform</a
+                    <a href="https://en.wikipedia.org/wiki/Root_mean_square" target="_blank" rel="noopener noreferrer"
+                      >Wikipedia — Root Mean Square</a
                     >
                   </li>
                 </ul>
@@ -601,11 +560,11 @@
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="audio-file-mic-input" class="article-related__link article-related__link--next">
-                    Bài 5: Phát &amp; Xử Lý File/Mic
-                  </a>
-                  <a href="audio-gain-filter-effects" class="article-related__link article-related__link--prev">
-                    Bài 3: Gain, Filter &amp; Hiệu Ứng
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 6: Spatial &amp; Stereo Audio (sắp ra mắt)
+                  </span>
+                  <a href="audio-analyser-fft" class="article-related__link article-related__link--prev">
+                    Bài 4: AnalyserNode &amp; FFT
                   </a>
                   <a href="audio-programming-series" class="article-related__link"
                     >Quay lại Lộ trình Series Web Audio API</a
@@ -742,6 +701,6 @@
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
-    <script src="audio-analyser-fft.js" defer></script>
+    <script src="audio-file-mic-input.js" defer></script>
   </body>
 </html>
