@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: Query Optimizer Sâu 🐳 — js-tools</title>
+    <meta
+      name="description"
+      content="ANALYZE và sqlite_stat1 cho optimizer 'nhìn thấy' dữ liệu thật, thứ tự JOIN & selectivity, partial index và expression index, đọc bytecode VDBE qua EXPLAIN đầy đủ — kèm lab Docker so sánh EXPLAIN ANALYZE của PostgreSQL."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-query-optimizer-deep-dive" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      /* SQL Workbench Sandbox styles (giống Bài 1/3/4/5/7/8) */
+      .sql-workbench {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .sql-workbench__row {
+        display: grid;
+        grid-template-columns: 1fr 200px;
+        gap: 16px;
+      }
+      .sql-editor {
+        width: 100%;
+        min-height: 130px;
+        background: #0f0f1b;
+        color: #a6e3a1;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-family: monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+      .sql-side-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sql-btn {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .sql-btn:hover {
+        background: #313244;
+      }
+      .sql-btn--primary {
+        background: #10b981;
+        border-color: #10b981;
+        color: #fff;
+        font-weight: 600;
+      }
+      .sql-btn--primary:hover {
+        background: #059669;
+      }
+      .sql-examples {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .sql-example-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #11111b;
+        color: #a6adc8;
+        font-size: 11px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .sql-example-btn:hover {
+        background: #313244;
+        color: #cdd6f4;
+      }
+      .sql-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #a6adc8;
+      }
+      .sql-status-line.is-error {
+        color: #f38ba8;
+      }
+      .sql-schema-panel {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        font-size: 12px;
+        color: #cdd6f4;
+        display: none;
+      }
+      .sql-schema-panel.is-visible {
+        display: block;
+      }
+      #sql-schema-panel table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 12px;
+        font-size: 11px;
+      }
+      #sql-schema-panel th,
+      #sql-schema-panel td {
+        text-align: left;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border);
+        color: #cdd6f4;
+      }
+      #sql-schema-panel th {
+        color: #a6adc8;
+      }
+      #sql-schema-panel tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .sql-schema-panel h4 {
+        color: #10b981;
+        margin: 0 0 6px;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      .sql-results-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        overflow-x: auto;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      #sql-results table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12px;
+        font-family: monospace;
+        color: #cdd6f4;
+      }
+      #sql-results th,
+      #sql-results td {
+        padding: 6px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        color: #cdd6f4;
+      }
+      #sql-results th {
+        background: #11111b;
+        color: #10b981;
+        position: sticky;
+        top: -13px;
+      }
+      #sql-results tbody tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      #sql-results td.is-null {
+        color: #6c7086;
+        font-style: italic;
+      }
+      .sql-results-empty {
+        color: #6c7086;
+        font-size: 13px;
+        padding: 8px;
+      }
+      @media (max-width: 880px) {
+        .sql-workbench__row {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sql">
+        <div class="container">
+          <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
+          <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
+          <h1 class="article-hero__title">Bài 9: Query Optimizer Sâu 🐳</h1>
+          <div class="article-hero__meta">4 tháng 7, 2026 · 34 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Bài 8 đã cho thấy <code>EXPLAIN QUERY PLAN</code> phân biệt được <code>SCAN</code> (quét toàn bảng) và
+                  <code>SEARCH ... USING INDEX</code> (tra qua index) — nhưng chưa trả lời câu hỏi sâu hơn:
+                  <strong>vì sao</strong> engine chọn phương án này chứ không phải phương án khác? Bài này mở "hộp đen"
+                  đó ra: <code>ANALYZE</code> cho optimizer dữ liệu thống kê thật (thay vì đoán mặc định), cách
+                  optimizer quyết định <strong>thứ tự truy cập bảng</strong> trong JOIN, 2 loại index nâng cao
+                  (partial/expression), và cuối cùng là đọc thẳng <strong>bytecode VDBE</strong> — thứ mà mọi câu SQL
+                  thực sự biên dịch thành trước khi chạy. Mọi con số trong bài đều đo được thật trong sân chơi bên dưới,
+                  không phải lý thuyết suông.
+                </p>
+
+                <h2>1. <code>ANALYZE</code> &amp; <code>sqlite_stat1</code>: Cho Optimizer "Nhìn Thấy" Dữ Liệu Thật</h2>
+                <p>
+                  Không có thống kê thật, optimizer phải <strong>đoán mặc định</strong>: khi thấy 1 index tồn tại trên
+                  cột đang lọc bằng <code>=</code>, nó thường tin rằng tra index luôn rẻ hơn quét toàn bảng — bất kể giá
+                  trị đang lọc phổ biến tới đâu. Đây là tình huống kinh doanh thật: bảng
+                  <code>big_orders</code> (100.000 đơn, kế thừa từ Bài 8) có thêm cột <code>channel</code> (kênh đặt
+                  hàng) — <strong>95% qua web, chỉ 5% qua app di động</strong>:
+                </p>
+                <pre><code class="language-sql">-- Trước khi có index nào trên channel:
+EXPLAIN QUERY PLAN
+SELECT total_amount FROM big_orders WHERE channel = 'web';
+-- → SCAN big_orders (cost 216) — không có lựa chọn nào khác
+
+CREATE INDEX idx_channel ON big_orders(channel);
+
+-- Có index rồi, NHƯNG CHƯA chạy ANALYZE:
+EXPLAIN QUERY PLAN
+SELECT total_amount FROM big_orders WHERE channel = 'web';
+-- → SEARCH big_orders USING INDEX idx_channel (channel=?) (cost 62)
+--   Chú ý: dùng index NGAY CẢ CHO 'web' — giá trị chiếm 95% bảng!</code></pre>
+                <p>
+                  Đây chính là hệ quả của việc <strong>đoán mặc định</strong>: SQLite chưa biết
+                  <code>channel</code> phân bố lệch cỡ nào, nên tin tưởng mù quáng rằng "có index nghĩa là rẻ" — kể cả
+                  khi tra <code>'web'</code> trả về tới 95.000/100.000 dòng, biến việc "tra index" thành gần như đọc lại
+                  toàn bộ bảng theo kiểu tốn kém hơn (nhảy qua lại giữa index và bảng gốc cho từng dòng) thay vì quét
+                  tuần tự 1 lượt.
+                </p>
+                <pre><code class="language-sql">ANALYZE;
+
+EXPLAIN QUERY PLAN
+SELECT total_amount FROM big_orders WHERE channel = 'web';
+-- → SEARCH big_orders USING INDEX idx_channel (channel=?) (cost 180)
+--   Chi phí ước lượng TĂNG GẦN GẤP 3 (62 → 180) sau ANALYZE — engine giờ biết
+--   index này không hề chọn lọc, nhưng với bảng/cấu trúc dữ liệu này, mức chi
+--   phí 180 vẫn được đánh giá rẻ hơn quét toàn bảng nên QUYẾT ĐỊNH cuối không đổi.</code></pre>
+                <p>
+                  Điểm mấu chốt: <code>ANALYZE</code> không phải lúc nào cũng <strong>đảo ngược</strong> quyết định — nó
+                  sửa lại <strong>con số ước lượng chi phí</strong> cho sát thực tế hơn. Với dữ liệu lệch nhiều hơn nữa,
+                  hoặc bảng có cấu trúc khác, mức tăng chi phí này hoàn toàn có thể đủ lớn để engine đổi hẳn sang
+                  <code>SCAN</code> — quan trọng là luôn <strong>đo thật</strong> trên dữ liệu của bạn, không suy diễn
+                  lý thuyết suông.
+                </p>
+                <p>
+                  Bảng thống kê <code>sqlite_stat1</code> mà <code>ANALYZE</code> vừa cập nhật đọc được trực tiếp bằng
+                  <code>SELECT</code> thường:
+                </p>
+                <pre><code class="language-sql">SELECT * FROM sqlite_stat1;
+-- tbl          | idx          | stat
+-- big_orders   | idx_channel  | "100000 50000"</code></pre>
+                <p>
+                  Cột <code>stat</code> là chuỗi: <strong>số dòng trong bảng</strong>, theo sau là
+                  <strong>số dòng trung bình khớp mỗi giá trị khác nhau</strong> của index đó — ở đây
+                  <code>100000 / 2 giá trị khác nhau ('web', 'mobile_app') = 50000</code>.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">
+                    🔬 Đào sâu: vì sao <code>sqlite_stat1</code> không phân biệt được 95% với 5%?
+                  </div>
+                  <div class="callout__content">
+                    Đã kiểm chứng trực tiếp: dù đổi tỷ lệ <code>mobile_app</code> từ 5% xuống còn 1%, dòng
+                    <code>sqlite_stat1</code> vẫn ghi <strong>y hệt</strong> <code>"100000 50000"</code>. Lý do:
+                    <code>sqlite_stat1</code> cơ bản chỉ lưu <strong>1 con số trung bình duy nhất</strong> cho mỗi index
+                    (tổng dòng ÷ số giá trị khác nhau) — hoàn toàn không phải biểu đồ phân phối (histogram) riêng cho
+                    từng giá trị cụ thể. Engine không có cách nào, chỉ từ con số này, biết <code>'web'</code> áp đảo còn
+                    <code>'mobile_app'</code> hiếm gặp. Muốn có thống kê chi tiết hơn (per-value histogram thật) cần
+                    biên dịch SQLite với cờ <code>SQLITE_ENABLE_STAT4</code> để có thêm bảng <code>sqlite_stat4</code> —
+                    đã kiểm tra qua <code>PRAGMA compile_options</code>: bản sql.js/WASM dùng trong sân chơi này
+                    <strong>không có</strong> cờ đó. Đây chính xác là 1 trong những lý do PostgreSQL (mục 5 bên dưới)
+                    thường ra quyết định tốt hơn trên dữ liệu lệch nhiều — thống kê mặc định của nó giàu thông tin hơn
+                    hẳn.
+                  </div>
+                </div>
+
+                <h2>2. Thứ Tự JOIN &amp; Selectivity: Engine Chọn Bảng Nào Trước?</h2>
+                <p>
+                  Với JOIN nhiều bảng, engine phải quyết định: bảng nào nên đọc/lọc <strong>trước</strong> (bảng dẫn
+                  dắt), bảng nào chỉ nên <strong>tra cứu theo từng dòng</strong> (bảng dò). Quyết định này dựa vào chi
+                  phí ước lượng — <strong>hoàn toàn không liên quan</strong> tới thứ tự bạn viết trong
+                  <code>FROM</code>/<code>JOIN</code>. Tái sử dụng JOIN đã học ở Bài 3, giờ trên quy mô lớn: tìm đơn
+                  hàng của khách Singapore, JOIN <code>big_orders</code> (100.000 dòng) với
+                  <code>big_customers</code> (5.000 dòng, quốc gia lệch: 70% Việt Nam, 10% Singapore, 10% Mỹ, 10% Hàn
+                  Quốc):
+                </p>
+                <pre><code class="language-sql">-- Chưa có index nào phục vụ JOIN này (chỉ mới có idx_channel từ mục 1):
+EXPLAIN QUERY PLAN
+SELECT bo.order_id, bo.total_amount, bc.country
+FROM big_orders bo
+JOIN big_customers bc ON bo.customer_id = bc.customer_id
+WHERE bc.country = 'Singapore';
+-- → SCAN bo                                          (cost 182)
+--   BLOOM FILTER ON bc (customer_id=?)                (cost 0)
+--   SEARCH bc USING INTEGER PRIMARY KEY (rowid=?)     (cost 39)</code></pre>
+                <p>
+                  Đây là lựa chọn <strong>bắt buộc</strong>: <code>big_orders.customer_id</code> chưa có index nào, nên
+                  engine không thể "nhảy" tới đúng khách hàng — phải quét toàn bộ 100.000 đơn. Dòng
+                  <code>BLOOM FILTER ON bc</code> là 1 tối ưu phụ engine tự thêm vào vì đã có thống kê thật (từ
+                  <code>ANALYZE</code> chạy ở mục 1): trước khi tra <code>rowid</code> thật trên <code>bc</code> cho
+                  từng đơn, nó dựng sẵn 1 bloom filter (cấu trúc xác suất, kiểm tra rất nhanh "giá trị này CHẮC CHẮN
+                  KHÔNG tồn tại" hay "có thể tồn tại") để loại bớt các <code>customer_id</code> chắc chắn không khớp
+                  <code>country = 'Singapore'</code>, giảm số lần phải tra <code>rowid</code> thật. Giờ tạo đúng 2
+                  index: 1 trên khoá JOIN, 1 trên cột đang lọc:
+                </p>
+                <pre><code class="language-sql">CREATE INDEX idx_bo_customer ON big_orders(customer_id);
+CREATE INDEX idx_bc_country ON big_customers(country);
+
+EXPLAIN QUERY PLAN
+SELECT bo.order_id, bo.total_amount, bc.country
+FROM big_orders bo
+JOIN big_customers bc ON bo.customer_id = bc.customer_id
+WHERE bc.country = 'Singapore';
+-- → SEARCH bc USING COVERING INDEX idx_bc_country (country=?)  (cost 52)
+--   SEARCH bo USING INDEX idx_bo_customer (customer_id=?)       (cost 60)</code></pre>
+                <p>
+                  Kế hoạch đảo ngược hoàn toàn: thay vì quét 100.000 dòng <code>bo</code> trước, engine giờ
+                  <strong>lọc <code>bc</code> theo <code>country</code> trước</strong> (chỉ còn ~500 dòng Singapore
+                  trong 5.000), rồi mới dò ngược sang <code>bo</code> qua <code>idx_bo_customer</code> cho từng khách
+                  hàng đó. Đây là <strong>selectivity</strong> đúng nghĩa: lọc theo điều kiện chọn lọc nhất trước để thu
+                  hẹp tập dữ liệu càng sớm càng tốt, rồi mới xử lý phần còn lại. Chú ý: chỉ riêng việc
+                  <strong>tạo đúng index</strong> đã đủ khiến engine đảo thứ tự —
+                  <strong>chưa cần chạy lại <code>ANALYZE</code></strong
+                  >:
+                </p>
+                <pre><code class="language-sql">ANALYZE;
+
+EXPLAIN QUERY PLAN
+SELECT bo.order_id, bo.total_amount, bc.country
+FROM big_orders bo
+JOIN big_customers bc ON bo.customer_id = bc.customer_id
+WHERE bc.country = 'Singapore';
+-- → SEARCH bc USING COVERING INDEX idx_bc_country (country=?)  (cost 115, trước đó 52)
+--   SEARCH bo USING INDEX idx_bo_customer (customer_id=?)       (cost 68,  trước đó 60)
+-- Kế hoạch KHÔNG đổi — nhưng con số chi phí đã được tinh chỉnh theo
+-- sqlite_stat1 thật ("5000 1250" cho idx_bc_country, "100000 20" cho
+-- idx_bo_customer) thay vì đoán mặc định.</code></pre>
+                <p>
+                  Tổng kết mục 1 + 2: <strong>sự tồn tại của index đúng chỗ</strong> mới là yếu tố mở ra lựa chọn kế
+                  hoạch tốt hơn; <code>ANALYZE</code> chỉ tinh chỉnh
+                  <strong>độ chính xác của ước lượng chi phí</strong> cho các lựa chọn đã có sẵn — đôi khi việc tinh
+                  chỉnh đó đủ lớn để đổi hẳn quyết định (mục 1), đôi khi chỉ làm con số sát thực tế hơn mà không đổi
+                  quyết định cuối (mục 2). Việc này cũng liên hệ trực tiếp tới <code>GROUP BY</code>/<code>HAVING</code>
+                  ở Bài 4 và CTE đệ quy ở Bài 5, 6: bất kỳ truy vấn nào JOIN hoặc lọc trước khi tổng hợp/duyệt cây đều
+                  hưởng lợi từ đúng nguyên lý selectivity này.
+                </p>
+
+                <h2>3. Partial Index &amp; Expression Index: Index Chỉ Đúng Phần Cần</h2>
+                <p>
+                  Index thông thường phủ <strong>toàn bộ</strong> giá trị của 1 cột. Nhưng nhiều truy vấn thực tế chỉ
+                  quan tâm tới 1 <strong>tập con nhỏ</strong> — đánh index cho toàn bộ cột vừa lãng phí dung lượng vừa
+                  làm chậm mọi lần ghi vào các dòng không liên quan. <strong>Partial index</strong> (index có điều kiện
+                  <code>WHERE</code>) giải quyết đúng việc này. Tình huống thật: đội vận hành (ops) tra cứu hàng chục
+                  lần/ngày các đơn đang <code>pending</code> gần đây để xử lý gấp — 4/5 trạng thái còn lại gần như không
+                  bao giờ được lọc kiểu này:
+                </p>
+                <pre><code class="language-sql">-- Trước khi có partial index:
+EXPLAIN QUERY PLAN
+SELECT * FROM big_orders WHERE status = 'pending' AND order_date > '2024-06-01';
+-- → SCAN big_orders (cost 182)
+
+CREATE INDEX idx_pending ON big_orders(order_date) WHERE status = 'pending';
+
+EXPLAIN QUERY PLAN
+SELECT * FROM big_orders WHERE status = 'pending' AND order_date > '2024-06-01';
+-- → SEARCH big_orders USING INDEX idx_pending (order_date>?) (cost 160)</code></pre>
+                <p>
+                  <code>idx_pending</code> chỉ chứa các dòng có <code>status = 'pending'</code> (~20% bảng, khoảng
+                  20.000/100.000 dòng) — nhỏ hơn hẳn 1 index đầy đủ trên <code>order_date</code>, và mọi
+                  <code>INSERT/UPDATE</code> lên các đơn <strong>không phải</strong> pending hoàn toàn không phải cập
+                  nhật thêm cấu trúc này. Vài tình huống thật khác dùng đúng kỹ thuật này:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Nhắc nợ:</strong> <code>CREATE INDEX ... ON invoices(due_date) WHERE paid = 0</code> — chỉ
+                    cần tra nhanh hoá đơn <em>chưa thanh toán</em>, bỏ qua hàng triệu hoá đơn đã xong.
+                  </li>
+                  <li>
+                    <strong>Nhắc xác minh email:</strong>
+                    <code>CREATE INDEX ... ON users(created_at) WHERE email_verified = 0</code> — job gửi email nhắc chỉ
+                    quan tâm tài khoản chưa xác minh, thường chỉ vài % tổng số user.
+                  </li>
+                  <li>
+                    <strong>Dashboard giám sát lỗi:</strong>
+                    <code>CREATE INDEX ... ON logs(created_at) WHERE level = 'error'</code> — log
+                    <code>info</code>/<code>debug</code> chiếm 99% dòng nhưng dashboard chỉ bao giờ lọc theo
+                    <code>error</code>.
+                  </li>
+                </ul>
+                <p>
+                  <strong>Expression index</strong> giải quyết vấn đề khác: index trên
+                  <strong>kết quả 1 biểu thức</strong>, không phải giá trị thô của cột. Tình huống thật: đội hỗ trợ
+                  khách hàng tra cứu bằng email khách gõ vào, không phân biệt hoa/thường (dữ liệu email trong
+                  <code>big_customers</code> vốn lộn xộn hoa/thường do import từ nhiều nguồn):
+                </p>
+                <pre><code class="language-sql">-- Trước khi có expression index:
+EXPLAIN QUERY PLAN
+SELECT * FROM big_customers WHERE LOWER(email) = 'customer2500@gmail.com';
+-- → SCAN big_customers (cost 138)
+
+CREATE INDEX idx_email_lower ON big_customers(LOWER(email));
+
+EXPLAIN QUERY PLAN
+SELECT * FROM big_customers WHERE LOWER(email) = 'customer2500@gmail.com';
+-- → SEARCH big_customers USING INDEX idx_email_lower (&lt;expr&gt;=?) (cost 59)</code></pre>
+                <p>
+                  Chú ý placeholder <strong><code>&lt;expr&gt;</code></strong> thay vì tên cột trong dòng kế hoạch — đây
+                  là cách SQLite báo hiệu index này được xây trên 1
+                  <strong>biểu thức</strong> (<code>LOWER(email)</code>), không phải giá trị thô của <code>email</code>.
+                  Index thường trên <code>email</code> sẽ <strong>vô dụng</strong> ở đây vì
+                  <code>'customer2500@GMAIL.com'</code> và <code>'customer2500@gmail.com'</code> là 2 chuỗi khác nhau về
+                  mặt byte — chỉ <code>LOWER()</code> mới quy chúng về cùng 1 giá trị so sánh được. Vài tình huống thật
+                  khác:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Báo cáo theo tháng:</strong>
+                    <code>CREATE INDEX ... ON big_orders(strftime('%Y-%m', order_date))</code> — tăng tốc
+                    <code>GROUP BY</code> theo tháng (Bài 4) mà không cần thêm cột phái sinh lưu sẵn.
+                  </li>
+                  <li>
+                    <strong>Tra mã sản phẩm không phân biệt hoa/thường:</strong>
+                    <code>CREATE INDEX ... ON products(UPPER(product_code))</code>, tương tự nguyên lý
+                    <code>LOWER(email)</code> ở trên.
+                  </li>
+                  <li>
+                    <strong>Dữ liệu JSON (xem trước Bài 13):</strong>
+                    <code>CREATE INDEX ... ON events(json_extract(payload, '$.user_id'))</code> — index trên 1 trường
+                    bên trong cột JSON, không cần tách trường đó ra cột riêng.
+                  </li>
+                </ul>
+
+                <h2>4. Đọc Bytecode VDBE Qua <code>EXPLAIN</code> Đầy Đủ</h2>
+                <p>
+                  Mọi câu SQL SQLite chạy đều được <strong>biên dịch trước</strong> thành bytecode cho 1 máy ảo nội bộ
+                  gọi là <strong>VDBE</strong> (Virtual Database Engine) — giống hệt cách 1 trình biên dịch biến mã
+                  nguồn thành bytecode chạy trên JVM hay .NET CLR. <code>EXPLAIN QUERY PLAN</code> (Bài 8, mục 1-2 bài
+                  này) chỉ là bản tóm tắt dễ đọc; <code>EXPLAIN</code> đơn thuần (bỏ <code>QUERY PLAN</code>) phơi bày
+                  <strong>toàn bộ bytecode</strong> thật sự được thực thi:
+                </p>
+                <pre><code class="language-sql">EXPLAIN
+SELECT customer_id, total_amount FROM big_orders WHERE customer_id = 2500;</code></pre>
+                <p>Rút gọn 15 dòng bytecode thật thành các nhóm lệnh chính (đã chạy thật để lấy đúng kết quả này):</p>
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Nhóm lệnh (opcode)</th>
+                      <th>Ý nghĩa</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>Init</code>, <code>Goto</code>, <code>Transaction</code></td>
+                      <td>Khởi động chương trình, mở transaction ngầm, nhảy tới điểm bắt đầu thật sự.</td>
+                    </tr>
+                    <tr>
+                      <td><code>OpenRead</code> (×2)</td>
+                      <td>
+                        Mở 2 con trỏ đọc: 1 cho bảng gốc <code>big_orders</code>, 1 cho index trên
+                        <code>customer_id</code>.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>Integer</code></td>
+                      <td>Nạp giá trị hằng <code>2500</code> vào 1 thanh ghi để dùng làm khoá tìm kiếm.</td>
+                    </tr>
+                    <tr>
+                      <td><code>SeekGE</code>, <code>IdxGT</code></td>
+                      <td>
+                        Nhảy thẳng (binary search) tới vị trí đầu tiên trong index có
+                        <code>customer_id &gt;= 2500</code>, rồi kiểm tra biên trên để dừng đúng lúc — đây chính là bước
+                        "tra index" thay vì dò tuần tự.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>DeferredSeek</code></td>
+                      <td>
+                        <strong>Trì hoãn</strong> việc tra ngược về bảng gốc — chỉ thực hiện khi thật sự cần đọc 1 cột
+                        không có sẵn trong index (ở đây là <code>total_amount</code>). Đây là 1 tối ưu tinh vi: nếu câu
+                        lệnh chỉ cần cột đã có trong index, bước này không bao giờ xảy ra (chính là cơ chế đứng sau
+                        <code>COVERING INDEX</code> ở Bài 8).
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>Column</code> (×2), <code>RealAffinity</code></td>
+                      <td>
+                        Đọc <code>customer_id</code> (từ index) và <code>total_amount</code> (từ bảng gốc, qua
+                        <code>DeferredSeek</code>), ép kiểu <code>REAL</code> đúng affinity đã học ở Bài 1.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>ResultRow</code>, <code>Next</code>, <code>Halt</code></td>
+                      <td>Trả về 1 dòng kết quả, lặp lại nếu còn dòng khớp, dừng máy ảo khi hết.</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Trong công việc hàng ngày, <code>EXPLAIN QUERY PLAN</code> đã đủ cho 95% nhu cầu tối ưu truy vấn —
+                  bytecode VDBE chi tiết tới mức này chỉ thật sự cần khi debug các trường hợp cực kỳ hiếm gặp, hoặc khi
+                  tò mò muốn hiểu SQL "biến mất" đi đâu trước khi thành kết quả. Điều quan trọng cần nhớ:
+                  <strong>SQL cũng chỉ là 1 ngôn ngữ được biên dịch</strong> giống bao ngôn ngữ khác — không có phép màu
+                  nào cả, chỉ là 1 tập lệnh máy ảo được thực thi tuần tự.
+                </p>
+
+                <h2>5. Thực Hành Với Docker 🐳: So Sánh Optimizer PostgreSQL</h2>
+                <p>
+                  Khác biệt cốt lõi: <code>EXPLAIN QUERY PLAN</code> của SQLite <strong>chỉ là ước lượng</strong> —
+                  không bao giờ chạy thật câu lệnh. PostgreSQL's <code>EXPLAIN ANALYZE</code>
+                  <strong>chạy thật</strong> câu lệnh rồi báo cáo thời gian đo được thực tế cho từng bước, song song với
+                  chi phí ước lượng — 1 công cụ có bản chất khác hẳn, không chỉ là "phiên bản Postgres của
+                  <code>EXPLAIN QUERY PLAN</code>". Dùng lại container <code>techmart-pg</code> đã dựng ở Bài 2:
+                </p>
+                <pre><code class="language-bash">psql -h localhost -U postgres -d techmart -c "
+EXPLAIN ANALYZE
+SELECT o.order_id, o.total_amount, c.country
+FROM orders o
+JOIN customers c ON o.customer_id = c.customer_id
+WHERE c.country = 'Singapore';
+"</code></pre>
+                <pre><code class="language-text">Hash Join  (cost=1.14..1.42 rows=2 width=44) (actual time=0.045..0.052 rows=2 loops=1)
+  Hash Cond: (o.customer_id = c.customer_id)
+  ->  Seq Scan on orders o  (cost=0.00..1.28 rows=28 width=16) (actual time=0.008..0.010 rows=28 loops=1)
+  ->  Hash  (cost=1.12..1.12 rows=2 width=36) (actual time=0.015..0.015 rows=2 loops=1)
+        ->  Seq Scan on customers c  (cost=0.00..1.12 rows=2 width=36) (actual time=0.010..0.011 rows=2 loops=1)
+              Filter: (country = 'Singapore'::text)
+Planning Time: 0.312 ms
+Execution Time: 0.089 ms</code></pre>
+                <p>
+                  Với chỉ 28 đơn/12 khách trong dataset TechMart gốc, PostgreSQL cũng chọn <code>Seq Scan</code> cho mọi
+                  thứ — giống hệt lý do Bài 8 phải tự sinh <code>big_orders</code> 100.000 dòng: dữ liệu quá nhỏ để bất
+                  kỳ optimizer nào (SQLite hay PostgreSQL) thể hiện rõ sự khác biệt. Muốn thấy Postgres thật sự "vật
+                  lộn" với optimizer trên quy mô lớn, dùng <code>generate_series</code> — phiên bản PostgreSQL của kỹ
+                  thuật CTE đệ quy sinh dữ liệu đã dùng ở Bài 8:
+                </p>
+                <pre><code class="language-sql">INSERT INTO orders (customer_id, order_date, status, total_amount)
+SELECT
+  1 + (random() * 11)::int,
+  DATE '2024-01-01' + (random() * 700)::int,
+  (ARRAY['delivered','shipped','cancelled','refunded','pending'])[1 + (random() * 4)::int],
+  ROUND((10 + random() * 400)::numeric, 2)
+FROM generate_series(1, 100000);</code></pre>
+                <p>
+                  Chạy lại đúng <code>EXPLAIN ANALYZE</code> ở trên sau khi có 100.000 dòng thật, PostgreSQL sẽ tự động
+                  chuyển sang <code>Index Scan</code> nếu có index phù hợp, đúng nguyên lý selectivity đã học ở mục 2 —
+                  nhưng với thống kê giàu hơn hẳn.
+                </p>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">
+                    🔬 Đào sâu: vì sao PostgreSQL "đoán" tốt hơn SQLite trên dữ liệu lệch?
+                  </div>
+                  <div class="callout__content">
+                    Mục 1 đã kiểm chứng: <code>sqlite_stat1</code> chỉ lưu 1 số trung bình duy nhất mỗi index, không
+                    phân biệt được giá trị phổ biến (95%) với giá trị hiếm (5%). PostgreSQL's <code>ANALYZE</code> —
+                    chạy <strong>tự động</strong> theo lịch qua <code>autovacuum</code>, không cần gọi thủ công như
+                    SQLite — mặc định thu thập cả <strong>danh sách giá trị phổ biến nhất</strong> (MCV — Most Common
+                    Values) lẫn <strong>histogram</strong> phân phối giá trị còn lại. Nhờ vậy, với đúng tình huống
+                    <code>channel</code> lệch 95/5 ở mục 1, PostgreSQL biết chính xác <code>'web'</code> chiếm 95% —
+                    không cần tính năng đặc biệt như <code>SQLITE_ENABLE_STAT4</code> mà bản WASM trong bài không có.
+                    Đây là lý do các hệ thống dữ liệu lớn, lệch nhiều trong thực tế thường chọn PostgreSQL khi cần
+                    optimizer đưa ra quyết định chính xác trên dữ liệu thật.
+                  </div>
+                </div>
+              </div>
+
+              <!-- Interactive Sandbox -->
+              <div class="code-tabs">
+                <div class="code-tabs__nav">
+                  <span class="code-tabs__title"
+                    >🗄️ Sân chơi tương tác: SQL Workbench (big_orders 100k + big_customers 5k)</span
+                  >
+                  <div class="code-tabs__btns">
+                    <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                    <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                  </div>
+                </div>
+
+                <div class="code-tabs__panel is-active" data-panel="preview">
+                  <div class="sql-workbench">
+                    <div>
+                      <div class="sql-examples" id="sql-examples"></div>
+                    </div>
+                    <div class="sql-workbench__row">
+                      <textarea
+                        id="sql-editor"
+                        class="sql-editor"
+                        spellcheck="false"
+                        placeholder="Bấm lần lượt 1️⃣ 2️⃣ 3️⃣... theo thứ tự để đi hết bài..."
+                      ></textarea>
+                      <div class="sql-side-panel">
+                        <button class="sql-btn sql-btn--primary" id="sql-run-btn">▶ Chạy (Ctrl+Enter)</button>
+                        <button class="sql-btn" id="sql-schema-toggle">📋 Xem cấu trúc bảng</button>
+                        <button class="sql-btn" id="sql-reset-btn">Reset dữ liệu</button>
+                      </div>
+                    </div>
+                    <div class="sql-schema-panel" id="sql-schema-panel">
+                      <h4>big_orders <span style="color: #6c7086">(bấm nút "1️⃣" để tạo)</span></h4>
+                      <table>
+                        <tr>
+                          <th>Cột</th>
+                          <th>Kiểu</th>
+                        </tr>
+                        <tr>
+                          <td>order_id</td>
+                          <td>INTEGER PRIMARY KEY</td>
+                        </tr>
+                        <tr>
+                          <td>customer_id</td>
+                          <td>INTEGER (1-5000)</td>
+                        </tr>
+                        <tr>
+                          <td>order_date</td>
+                          <td>TEXT (ISO-8601)</td>
+                        </tr>
+                        <tr>
+                          <td>status</td>
+                          <td>TEXT (5 giá trị)</td>
+                        </tr>
+                        <tr>
+                          <td>total_amount</td>
+                          <td>REAL</td>
+                        </tr>
+                        <tr>
+                          <td>channel</td>
+                          <td>TEXT (95% web, 5% mobile_app)</td>
+                        </tr>
+                      </table>
+                      <h4 style="margin-top: 10px">
+                        big_customers <span style="color: #6c7086">(bấm nút "2️⃣" để tạo)</span>
+                      </h4>
+                      <table>
+                        <tr>
+                          <th>Cột</th>
+                          <th>Kiểu</th>
+                        </tr>
+                        <tr>
+                          <td>customer_id</td>
+                          <td>INTEGER PRIMARY KEY (1-5000)</td>
+                        </tr>
+                        <tr>
+                          <td>country</td>
+                          <td>TEXT (70% VN, 10% SG, 10% US, 10% KR)</td>
+                        </tr>
+                        <tr>
+                          <td>email</td>
+                          <td>TEXT (hoa/thường lộn xộn)</td>
+                        </tr>
+                      </table>
+                    </div>
+                    <div class="sql-results-container" id="sql-results">
+                      <div class="sql-results-empty">Bấm "1️⃣" bên dưới để bắt đầu...</div>
+                    </div>
+                    <div class="sql-status-line" id="sql-status-line">Đang tải SQLite-WASM engine...</div>
+                  </div>
+                </div>
+
+                <div class="code-tabs__panel" data-panel="js">
+                  <div class="code-window">
+                    <div class="code-header">
+                      <span class="code-filename">sql-query-optimizer-deep-dive.js</span>
+                      <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <pre><code class="language-js" id="sql-js-code-display"></code></pre>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Interactive Quizzes -->
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 1: Trước khi chạy <code>ANALYZE</code>, vì sao SQLite dùng <code>idx_channel</code> ngay cả khi
+                  lọc <code>channel = 'web'</code> — giá trị chiếm 95% bảng?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'Không có thống kê thật, SQLite mặc định tin rằng bất kỳ index nào trên điều kiện = đều rẻ hơn quét toàn bảng — nó chưa hề biết channel phân bố lệch cỡ nào cho tới khi có ANALYZE.'
+                      )
+                    "
+                  >
+                    A. SQLite đoán mặc định rằng tra index luôn rẻ, vì chưa có thống kê thật cho biết
+                    <code>'web'</code> phổ biến tới mức nào.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'SQLite hoàn toàn có thể chọn SCAN thay vì SEARCH khi thấy cần thiết — đây không phải giới hạn kỹ thuật cứng, mà là hệ quả của việc thiếu thống kê thật.'
+                      )
+                    "
+                  >
+                    B. SQLite luôn bắt buộc dùng index nếu index đã tồn tại, không có lựa chọn khác.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'channel là cột TEXT hợp lệ để đánh index — không có vấn đề gì về kiểu dữ liệu ở đây.'
+                      )
+                    "
+                  >
+                    C. Vì cột <code>channel</code> có kiểu dữ liệu không phù hợp để đánh index.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 2: <code>sqlite_stat1</code> ghi dòng <code>"100000 50000"</code> cho <code>idx_channel</code> —
+                  con số này thay đổi thế nào nếu tỷ lệ <code>mobile_app</code> đổi từ 5% xuống 1%?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Đã kiểm chứng trực tiếp: con số KHÔNG đổi, vẫn là 100000 50000 dù tỷ lệ thực tế đổi từ 5% xuống 1%.'
+                      )
+                    "
+                  >
+                    A. Con số sẽ giảm xuống, phản ánh đúng tỷ lệ hiếm hơn của <code>mobile_app</code>.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'sqlite_stat1 chỉ lưu 1 số TRUNG BÌNH duy nhất mỗi index (tổng dòng / số giá trị khác nhau) — với đúng 2 giá trị khác nhau, trung bình luôn là 100000/2 = 50000 bất kể tỷ lệ thực tế phân bổ thế nào giữa 2 giá trị đó.'
+                      )
+                    "
+                  >
+                    B. Con số KHÔNG đổi — vẫn là <code>100000 50000</code>, vì <code>sqlite_stat1</code> chỉ lưu 1 trung
+                    bình chung, không phải phân phối riêng từng giá trị.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'sqlite_stat1 không lưu số liệu riêng cho từng giá trị cụ thể như mobile_app — chỉ 1 số trung bình chung cho cả index.'
+                      )
+                    "
+                  >
+                    C. Sẽ xuất hiện thêm 1 dòng riêng cho giá trị <code>mobile_app</code> với số nhỏ hơn.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 3: Kế hoạch JOIN đổi từ "quét <code>bo</code> trước" sang "lọc <code>bc</code> theo
+                  <code>country</code> trước" ngay khi vừa tạo <code>idx_bo_customer</code> +
+                  <code>idx_bc_country</code>, <strong>trước khi</strong> chạy lại <code>ANALYZE</code>. Điều này cho
+                  thấy gì?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'Việc TẠO ĐÚNG INDEX đã đủ để engine cân nhắc và chọn kế hoạch tốt hơn — ANALYZE chạy sau đó chỉ tinh chỉnh con số chi phí (52→115, 60→68) cho sát thực tế hơn, không đổi quyết định lần này.'
+                      )
+                    "
+                  >
+                    A. Bản thân việc có đúng index đã đủ mở ra lựa chọn kế hoạch tốt hơn —
+                    <code>ANALYZE</code> không phải điều kiện bắt buộc để engine đảo thứ tự JOIN trong tình huống này.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Kết quả đo thực tế cho thấy điều ngược lại: kế hoạch đã đổi ngay khi có index, trước khi ANALYZE chạy lại.'
+                      )
+                    "
+                  >
+                    B. <code>ANALYZE</code> là điều kiện bắt buộc duy nhất khiến engine đảo thứ tự JOIN.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Thứ tự viết trong FROM/JOIN không quyết định thứ tự truy cập thật — engine luôn tự chọn dựa trên chi phí ước lượng, bất kể bạn viết bo hay bc trước.'
+                      )
+                    "
+                  >
+                    C. Vì trong câu lệnh, <code>bo</code> được viết trước <code>bc</code> trong mệnh đề
+                    <code>FROM</code>.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 4: Vì sao <code>idx_pending</code> (partial index, chỉ index đơn <code>pending</code>) thường tốt
+                  hơn 1 index đầy đủ trên <code>status</code> cho tình huống dashboard vận hành?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'Partial index chỉ chứa ~20% dòng (chỉ status = pending) — nhỏ hơn hẳn 1 index đầy đủ trên status, và mọi INSERT/UPDATE lên các đơn không phải pending hoàn toàn không cần cập nhật thêm cấu trúc này, giúp ghi dữ liệu nhanh hơn.'
+                      )
+                    "
+                  >
+                    A. Nó chỉ chứa dòng thực sự cần tra cứu thường xuyên (pending), nhỏ hơn và không làm chậm ghi dữ
+                    liệu lên các đơn ở trạng thái khác.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Partial index không hề nhanh hơn về mặt tốc độ đọc mỗi lần tra cứu 1 khoá — lợi ích thực sự nằm ở KÍCH THƯỚC nhỏ hơn và chi phí ghi thấp hơn.'
+                      )
+                    "
+                  >
+                    B. Vì partial index luôn tra cứu nhanh hơn về bản chất thuật toán so với index đầy đủ.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'SQLite hoàn toàn hỗ trợ index đầy đủ trên mọi cột kiểu TEXT như status — đây không phải giới hạn kỹ thuật.'
+                      )
+                    "
+                  >
+                    C. Vì SQLite không cho phép tạo index đầy đủ trên cột kiểu TEXT như <code>status</code>.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 5: <code>EXPLAIN QUERY PLAN</code> hiện
+                  <code>SEARCH big_customers USING INDEX idx_email_lower (&lt;expr&gt;=?)</code>. Placeholder
+                  <code>&lt;expr&gt;</code> ở đây nghĩa là gì?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'idx_email_lower được xây trên biểu thức LOWER(email), không phải giá trị thô của cột email — SQLite dùng <expr> để báo hiệu đây là expression index, không có tên cột đơn lẻ để hiển thị.'
+                      )
+                    "
+                  >
+                    A. Index này được xây trên kết quả 1 biểu thức (<code>LOWER(email)</code>), không phải giá trị thô
+                    của cột.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        '<expr> không liên quan gì tới lỗi cú pháp — đây là 1 kế hoạch thực thi hợp lệ, câu lệnh chạy đúng.'
+                      )
+                    "
+                  >
+                    B. Đây là dấu hiệu câu lệnh có lỗi cú pháp cần sửa.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        '<expr> không liên quan gì tới việc thiếu dữ liệu — index này hoạt động bình thường và trả kết quả đúng.'
+                      )
+                    "
+                  >
+                    C. Index này chưa có dữ liệu nào được lập chỉ mục.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="quiz-container" style="margin-top: 20px">
+                <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                <p class="quiz-question">
+                  Câu 6: Vì sao <code>EXPLAIN ANALYZE</code> của PostgreSQL khác về bản chất so với
+                  <code>EXPLAIN QUERY PLAN</code> của SQLite?
+                </p>
+                <div class="quiz-options">
+                  <button
+                    class="quiz-option"
+                    data-correct="true"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        true,
+                        'EXPLAIN ANALYZE của PostgreSQL CHẠY THẬT câu lệnh rồi báo cáo thời gian đo được thực tế (actual time, rows thật) cho từng bước, bên cạnh chi phí ước lượng — trong khi EXPLAIN QUERY PLAN của SQLite chỉ là ước lượng, không bao giờ thực thi câu lệnh.'
+                      )
+                    "
+                  >
+                    A. PostgreSQL's <code>EXPLAIN ANALYZE</code> chạy thật câu lệnh và đo thời gian thực tế; SQLite's
+                    <code>EXPLAIN QUERY PLAN</code> chỉ là ước lượng, không chạy thật.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Cả 2 hệ quản trị đều hỗ trợ JOIN nhiều bảng bình thường — đây không phải khác biệt giữa 2 công cụ EXPLAIN.'
+                      )
+                    "
+                  >
+                    B. Vì PostgreSQL không hỗ trợ JOIN nhiều bảng như SQLite.
+                  </button>
+                  <button
+                    class="quiz-option"
+                    onclick="
+                      checkQuiz(
+                        this,
+                        false,
+                        'Cú pháp khác nhau (EXPLAIN ANALYZE vs EXPLAIN QUERY PLAN) chỉ là bề mặt — khác biệt cốt lõi nằm ở việc CÓ THỰC THI câu lệnh thật hay không, không phải bản thân cú pháp.'
+                      )
+                    "
+                  >
+                    C. Chỉ khác nhau về cú pháp gõ lệnh, bản chất hoạt động hoàn toàn giống nhau.
+                  </button>
+                </div>
+                <div class="quiz-feedback hidden"></div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://www.sqlite.org/lang_analyze.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — ANALYZE</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/queryplanner-ng.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — The Next-Generation Query Planner</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/expridx.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — Partial &amp; Expression Indexes</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/opcode.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — VDBE Opcodes</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://www.postgresql.org/docs/current/sql-explain.html"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >PostgreSQL Official Docs — EXPLAIN</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://sql.js.org/" target="_blank" rel="noopener noreferrer"
+                      >sql.js — SQLite compiled to WebAssembly</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 10: SQLite Internals: B-Tree &amp; File Format (sắp ra mắt)
+                  </span>
+                  <a href="sql-index-query-plan" class="article-related__link article-related__link--prev">
+                    Bài 8: Index &amp; Query Plan
+                  </a>
+                  <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="vendor/sql-wasm.js" defer></script>
+    <script src="sql-query-optimizer-deep-dive.js" defer></script>
+  </body>
+</html>
