@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 14: FTS5 Full-Text Search — js-tools</title>
+    <title>Bài 15: Performance Engineering 🐳 — js-tools</title>
     <meta
       name="description"
-      content="Tìm hiểu cơ chế hoạt động của chỉ mục đảo ngược (Inverted Index), bộ phân tích từ vựng Tokenizer, thuật toán xếp hạng BM25, và các hàm trợ giúp như snippet()/highlight() để xây dựng một bộ máy tìm kiếm toàn văn siêu tốc trong SQLite."
+      content="Tìm hiểu kỹ thuật tối ưu hóa hiệu năng đọc/ghi trong SQLite. Cách sử dụng Prepared Statements để tránh biên dịch cú pháp liên tục, kỹ thuật tối ưu hóa ghi hàng loạt (Batch Insert) bằng Transaction, PRAGMA Tuning (journal_mode, synchronous) và thực hành đo lường hiệu năng I/O thực tế."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-fts5-full-text-search" />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-performance-engineering" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -285,7 +285,7 @@
         <div class="container">
           <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
           <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
-          <h1 class="article-hero__title">Bài 14: FTS5 Full-Text Search</h1>
+          <h1 class="article-hero__title">Bài 15: Performance Engineering 🐳</h1>
           <div class="article-hero__meta">5 tháng 7, 2026 · 30 phút đọc</div>
         </div>
       </section>
@@ -296,207 +296,167 @@
             <div class="article-body">
               <div>
                 <p>
-                  Khi xây dựng các tính năng tìm kiếm văn bản như tìm sản phẩm, bài viết hay nhật ký giao dịch, các lập
-                  trình viên thường nghĩ ngay đến toán tử <code>LIKE '%từ_khóa%'</code>. Tuy nhiên, trên tập dữ liệu
-                  hàng triệu dòng, phương pháp này tốn rất nhiều thời gian do hệ thống phải thực hiện quét tuần tự toàn
-                  bảng (Full Table Scan) với độ phức tạp \(O(N)\). Bài viết này sẽ phân tích chi tiết cơ chế hoạt động
-                  của <strong>Inverted Index</strong> (Chỉ mục đảo ngược), cấu trúc bộ phân tích từ vựng (Tokenizer),
-                  thuật toán xếp hạng độ liên quan <strong>BM25</strong>, và cách ứng dụng module
-                  <strong>FTS5</strong> để xây dựng một bộ máy tìm kiếm toàn văn siêu tốc trong SQLite.
+                  Khi ứng dụng của bạn tăng trưởng, lượng dữ liệu ghi nhận mỗi giây có thể tăng lên hàng nghìn bản ghi.
+                  Một lỗi lập trình kinh điển về I/O đĩa hoặc parse câu lệnh có thể khiến tốc độ ghi giảm đi hàng trăm
+                  lần, gây nghẽn hệ thống. Bài viết này hướng đến khía cạnh kỹ thuật hiệu năng (Performance Engineering)
+                  của cơ sở dữ liệu: cách SQLite biên dịch câu lệnh, tại sao Transaction lại thay đổi hoàn toàn tốc độ
+                  ghi hàng loạt (Batch Insert), các cấu hình <code>PRAGMA</code> tuning chuyên sâu, và một bài thực hành
+                  đo đạc hiệu năng I/O trực quan.
                 </p>
 
-                <h2>1. Trái Tim Của Mọi Bộ Máy Tìm Kiếm: Chỉ Mục Đảo Ngược (Inverted Index)</h2>
+                <h2>1. Prepared Statements: Tối Ưu Hóa Chi Phí Phân Tích Cú Pháp SQL</h2>
                 <p>
-                  Để hiểu vì sao các công cụ tìm kiếm như Elasticsearch hay module FTS (Full-Text Search) của SQLite có
-                  thể trả về kết quả trong vài mili-giây trên hàng triệu dòng tài liệu, chúng ta cần tìm hiểu cấu trúc
-                  dữ liệu bên dưới của chúng.
+                  Mỗi khi bạn gửi một câu lệnh SQL dạng văn bản thô tới cơ sở dữ liệu (ví dụ:
+                  <code>INSERT INTO logs VALUES (1, 'info')</code>), engine cơ sở dữ liệu phải trải qua một quy trình
+                  biên dịch nghiêm ngặt:
+                </p>
+                <ol>
+                  <li><strong>Parser</strong>: Phân tích cú pháp chuỗi văn bản để phát hiện lỗi chính tả.</li>
+                  <li>
+                    <strong>Semantic Analyzer</strong>: Kiểm tra xem các bảng và cột có tồn tại thực sự hay không.
+                  </li>
+                  <li><strong>Optimizer</strong>: Lập kế hoạch tối ưu (Query Plan).</li>
+                  <li>
+                    <strong>Code Generator</strong>: Biên dịch câu lệnh thành mã bytecode của máy ảo VDBE (Virtual
+                    Database Engine) trong SQLite.
+                  </li>
+                </ol>
+                <p>
+                  Quá trình biên dịch này chiếm từ 30% đến 50% tổng thời gian thực thi của một truy vấn đơn giản. Nếu
+                  bạn ghi 10.000 bản ghi bằng 10.000 câu lệnh văn bản khác nhau, bạn đang lãng phí hàng tỷ chu kỳ CPU
+                  chỉ để parse và compile cùng một cấu trúc lệnh lặp đi lặp lại.
                 </p>
                 <p>
-                  Trong bảng B-Tree thông thường, dữ liệu được tổ chức theo chiều xuôi:
-                  <code>Document ID (Khóa chính) -&gt; Nội dung văn bản</code>. Khi bạn tìm một từ, hệ thống buộc phải
-                  đọc từng tài liệu và duyệt qua chuỗi ký tự để kiểm tra.
+                  <strong>Prepared Statements (Câu lệnh chuẩn bị)</strong> giải quyết bài toán này bằng cách gửi cấu
+                  trúc lệnh chứa các tham số động (placeholders <code>?</code> hoặc <code>$name</code>) lên database
+                  trước:
+                </p>
+                <pre><code class="language-sql">-- Khai báo cấu trúc câu lệnh một lần duy nhất
+INSERT INTO techmart_logs (log_id, message) VALUES (?, ?);</code></pre>
+                <p>
+                  SQLite sẽ parse, biên dịch và lưu trữ cấu trúc máy ảo VDBE đã được dịch sẵn. Khi thực thi ghi dữ liệu,
+                  ứng dụng chỉ cần gửi các giá trị liên kết (Parameter Binding) trực tiếp vào máy ảo, bỏ qua hoàn toàn
+                  các bước Parser/Compile.
+                </p>
+                <p>Cách viết tối ưu trong JavaScript sử dụng thư viện SQLite-WASM:</p>
+                <pre><code class="language-js">// Chuẩn bị câu lệnh một lần
+const stmt = db.prepare("INSERT INTO techmart_logs (message) VALUES (?);");
+
+// Binding và thực thi nhiều lần
+for (let i = 0; i &lt; 1000; i++) {
+  stmt.run([`Log event #${i}`]); // Chỉ truyền mảng tham số, tốc độ cực nhanh
+}
+
+// Giải phóng bộ nhớ của statement khi dùng xong
+stmt.free();</code></pre>
+
+                <h2>2. Sức Mạnh Của Transactions Đối Với Ghi Hàng Loạt (Batch Insert)</h2>
+                <p>
+                  Nhiều lập trình viên ngạc nhiên khi thấy chèn 1.000 dòng vào SQLite mất tới 10-15 giây ở cấu hình mặc
+                  định. Họ đổ lỗi cho SQLite chậm chạp. Nhưng thực tế, đây là hành vi bảo vệ dữ liệu mặc định của hệ
+                  điều hành và cơ sở dữ liệu.
                 </p>
                 <p>
-                  <strong>Inverted Index (Chỉ mục đảo ngược)</strong> tổ chức dữ liệu theo chiều ngược lại:
-                  <code>Từ đơn (Term) -&gt; Danh sách Document ID chứa từ đó + Vị trí từ</code>.
+                  Theo mặc định, SQLite chạy ở chế độ **Auto-commit**. Nghĩa là mỗi câu lệnh <code>INSERT</code> riêng
+                  lẻ được coi là một giao dịch độc lập. Để đảm bảo tính bền vững (Durability - chữ D trong ACID), mỗi
+                  khi một câu lệnh kết thúc, SQLite bắt buộc phải thực hiện quy trình sau:
+                </p>
+                <ol>
+                  <li>Tạo và mở file nhật ký giao dịch (journal file).</li>
+                  <li>Ghi thay đổi vào đĩa vật lý.</li>
+                  <li>
+                    Gọi hàm hệ thống <strong><code>fsync()</code></strong
+                    >.
+                  </li>
+                </ol>
+                <p>
+                  Hàm <code>fsync()</code> yêu cầu hệ điều hành đẩy toàn bộ dữ liệu đang nằm trong RAM (OS page cache)
+                  xuống bề mặt vật lý của đĩa cứng hoặc chip nhớ flash SSD. Đây là một thao tác phần cứng rất chậm (mất
+                  khoảng 10ms đối với SSD thông thường). Do đó, chèn 1.000 dòng riêng biệt đồng nghĩa với 1.000 lần gọi
+                  <code>fsync()</code>, tiêu tốn ít nhất: \[ 1000 \times 10\text{ms} = 10\text{giây} \]
+                </p>
+                <p>Khi chúng ta bọc toàn bộ khối lệnh trong một **Transaction** duy nhất:</p>
+                <pre><code class="language-sql">BEGIN TRANSACTION;
+INSERT INTO techmart_logs (message) VALUES ('Log #1');
+INSERT INTO techmart_logs (message) VALUES ('Log #2');
+...
+INSERT INTO techmart_logs (message) VALUES ('Log #1000');
+COMMIT;</code></pre>
+                <p>
+                  SQLite sẽ ghi toàn bộ các thay đổi này vào bộ nhớ đệm và chỉ thực hiện **một lần gọi
+                  <code>fsync()</code> duy nhất** tại thời điểm từ khóa <code>COMMIT</code> được chạy. Thời gian xử lý
+                  lập tức giảm từ 10 giây xuống còn vỏn vẹn **chưa đầy 20 mili-giây**!
                 </p>
 
-                <p>Giả sử ta có hai tài liệu trong cơ sở dữ liệu:</p>
-                <ul>
-                  <li><strong>Tài liệu 1 (D1)</strong>: "Học SQL rất thú vị."</li>
-                  <li><strong>Tài liệu 2 (D2)</strong>: "Học giải thuật trực quan."</li>
-                </ul>
+                <h2>3. PRAGMA Tuning: Tinh Chỉnh Hiệu Năng SQLite</h2>
+                <p>
+                  SQLite cung cấp một loạt các tham số PRAGMA để thay đổi cách thức cơ sở dữ liệu tương tác với đĩa cứng
+                  và bộ nhớ đệm. Dưới đây là các cấu hình tuning hiệu năng quan trọng nhất:
+                </p>
 
-                <p>Sau khi phân tích, Inverted Index sẽ lưu trữ như sau:</p>
                 <table class="comparison-table">
                   <thead>
                     <tr>
-                      <th>Từ đơn (Term)</th>
-                      <th>Danh sách xuất hiện (Posting List)</th>
+                      <th>Tham số PRAGMA</th>
+                      <th>Giá trị mặc định</th>
+                      <th>Giá trị tối ưu hiệu năng</th>
+                      <th>Đánh đổi (Trade-off)</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>học</td>
-                      <td>(D1, vị trí 0), (D2, vị trí 0)</td>
+                      <td>
+                        <strong><code>journal_mode</code></strong>
+                      </td>
+                      <td><code>DELETE</code> (xóa file log sau mỗi transaction)</td>
+                      <td><code>WAL</code> (Write-Ahead Log)</td>
+                      <td>Cho phép đọc ghi song song, cải thiện tốc độ ghi đáng kể. Lưu thêm file phụ trên ổ đĩa.</td>
                     </tr>
                     <tr>
-                      <td>sql</td>
-                      <td>(D1, vị trí 1)</td>
+                      <td>
+                        <strong><code>synchronous</code></strong>
+                      </td>
+                      <td><code>FULL</code> (chờ fsync hoàn tất ở mọi bước)</td>
+                      <td><code>NORMAL</code> hoặc <code>OFF</code></td>
+                      <td>
+                        Nếu đặt là <code>OFF</code>, tốc độ ghi tăng vọt 50x nhưng có nguy cơ lỗi file DB nếu mất nguồn
+                        đột ngột.
+                      </td>
                     </tr>
                     <tr>
-                      <td>rất</td>
-                      <td>(D1, vị trí 2)</td>
-                    </tr>
-                    <tr>
-                      <td>thú vị</td>
-                      <td>(D1, vị trí 3)</td>
-                    </tr>
-                    <tr>
-                      <td>giải thuật</td>
-                      <td>(D2, vị trí 1)</td>
-                    </tr>
-                    <tr>
-                      <td>trực quan</td>
-                      <td>(D2, vị trí 2)</td>
+                      <td>
+                        <strong><code>cache_size</code></strong>
+                      </td>
+                      <td><code>-2000</code> (khoảng 2MB bộ nhớ đệm)</td>
+                      <td><code>-10000</code> hoặc lớn hơn (10MB+)</td>
+                      <td>Tốn RAM hơn để giữ dữ liệu trên cache, giảm I/O đọc từ ổ đĩa vật lý.</td>
                     </tr>
                   </tbody>
                 </table>
 
+                <p>Cú pháp cấu hình tối ưu hiệu năng ghi hàng loạt điển hình:</p>
+                <pre><code class="language-sql">-- Chuyển sang chế độ WAL để tăng tốc ghi và cho phép đọc ghi song song
+PRAGMA journal_mode = WAL;
+
+-- Giảm mức độ đồng bộ xuống NORMAL (vẫn an toàn cao nếu mất điện)
+PRAGMA synchronous = NORMAL;
+
+-- Tăng bộ nhớ đệm lên 40MB (khoảng 10000 trang 4KB)
+PRAGMA cache_size = -10000;</code></pre>
+
+                <h2>4. Đo Lường Hiệu Năng Thực Tế (Benchmark Sandbox)</h2>
                 <p>
-                  Khi người dùng tìm kiếm từ "SQL", SQLite không cần đọc nội dung bất kỳ hàng nào. Nó chỉ cần thực hiện
-                  tra cứu nhị phân trên danh sách từ đơn để tìm khóa <code>sql</code>, lập tức lấy được danh sách kết
-                  quả chứa <code>D1</code>. Độ phức tạp tìm kiếm giảm từ quét toàn bảng \(O(N)\) xuống còn tìm kiếm nhị
-                  phân hoặc bảng băm \(O(\log M)\) với $M$ là tổng số từ đơn phân biệt.
+                  Để thấy rõ sự khác biệt của các kỹ thuật trên, chúng ta sẽ thực hiện một thực nghiệm đo lường
+                  (Benchmark) ngay trên trình duyệt. Chúng ta sẽ ghi 500 bản ghi vào bảng và so sánh 3 phương pháp:
                 </p>
-
-                <h2>2. Bộ Phân Tích Từ Vựng (Tokenizer): unicode61 vs trigram</h2>
-                <p>
-                  Quá trình chuyển đổi một câu văn bản thô thành danh sách các từ đơn trong Inverted Index được đảm nhận
-                  bởi
-                  <strong>Tokenizer</strong>. SQLite cung cấp một số bộ Tokenizer mặc định:
-                </p>
-                <ul>
+                <ol>
+                  <li><strong>Autocommit (Không Transaction)</strong>: Chạy từng lệnh INSERT riêng rẽ.</li>
+                  <li><strong>Với Transaction</strong>: Bọc toàn bộ các lệnh INSERT thô trong một Transaction.</li>
                   <li>
-                    <strong><code>simple</code></strong
-                    >: Chỉ phân tách từ dựa trên các ký tự khoảng trắng và dấu câu ASCII. Nó loại bỏ hoàn toàn các ký tự
-                    ngoài ASCII và không hỗ trợ tốt tiếng Việt có dấu.
+                    <strong>Transaction + Prepared Statement</strong>: Kết hợp bọc Transaction và biên dịch sẵn câu
+                    lệnh.
                   </li>
-                  <li>
-                    <strong><code>porter</code></strong
-                    >: Áp dụng thuật toán Stemming của Porter dành riêng cho tiếng Anh (ví dụ: biến đổi "running",
-                    "runs", "ran" về từ gốc chung là "run").
-                  </li>
-                  <li>
-                    <strong><code>unicode61</code></strong
-                    >: Hỗ trợ đầy đủ bảng mã Unicode (UTF-8). Nó nhận biết chính xác các nguyên âm có dấu trong tiếng
-                    Việt để tách từ một cách chuẩn xác nhất. Đây là lựa chọn bắt buộc khi làm ứng dụng đa ngôn ngữ hoặc
-                    ứng dụng thuần Việt.
-                  </li>
-                  <li>
-                    <strong><code>trigram</code> (Từ SQLite 3.34.0, chỉ có ở FTS5)</strong>: Phân rã chuỗi thành các cụm
-                    3 ký tự liên tiếp. Trigram rất mạnh cho tìm kiếm mờ (fuzzy search) hoặc tìm kiếm chuỗi con không cần
-                    đúng ranh giới từ (ví dụ: tìm "code" có thể khớp cả "bytecode", "codegolf").
-                  </li>
-                </ul>
-
-                <p>Khai báo bảng ảo FTS5 sử dụng Tokenizer unicode61 cấu hình loại bỏ dấu câu tùy biến:</p>
-                <pre><code class="language-sql">-- FTS5 Syntax (Dành cho production)
-CREATE VIRTUAL TABLE articles_search USING fts5(
-  title, 
-  body, 
-  tokenize = "unicode61 remove_diacritics 1"
-);</code></pre>
-
-                <div class="callout callout--note">
-                  <div class="callout__title">ℹ️ Bản sql.js/WASM trong trình duyệt sử dụng FTS3</div>
-                  <div class="callout__content">
-                    Bản phân phối <code>sql.js</code> WASM chạy trực tiếp trên trình duyệt hiện tại chỉ được biên dịch
-                    kích hoạt module **FTS3** (không có FTS5). Trong bài học tương tác này, chúng ta sẽ viết code tương
-                    thích FTS3 để chạy thật được 100%. Về mặt lý thuyết và kiến trúc tìm kiếm, FTS3 và FTS5 đều dùng
-                    chung mô hình Inverted Index và cú pháp toán tử <code>MATCH</code>. Điểm khác biệt là FTS5 cung cấp
-                    thuật toán xếp hạng BM25 tốt hơn và cú pháp linh hoạt hơn.
-                  </div>
-                </div>
-
-                <h2>3. Thuật Toán Xếp Hạng Độ Liên Quan BM25 (Best Matching 25)</h2>
-                <p>
-                  Khi một câu truy vấn có nhiều kết quả khớp, làm sao để đưa các tài liệu liên quan nhất lên đầu? Module
-                  FTS5 của SQLite sử dụng thuật toán xếp hạng nổi tiếng **BM25**. Điểm số BM25 của tài liệu $D$ đối với
-                  truy vấn $Q$ chứa các từ khóa $q_1, q_2, \dots, q_n$ được tính toán theo công thức toán học sau:
-                </p>
-
-                \[ \text{Score}(D, Q) = \sum_{i=1}^{n} \text{IDF}(q_i) \cdot \frac{f(q_i, D) \cdot (k_1 + 1)}{f(q_i, D)
-                + k_1 \cdot \left(1 - b + b \cdot \frac{|D|}{\text{avgdl}}\right)} \]
-
-                <p>Trong đó:</p>
-                <ul>
-                  <li>
-                    <strong>\(f(q_i, D)\)</strong>: Tần suất từ khóa $q_i$ xuất hiện trong tài liệu $D$ (Term
-                    Frequency). Từ khóa xuất hiện càng nhiều, điểm càng cao.
-                  </li>
-                  <li><strong>\(|D|\)</strong>: Chiều dài (số lượng từ) của tài liệu $D$.</li>
-                  <li><strong>\(\text{avgdl}\)</strong>: Chiều dài trung bình của tất cả tài liệu trong bảng.</li>
-                  <li>
-                    <strong>\(\text{IDF}(q_i)\)</strong>: Trọng số nghịch đảo tần suất tài liệu chứa từ khóa (Inverse
-                    Document Frequency). Từ khóa nào càng hiếm trong cơ sở dữ liệu (ví dụ: thuật ngữ chuyên ngành) thì
-                    khi khớp sẽ mang lại điểm số cao hơn hẳn các từ phổ biến (như "và", "là", "thì").
-                  </li>
-                  <li>
-                    <strong>\(k_1\) và \(b\)</strong>: Các siêu tham số hiệu chỉnh (mặc định trong SQLite thường là
-                    \(k_1 = 1.2\) điều khiển mức độ bão hòa tần suất từ, và \(b = 0.75\) điều khiển mức độ phạt độ dài
-                    tài liệu).
-                  </li>
-                </ul>
-
-                <p>
-                  Trong FTS5, SQLite cung cấp hàm <code>bm25()</code> để tự động tính điểm số này. Điểm số trả về của
-                  hàm <code>bm25()</code> là một số âm, tài liệu nào có điểm số âm **càng nhỏ** (càng âm sâu) thì độ
-                  liên quan càng cao.
-                </p>
-
-                <pre><code class="language-sql">-- FTS5 query xếp hạng theo BM25 và lọc trọng số cột
-SELECT title, bm25(articles_search, 10.0, 1.0) AS score
-FROM articles_search 
-WHERE articles_search MATCH 'học SQL'
-ORDER BY score ASC; -- Xếp hạng tốt nhất lên đầu</code></pre>
-                <p>
-                  Trọng số <code>10.0, 1.0</code> truyền vào hàm <code>bm25()</code> chỉ ra rằng nếu từ khóa khớp ở cột
-                  thứ nhất (title), nó sẽ có mức độ quan trọng gấp 10 lần so với khớp ở cột thứ hai (body).
-                </p>
-
-                <h2>4. Các Hàm Bổ Trợ Trực Quan Hóa: <code>snippet()</code> và <code>highlight()</code></h2>
-                <p>
-                  Một bộ máy tìm kiếm không thể chỉ trả về tiêu đề trơ trọi. Người dùng cần nhìn thấy một đoạn trích dẫn
-                  ngắn chứa từ khóa được tô đậm để quyết định có click vào xem hay không.
-                </p>
-                <ul>
-                  <li>
-                    <strong><code>snippet(table, column_index, start_tag, end_tag, ellipses, max_tokens)</code></strong
-                    >: Tự động trích xuất một đoạn văn ngắn xung quanh từ khóa khớp, thêm dấu ba chấm <code>...</code> ở
-                    hai đầu.
-                  </li>
-                  <li>
-                    <strong><code>highlight(table, column_index, start_tag, end_tag)</code></strong
-                    >: Trả về toàn bộ nội dung cột nhưng bọc các từ khóa khớp bằng thẻ HTML tùy chọn (ví dụ: bọc bằng
-                    thẻ <code>&lt;mark&gt;</code>).
-                  </li>
-                </ul>
-
-                <pre><code class="language-sql">-- Sử dụng các hàm trực quan trong FTS5
-SELECT highlight(articles_search, 0, '&lt;span class="match"&gt;', '&lt;/span&gt;') AS highlighted_title,
-       snippet(articles_search, 1, '&lt;mark&gt;', '&lt;/mark&gt;', '...', 15) AS preview_snippet
-FROM articles_search
-WHERE articles_search MATCH 'trực quan'
-LIMIT 5;</code></pre>
-
-                <h2>5. Thực Hành Xây Dựng Search Engine Mini Trên Trình Duyệt</h2>
-                <p>
-                  Để tiến hành thử nghiệm trực tiếp trên trình duyệt với thư viện <code>sql.js</code>, chúng ta sử dụng
-                  module <strong>FTS3</strong> có sẵn. Cú pháp tìm kiếm và hàm cắt chuỗi <code>snippet()</code> hoạt
-                  động hoàn toàn tương thích.
-                </p>
-                <p>Hãy cùng chạy thử các câu lệnh trên bảng tìm kiếm sản phẩm TechMart dưới đây.</p>
+                </ol>
 
                 <!-- SQL Workbench Sandbox -->
                 <div class="sql-workbench">
@@ -527,30 +487,41 @@ LIMIT 5;</code></pre>
                   </div>
                   <div class="sql-results-container">
                     <div id="sql-results">
-                      <div class="sql-results-empty">Kết quả truy vấn sẽ hiển thị ở đây...</div>
+                      <div class="sql-results-empty">
+                        Kết quả truy vấn hoặc kết quả đo hiệu năng sẽ hiển thị ở đây...
+                      </div>
                     </div>
                   </div>
                 </div>
 
+                <h2>5. Thực Hành Nâng Cao Với Docker: Đo Lường Disk I/O &amp; fsync Thật</h2>
+                <p>
+                  Môi trường WASM trên trình duyệt chạy hoàn toàn trên bộ nhớ RAM ảo của sandbox, do đó các lệnh hệ
+                  thống như
+                  <code>fsync()</code> chỉ được giả lập bằng lệnh ghi vào RAM. Để kiểm chứng hiệu năng I/O thực tế dưới
+                  sự tác động của đĩa cứng và hệ điều hành, bạn hãy thực hành lab tại nhà bằng Docker.
+                </p>
+
                 <div class="callout callout--deep">
-                  <div class="callout__title">🔬 Đào sâu: Boolean Operator &amp; Dò cụm từ chính xác</div>
+                  <div class="callout__title">
+                    🐳 Lab tại nhà: Đo lường I/O và lock contention trên PostgreSQL và SQLite CLI
+                  </div>
                   <div class="callout__content">
-                    FTS hỗ trợ các toán tử Boolean nâng cao ngay trong chuỗi truy vấn MATCH:
-                    <ul>
+                    Hãy khởi chạy container PostgreSQL bằng Docker:
+                    <pre><code class="language-bash">docker run --name techmart-pg -e POSTGRES_PASSWORD=secret -d -p 5432:5432 postgres</code></pre>
+                    Sau đó truy cập vào console bằng psql và chạy các thử nghiệm:
+                    <ol>
                       <li>
-                        <code>AND</code>: Mặc định giữa các từ (ví dụ: <code>'chuột không_dây'</code> tương đương
-                        <code>'chuột AND không_dây'</code>).
-                      </li>
-                      <li><code>OR</code>: Khớp một trong các từ khóa (ví dụ: <code>'bàn_phím OR chuột'</code>).</li>
-                      <li>
-                        <code>NOT</code> hoặc dấu trừ <code>-</code>: Loại bỏ các dòng chứa từ đó (ví dụ:
-                        <code>'chuột -dây'</code> tìm chuột không dây).
+                        Viết một script Bash chèn 10.000 dòng bằng vòng lặp riêng lẻ, giám sát IOPS (Input/Output
+                        Operations Per Second) bằng công cụ <code>iostat -dx 1</code> trên Linux.
                       </li>
                       <li>
-                        <code>"cụm từ"</code>: Bao trong dấu nháy kép để tìm chính xác thứ tự từ xuất hiện cạnh nhau
-                        (Phrase Search), ví dụ <code>'"không dây bluetooth"'</code>.
+                        Xem sự phình to của write volume khi thay đổi tham số <code>synchronous_commit</code> từ
+                        <code>on</code> sang <code>off</code> trong PostgreSQL.
                       </li>
-                    </ul>
+                    </ol>
+                    Bạn sẽ thấy tốc độ chèn dữ liệu tăng gấp hàng chục lần vì OS không bắt buộc chờ ổ cứng phản hồi tín
+                    hiệu ghi vật lý hoàn tất.
                   </div>
                 </div>
               </div>
@@ -562,8 +533,8 @@ LIMIT 5;</code></pre>
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Cơ chế nào giúp bộ chỉ mục đảo ngược (Inverted Index) tìm kiếm nhanh hơn hàng nghìn lần so
-                    với toán tử <code>LIKE '%từ_khóa%'</code> thông thường?
+                    Câu 1: Cơ chế chính giúp Prepared Statements chạy nhanh hơn việc gửi nhiều câu lệnh SQL thô lặp lại
+                    là gì?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -573,12 +544,18 @@ LIMIT 5;</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Inverted Index phân tách văn bản thành các từ đơn và ánh xạ ngược từ đơn -> danh sách Document ID chứa từ đó, giúp tra cứu nhị phân hoặc bảng băm cực nhanh mà không cần quét tuần tự từng dòng văn bản.'
+                          'Prepared Statements chỉ thực hiện phân tích cú pháp (parse) và biên dịch mã máy ảo VDBE một lần duy nhất. Các lần chạy tiếp theo chỉ việc bind tham số và chạy trực tiếp, giúp tiết kiệm chu kỳ CPU.'
                         )
                       "
                     >
-                      A. Nó phân tích và ánh xạ ngược từ từ đơn sang danh sách Document ID chứa từ đó, bỏ qua thao tác
-                      quét tuần tự.
+                      A. Biên dịch sẵn câu lệnh thành mã bytecode của máy ảo VDBE một lần duy nhất, bỏ qua bước phân
+                      tích cú pháp ở các lần chạy sau.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Prepared Statements không liên quan đến việc nén dữ liệu mạng.')"
+                    >
+                      B. Nó tự động nén chuỗi ký tự gửi đi để tiết kiệm băng thông mạng.
                     </button>
                     <button
                       class="quiz-option"
@@ -586,23 +563,11 @@ LIMIT 5;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Inverted Index hoàn toàn có thể lưu trữ trên ổ đĩa vật lý bình thường, không bắt buộc phải nạp toàn bộ vào RAM.'
+                          'B-Tree index là cấu trúc dữ liệu của bảng dưới đĩa, không bị thay đổi bởi việc ta viết câu lệnh thế nào.'
                         )
                       "
                     >
-                      B. Nó nạp toàn bộ cơ sở dữ liệu vào bộ nhớ RAM và khóa các luồng tính toán khác.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Inverted Index không chuyển đổi dữ liệu thành mã hóa nhị phân MD5, nó lưu danh sách posting list gồm DocID và offset.'
-                        )
-                      "
-                    >
-                      C. Nó mã hóa toàn bộ dữ liệu văn bản sang dạng MD5 để so sánh chuỗi nhị phân nhanh hơn.
+                      C. Nó tự động chuyển đổi cấu trúc bảng sang dạng Hash Table để tìm kiếm nhanh hơn.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -611,8 +576,8 @@ LIMIT 5;</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Tại sao Tokenizer <code>unicode61</code> là bắt buộc khi xây dựng tính năng tìm kiếm văn bản
-                    tiếng Việt trong SQLite?
+                    Câu 2: Tại sao chèn hàng nghìn dòng dữ liệu không bọc trong Transaction lại khiến ổ cứng hoạt động
+                    nặng nề và tốc độ chậm đi hàng trăm lần?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -621,11 +586,11 @@ LIMIT 5;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Stemming của Porter chỉ thiết kế và hoạt động đúng cho ngữ pháp tiếng Anh (như s/es, ing, ed).'
+                          'SQLite hoàn toàn có thể xử lý hàng triệu bản ghi ghi cùng lúc nếu được gom nhóm đúng cách.'
                         )
                       "
                     >
-                      A. Vì nó tích hợp sẵn thuật toán rút gọn Stemming cho các hậu tố tiếng Việt.
+                      A. Vì SQLite không có cơ chế ghi hàng loạt và chỉ cho phép ghi tối đa 1 bản ghi mỗi giây.
                     </button>
                     <button
                       class="quiz-option"
@@ -634,12 +599,12 @@ LIMIT 5;</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'unicode61 hỗ trợ toàn vẹn bảng mã UTF-8, nhận biết đúng các ký tự Latin mở rộng có dấu của tiếng Việt để tách từ chính xác, thay vì coi các ký tự có dấu là khoảng trắng hoặc dấu câu bị loại bỏ như bộ tokenizer simple.'
+                          'Trong chế độ autocommit mặc định, mỗi câu lệnh ghi là một transaction độc lập, buộc SQLite phải gọi lệnh fsync() để ghi cứng dữ liệu xuống đĩa nhằm bảo đảm tính bền vững (Durability) của ACID. fsync() là một thao tác I/O phần cứng cực kỳ đắt đỏ.'
                         )
                       "
                     >
-                      B. Vì nó hỗ trợ đầy đủ bảng mã UTF-8 và nhận diện chính xác các nguyên âm tiếng Việt có dấu để
-                      tách từ chuẩn xác.
+                      B. Vì chế độ autocommit buộc SQLite phải gọi lệnh hệ thống <code>fsync()</code> để ghi cứng dữ
+                      liệu xuống đĩa vật lý ở mỗi câu lệnh riêng lẻ.
                     </button>
                     <button
                       class="quiz-option"
@@ -647,11 +612,11 @@ LIMIT 5;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'unicode61 không nén dữ liệu mà chịu trách nhiệm phân tích tách chuỗi ký tự thành các token từ đơn.'
+                          'Mạng/internet không phải là nguyên nhân chính vì SQLite là một cơ sở dữ liệu nhúng (embedded) cục bộ chạy ngay trên file đĩa của thiết bị.'
                         )
                       "
                     >
-                      C. Vì nó tự động nén văn bản tiếng Việt nhỏ đi 2 lần trước khi lưu vào đệm.
+                      C. Vì hệ thống phải gửi yêu cầu xác thực bảo mật qua đường truyền Internet ở mỗi bản ghi.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -660,132 +625,17 @@ LIMIT 5;</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Trong thuật toán xếp hạng BM25, yếu tố IDF (Inverse Document Frequency) đóng vai trò gì?
-                  </p>
-                  <div class="quiz-options">
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Ngược lại, IDF đánh giá độ hiếm của từ khóa, từ khóa càng hiếm điểm số mang lại càng cao.'
-                        )
-                      "
-                    >
-                      A. Đảm bảo các từ khóa xuất hiện nhiều nhất trong tài liệu luôn có điểm số cao nhất.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      data-correct="true"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          true,
-                          'IDF phản ánh độ hiếm của một từ khóa trong toàn bộ cơ sở dữ liệu. Nếu từ khóa xuất hiện ở rất ít tài liệu (từ khóa hiếm), nó sẽ mang lại điểm số cộng hưởng cao hơn nhiều so với các từ xuất hiện phổ biến.'
-                        )
-                      "
-                    >
-                      B. Đánh giá độ hiếm của từ khóa trong cơ sở dữ liệu để trao điểm số cao hơn cho các từ khóa mang
-                      tính đặc trưng.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Độ dài tài liệu được điều chỉnh bởi tham số chuẩn hóa b kết hợp với avgdl, không phải bởi IDF.'
-                        )
-                      "
-                    >
-                      C. Tính toán tỉ lệ phạt điểm của các tài liệu có độ dài quá lớn so với trung bình.
-                    </button>
-                  </div>
-                  <div class="quiz-feedback hidden"></div>
-                </div>
-
-                <div class="quiz-container" style="margin-top: 20px">
-                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
-                  <p class="quiz-question">
-                    Câu 4: Sự khác nhau về kết quả hiển thị giữa hai hàm trợ giúp <code>snippet()</code> và
-                    <code>highlight()</code> là gì?
-                  </p>
-                  <div class="quiz-options">
-                    <button
-                      class="quiz-option"
-                      data-correct="true"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          true,
-                          'snippet() chỉ cắt lấy một đoạn văn ngắn chứa từ khóa khớp và thêm dấu ba chấm, phù hợp làm preview. highlight() trả về toàn bộ nội dung của cột văn bản đó và tô đậm các từ khóa khớp.'
-                        )
-                      "
-                    >
-                      A. <code>snippet()</code> trả về một đoạn trích văn bản ngắn chứa từ khóa khớp làm preview, còn
-                      <code>highlight()</code> trả về toàn bộ văn bản cột và chỉ bọc thẻ tô đậm từ khóa.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Cả hai hàm đều không liên quan đến việc tính điểm xếp hạng độ liên quan (việc của bm25).'
-                        )
-                      "
-                    >
-                      B. <code>snippet()</code> tính điểm xếp hạng độ liên quan, còn <code>highlight()</code> dùng để
-                      đổi màu văn bản.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Cả hai hàm đều hỗ trợ đầy đủ các thẻ tag HTML tùy biến do lập trình viên định nghĩa.'
-                        )
-                      "
-                    >
-                      C. <code>snippet()</code> không cho phép thay đổi thẻ tag HTML bọc từ khóa, còn
-                      <code>highlight()</code> thì có.
-                    </button>
-                  </div>
-                  <div class="quiz-feedback hidden"></div>
-                </div>
-
-                <div class="quiz-container" style="margin-top: 20px">
-                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
-                  <p class="quiz-question">
-                    Câu 5: Trong câu lệnh MATCH <code>techmart_search MATCH 'chuột -dây'</code>, kết quả trả về sẽ là
+                    Câu 3: Đánh đổi lớn nhất khi thiết lập tham số cấu hình <code>PRAGMA synchronous = OFF;</code> là
                     gì?
                   </p>
                   <div class="quiz-options">
                     <button
                       class="quiz-option"
                       onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Dấu trừ đứng sát trước từ khóa biểu thị toán tử loại trừ NOT, không phải là tìm kiếm cụm từ ghép.'
-                        )
+                        checkQuiz(this, false, 'Ngược lại, synchronous = OFF tăng tốc độ ghi dữ liệu lên tối đa.')
                       "
                     >
-                      A. Tìm kiếm các tài liệu chứa cụm từ ghép chính xác "chuột-dây".
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'Phép toán AND được viết là chuột AND dây, hoặc chỉ cần viết cách nhau chuột dây.'
-                        )
-                      "
-                    >
-                      B. Tìm kiếm các tài liệu chứa cả hai từ "chuột" và từ "dây".
+                      A. Tốc độ ghi dữ liệu bị giảm đi đáng kể do phải kiểm tra tính toàn vẹn nhiều lần.
                     </button>
                     <button
                       class="quiz-option"
@@ -794,11 +644,122 @@ LIMIT 5;</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Dấu trừ (-) hoạt động tương tự như toán tử NOT trong FTS của SQLite. Nó sẽ tìm kiếm các dòng chứa từ chuột nhưng loại bỏ hoàn toàn các dòng có xuất hiện từ dây.'
+                          'Khi synchronous = OFF, SQLite sẽ không chờ hệ điều hành ghi dữ liệu xuống đĩa cứng vật lý mà báo thành công ngay lập tức. Nếu máy tính bị sập nguồn đột ngột hoặc mất điện, file cơ sở dữ liệu có khả năng bị hỏng hoàn toàn (corruption).'
                         )
                       "
                     >
-                      C. Tìm kiếm các tài liệu chứa từ "chuột" nhưng loại bỏ các tài liệu có chứa từ "dây".
+                      B. Nguy cơ làm hỏng file cơ sở dữ liệu hoặc mất dữ liệu nếu hệ điều hành hoặc thiết bị bị sập
+                      nguồn/mất điện đột ngột.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'SQLite chỉ cho phép đúng 1 kết nối ghi tại một thời điểm (do khóa file) ở mọi cấu hình synchronous.'
+                        )
+                      "
+                    >
+                      C. Cơ sở dữ liệu sẽ tự động chuyển sang chế độ chỉ đọc và chặn mọi thao tác ghi tiếp theo.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 4: Chế độ ghi nhật ký giao dịch <code>PRAGMA journal_mode = WAL;</code> mang lại lợi ích gì cho
+                    SQLite?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'WAL (Write-Ahead Log) cho phép các tiến trình đọc (reader) và ghi (writer) hoạt động song song mà không khóa lẫn nhau, đồng thời tăng đáng kể hiệu năng ghi đĩa.'
+                        )
+                      "
+                    >
+                      A. Cho phép các tác vụ đọc và ghi diễn ra song song mà không khóa lẫn nhau, tăng tốc độ xử lý đồng
+                      thời.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'WAL thực tế làm dung lượng thư mục tăng thêm một chút do lưu thêm hai file phụ (-wal và -shm), không phải là tiết kiệm dung lượng.'
+                        )
+                      "
+                    >
+                      B. Tự động xóa mọi chỉ mục B-Tree để giảm dung lượng file đĩa.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'WAL hoàn toàn hỗ trợ rollbacks khôi phục dữ liệu bình thường qua file log WAL.'
+                        )
+                      "
+                    >
+                      C. Chặn hoàn toàn tính năng ROLLBACK để ép buộc mọi transaction đều phải commit thành công.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 5: Tại sao trong môi trường trình duyệt (WASM), sự khác biệt tốc độ ghi khi có và không có
+                    Transaction không rõ rệt giống như trên môi trường máy chủ chạy ổ đĩa vật lý?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'sql.js hỗ trợ đầy đủ cơ chế Transaction thông qua BEGIN/COMMIT/ROLLBACK.'
+                        )
+                      "
+                    >
+                      A. Vì WASM không hỗ trợ cơ chế Transaction.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Vòng lặp trong WASM được biên dịch tối ưu hóa chạy rất nhanh gần như native.'
+                        )
+                      "
+                    >
+                      B. Vì CPU của trình duyệt chạy vòng lặp quá chậm nên nghẽn ở CPU chứ không phải ở I/O.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'sql.js WASM chạy hoàn toàn trên RAM ảo của trình duyệt. Lời gọi hệ thống fsync() đắt đỏ xuống đĩa vật lý chỉ được giả lập bằng lệnh ghi vào mảng byte trên RAM, vốn có tốc độ cực nhanh, nên ta không đo được độ trễ vật lý của đĩa.'
+                        )
+                      "
+                    >
+                      C. Vì sql.js WASM lưu trữ cơ sở dữ liệu hoàn toàn trên bộ nhớ RAM ảo của trình duyệt, việc gọi
+                      lệnh ghi đĩa <code>fsync()</code> chỉ được giả lập bằng cách ghi đè mảng byte trên RAM.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -809,18 +770,18 @@ LIMIT 5;</code></pre>
                 <h3>📖 Tài liệu tham khảo / References</h3>
                 <ul>
                   <li>
-                    <a href="https://www.sqlite.org/fts5.html" target="_blank" rel="noopener noreferrer"
-                      >SQLite Official Docs — SQLite FTS5 Extension</a
+                    <a href="https://www.sqlite.org/lang_transaction.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — BEGIN/COMMIT/ROLLBACK</a
                     >
                   </li>
                   <li>
-                    <a href="https://www.sqlite.org/fts3.html" target="_blank" rel="noopener noreferrer"
-                      >SQLite Official Docs — SQLite FTS3 and FTS4 Extensions</a
+                    <a href="https://www.sqlite.org/pragma.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — PRAGMA statements (synchronous, journal_mode)</a
                     >
                   </li>
                   <li>
-                    <a href="https://en.wikipedia.org/wiki/Okapi_BM25" target="_blank" rel="noopener noreferrer"
-                      >Wikipedia — Okapi BM25 Ranking Algorithm</a
+                    <a href="https://www.sqlite.org/wal.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — Write-Ahead Log</a
                     >
                   </li>
                 </ul>
@@ -830,11 +791,11 @@ LIMIT 5;</code></pre>
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="sql-performance-engineering" class="article-related__link article-related__link--next">
-                    Bài 15: Performance Engineering 🐳
-                  </a>
-                  <a href="sql-json-generated-columns" class="article-related__link article-related__link--prev">
-                    Bài 13: JSON &amp; Generated Columns
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 16: WAL &amp; Persistence trong Browser 🐳 (sắp ra mắt)
+                  </span>
+                  <a href="sql-fts5-full-text-search" class="article-related__link article-related__link--prev">
+                    Bài 14: FTS5 Full-Text Search
                   </a>
                   <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
                 </div>
@@ -866,14 +827,7 @@ LIMIT 5;</code></pre>
             <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
           </a>
           <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
-            <img
-              src="../../assets/rmbg.svg"
-              alt=""
-              width="18"
-              height="18"
-              aria-hidden="true"
-              style="flex-shrink: 0; border-radius: 3px"
-            />
+            <img src="../../assets/rmbg.svg" alt="" width="18" height="18" aria-hidden="true; border-radius: 3px" />
             <span data-i18n="nav.rmbg">Remove BG</span>
           </a>
           <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
@@ -969,6 +923,6 @@ LIMIT 5;</code></pre>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
     <script src="vendor/sql-wasm.js" defer></script>
-    <script src="sql-fts5-full-text-search.js" defer></script>
+    <script src="sql-performance-engineering.js" defer></script>
   </body>
 </html>
