@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bài 15: Performance Engineering 🐳 — js-tools</title>
+    <title>Bài 16: WAL &amp; Persistence Trong Browser 🐳 — js-tools</title>
     <meta
       name="description"
-      content="Tìm hiểu kỹ thuật tối ưu hóa hiệu năng đọc/ghi trong SQLite. Cách sử dụng Prepared Statements để tránh biên dịch cú pháp liên tục, kỹ thuật tối ưu hóa ghi hàng loạt (Batch Insert) bằng Transaction, PRAGMA Tuning (journal_mode, synchronous) và thực hành đo lường hiệu năng I/O thực tế."
+      content="Tìm hiểu chế độ Write-Ahead Log (WAL) của SQLite, các giải pháp lưu trữ bền vững (Persistence) trong trình duyệt sử dụng IndexedDB và Origin Private File System (OPFS), so sánh các thư viện sql.js vs wa-sqlite và lab Docker mô phỏng đọc ghi đồng thời."
     />
-    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-performance-engineering" />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-wal-persistence-browser" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../styles.css" />
     <link rel="stylesheet" href="../blog.css" />
@@ -285,7 +285,7 @@
         <div class="container">
           <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
           <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
-          <h1 class="article-hero__title">Bài 15: Performance Engineering 🐳</h1>
+          <h1 class="article-hero__title">Bài 16: WAL &amp; Persistence Trong Browser 🐳</h1>
           <div class="article-hero__meta">5 tháng 7, 2026 · 30 phút đọc</div>
         </div>
       </section>
@@ -296,167 +296,152 @@
             <div class="article-body">
               <div>
                 <p>
-                  Khi ứng dụng của bạn tăng trưởng, lượng dữ liệu ghi nhận mỗi giây có thể tăng lên hàng nghìn bản ghi.
-                  Một lỗi lập trình kinh điển về I/O đĩa hoặc parse câu lệnh có thể khiến tốc độ ghi giảm đi hàng trăm
-                  lần, gây nghẽn hệ thống. Bài viết này hướng đến khía cạnh kỹ thuật hiệu năng (Performance Engineering)
-                  của cơ sở dữ liệu: cách SQLite biên dịch câu lệnh, tại sao Transaction lại thay đổi hoàn toàn tốc độ
-                  ghi hàng loạt (Batch Insert), các cấu hình <code>PRAGMA</code> tuning chuyên sâu, và một bài thực hành
-                  đo đạc hiệu năng I/O trực quan.
+                  Khi chạy cơ sở dữ liệu trên máy chủ, hệ thống có toàn quyền tương tác với hệ thống file của hệ điều
+                  hành. Nhưng khi đưa SQL vào trong trình duyệt (Client-side), chúng ta phải đối mặt với hai thử thách
+                  lớn: làm thế nào để dữ liệu được lưu trữ bền vững (Persistence) qua các phiên tải lại trang, và làm
+                  thế nào để tối ưu hóa tốc độ ghi đĩa thông qua cơ chế
+                  <strong>Write-Ahead Log (WAL)</strong> trong môi trường hộp cát (sandbox) bảo mật. Bài viết này sẽ
+                  phân tích các cơ chế lưu trữ client-side hiện đại nhất, so sánh các thư viện SQLite WASM và cung cấp
+                  bài lab Docker mô phỏng đọc/ghi song song.
                 </p>
 
-                <h2>1. Prepared Statements: Tối Ưu Hóa Chi Phí Phân Tích Cú Pháp SQL</h2>
+                <h2>1. Cơ Chế Hoạt Động Của Chế Độ WAL (Write-Ahead Log)</h2>
                 <p>
-                  Mỗi khi bạn gửi một câu lệnh SQL dạng văn bản thô tới cơ sở dữ liệu (ví dụ:
-                  <code>INSERT INTO logs VALUES (1, 'info')</code>), engine cơ sở dữ liệu phải trải qua một quy trình
-                  biên dịch nghiêm ngặt:
+                  Trong chế độ lưu nhật ký giao dịch truyền thống (như <code>DELETE</code> hay <code>TRUNCATE</code>),
+                  khi có một phiên ghi (writer) bắt đầu, SQLite sẽ thực hiện khóa độc quyền (Exclusive Lock) trên toàn
+                  bộ file cơ sở dữ liệu. Mọi tiến trình đọc (readers) khác đều bị chặn hoàn toàn và báo lỗi
+                  <code>database is locked</code> cho tới khi writer hoàn tất và giải phóng khóa.
+                </p>
+                <p>
+                  Chế độ **WAL (Write-Ahead Log)** giải quyết bài toán nghẽn cổ chai này bằng cách thay đổi quy trình
+                  ghi dữ liệu:
                 </p>
                 <ol>
-                  <li><strong>Parser</strong>: Phân tích cú pháp chuỗi văn bản để phát hiện lỗi chính tả.</li>
                   <li>
-                    <strong>Semantic Analyzer</strong>: Kiểm tra xem các bảng và cột có tồn tại thực sự hay không.
+                    File cơ sở dữ liệu chính (ví dụ: <code>mydb.sqlite</code>) chỉ chứa dữ liệu đã được cam kết ổn định.
                   </li>
-                  <li><strong>Optimizer</strong>: Lập kế hoạch tối ưu (Query Plan).</li>
                   <li>
-                    <strong>Code Generator</strong>: Biên dịch câu lệnh thành mã bytecode của máy ảo VDBE (Virtual
-                    Database Engine) trong SQLite.
+                    Khi có transaction ghi mới, SQLite ghi trực tiếp thay đổi vào một file log ghi trước riêng biệt có
+                    hậu tố <strong>`-wal`</strong> (ví dụ: <code>mydb.sqlite-wal</code>).
+                  </li>
+                  <li>
+                    Các tiến trình đọc dữ liệu không cần đợi tiến trình ghi. Chúng đọc trực tiếp dữ liệu cũ từ file
+                    chính. Đồng thời, writer ghi tiếp vào file WAL mà không hề xảy ra xung đột khóa.
                   </li>
                 </ol>
                 <p>
-                  Quá trình biên dịch này chiếm từ 30% đến 50% tổng thời gian thực thi của một truy vấn đơn giản. Nếu
-                  bạn ghi 10.000 bản ghi bằng 10.000 câu lệnh văn bản khác nhau, bạn đang lãng phí hàng tỷ chu kỳ CPU
-                  chỉ để parse và compile cùng một cấu trúc lệnh lặp đi lặp lại.
+                  Khi file WAL tích tụ đủ số lượng trang thay đổi (mặc định trong SQLite là khi đạt $1000$ trang, tức
+                  khoảng $4\text{MB}$ dữ liệu), SQLite sẽ thực hiện một thao tác gọi là **Checkpoint**. Checkpoint di
+                  chuyển tất cả các trang dữ liệu mới từ file WAL quay trở lại file chính và xóa trắng file WAL để tái
+                  sử dụng.
                 </p>
-                <p>
-                  <strong>Prepared Statements (Câu lệnh chuẩn bị)</strong> giải quyết bài toán này bằng cách gửi cấu
-                  trúc lệnh chứa các tham số động (placeholders <code>?</code> hoặc <code>$name</code>) lên database
-                  trước:
-                </p>
-                <pre><code class="language-sql">-- Khai báo cấu trúc câu lệnh một lần duy nhất
-INSERT INTO techmart_logs (log_id, message) VALUES (?, ?);</code></pre>
-                <p>
-                  SQLite sẽ parse, biên dịch và lưu trữ cấu trúc máy ảo VDBE đã được dịch sẵn. Khi thực thi ghi dữ liệu,
-                  ứng dụng chỉ cần gửi các giá trị liên kết (Parameter Binding) trực tiếp vào máy ảo, bỏ qua hoàn toàn
-                  các bước Parser/Compile.
-                </p>
-                <p>Cách viết tối ưu trong JavaScript sử dụng thư viện SQLite-WASM:</p>
-                <pre><code class="language-js">// Chuẩn bị câu lệnh một lần
-const stmt = db.prepare("INSERT INTO techmart_logs (message) VALUES (?);");
+                <p>Cú pháp ép buộc thực hiện checkpoint thủ công trong SQL:</p>
+                <pre><code class="language-sql">-- Thực hiện checkpoint thụ động, chuyển tối đa các trang có thể mà không chặn kết nối khác
+PRAGMA wal_checkpoint(PASSIVE);
 
-// Binding và thực thi nhiều lần
-for (let i = 0; i &lt; 1000; i++) {
-  stmt.run([`Log event #${i}`]); // Chỉ truyền mảng tham số, tốc độ cực nhanh
-}
+-- Thực hiện checkpoint triệt để, thu gọn file WAL về kích thước 0
+PRAGMA wal_checkpoint(TRUNCATE);</code></pre>
 
-// Giải phóng bộ nhớ của statement khi dùng xong
-stmt.free();</code></pre>
-
-                <h2>2. Sức Mạnh Của Transactions Đối Với Ghi Hàng Loạt (Batch Insert)</h2>
+                <h2>2. Persistence trong Browser: Từ Ghi Đè Nguyên Khối Đến Ghi Theo Trang (OPFS)</h2>
                 <p>
-                  Nhiều lập trình viên ngạc nhiên khi thấy chèn 1.000 dòng vào SQLite mất tới 10-15 giây ở cấu hình mặc
-                  định. Họ đổ lỗi cho SQLite chậm chạp. Nhưng thực tế, đây là hành vi bảo vệ dữ liệu mặc định của hệ
-                  điều hành và cơ sở dữ liệu.
-                </p>
-                <p>
-                  Theo mặc định, SQLite chạy ở chế độ **Auto-commit**. Nghĩa là mỗi câu lệnh <code>INSERT</code> riêng
-                  lẻ được coi là một giao dịch độc lập. Để đảm bảo tính bền vững (Durability - chữ D trong ACID), mỗi
-                  khi một câu lệnh kết thúc, SQLite bắt buộc phải thực hiện quy trình sau:
-                </p>
-                <ol>
-                  <li>Tạo và mở file nhật ký giao dịch (journal file).</li>
-                  <li>Ghi thay đổi vào đĩa vật lý.</li>
-                  <li>
-                    Gọi hàm hệ thống <strong><code>fsync()</code></strong
-                    >.
-                  </li>
-                </ol>
-                <p>
-                  Hàm <code>fsync()</code> yêu cầu hệ điều hành đẩy toàn bộ dữ liệu đang nằm trong RAM (OS page cache)
-                  xuống bề mặt vật lý của đĩa cứng hoặc chip nhớ flash SSD. Đây là một thao tác phần cứng rất chậm (mất
-                  khoảng 10ms đối với SSD thông thường). Do đó, chèn 1.000 dòng riêng biệt đồng nghĩa với 1.000 lần gọi
-                  <code>fsync()</code>, tiêu tốn ít nhất: \[ 1000 \times 10\text{ms} = 10\text{giây} \]
-                </p>
-                <p>Khi chúng ta bọc toàn bộ khối lệnh trong một **Transaction** duy nhất:</p>
-                <pre><code class="language-sql">BEGIN TRANSACTION;
-INSERT INTO techmart_logs (message) VALUES ('Log #1');
-INSERT INTO techmart_logs (message) VALUES ('Log #2');
-...
-INSERT INTO techmart_logs (message) VALUES ('Log #1000');
-COMMIT;</code></pre>
-                <p>
-                  SQLite sẽ ghi toàn bộ các thay đổi này vào bộ nhớ đệm và chỉ thực hiện **một lần gọi
-                  <code>fsync()</code> duy nhất** tại thời điểm từ khóa <code>COMMIT</code> được chạy. Thời gian xử lý
-                  lập tức giảm từ 10 giây xuống còn vỏn vẹn **chưa đầy 20 mili-giây**!
-                </p>
-
-                <h2>3. PRAGMA Tuning: Tinh Chỉnh Hiệu Năng SQLite</h2>
-                <p>
-                  SQLite cung cấp một loạt các tham số PRAGMA để thay đổi cách thức cơ sở dữ liệu tương tác với đĩa cứng
-                  và bộ nhớ đệm. Dưới đây là các cấu hình tuning hiệu năng quan trọng nhất:
+                  Trình duyệt web không cho phép JavaScript ghi trực tiếp vào ổ đĩa vật lý của người dùng vì lý do bảo
+                  mật. Do đó, để lưu trữ bền vững dữ liệu SQLite, các nhà phát triển web đã trải qua nhiều thế hệ giải
+                  pháp:
                 </p>
 
                 <table class="comparison-table">
                   <thead>
                     <tr>
-                      <th>Tham số PRAGMA</th>
-                      <th>Giá trị mặc định</th>
-                      <th>Giá trị tối ưu hiệu năng</th>
-                      <th>Đánh đổi (Trade-off)</th>
+                      <th>Giải pháp lưu trữ</th>
+                      <th>Cơ chế hoạt động</th>
+                      <th>Ưu điểm</th>
+                      <th>Nhược điểm (Hiệu năng)</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>
-                        <strong><code>journal_mode</code></strong>
-                      </td>
-                      <td><code>DELETE</code> (xóa file log sau mỗi transaction)</td>
-                      <td><code>WAL</code> (Write-Ahead Log)</td>
-                      <td>Cho phép đọc ghi song song, cải thiện tốc độ ghi đáng kể. Lưu thêm file phụ trên ổ đĩa.</td>
+                      <td><strong>RAM thô (sql.js)</strong></td>
+                      <td>Dữ liệu lưu hoàn toàn trên bộ nhớ RAM ảo của WASM.</td>
+                      <td>Dễ tích hợp, không phụ thuộc trình duyệt.</td>
+                      <td>Mất hoàn toàn dữ liệu khi F5/reload trang. Phải xuất/nhập thủ công dạng Blob.</td>
                     </tr>
                     <tr>
+                      <td><strong>Ghi đè IndexedDB</strong></td>
                       <td>
-                        <strong><code>synchronous</code></strong>
+                        Mỗi khi thay đổi, ứng dụng sao chép (serialize) toàn bộ file DB thành mảng byte lớn và ghi đè
+                        vào IndexedDB.
                       </td>
-                      <td><code>FULL</code> (chờ fsync hoàn tất ở mọi bước)</td>
-                      <td><code>NORMAL</code> hoặc <code>OFF</code></td>
+                      <td>Dữ liệu được lưu trữ lại qua các phiên tải trang.</td>
                       <td>
-                        Nếu đặt là <code>OFF</code>, tốc độ ghi tăng vọt 50x nhưng có nguy cơ lỗi file DB nếu mất nguồn
-                        đột ngột.
+                        Cực kỳ chậm khi file DB phình to. File 50MB sẽ tốn ~2-3 giây chỉ để ghi đè dù chỉ thay đổi 1
+                        dòng dữ liệu.
                       </td>
                     </tr>
                     <tr>
+                      <td><strong>Origin Private File System (OPFS)</strong></td>
                       <td>
-                        <strong><code>cache_size</code></strong>
+                        Hệ thống file ảo tốc độ cao của trình duyệt (File System Access API). Cho phép ghi ngẫu nhiên
+                        (random-write) từng page dữ liệu nhỏ ngầm qua Web Worker.
                       </td>
-                      <td><code>-2000</code> (khoảng 2MB bộ nhớ đệm)</td>
-                      <td><code>-10000</code> hoặc lớn hơn (10MB+)</td>
-                      <td>Tốn RAM hơn để giữ dữ liệu trên cache, giảm I/O đọc từ ổ đĩa vật lý.</td>
+                      <td>
+                        Tốc độ đọc ghi tương đương ứng dụng native. Chỉ ghi đúng trang 4KB bị thay đổi. Hỗ trợ đầy đủ
+                        WAL.
+                      </td>
+                      <td>
+                        Chỉ hoạt động trên trình duyệt hiện đại. Yêu cầu thiết lập CORS Headers phức tạp (COOP/COEP).
+                      </td>
                     </tr>
                   </tbody>
                 </table>
 
-                <p>Cú pháp cấu hình tối ưu hiệu năng ghi hàng loạt điển hình:</p>
-                <pre><code class="language-sql">-- Chuyển sang chế độ WAL để tăng tốc ghi và cho phép đọc ghi song song
-PRAGMA journal_mode = WAL;
-
--- Giảm mức độ đồng bộ xuống NORMAL (vẫn an toàn cao nếu mất điện)
-PRAGMA synchronous = NORMAL;
-
--- Tăng bộ nhớ đệm lên 40MB (khoảng 10000 trang 4KB)
-PRAGMA cache_size = -10000;</code></pre>
-
-                <h2>4. Đo Lường Hiệu Năng Thực Tế (Benchmark Sandbox)</h2>
                 <p>
-                  Để thấy rõ sự khác biệt của các kỹ thuật trên, chúng ta sẽ thực hiện một thực nghiệm đo lường
-                  (Benchmark) ngay trên trình duyệt. Chúng ta sẽ ghi 500 bản ghi vào bảng và so sánh 3 phương pháp:
+                  Với <strong>OPFS (Origin Private File System)</strong>, SQLite-WASM có thể mở một kết nối ghi trực
+                  tiếp ở tầng thấp. Khi một giao dịch commit, hệ thống chỉ ghi đúng một vài trang dữ liệu 4KB bị thay
+                  đổi xuống đĩa ảo thay vì phải copy lại toàn bộ file DB. Điều này giúp hiệu năng ghi tăng vọt lên hàng
+                  nghìn lần trên các file cơ sở dữ liệu lớn.
                 </p>
-                <ol>
-                  <li><strong>Autocommit (Không Transaction)</strong>: Chạy từng lệnh INSERT riêng rẽ.</li>
-                  <li><strong>Với Transaction</strong>: Bọc toàn bộ các lệnh INSERT thô trong một Transaction.</li>
+
+                <h2>3. Yêu Cầu CORS Để Kích Hoạt OPFS: Thiết Lập COOP và COEP</h2>
+                <p>
+                  Để OPFS hoạt động với SQLite-WASM một cách hiệu quả và an toàn, trình duyệt yêu cầu môi trường chạy
+                  phải được thiết lập cô lập bộ nhớ nâng cao (Cross-Origin Isolation). Điều này đòi hỏi máy chủ web (Web
+                  Server) của bạn phải cấu hình trả về hai HTTP Response Headers bắt buộc sau:
+                </p>
+                <pre><code class="language-http">Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp</code></pre>
+                <p>
+                  Nếu thiếu hai tiêu đề này, trình duyệt sẽ khóa tính năng <strong>SharedArrayBuffer</strong> (bộ nhớ
+                  chia sẻ giữa Main Thread và Web Worker). Thiếu SharedArrayBuffer, SQLite-WASM sẽ không thể truy cập
+                  vào AccessHandle đồng thì của hệ thống file OPFS và sẽ tự động fallback về chế độ lưu trữ tạm thời
+                  trên RAM.
+                </p>
+
+                <h2>4. So Sánh Các Thư Viện SQLite WASM Hiện Nay</h2>
+                <p>Khi tích hợp SQLite vào dự án Web Frontend, bạn cần cân nhắc lựa chọn giữa các thư viện phổ biến:</p>
+                <ul>
                   <li>
-                    <strong>Transaction + Prepared Statement</strong>: Kết hợp bọc Transaction và biên dịch sẵn câu
-                    lệnh.
+                    <strong><code>sql.js</code></strong
+                    >: Thư viện lâu đời, gọn nhẹ. Hoạt động 100% trên bộ nhớ RAM. Thích hợp cho các công cụ nhỏ, xử lý
+                    dữ liệu một lần (như chính trang web js-tools.org này).
                   </li>
-                </ol>
+                  <li>
+                    <strong><code>wa-sqlite</code></strong
+                    >: Thư viện tối ưu hóa cao của Roy Hashimoto. Nó tự viết một lớp ảo VFS kết nối SQLite-WASM với
+                    IndexedDB thông qua cơ chế ghi theo trang (Page-level Virtual File System), mang lại sự cân bằng
+                    hoàn hảo giữa tính bền vững và tính tương thích cao (không bắt buộc CORS headers).
+                  </li>
+                  <li>
+                    <strong><code>SQLite Official WASM</code></strong
+                    >: Bản phát hành chính thức từ đội ngũ SQLite Core (kể từ bản 3.40.0). Tích hợp sẵn OPFS VFS tối ưu
+                    tuyệt đối về mặt tốc độ ghi nhưng bắt buộc phải có cấu hình COOP/COEP headers từ phía máy chủ web.
+                  </li>
+                </ul>
+
+                <h2>5. Mô Phỏng Checkpoint Trên Trình Duyệt</h2>
+                <p>
+                  Sân chơi tương tác dưới đây mô phỏng hoạt động của chế độ WAL và checkpoint. Bạn có thể chèn dữ liệu
+                  ghi nhận và gọi lệnh checkpoint để theo dõi trạng thái.
+                </p>
 
                 <!-- SQL Workbench Sandbox -->
                 <div class="sql-workbench">
@@ -487,41 +472,63 @@ PRAGMA cache_size = -10000;</code></pre>
                   </div>
                   <div class="sql-results-container">
                     <div id="sql-results">
-                      <div class="sql-results-empty">
-                        Kết quả truy vấn hoặc kết quả đo hiệu năng sẽ hiển thị ở đây...
-                      </div>
+                      <div class="sql-results-empty">Kết quả truy vấn sẽ hiển thị ở đây...</div>
                     </div>
                   </div>
                 </div>
 
-                <h2>5. Thực Hành Nâng Cao Với Docker: Đo Lường Disk I/O &amp; fsync Thật</h2>
+                <h2>6. Thực Hành Nâng Cao Với Docker: Đọc Ghi Song Song Trên WAL Thật</h2>
                 <p>
-                  Môi trường WASM trên trình duyệt chạy hoàn toàn trên bộ nhớ RAM ảo của sandbox, do đó các lệnh hệ
-                  thống như
-                  <code>fsync()</code> chỉ được giả lập bằng lệnh ghi vào RAM. Để kiểm chứng hiệu năng I/O thực tế dưới
-                  sự tác động của đĩa cứng và hệ điều hành, bạn hãy thực hành lab tại nhà bằng Docker.
+                  Do WASM chạy trong môi trường đơn luồng của sandbox trình duyệt nên chúng ta khó lòng tự tay kiểm
+                  chứng việc đọc ghi song song (đồng thời). Bạn hãy thực hiện lab Docker tại nhà bằng SQLite CLI để cảm
+                  nhận sự khác biệt.
                 </p>
 
                 <div class="callout callout--deep">
-                  <div class="callout__title">
-                    🐳 Lab tại nhà: Đo lường I/O và lock contention trên PostgreSQL và SQLite CLI
-                  </div>
+                  <div class="callout__title">🐳 Lab tại nhà: Kiểm chứng đọc ghi song song giữa journal thô và WAL</div>
                   <div class="callout__content">
-                    Hãy khởi chạy container PostgreSQL bằng Docker:
-                    <pre><code class="language-bash">docker run --name techmart-pg -e POSTGRES_PASSWORD=secret -d -p 5432:5432 postgres</code></pre>
-                    Sau đó truy cập vào console bằng psql và chạy các thử nghiệm:
+                    Hãy chuẩn bị một file database SQLite trống <code>test.db</code> trong thư mục local và mở hai
+                    Terminal cùng trỏ vào thư mục đó:
                     <ol>
                       <li>
-                        Viết một script Bash chèn 10.000 dòng bằng vòng lặp riêng lẻ, giám sát IOPS (Input/Output
-                        Operations Per Second) bằng công cụ <code>iostat -dx 1</code> trên Linux.
+                        <strong>Mô phỏng với chế độ DELETE mặc định:</strong>
+                        <ul>
+                          <li>
+                            <strong>Terminal 1:</strong> Khởi tạo bảng và chạy một giao dịch ghi dài:
+                            <pre><code class="language-sql">sqlite3 test.db
+PRAGMA journal_mode = DELETE;
+CREATE TABLE logs (val TEXT);
+BEGIN;
+INSERT INTO logs VALUES ('log_data');
+-- Giữ nguyên Terminal 1 chưa gọi COMMIT!</code></pre>
+                          </li>
+                          <li>
+                            <strong>Terminal 2:</strong> Thử thực hiện đọc dữ liệu:
+                            <pre><code class="language-sql">sqlite3 test.db
+SELECT * FROM logs;
+-- → Kết quả: Bị chặn hoàn toàn và báo lỗi: Error: database is locked</code></pre>
+                          </li>
+                        </ul>
                       </li>
-                      <li>
-                        Xem sự phình to của write volume khi thay đổi tham số <code>synchronous_commit</code> từ
-                        <code>on</code> sang <code>off</code> trong PostgreSQL.
+                      <li style="margin-top: 12px">
+                        <strong>Mô phỏng với chế độ WAL:</strong>
+                        <ul>
+                          <li>Quay lại <strong>Terminal 1</strong> gõ <code>COMMIT;</code> để giải phóng khóa.</li>
+                          <li>
+                            Thiết lập chế độ WAL:
+                            <pre><code class="language-sql">PRAGMA journal_mode = WAL;
+BEGIN;
+INSERT INTO logs VALUES ('new_log_data');
+-- Vẫn giữ nguyên chưa COMMIT!</code></pre>
+                          </li>
+                          <li>
+                            Sang <strong>Terminal 2</strong> chạy lại câu lệnh đọc:
+                            <pre><code class="language-sql">SELECT * FROM logs;
+-- → Kết quả: ĐỌC ĐƯỢC NGAY LẬP TỨC dữ liệu cũ ('log_data') mà không hề bị chặn! Ghi và Đọc đã diễn ra song song hoàn hảo.</code></pre>
+                          </li>
+                        </ul>
                       </li>
                     </ol>
-                    Bạn sẽ thấy tốc độ chèn dữ liệu tăng gấp hàng chục lần vì OS không bắt buộc chờ ổ cứng phản hồi tín
-                    hiệu ghi vật lý hoàn tất.
                   </div>
                 </div>
               </div>
@@ -533,8 +540,8 @@ PRAGMA cache_size = -10000;</code></pre>
                 <div class="quiz-container">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 1: Cơ chế chính giúp Prepared Statements chạy nhanh hơn việc gửi nhiều câu lệnh SQL thô lặp lại
-                    là gì?
+                    Câu 1: Điểm cải tiến cốt lõi nhất của chế độ Write-Ahead Log (WAL) so với các chế độ lưu nhật ký
+                    truyền thống trong SQLite là gì?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -544,18 +551,11 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Prepared Statements chỉ thực hiện phân tích cú pháp (parse) và biên dịch mã máy ảo VDBE một lần duy nhất. Các lần chạy tiếp theo chỉ việc bind tham số và chạy trực tiếp, giúp tiết kiệm chu kỳ CPU.'
+                          'WAL tách biệt thay đổi vào file log phụ -wal, cho phép các tiến trình đọc (readers) và ghi (writer) hoạt động song song mà không khóa lẫn nhau.'
                         )
                       "
                     >
-                      A. Biên dịch sẵn câu lệnh thành mã bytecode của máy ảo VDBE một lần duy nhất, bỏ qua bước phân
-                      tích cú pháp ở các lần chạy sau.
-                    </button>
-                    <button
-                      class="quiz-option"
-                      onclick="checkQuiz(this, false, 'Prepared Statements không liên quan đến việc nén dữ liệu mạng.')"
-                    >
-                      B. Nó tự động nén chuỗi ký tự gửi đi để tiết kiệm băng thông mạng.
+                      A. Cho phép tác vụ đọc và tác vụ ghi diễn ra song song cùng lúc mà không xảy ra xung đột khóa.
                     </button>
                     <button
                       class="quiz-option"
@@ -563,11 +563,23 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'B-Tree index là cấu trúc dữ liệu của bảng dưới đĩa, không bị thay đổi bởi việc ta viết câu lệnh thế nào.'
+                          'WAL không mã hóa dữ liệu, việc bảo mật phải được xử lý ở tầng ứng dụng hoặc phần cứng.'
                         )
                       "
                     >
-                      C. Nó tự động chuyển đổi cấu trúc bảng sang dạng Hash Table để tìm kiếm nhanh hơn.
+                      B. Tự động mã hóa file cơ sở dữ liệu bằng thuật toán AES-256.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Index B-Tree hoạt động bình thường trên mọi chế độ journal_mode của SQLite.'
+                        )
+                      "
+                    >
+                      C. Nó loại bỏ hoàn toàn việc tạo chỉ mục B-Tree để tiết kiệm bộ nhớ.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -576,8 +588,8 @@ PRAGMA cache_size = -10000;</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 2: Tại sao chèn hàng nghìn dòng dữ liệu không bọc trong Transaction lại khiến ổ cứng hoạt động
-                    nặng nề và tốc độ chậm đi hàng trăm lần?
+                    Câu 2: Tại sao giải pháp lưu trữ Origin Private File System (OPFS) lại có hiệu năng vượt trội hơn
+                    phương pháp lưu đè nguyên khối IndexedDB khi dữ liệu phình to?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -586,11 +598,11 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'SQLite hoàn toàn có thể xử lý hàng triệu bản ghi ghi cùng lúc nếu được gom nhóm đúng cách.'
+                          'IndexedDB hoàn toàn lưu trên đĩa cứng chứ không phải chạy trên đám mây.'
                         )
                       "
                     >
-                      A. Vì SQLite không có cơ chế ghi hàng loạt và chỉ cho phép ghi tối đa 1 bản ghi mỗi giây.
+                      A. Vì IndexedDB lưu dữ liệu trên máy chủ đám mây nên bị ảnh hưởng bởi tốc độ mạng.
                     </button>
                     <button
                       class="quiz-option"
@@ -599,12 +611,12 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Trong chế độ autocommit mặc định, mỗi câu lệnh ghi là một transaction độc lập, buộc SQLite phải gọi lệnh fsync() để ghi cứng dữ liệu xuống đĩa nhằm bảo đảm tính bền vững (Durability) của ACID. fsync() là một thao tác I/O phần cứng cực kỳ đắt đỏ.'
+                          'OPFS hỗ trợ ghi ngẫu nhiên (random-access), cho phép SQLite ghi trực tiếp đúng các trang page dữ liệu 4KB bị thay đổi xuống ổ đĩa ảo, bỏ qua bước serialize và ghi đè nguyên cả file DB lớn của IndexedDB.'
                         )
                       "
                     >
-                      B. Vì chế độ autocommit buộc SQLite phải gọi lệnh hệ thống <code>fsync()</code> để ghi cứng dữ
-                      liệu xuống đĩa vật lý ở mỗi câu lệnh riêng lẻ.
+                      B. Vì OPFS hỗ trợ ghi ngẫu nhiên từng trang page dữ liệu 4KB bị thay đổi, tránh được việc phải sao
+                      chép ghi đè toàn bộ file DB khổng lồ mỗi lần có thay đổi nhỏ.
                     </button>
                     <button
                       class="quiz-option"
@@ -612,11 +624,11 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Mạng/internet không phải là nguyên nhân chính vì SQLite là một cơ sở dữ liệu nhúng (embedded) cục bộ chạy ngay trên file đĩa của thiết bị.'
+                          'Cả hai giải pháp đều chạy 100% dưới local client, không sử dụng tài nguyên CPU bên ngoài.'
                         )
                       "
                     >
-                      C. Vì hệ thống phải gửi yêu cầu xác thực bảo mật qua đường truyền Internet ở mỗi bản ghi.
+                      C. Vì OPFS chuyển toàn bộ các phép tính toán truy vấn SQL lên luồng xử lý của card đồ họa GPU.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -625,17 +637,21 @@ PRAGMA cache_size = -10000;</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 3: Đánh đổi lớn nhất khi thiết lập tham số cấu hình <code>PRAGMA synchronous = OFF;</code> là
-                    gì?
+                    Câu 3: Tại sao trình duyệt lại yêu cầu cấu hình các HTTP response headers COOP và COEP để sử dụng
+                    OPFS AccessHandle?
                   </p>
                   <div class="quiz-options">
                     <button
                       class="quiz-option"
                       onclick="
-                        checkQuiz(this, false, 'Ngược lại, synchronous = OFF tăng tốc độ ghi dữ liệu lên tối đa.')
+                        checkQuiz(
+                          this,
+                          false,
+                          'CORS thông thường không đủ để cấp quyền SharedArrayBuffer do các lỗ hổng bảo mật mức CPU như Spectre.'
+                        )
                       "
                     >
-                      A. Tốc độ ghi dữ liệu bị giảm đi đáng kể do phải kiểm tra tính toàn vẹn nhiều lần.
+                      A. Để cấp quyền cho trình duyệt kết nối với các API cơ sở dữ liệu bên ngoài qua cổng CORS.
                     </button>
                     <button
                       class="quiz-option"
@@ -644,24 +660,18 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'Khi synchronous = OFF, SQLite sẽ không chờ hệ điều hành ghi dữ liệu xuống đĩa cứng vật lý mà báo thành công ngay lập tức. Nếu máy tính bị sập nguồn đột ngột hoặc mất điện, file cơ sở dữ liệu có khả năng bị hỏng hoàn toàn (corruption).'
+                          'Các header COOP/COEP cô lập trang web ở mức bộ nhớ phần cứng, cho phép trình duyệt kích hoạt SharedArrayBuffer một cách an toàn để trao đổi dữ liệu tốc độ cao giữa Web Worker và Main Thread.'
                         )
                       "
                     >
-                      B. Nguy cơ làm hỏng file cơ sở dữ liệu hoặc mất dữ liệu nếu hệ điều hành hoặc thiết bị bị sập
-                      nguồn/mất điện đột ngột.
+                      B. Để đưa trang web vào trạng thái cô lập Cross-Origin Isolation, cho phép kích hoạt tính năng
+                      SharedArrayBuffer vốn cần thiết cho việc đồng bộ dữ liệu tốc độ cao ngầm dưới Worker.
                     </button>
                     <button
                       class="quiz-option"
-                      onclick="
-                        checkQuiz(
-                          this,
-                          false,
-                          'SQLite chỉ cho phép đúng 1 kết nối ghi tại một thời điểm (do khóa file) ở mọi cấu hình synchronous.'
-                        )
-                      "
+                      onclick="checkQuiz(this, false, 'COOP/COEP hoàn toàn không liên quan đến việc nén ảnh.')"
                     >
-                      C. Cơ sở dữ liệu sẽ tự động chuyển sang chế độ chỉ đọc và chặn mọi thao tác ghi tiếp theo.
+                      C. Để nén các file hình ảnh và âm thanh trong bộ đệm nhằm tiết kiệm băng thông.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -670,8 +680,7 @@ PRAGMA cache_size = -10000;</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 4: Chế độ ghi nhật ký giao dịch <code>PRAGMA journal_mode = WAL;</code> mang lại lợi ích gì cho
-                    SQLite?
+                    Câu 4: Thao tác Checkpoint trong chế độ WAL của SQLite thực chất làm công việc gì?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -681,12 +690,12 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'WAL (Write-Ahead Log) cho phép các tiến trình đọc (reader) và ghi (writer) hoạt động song song mà không khóa lẫn nhau, đồng thời tăng đáng kể hiệu năng ghi đĩa.'
+                          'Checkpoint sao chép các trang thay đổi tích tụ trong file -wal ngược về file database chính để đồng nhất dữ liệu và giải phóng file log.'
                         )
                       "
                     >
-                      A. Cho phép các tác vụ đọc và ghi diễn ra song song mà không khóa lẫn nhau, tăng tốc độ xử lý đồng
-                      thời.
+                      A. Đồng bộ hóa, di chuyển các trang dữ liệu mới từ file log phụ hậu tố <code>-wal</code> trở lại
+                      file cơ sở dữ liệu chính.
                     </button>
                     <button
                       class="quiz-option"
@@ -694,11 +703,11 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'WAL thực tế làm dung lượng thư mục tăng thêm một chút do lưu thêm hai file phụ (-wal và -shm), không phải là tiết kiệm dung lượng.'
+                          'Checkpoint là quy trình đồng bộ dữ liệu nội bộ dưới đĩa, không liên quan đến việc kiểm tra lỗi chính tả SQL.'
                         )
                       "
                     >
-                      B. Tự động xóa mọi chỉ mục B-Tree để giảm dung lượng file đĩa.
+                      B. Quét toàn bộ mã SQL của ứng dụng để tìm kiếm các lỗi bảo mật SQL Injection.
                     </button>
                     <button
                       class="quiz-option"
@@ -706,11 +715,11 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'WAL hoàn toàn hỗ trợ rollbacks khôi phục dữ liệu bình thường qua file log WAL.'
+                          'Mục tiêu của checkpoint là ghi dữ liệu về file chính và dọn dẹp file WAL, không phải để tạo thêm file bản sao lưu backup.'
                         )
                       "
                     >
-                      C. Chặn hoàn toàn tính năng ROLLBACK để ép buộc mọi transaction đều phải commit thành công.
+                      C. Tạo một bản sao lưu (backup) nén dạng ZIP của cơ sở dữ liệu gửi lên máy chủ.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -719,8 +728,8 @@ PRAGMA cache_size = -10000;</code></pre>
                 <div class="quiz-container" style="margin-top: 20px">
                   <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
                   <p class="quiz-question">
-                    Câu 5: Tại sao trong môi trường trình duyệt (WASM), sự khác biệt tốc độ ghi khi có và không có
-                    Transaction không rõ rệt giống như trên môi trường máy chủ chạy ổ đĩa vật lý?
+                    Câu 5: Trong thư viện <code>wa-sqlite</code>, làm thế nào để nó giải quyết bài toán lưu trữ bền vững
+                    mà không bắt buộc máy chủ phải cấu hình CORS Headers COOP/COEP phức tạp?
                   </p>
                   <div class="quiz-options">
                     <button
@@ -729,11 +738,11 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'sql.js hỗ trợ đầy đủ cơ chế Transaction thông qua BEGIN/COMMIT/ROLLBACK.'
+                          'Nó vẫn lưu trữ dữ liệu bền vững dưới IndexedDB của trình duyệt người dùng.'
                         )
                       "
                     >
-                      A. Vì WASM không hỗ trợ cơ chế Transaction.
+                      A. Nó từ bỏ hoàn toàn việc lưu trữ dữ liệu lâu dài và chỉ chạy tạm thời trên bộ nhớ RAM.
                     </button>
                     <button
                       class="quiz-option"
@@ -741,11 +750,11 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           false,
-                          'Vòng lặp trong WASM được biên dịch tối ưu hóa chạy rất nhanh gần như native.'
+                          'Không có dịch vụ đám mây trung gian nào được wa-sqlite sử dụng, toàn bộ dữ liệu lưu trữ offline tại client.'
                         )
                       "
                     >
-                      B. Vì CPU của trình duyệt chạy vòng lặp quá chậm nên nghẽn ở CPU chứ không phải ở I/O.
+                      B. Nó gửi dữ liệu qua một websocket tới máy chủ đám mây của Roy Hashimoto để lưu trữ hộ.
                     </button>
                     <button
                       class="quiz-option"
@@ -754,12 +763,12 @@ PRAGMA cache_size = -10000;</code></pre>
                         checkQuiz(
                           this,
                           true,
-                          'sql.js WASM chạy hoàn toàn trên RAM ảo của trình duyệt. Lời gọi hệ thống fsync() đắt đỏ xuống đĩa vật lý chỉ được giả lập bằng lệnh ghi vào mảng byte trên RAM, vốn có tốc độ cực nhanh, nên ta không đo được độ trễ vật lý của đĩa.'
+                          'wa-sqlite tự viết một lớp ảo VFS tùy chỉnh trong JavaScript để đọc/ghi từng page 4KB riêng lẻ trực tiếp xuống IndexedDB thay vì ghi đè nguyên khối, nhờ đó không cần dùng tới SharedArrayBuffer và tránh được ràng buộc CORS.'
                         )
                       "
                     >
-                      C. Vì sql.js WASM lưu trữ cơ sở dữ liệu hoàn toàn trên bộ nhớ RAM ảo của trình duyệt, việc gọi
-                      lệnh ghi đĩa <code>fsync()</code> chỉ được giả lập bằng cách ghi đè mảng byte trên RAM.
+                      C. Nó tự triển khai một lớp Virtual File System (VFS) bằng JavaScript để thực hiện đọc/ghi dữ liệu
+                      theo trang trực tiếp xuống IndexedDB mà không cần dùng đến SharedArrayBuffer.
                     </button>
                   </div>
                   <div class="quiz-feedback hidden"></div>
@@ -770,18 +779,21 @@ PRAGMA cache_size = -10000;</code></pre>
                 <h3>📖 Tài liệu tham khảo / References</h3>
                 <ul>
                   <li>
-                    <a href="https://www.sqlite.org/lang_transaction.html" target="_blank" rel="noopener noreferrer"
-                      >SQLite Official Docs — BEGIN/COMMIT/ROLLBACK</a
-                    >
-                  </li>
-                  <li>
-                    <a href="https://www.sqlite.org/pragma.html" target="_blank" rel="noopener noreferrer"
-                      >SQLite Official Docs — PRAGMA statements (synchronous, journal_mode)</a
-                    >
-                  </li>
-                  <li>
                     <a href="https://www.sqlite.org/wal.html" target="_blank" rel="noopener noreferrer"
                       >SQLite Official Docs — Write-Ahead Log</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API/Origin_private_file_system"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >MDN Web Docs — Origin Private File System (OPFS)</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://github.com/rhashimoto/wa-sqlite" target="_blank" rel="noopener noreferrer"
+                      >GitHub — Roy Hashimoto wa-sqlite VFS Implementation</a
                     >
                   </li>
                 </ul>
@@ -791,11 +803,11 @@ PRAGMA cache_size = -10000;</code></pre>
               <div class="article-related">
                 <h2>Bài viết liên quan trong series</h2>
                 <div class="article-related__links">
-                  <a href="sql-wal-persistence-browser" class="article-related__link article-related__link--next">
-                    Bài 16: WAL &amp; Persistence Trong Browser 🐳
-                  </a>
-                  <a href="sql-fts5-full-text-search" class="article-related__link article-related__link--prev">
-                    Bài 14: FTS5 Full-Text Search
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 17: Dự Án Mini Analytics Dashboard (sắp ra mắt)
+                  </span>
+                  <a href="sql-performance-engineering" class="article-related__link article-related__link--prev">
+                    Bài 15: Performance Engineering 🐳
                   </a>
                   <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
                 </div>
@@ -827,7 +839,14 @@ PRAGMA cache_size = -10000;</code></pre>
             <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
           </a>
           <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
-            <img src="../../assets/rmbg.svg" alt="" width="18" height="18" aria-hidden="true; border-radius: 3px" />
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
             <span data-i18n="nav.rmbg">Remove BG</span>
           </a>
           <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
@@ -923,6 +942,6 @@ PRAGMA cache_size = -10000;</code></pre>
     <script src="../blog.js" defer></script>
     <script src="../ide.js" defer></script>
     <script src="vendor/sql-wasm.js" defer></script>
-    <script src="sql-performance-engineering.js" defer></script>
+    <script src="sql-wal-persistence-browser.js" defer></script>
   </body>
 </html>
