@@ -17,6 +17,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 7: SQL**             | **SQL trong Trình duyệt (SQLite-WASM)** | **17/17**      | **17**   | **100%** ✅ |
 | 🎉 **Series 8: Web Audio**       | **Âm Thanh & Visualizer**               | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 9: Git**             | **Mô Hình & Quy Trình Làm Việc**        | **13/13**      | **13**   | **100%** ✅ |
+| Series 10                        | Điện Tử & Mô Phỏng Vi Mạch              | 0/14           | 14       | 0%          |
 
 ### DSA Series Lessons
 
@@ -379,6 +380,57 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ---
 
+## ⚡ Series 10: Điện Tử & Mô Phỏng Vi Mạch (Electronics & Circuit Simulation)
+
+### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
+
+- **Engine:** Trình tính toán và giải lập mạch điện Modified Nodal Analysis (MNA) viết bằng vanilla JavaScript — tự động hóa việc tính điện áp nút và dòng điện nhánh bằng phương pháp giải hệ phương trình tuyến tính $A \cdot x = B$.
+- **Hiển thị:** HTML5 Canvas 2D vẽ đồ họa linh kiện tĩnh, nối dây và hạt electron di chuyển thể hiện chiều dòng điện. Biểu đồ máy hiện sóng (Oscilloscope) vẽ bằng đồ họa vector SVG hoặc Canvas động.
+- **Tương tác:** Drag & drop linh kiện trên grid lưới, vẽ kết nối dây, click điều chỉnh thông số linh kiện (trở kháng, điện áp nguồn, tần số xung), tắt mở công tắc.
+
+### 2. Thiết kế Demo tương tác cốt lõi (Core Visualizer Demo)
+
+- **Tên: "Interactive Circuit Builder & Waveform Scope"**
+- **Mô tả giao diện:**
+  - **Khung chính (Grid):** Khu vực lưới kéo thả linh kiện (Nguồn DC/AC, Điện trở, Tụ điện, Cuộn cảm, Đi-ốt, Transistor, Đèn LED, Cổng logic). Người dùng có thể nhấp chuột để vẽ dây nối tạo mạch kín. Khi mạch hoạt động, các chấm tròn electron sẽ di chuyển dọc theo dây dẫn. Tốc độ di chuyển tỉ lệ thuận với cường độ dòng điện $I$, chiều di chuyển chỉ hướng của dòng điện.
+  - **Bên phải (Oscilloscope & Control):** Máy hiện sóng hiển thị giản đồ điện áp $V(t)$ và dòng điện $I(t)$ của linh kiện đang được chọn dạng đồ thị hình sin/xung vuông động. Bộ điều chỉnh tham số (như thanh trượt đổi giá trị điện trở $R$, điện áp nguồn $V$).
+
+### 3. Đề cương chi tiết từng bài học (Detailed Syllabus)
+
+| Bài | Tên bài học                                          | Nội dung chuyên sâu                                                                                                                                                                                                                                                                                        | Dự án/Demo đi kèm                                                                                                                                                                                                                              |
+| --- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Đọc trị số linh kiện & Đo kiểm bằng VOM**          | Cách đọc mã màu điện trở (4/5 vòng màu), mã số tụ điện (104, 224), thông số cuộn cảm. Cách xác định các chân linh kiện bán dẫn (đi-ốt Anode/Cathode; BJT Emitter/Base/Collector; MOSFET Gate/Drain/Source). Cách dùng vạn năng kế VOM đo thế, dòng, trở, thông mạch và kiểm tra linh kiện hỏng.            | **Trình giả lập đồng hồ vạn năng ảo (Multimeter Simulator):** Người dùng cắm hai đầu que đo (đỏ/đen) vào các chân của linh kiện ngẫu nhiên trên testboard, xoay núm vạn năng kế đo thông số để tìm ra chân và xác định linh kiện tốt hay hỏng. |
+| 2   | **Định luật Ohm & Mạch cầu phân áp**                 | Khái niệm cơ bản $V, I, R$. Định luật Ohm $V = I \cdot R$. Công thức sụt thế và cầu phân áp (voltage divider). Chứng minh sự bảo toàn năng lượng trong mạch đơn giản.                                                                                                                                      | **Mạch chỉnh độ sáng đèn LED:** Dùng chiết áp (potentiometer) làm cầu phân thế chỉnh áp ngõ ra LED. Có công thức tính dòng $I_{LED} = rac{V_{in} - V_{LED}}{R}$.                                                                               |
+| 3   | **Định luật Kirchhoff & Giải thuật mạng điện MNA**   | Định luật KCL (dòng nút) và KVL (áp vòng). Giới thiệu phương pháp thế nút Modified Nodal Analysis (MNA) giải hệ phương trình tuyến tính $A \cdot x = B$. Chứng minh định lý Kirchhoff bằng toán ma trận.                                                                                                   | **Sân chơi giải mạch tự động:** Người dùng thiết kế mạch điện bất kỳ, xem ma trận $A$ và vector $B$ được dựng động và giải bằng khử Gauss để tìm điện áp tại mọi nút.                                                                          |
+| 4   | **Linh kiện tích lũy & Hằng số thời gian RC/RL**     | Điện dung ($C$), Độ tự cảm ($L$). Viết phương trình vi phân mô tả tụ/cuộn cảm. Chứng minh công thức phóng nạp $v_C(t) = V_0(1 - e^{-t/RC})$. Hằng số thời gian $ au = RC$ và $ au = L/R$.                                                                                                                  | **Mạch trễ bật nguồn (Delay Timer):** Sử dụng nút bấm sạc tụ điện để trì hoãn đóng mở transistor kích đèn LED sáng/tắt. Biểu đồ nạp xả vẽ theo thời gian thực.                                                                                 |
+| 5   | **Cảm ứng điện từ & Máy biến áp (Transformer)**      | Định luật cảm ứng Faraday, hiện tượng tự cảm và hỗ cảm. Cấu trúc máy biến áp. Công thức tỉ số vòng dây $rac{V_1}{V_2} = rac{N_1}{N_2} = rac{I_2}{I_1}$. Chứng minh bảo toàn công suất $P_{in} pprox P_{out}$.                                                                                              | **Mạch hạ thế AC:** Mô phỏng máy biến áp hạ dòng AC hình sin 220V xuống 12V AC. Cho phép kéo chỉnh số vòng dây cuộn sơ cấp/thứ cấp để quan sát dạng sóng ngõ ra lệch biên độ.                                                                  |
+| 6   | **Đi-ốt & Mạch chỉnh lưu nguồn DC Linear**           | Tiếp giáp P-N, sụt áp thuận đi-ốt ($0.7	ext{V}$). Chỉnh lưu nửa chu kỳ, toàn chu kỳ (Cầu đi-ốt) và công thức tính dung tích tụ lọc san phẳng gợn sóng điện áp: $C = rac{I_{load}}{f \cdot V_{ripple}}$.                                                                                                     | **Bộ nguồn DC Linear 12V thực tế:** Chuyển đổi dòng 12V AC (từ Bài 5) thành nguồn 12V DC phẳng bằng cầu đi-ốt và tụ hóa lớn. Quan sát mức độ gợn sóng biến đổi theo điện trở tải.                                                              |
+| 7   | **Dòng điện xoay chiều AC & Trở kháng phức**         | Dạng sóng AC hình sin, tần số ($f$), điện áp RMS. Khái niệm số phức $j$ ứng dụng trong trở kháng phức ($Z_C = rac{1}{j\omega C}$, $Z_L = j\omega L$). Chứng minh pha của tụ điện trễ pha $90^\circ$ so với áp.                                                                                             | **Mạch kiểm chứng độ lệch pha AC:** Đo điện áp và dòng điện trên mạch xoay chiều RC/RL bằng máy hiện sóng, vẽ giản đồ vector pha (Phasor diagram) xoay động trực quan.                                                                         |
+| 8   | **Mạch lọc tần số (Filters) & Ứng dụng âm thanh**    | Bộ lọc thông thấp (Low-pass) và thông cao (High-pass) bậc 1 và 2. Công thức tần số cắt $f_c = rac{1}{2\pi RC}$. Chứng minh hàm truyền đạt (transfer function) $H(f)$ bằng số phức, vẽ giản đồ Bode plot.                                                                                                   | **Mạch phân tần loa (Audio Crossover):** Mô phỏng bộ phân tần chia tín hiệu âm thanh hỗn hợp thành tần số thấp (cho loa Bass) và tần số cao (cho loa Treble), đo giản đồ Bode.                                                                 |
+| 9   | **Ăng-ten & Mạch thu phát vô tuyến (RF)**            | Sóng điện từ và nguyên lý bức xạ. Cấu trúc ăng-ten dipole/monopole. Công thức tính độ dài ăng-ten tối ưu $\lambda/2$ và $\lambda/4$ ($\lambda = c/f$). Hiện tượng cộng hưởng LC và công thức Thompson $f_0 = rac{1}{2\pi\sqrt{LC}}$. Phối hợp trở kháng (impedance matching) ăng-ten để truyền tải tối đa. | **Mạch thu sóng Radio AM đơn giản:** Mô phỏng ăng-ten nhận sóng AM, xoay tụ biến dung $C$ để mạch cộng hưởng khớp tần số đài phát, thực hiện tách sóng bằng đi-ốt lấy lại tín hiệu âm thanh ban đầu.                                           |
+| 10  | **Transistor (BJT & MOSFET) & Mạch khuếch đại**      | Đặc tính linh kiện bán dẫn. Trạng thái ngắt, bão hòa và tuyến tính. Cấu hình khuếch đại cực phát chung (Common Emitter). Công thức tính độ lợi điện áp $A_v = -g_m \cdot R_C$. Chứng minh độ lệch pha $180^\circ$.                                                                                         | **Mạch khuếch đại micro:** Người dùng cấp tín hiệu hình sin biên độ nhỏ từ micro ($10	ext{mV}$), quan sát transistor khuếch đại thành tín hiệu hình sin lớn ($1.5	ext{V}$) ngược pha.                                                            |
+| 11  | **Cổng Logic & Mạch tổ hợp (Combinational)**         | Mức điện áp logic nhị phân. Thiết kế cổng NOT, AND, OR, XOR bằng CMOS thực tế. Đại số Boolean tính toán ngõ ra và giản đồ Karnaugh tối giản mạch logic. Ghép nối tạo bộ cộng bán phần/toàn phần (Half/Full Adder).                                                                                         | **Bộ cộng nhị phân 1-bit (Full Adder):** Lắp ghép các cổng logic ở mức transistor, cấp ngõ vào $A, B, C_{in}$ để kiểm chứng ngõ ra Tổng ($S$) và Số nhớ ($C_{out}$).                                                                           |
+| 12  | **Mạch tuần tự & Thiết kế bộ nhớ lưu trữ**           | Latch RS, D Flip-Flop. Hệ thống đồng bộ (xung clock). Thiết kế thanh ghi dịch (Shift Register), bộ đếm nhị phân (Counter). Ghép nối Flip-Flop tạo ô nhớ RAM tĩnh (SRAM cell - 6T SRAM). Công thức thời gian trễ và setup/hold time.                                                                        | **Thiết kế mạch ô nhớ SRAM:** Tạo mạch nhớ SRAM từ các cổng logic, điều khiển chân Write/Read, đổi chân Data để ghi nhớ và lưu trữ ổn định 1 bit dữ liệu.                                                                                      |
+| 13  | **IC định thời 555 & Mạch tạo xung điều rộng (PWM)** | Nguyên lý hoạt động bên trong IC 555 (bộ so sánh, flip-flop, transistor xả). Chế độ dao động phi ổn định (Astable). Công thức tần số $f = rac{1.44}{(R_1 + 2R_2)C}$ và chu kỳ nhiệm vụ (duty cycle).                                                                                                       | **Mạch điều khiển độ sáng bằng xung PWM:** IC 555 phát xung vuông điều khiển đóng cắt MOSFET để tăng giảm độ sáng đèn LED công suất lớn cực kỳ hiệu quả mà không tỏa nhiệt trên transistor.                                                    |
+| 14  | **Lập trình vi điều khiển (MCU) & Giao tiếp GPIO**   | Cấu trúc vi mạch điều khiển (MCU). Giao tiếp cổng I/O (GPIO), thanh ghi cấu hình hướng (DDR) và xuất dữ liệu (PORT). Nguyên lý hoạt động ngắt (Interrupt) và bộ đếm thời gian (Timer).                                                                                                                     | **Trình giả lập MCU viết code C/Assembly:** Viết mã lệnh điều khiển nhấp nháy LED, cấu hình nút bấm kích hoạt ngắt phần cứng, quan sát luồng thực thi ghi vào các thanh ghi của MCU ảo.                                                        |
+
+### 4. Tiêu chuẩn chất lượng & Bản đồ liên kết chéo (Quality Contract & Cross-links)
+
+Mọi bài học trong Series 10 phải tuân thủ nghiêm ngặt tiêu chuẩn chất lượng tại `.agents/skills/design-new-series/references/quality-contract.md` với các yêu cầu đặc thù sau:
+
+- **Độ dài và Chất lượng Học thuật:** Tối thiểu 1.500 từ tiếng Việt cho mỗi bài viết. Nội dung phải đi sâu vào bản chất vật lý, toán học và thiết kế kỹ thuật, tuyệt đối không viết sơ sài hay dùng văn phong mang tính chất giới thiệu chung chung.
+- **Sơ đồ nguyên lý & Sơ đồ cấu tạo bán dẫn/vi vi mạch:** Mỗi bài học bắt buộc phải thiết kế ít nhất 1 sơ đồ nguyên lý mạch điện (schematic) bằng định dạng đồ họa vector SVG hoặc Canvas động để người đọc dễ hình dung. Đối với các bài về đi-ốt, transistor, cổng logic, ô nhớ SRAM hay vi mạch 555, bắt buộc phải vẽ sơ đồ cấu trúc bên trong (mặt cắt tiếp giáp P-N, sơ đồ cấu tạo transistor CMOS, sơ đồ khối mạch so sánh/latch 555, cấu trúc 6T SRAM).
+- **Ví dụ tính toán số học & Chứng minh chi tiết (Step-by-step Calculations):** Mỗi bài phải bao gồm ít nhất 1 bài toán thực tế đi kèm các bước giải chi tiết bằng công thức toán học KaTeX. Ví dụ: Tính dòng điện hạn dòng cho LED ngõ ra; lập hệ phương trình ma trận MNA cho một mạch điện cụ thể; tính điện dung tụ lọc nguồn để giữ điện áp gợn sóng dưới mức cho phép; tính chiều dài vật lý của ăng-ten monopole cho tần số sóng vô tuyến; tính giá trị trở kháng phân tần loa; hay tính thời gian trễ của cổng logic.
+- **Ví dụ code và Anti-patterns:** Tối thiểu 4 khối `.code-window` chạy được cho mỗi bài học, cấu trúc tăng dần độ khó kèm sơ đồ đấu nối anti-pattern (❌ Đấu sai/Không chạy được vs ✅ Đấu đúng/Chạy tốt) để người học tự rà lỗi thực tế (như cắm ngược cực đi-ốt, đấu thiếu Ground, quá dòng cháy transistor, thiếu điện trở kéo lên GPIO).
+- **Chú thích & Callout:** Tối thiểu 3 callout (ít nhất 1 `--pitfall` về lỗi thường gặp như đấu sai chân, quên nối Ground, quá tải dòng điện).
+- **Công thức:** Sử dụng KaTeX cục bộ, mỗi công thức phải có 1 câu giải thích rõ ràng ý nghĩa của các đại lượng ($V, I, R, C, L, f, \omega, Z$).
+- **Bản đồ liên kết chéo (Cross-link Map):**
+  - **Bài 1, 2** (Ohm, Kirchhoff, MNA) chéo với **DSA (B-Tree/Hash)** để so sánh cấu trúc đồ thị ma trận và hiệu năng thuật toán giải tuyến tính.
+  - **Bài 3, 5, 6, 7** (RC, AC, Diode, Filters) chéo với **Web Audio API (FFT/Oscilloscope)** và **Canvas (Data Visualization)** để trực quan hóa tín hiệu, biên độ và tần số sóng âm AC.
+  - **Bài 13** (MCU/Registers/GPIO) chéo với **C/C++ (Pointers & Memory)** để giải thích cách con trỏ trỏ trực tiếp đến địa chỉ thanh ghi phần cứng và thực thi mã máy ảo.
+
+---
+
 # 🧱 PHẦN II — CÔNG VIỆC TRIỂN KHAI (Implementation Tasks)
 
 > Tài liệu bàn giao cho người/agent thực thi. Phần I ở trên là **thiết kế nội dung**; phần II này là **danh sách công việc kỹ thuật** bám đúng khung (template) thật của dự án. Đọc kèm `AGENTS.md`.
@@ -410,17 +462,18 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 
 ## 0. Quy ước slug thư mục & ID series
 
-| #   | Series                    | Thư mục          | File hub                           | Tag class CSS | Số bài |
-| --- | ------------------------- | ---------------- | ---------------------------------- | ------------- | ------ |
-| 1   | WebAssembly & Rust        | `blog/wasm/`     | `wasm-programming-series.html`     | `--wasm`      | 10     |
-| 2   | WebGPU                    | `blog/webgpu/`   | `webgpu-programming-series.html`   | `--webgpu`    | 10     |
-| 3   | DS & Giải Thuật Trực Quan | `blog/algo/`     | `algo-programming-series.html`     | `--algo`      | 12     |
-| 4   | WebRTC & WebSocket        | `blog/realtime/` | `realtime-programming-series.html` | `--rtc`       | 8      |
-| 5   | Toy JS Engine             | `blog/toyjs/`    | `toyjs-programming-series.html`    | `--toyjs`     | 8      |
-| 6   | CSS & Animation           | `blog/css/`      | `css-programming-series.html`      | `--css`       | 10     |
-| 7   | SQL (SQLite-WASM)         | `blog/sql/`      | `sql-programming-series.html`      | `--sql`       | 17     |
-| 8   | Web Audio API             | `blog/audio/`    | `audio-programming-series.html`    | `--audio`     | 8      |
-| 9   | Git                       | `blog/git/`      | `git-programming-series.html`      | `--git`       | 13     |
+| #   | Series                     | Thư mục             | File hub                              | Tag class CSS   | Số bài |
+| --- | -------------------------- | ------------------- | ------------------------------------- | --------------- | ------ |
+| 1   | WebAssembly & Rust         | `blog/wasm/`        | `wasm-programming-series.html`        | `--wasm`        | 10     |
+| 2   | WebGPU                     | `blog/webgpu/`      | `webgpu-programming-series.html`      | `--webgpu`      | 10     |
+| 3   | DS & Giải Thuật Trực Quan  | `blog/algo/`        | `algo-programming-series.html`        | `--algo`        | 12     |
+| 4   | WebRTC & WebSocket         | `blog/realtime/`    | `realtime-programming-series.html`    | `--rtc`         | 8      |
+| 5   | Toy JS Engine              | `blog/toyjs/`       | `toyjs-programming-series.html`       | `--toyjs`       | 8      |
+| 6   | CSS & Animation            | `blog/css/`         | `css-programming-series.html`         | `--css`         | 10     |
+| 7   | SQL (SQLite-WASM)          | `blog/sql/`         | `sql-programming-series.html`         | `--sql`         | 17     |
+| 8   | Web Audio API              | `blog/audio/`       | `audio-programming-series.html`       | `--audio`       | 8      |
+| 9   | Git                        | `blog/git/`         | `git-programming-series.html`         | `--git`         | 13     |
+| 10  | Điện Tử & Mô Phỏng Vi Mạch | `blog/electronics/` | `electronics-programming-series.html` | `--electronics` | 13     |
 
 > Slug từng bài đặt theo mẫu sẵn có: `<series>-<chu-de>.html` (vd `wasm-linear-memory.html`, `webgpu-compute-shaders.html`). Đặt tên kebab-case, không dấu.
 
@@ -436,7 +489,7 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 - [ ] **✅ Math rendering = KaTeX local (ĐÃ CHỐT).** Thêm `katex.min.css` + `katex.min.js` + `auto-render.min.js` vào `blog/` (bản tĩnh, **không CDN, không build**). Mọi công thức toán dùng KaTeX (`$…$` inline, `$$…$$` block) qua auto-render khi `DOMContentLoaded`. Áp cho mọi bài có công thức (đặc biệt WebGPU, WASM SIMD, DSA); chỉ nạp script ở trang có công thức để khỏi nặng trang khác. Test render trên 1 bài mẫu.
 - [x] **✅ Widget bình luận = chỉ giscus (ĐÃ HOÀN THÀNH).** Đã gỡ bỏ hoàn toàn Facebook comments/SDK và chuyển đổi sang Giscus trên toàn bộ trang bài viết.
 
-## 2. Checklist cho MỖI series (lặp lại 9 lần)
+## 2. Checklist cho MỖI series (lặp lại 10 lần)
 
 - [ ] Tạo thư mục `blog/<series>/`.
 - [ ] **Trang hub** `<series>-programming-series.html`:
@@ -478,6 +531,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - [ ] **SQL** → `sql-workbench.html`: editor SQL + bảng kết quả + thời gian thực thi + `EXPLAIN QUERY PLAN` + ERD. Cần commit sẵn artifact `sql-wasm.wasm` của `sql.js` (không build runtime).
 - [ ] **Web Audio** → `audio-synth-lab.html`: node-graph kéo-thả + Canvas waveform/FFT + nguồn synth/file/mic. Tôn trọng autoplay policy (chỉ khởi tạo `AudioContext` sau user gesture).
 - [ ] **Git** → `git-graph-sim.html`: canvas/SVG vẽ DAG commit + ô nhập lệnh giả lập + panel 3 cây & refs di chuyển trực quan.
+- [ ] **Electronics** → `circuit-scope-lab.html`: canvas vẽ lưới mạch điện (nguồn DC/AC, trở, tụ, cuộn cảm, đi-ốt, transistor, cổng logic, LED) kéo thả + electron chạy trên dây dẫn + máy hiện sóng oscilloscope hiển thị dạng sóng điện áp/dòng điện thời gian thực.
 
 > ⚠️ Ràng buộc "no build step": với Rust/Wasm phải **commit sẵn artifact `.wasm`** (build offline), trang chỉ `fetch()` + `instantiate`. Không thêm toolchain vào CI/Cloudflare.
 
@@ -648,6 +702,23 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - **Bài 11 — Hooks & Worktree:** 11.1 Git hooks tự động hoá (pre-commit/pre-push/commit-msg) · 11.2 Use case chặn commit lỗi lint/test · 11.3 `worktree` checkout song song nhiều nhánh không cần clone lại · 11.4 So sánh worktree vs chuyển nhánh thông thường.
 - **Bài 12 — Tags & Aliases Nâng Cao:** 12.1 Lightweight vs annotated tag (metadata, GPG sign) · 12.2 Semantic Versioning & quy ước tag release · 12.3 `git alias` rút gọn lệnh dài · 12.4 `git config` tuỳ biến hành vi (core.editor, pull.rebase...).
 - **Bài 13 — Dự án: Git Kata Trainer:** 13.1 Định nghĩa graph đích · 13.2 Parser lệnh giả lập · 13.3 Chấm điểm theo graph kết quả · 13.4 Bộ thử thách tăng dần, tổng hợp 12 bài trước.
+
+## Series 10 — Điện Tử & Mô Phỏng Vi Mạch
+
+- **Bài 1 — Đọc trị số linh kiện & Đo kiểm bằng VOM:** 1.1 Đọc vòng màu điện trở và mã số tụ điện/cuộn cảm · 1.2 Nhận diện chân linh kiện bán dẫn (Diode, BJT, MOSFET, IC) · 1.3 Sử dụng đồng hồ vạn năng VOM đo dòng/áp/trở kháng · 1.4 Thực hành đo thông mạch kiểm tra linh kiện hỏng.
+- **Bài 2 — Định luật Ohm & Mạch cầu phân áp:** 2.1 Khái niệm cơ bản dòng điện ($I$), điện áp ($V$), điện trở ($R$) · 2.2 Định luật Ohm $V = I \cdot R$ & Chứng minh sự bảo toàn năng lượng · 2.3 Mạch cầu phân áp (Voltage Divider) & Công thức sụt áp · 2.4 Thực hành mạch phân thế chỉnh độ sáng đèn LED bằng chiết áp.
+- **Bài 3 — Định luật Kirchhoff & Giải thuật mạng điện MNA:** 3.1 Định luật dòng nút KCL & áp vòng KVL · 3.2 Phương pháp thế nút Modified Nodal Analysis (MNA) & toán ma trận $A \cdot x = B$ · 3.3 Giải ma trận ngầm bằng giải thuật khử Gauss trong JavaScript · 3.4 Thực hành thiết kế và tự động giải điện áp nút mạng điện.
+- **Bài 4 — Linh kiện tích lũy & Hằng số thời gian RC/RL:** 4.1 Điện dung ($C$), Độ tự cảm ($L$) và phương trình vi phân mô tả · 4.2 Hằng số thời gian $ au = RC$ & $ au = L/R$ · 4.3 Chứng minh công thức phóng nạp $v_C(t) = V_0(1 - e^{-t/RC})$ · 4.4 Thực hành mạch trễ bật nguồn Delay Timer điều khiển bóng đèn.
+- **Bài 5 — Cảm ứng điện từ & Máy biến áp (Transformer):** 4.1 Định luật cảm ứng Faraday & Hiện tượng tự cảm/hỗ cảm · 4.2 Cấu tạo biến áp & Công thức tỷ số vòng dây $rac{V_1}{V_2} = rac{N_1}{N_2}$ · 4.3 Chứng minh bảo toàn công suất $P_{in} pprox P_{out}$ & tổn hao lõi sắt · 4.4 Thực hành mô phỏng máy hạ áp AC 220V xuống 12V xoay chiều.
+- **Bài 6 — Đi-ốt & Mạch chỉnh lưu nguồn DC Linear:** 5.1 Tiếp giáp bán dẫn P-N & sụt áp thuận của đi-ốt ($0.7	ext{V}$) · 5.2 Mạch chỉnh lưu nửa chu kỳ vs toàn chu kỳ (Cầu đi-ốt) · 5.3 Công thức tính tụ lọc khử gợn sóng điện áp $C = rac{I_{load}}{f \cdot V_{ripple}}$ · 5.4 Thực hành mạch nguồn DC Linear 12V ổn định từ 12V AC.
+- **Bài 7 — Dòng điện xoay chiều AC & Trở kháng phức:** 6.1 Dạng sóng AC, điện áp cực đại $V_{peak}$ và điện áp hiệu dụng $V_{RMS}$ · 6.2 Định nghĩa số phức $j$ và ứng dụng biểu diễn trở kháng phức $Z_C, Z_L$ · 6.3 Chứng minh lệch pha dòng áp $\phi = \pm 90^\circ$ qua tụ/cuộn cảm · 6.4 Thực hành mạch đo lệch pha AC và vẽ giản đồ vector pha (Phasor diagram).
+- **Bài 8 — Mạch lọc tần số (Filters) & Ứng dụng âm thanh:** 7.1 Bộ lọc RC thông thấp (Low-pass) & thông cao (High-pass) bậc 1 và 2 · 7.2 Công thức tính tần số cắt $f_c = rac{1}{2\pi RC}$ · 7.3 Chứng minh hàm truyền đạt $H(f)$ bằng số phức & vẽ giản đồ đáp ứng tần số Bode plot · 7.4 Thực hành thiết kế mạch phân tần loa Crossover (Bass/Treble).
+- **Bài 9 — Ăng-ten & Mạch thu phát vô tuyến (RF):** 8.1 Sóng điện từ và nguyên lý bức xạ ăng-ten dipole/monopole · 8.2 Công thức tính độ dài ăng-ten tối ưu $\lambda/2$ và $\lambda/4$ ($\lambda = c/f$) · 8.3 Hiện tượng cộng hưởng LC và công thức Thompson $f_0 = rac{1}{2\pi\sqrt{LC}}$ · 8.4 Thực hành mạch thu sóng Radio AM tách sóng và phối hợp trở kháng ăng-ten.
+- **Bài 10 — Transistor (BJT & MOSFET) & Mạch khuếch đại:** 9.1 Cấu trúc bán dẫn và chế độ hoạt động BJT/MOSFET · 9.2 Thiết kế mạch đóng ngắt tải (Switching) bóng đèn 12V · 9.3 Mạch khuếch đại cực phát chung (Common Emitter) khuếch đại tín hiệu micro · 9.4 Công thức tính độ lợi áp $A_v = -g_m \cdot R_C$ và chứng minh lệch pha $180^\circ$ ngõ vào/ra.
+- **Bài 11 — Cổng Logic & Mạch tổ hợp (Combinational Logic):** 10.1 Khái niệm mức logic nhị phân · 10.2 Sơ đồ thiết kế cổng NOT, AND, OR, XOR từ CMOS thực tế · 10.3 Đại số Boolean và giản đồ Karnaugh để tối giản hóa mạch logic · 10.4 Thực hành mạch cộng nhị phân 1-bit (Full Adder) cấp transistor.
+- **Bài 12 — Mạch tuần tự & Thiết kế bộ nhớ lưu trữ:** 11.1 Latch RS và D Flip-Flop đồng bộ theo xung clock · 11.2 Thiết kế thanh ghi dịch (Shift Register) và bộ đếm (Counter) · 11.3 Ghép nối Flip-Flop tạo ô nhớ RAM tĩnh (SRAM cell - 6T SRAM) · 11.4 Công thức thời gian trễ propagation delay và setup/hold time.
+- **Bài 13 — IC định thời 555 & Mạch tạo xung điều rộng (PWM):** 12.1 Cấu trúc khối chức năng bên trong IC 555 · 12.2 Chế độ dao động phi ổn định Astable tạo xung vuông liên tục · 12.3 Công thức tính chu kỳ và tần số $f = rac{1.44}{(R_1 + 2R_2)C}$ · 12.4 Thực hành mạch điều rộng xung (PWM) đóng ngắt MOSFET chỉnh độ sáng LED.
+- **Bài 14 — Lập trình vi điều khiển (MCU) & Giao tiếp GPIO:** 13.1 Kiến trúc MCU (CPU, SRAM, Flash) · 13.2 Giao tiếp GPIO, thanh ghi DDRx và PORTx · 13.3 Nguyên lý ngắt phần cứng (Interrupts) và Timer · 13.4 Thực hành viết mã lệnh C/Assembly điều khiển LED và ngắt nút nhấn qua MCU ảo.
 
 ---
 
