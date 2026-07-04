@@ -1,0 +1,1138 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 13: JSON &amp; Generated Columns — js-tools</title>
+    <meta
+      name="description"
+      content="Tìm hiểu kiểu dữ liệu JSON, cách truy vấn trích xuất dữ liệu bán cấu trúc bằng json_extract, các toán tử -> và ->>, kỹ thuật làm phẳng mảng với json_each/json_tree, cột tự động tạo Generated Columns (Virtual vs Stored) và tối ưu hóa tốc độ truy vấn bằng index trên biểu thức."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sql/sql-json-generated-columns" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex/katex.min.js"></script>
+    <script
+      defer
+      src="../katex/contrib/auto-render.min.js"
+      onload="
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+        })
+      "
+    ></script>
+    <style>
+      /* SQL Workbench Sandbox styles */
+      .sql-workbench {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .sql-workbench__row {
+        display: grid;
+        grid-template-columns: 1fr 200px;
+        gap: 16px;
+      }
+      .sql-editor {
+        width: 100%;
+        min-height: 130px;
+        background: #0f0f1b;
+        color: #a6e3a1;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-family: monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+      .sql-side-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sql-btn {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .sql-btn:hover {
+        background: #313244;
+      }
+      .sql-btn--primary {
+        background: #10b981;
+        border-color: #10b981;
+        color: #fff;
+        font-weight: 600;
+      }
+      .sql-btn--primary:hover {
+        background: #059669;
+      }
+      .sql-examples {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .sql-example-btn {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #11111b;
+        color: #a6adc8;
+        font-size: 11px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .sql-example-btn:hover {
+        background: #313244;
+        color: #cdd6f4;
+      }
+      .sql-status-line {
+        font-family: monospace;
+        font-size: 12px;
+        color: #a6adc8;
+      }
+      .sql-status-line.is-error {
+        color: #f38ba8;
+      }
+      .sql-schema-panel {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        font-size: 12px;
+        color: #cdd6f4;
+        display: none;
+      }
+      .sql-schema-panel.is-visible {
+        display: block;
+      }
+      #sql-schema-panel table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 12px;
+        font-size: 11px;
+      }
+      #sql-schema-panel th,
+      #sql-schema-panel td {
+        text-align: left;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border);
+        color: #cdd6f4;
+      }
+      #sql-schema-panel th {
+        color: #a6adc8;
+      }
+      #sql-schema-panel tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .sql-schema-panel h4 {
+        color: #10b981;
+        margin: 0 0 6px;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      .sql-results-container {
+        background: #0f0f1b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        overflow-x: auto;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      #sql-results table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12px;
+        font-family: monospace;
+        color: #cdd6f4;
+      }
+      #sql-results th,
+      #sql-results td {
+        padding: 6px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        color: #cdd6f4;
+      }
+      #sql-results th {
+        background: #11111b;
+        color: #10b981;
+        position: sticky;
+        top: -13px;
+      }
+      #sql-results tbody tr:nth-child(even) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      #sql-results td.is-null {
+        color: #6c7086;
+        font-style: italic;
+      }
+      .sql-results-empty {
+        color: #6c7086;
+        font-size: 13px;
+        padding: 8px;
+      }
+      @media (max-width: 880px) {
+        .sql-workbench__row {
+          grid-template-columns: 1fr;
+        }
+      }
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .comparison-table th,
+      .comparison-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      .comparison-table th {
+        background: #181825;
+        color: #fff;
+      }
+      body.light-theme .comparison-table th {
+        background: #f1f3f5;
+        color: #242424;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sql">
+        <div class="container">
+          <a href="sql-programming-series" class="article-hero__back">← Quay lại Lộ trình SQL trong Trình duyệt</a>
+          <div class="article-hero__tag article-hero__tag--sql">SQL trong Trình duyệt</div>
+          <h1 class="article-hero__title">Bài 13: JSON &amp; Generated Columns</h1>
+          <div class="article-hero__meta">5 tháng 7, 2026 · 30 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <article>
+            <div class="article-body">
+              <div>
+                <p>
+                  Trong thế giới thiết kế cơ sở dữ liệu hiện đại, ranh giới giữa mô hình quan hệ chặt chẽ (Relational)
+                  và mô hình tài liệu phi cấu trúc (NoSQL Document) đang ngày càng mờ nhạt. Thay vì tách nhỏ mọi thuộc
+                  tính thành hàng chục bảng chuẩn hóa hoặc chuyển hẳn sang các DB không quan hệ, SQL hỗ trợ các cột lưu
+                  trữ dữ liệu dạng <strong>JSON</strong> kết hợp với cơ chế <strong>Generated Columns</strong> (Cột tự
+                  động sinh). Bài viết này sẽ đi sâu vào cách SQLite xử lý dữ liệu bán cấu trúc, cách trích xuất, làm
+                  phẳng các mảng phức tạp, và phương pháp tối ưu hóa hiệu năng bằng chỉ mục trên biểu thức (Index on
+                  Expression).
+                </p>
+
+                <h2>1. Lưu Trữ JSON Trong SQLite: Text thô vs Định Dạng Nhị Phân (JSONB)</h2>
+                <p>
+                  Khác với các hệ quản trị lớn như PostgreSQL có kiểu dữ liệu <code>jsonb</code> lưu nhị phân chuyên
+                  dụng từ sớm, triết lý của SQLite là tối giản và tương thích ngược. Mặc định, SQLite lưu trữ dữ liệu
+                  JSON dưới dạng một chuỗi văn bản thô (kiểu <code>TEXT</code>).
+                </p>
+                <p>
+                  Điều này có nghĩa là mỗi khi bạn chạy câu lệnh trích xuất thuộc tính bên trong JSON, SQLite buộc phải
+                  quét qua chuỗi văn bản và phân tích cú pháp (parse) lại từ đầu. Nếu bảng có $N$ dòng, CPU sẽ phải thực
+                  hiện $N$ lần thao tác parse chuỗi. Độ phức tạp tính toán trung bình cho việc phân tích cú pháp một
+                  chuỗi JSON độ dài $L$ là \(O(L)\), khiến các truy vấn quét toàn bảng trên dữ liệu JSON thô tốn rất
+                  nhiều CPU.
+                </p>
+                <p>
+                  Để giải quyết bài toán hiệu năng này, kể từ phiên bản <strong>SQLite 3.45.0 (đầu năm 2024)</strong>,
+                  định dạng <strong>JSONB</strong> đã được giới thiệu. JSONB chuyển đổi văn bản JSON thành một chuỗi nhị
+                  phân (kiểu <code>BLOB</code>) đã được phân tích sẵn cấu trúc cây.
+                </p>
+
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Đặc tính</th>
+                      <th>JSON thô (TEXT)</th>
+                      <th>JSONB (Nhị phân BLOB)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Cách lưu trữ</strong></td>
+                      <td>Chuỗi văn bản RFC-8259 nguyên bản.</td>
+                      <td>Mảng byte nhị phân đã sắp xếp sẵn vị trí key/value.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Tốc độ ghi (Insert/Update)</strong></td>
+                      <td>Nhanh (chỉ ghi chuỗi thô, không cần parse).</td>
+                      <td>Chậm hơn một chút (phải parse và chuyển sang nhị phân khi viết).</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Tốc độ đọc (Query/Extract)</strong></td>
+                      <td>Chậm (phải parse JSON liên tục trên mỗi dòng).</td>
+                      <td>Nhanh hơn từ 2x đến 3x (chỉ cần nhảy thẳng tới offset của key).</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Dung lượng đĩa</strong></td>
+                      <td>Lớn hơn (chứa đầy đủ dấu nháy, khoảng trắng dư thừa).</td>
+                      <td>Nhỏ hơn khoảng 5-10% (loại bỏ cú pháp text thừa).</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p>
+                  Trong thực tế, bạn không khai báo kiểu cột là <code>JSONB</code> vì SQLite dùng hệ kiểu động (Type
+                  Affinity). Bạn chỉ cần lưu kết quả của hàm <code>jsonb()</code> vào một cột kiểu <code>BLOB</code>:
+                </p>
+                <pre><code class="language-sql">CREATE TABLE product_specs (
+  product_id INTEGER PRIMARY KEY,
+  specs_raw TEXT,         -- Lưu JSON thô dạng văn bản
+  specs_bin BLOB          -- Lưu JSONB nhị phân bằng hàm jsonb()
+);
+
+INSERT INTO product_specs (product_id, specs_raw, specs_bin)
+VALUES (
+  1, 
+  '{"RAM": "16GB", "CPU": "M2", "weight_kg": 1.4}', 
+  jsonb('{"RAM": "16GB", "CPU": "M2", "weight_kg": 1.4}')
+);</code></pre>
+
+                <div class="callout callout--tip">
+                  <div class="callout__title">💡 Hàm tự động chuyển đổi trong SQLite</div>
+                  <div class="callout__content">
+                    Tất cả các hàm xử lý JSON của SQLite (như <code>json_extract</code>) đều chấp nhận cả đầu vào là
+                    TEXT lẫn nhị phân BLOB. Nếu đầu vào là nhị phân, nó tự động nhận biết cấu trúc đã tối ưu để bỏ qua
+                    bước phân tích cú pháp chuỗi, mang lại tốc độ vượt trội.
+                  </div>
+                </div>
+
+                <h2>
+                  2. Truy Vấn Dữ Liệu Bán Cấu Trúc: Hàm Trích Xuất &amp; Toán Tử <code>-&gt;</code> /
+                  <code>-&gt;&gt;</code>
+                </h2>
+                <p>
+                  Hãy xem xét tình huống kinh doanh thực tế tại <strong>TechMart</strong>: Cửa hàng bán các dòng sản
+                  phẩm có thông số kỹ thuật (Specs) hoàn toàn khác nhau. Thay vì tạo hàng chục cột thưa chứa nhiều giá
+                  trị <code>NULL</code> (ví dụ: cột <code>battery_life</code> chỉ có cho Laptop, <code>dpi</code> chỉ có
+                  cho Mouse, <code>frequency_response</code> chỉ có cho Headphones), chúng ta gói tất cả các thuộc tính
+                  động này vào cột JSON <code>specs</code>.
+                </p>
+                <p>
+                  Để trích xuất các thuộc tính bên trong JSON, SQLite cung cấp hàm
+                  <code>json_extract(json, path)</code>. Đường dẫn <code>path</code> bắt đầu bằng ký tự
+                  <code>$</code> đại diện cho gốc của đối tượng.
+                </p>
+                <pre><code class="language-sql">-- Truy vấn truyền thống bằng json_extract
+SELECT product_name, 
+       json_extract(specs, '$.RAM') AS ram,
+       json_extract(specs, '$.weight_kg') AS weight
+FROM techmart_products
+WHERE json_extract(specs, '$.category_type') = 'Laptop';</code></pre>
+
+                <p>
+                  Để cú pháp ngắn gọn và trực quan hơn (tương tự như PostgreSQL), kể từ phiên bản 3.38.0, SQLite hỗ trợ
+                  hai toán tử mũi tên:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Toán tử <code>-&gt;</code></strong
+                    >: Trích xuất một đối tượng con hoặc giá trị dưới dạng <strong>chuỗi JSON</strong> (giữ nguyên dấu
+                    nháy <code>"</code> bọc quanh chuỗi và định dạng JSON).
+                  </li>
+                  <li>
+                    <strong>Toán tử <code>-&gt;&gt;</code></strong
+                    >: Trích xuất một đối tượng dưới dạng <strong>giá trị thô của SQL</strong> (trả về kiểu text,
+                    integer, real thực tế, tự động gỡ bỏ dấu nháy kép bọc ngoài chuỗi).
+                  </li>
+                </ul>
+
+                <pre><code class="language-sql">-- Sử dụng các toán tử mũi tên hiện đại
+SELECT product_name,
+       specs -> '$.RAM' AS ram_json,     -- Trả về '"16GB"' (có dấu nháy)
+       specs ->> '$.RAM' AS ram_raw,     -- Trả về '16GB' (chuỗi sạch)
+       specs ->> '$.weight_kg' AS weight -- Trả về 1.4 dưới dạng số thực
+FROM techmart_products
+WHERE specs ->> '$.category_type' = 'Laptop';</code></pre>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">🕳️ Cạm bẫy so sánh dữ liệu với toán tử mũi tên</div>
+                  <div class="callout__content">
+                    Một trong những lỗi kinh điển khi mới làm việc với JSON trong SQL là sử dụng nhầm toán tử
+                    <code>-&gt;</code> khi so sánh chuỗi. Nếu bạn viết:
+                    <pre><code class="language-sql">WHERE specs -> '$.RAM' = '16GB'</code></pre>
+                    Kết quả sẽ luôn là <strong>sai (empty)</strong>, bởi vì vế trái trả về chuỗi JSON
+                    <code>'"16GB"'</code> (có chứa hai dấu nháy kép), trong khi vế phải là chuỗi SQL thông thường
+                    <code>'16GB'</code>. Hãy luôn sử dụng toán tử kép <strong><code>-&gt;&gt;</code></strong>
+                    khi muốn lọc hoặc so sánh giá trị văn bản thô.
+                  </div>
+                </div>
+
+                <div class="callout callout--warning">
+                  <div class="callout__title">⚠️ Ép kiểu tường minh cho các phép toán so sánh số học</div>
+                  <div class="callout__content">
+                    Bản chất giá trị trả về của <code>-&gt;&gt;</code> vẫn có thể được hiểu là chuỗi văn bản nếu SQLite
+                    không thể tự động ép kiểu chính xác. Đối với các phép toán so sánh lớn hơn/nhỏ hơn trên kiểu số, để
+                    an toàn tuyệt đối tránh lỗi so sánh chuỗi (ví dụ: chuỗi <code>'10'</code> nhỏ hơn
+                    <code>'2'</code> theo thứ tự bảng chữ cái), bạn nên thực hiện ép kiểu rõ ràng:
+                    <pre><code class="language-sql">SELECT product_name FROM techmart_products
+WHERE CAST(specs ->> '$.weight_kg' AS REAL) > 1.5;</code></pre>
+                  </div>
+                </div>
+
+                <h2>3. Làm Phẳng Dữ Liệu JSON Phức Tạp: Sử Dụng <code>json_each</code> và <code>json_tree</code></h2>
+                <p>
+                  Trong nhiều trường hợp, một trường JSON không chỉ chứa các cặp key-value đơn giản mà chứa các mảng
+                  (Arrays) hoặc các cây phân cấp lồng nhau. Tình huống kinh doanh: Bảng <code>api_logs</code> ghi nhận
+                  các sự kiện từ client. Cột <code>payload</code> chứa mảng danh sách lỗi phát sinh trong một request:
+                </p>
+                <pre><code class="language-json">{
+  "request_id": 9901,
+  "status": "failed",
+  "errors": [
+    {"code": "ERR_STOCK", "msg": "Wireless Mouse hết hàng"},
+    {"code": "ERR_PRICE", "msg": "Sai lệch giá bán tối thiểu"}
+  ]
+}</code></pre>
+                <p>
+                  Làm sao để lọc ra toàn bộ các bản ghi lỗi chi tiết của từng request thành từng hàng SQL độc lập? Chúng
+                  ta sử dụng hàm
+                  <strong><code>json_each(json, path)</code></strong> như một bảng ảo và kết hợp với phép nối
+                  <code>JOIN</code> (thực chất là một lateral join ngầm định).
+                </p>
+                <pre><code class="language-sql">SELECT log_id,
+       payload ->> '$.request_id' AS request_id,
+       value ->> '$.code' AS error_code,
+       value ->> '$.msg' AS error_msg
+FROM api_logs, json_each(api_logs.payload, '$.errors');</code></pre>
+                <p>
+                  Trong câu lệnh trên, hàm <code>json_each</code> duyệt qua mảng nằm ở đường dẫn <code>$.errors</code>.
+                  Với mỗi phần tử trong mảng, nó trả về một hàng ảo có cột <code>value</code> chứa chuỗi JSON của phần
+                  tử đó. Nhờ đó, chúng ta có thể tiếp tục dùng toán tử <code>-&gt;&gt;</code> trên cột
+                  <code>value</code> để bóc tách thông tin lỗi chi tiết.
+                </p>
+                <p>
+                  <strong>Sự khác biệt giữa <code>json_each</code> và <code>json_tree</code>:</strong>
+                </p>
+                <ul>
+                  <li>
+                    <strong><code>json_each</code></strong
+                    >: Chỉ duyệt qua các phần tử con trực tiếp (mức độ 1) của đường dẫn được chỉ định.
+                  </li>
+                  <li>
+                    <strong><code>json_tree</code></strong
+                    >: Duyệt đệ quy theo chiều sâu qua toàn bộ các nhánh con, cháu, chắt của cây JSON. Nó trả về đầy đủ
+                    đường dẫn cụ thể (cột <code>path</code>) của từng phần tử xuất hiện trong cấu trúc.
+                  </li>
+                </ul>
+
+                <pre><code class="language-sql">-- Tìm kiếm tất cả các giá trị văn bản bất kể nó nằm ở cấp độ nào trong JSON payload
+SELECT log_id, key, value, path
+FROM api_logs, json_tree(api_logs.payload)
+WHERE type = 'text' AND value LIKE '%hết hàng%';</code></pre>
+
+                <h2>
+                  4. Cập Nhật Dữ Liệu JSON: So Sánh <code>json_set</code>, <code>json_insert</code>,
+                  <code>json_replace</code> và <code>json_patch</code>
+                </h2>
+                <p>
+                  Không chỉ đọc, SQL còn cho phép chỉnh sửa nội dung bên trong tài liệu JSON mà không cần phải ghi đè
+                  toàn bộ cột bằng code ứng dụng. Tình huống kinh doanh: Lưu trữ cấu hình giao diện và tùy chọn thông
+                  báo của người dùng trong bảng <code>user_profiles</code>. SQLite cung cấp các hàm chuyên biệt sau:
+                </p>
+
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Hàm</th>
+                      <th>Cơ chế hoạt động</th>
+                      <th>Nếu Key đã tồn tại</th>
+                      <th>Nếu Key chưa tồn tại</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        <strong><code>json_set()</code></strong>
+                      </td>
+                      <td>Thiết lập giá trị.</td>
+                      <td>Cập nhật giá trị mới.</td>
+                      <td>Tạo thêm cặp key-value mới.</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong><code>json_insert()</code></strong>
+                      </td>
+                      <td>Chèn giá trị mới.</td>
+                      <td>Bỏ qua (không thay đổi giá trị cũ).</td>
+                      <td>Tạo thêm cặp key-value mới.</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong><code>json_replace()</code></strong>
+                      </td>
+                      <td>Thay thế giá trị cũ.</td>
+                      <td>Cập nhật giá trị mới.</td>
+                      <td>Bỏ qua (không tạo mới).</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p>Ví dụ minh họa sự khác biệt khi chạy cùng một cấu hình cập nhật:</p>
+                <pre><code class="language-sql">-- Giả sử settings ban đầu là: '{"theme": "dark"}'
+
+-- 1. json_set: Cập nhật theme cũ đồng thời thêm mới language
+SELECT json_set('{"theme": "dark"}', '$.theme', 'light', '$.lang', 'vi');
+-- Kết quả: '{"theme": "light", "lang": "vi"}'
+
+-- 2. json_insert: theme giữ nguyên vì đã có, lang được thêm mới
+SELECT json_insert('{"theme": "dark"}', '$.theme', 'light', '$.lang', 'vi');
+-- Kết quả: '{"theme": "dark", "lang": "vi"}'
+
+-- 3. json_replace: theme được cập nhật, lang bị bỏ qua vì chưa có
+SELECT json_replace('{"theme": "dark"}', '$.theme', 'light', '$.lang', 'vi');
+-- Kết quả: '{"theme": "light"}'</code></pre>
+
+                <p>
+                  Ngoài việc cập nhật từng đường dẫn đơn lẻ, bạn có thể thực hiện trộn (merge) hai đối tượng JSON bằng
+                  hàm
+                  <strong><code>json_patch(json1, json2)</code></strong> (tuân thủ tiêu chuẩn RFC-7396). Nó sẽ ghi đè
+                  các trường của <code>json1</code> bằng dữ liệu từ <code>json2</code>, và nếu một trường ở
+                  <code>json2</code> có giá trị là <code>null</code>, trường đó sẽ bị xóa khỏi đối tượng kết quả.
+                </p>
+                <pre><code class="language-sql">-- Gộp cấu hình mặc định với cấu hình tùy biến của user
+SELECT json_patch(
+  '{"theme": "dark", "font_size": 14, "show_sidebar": true}',
+  '{"theme": "light", "show_sidebar": null}' -- null nghĩa là xóa trường này
+);
+-- Kết quả: '{"theme": "light", "font_size": 14}'</code></pre>
+
+                <h2>5. Generated Columns: Cột Tự Động Tạo (Virtual vs Stored)</h2>
+                <p>
+                  Một trong những phàn nàn lớn nhất khi làm việc với JSON trong cơ sở dữ liệu quan hệ là cú pháp trích
+                  xuất dữ liệu rườm rà. Mỗi khi cần lấy cân nặng sản phẩm để tính phí ship, chúng ta lại phải gõ
+                  <code>specs -&gt;&gt; '$.weight_kg'</code>.
+                </p>
+                <p>
+                  Cơ chế <strong>Generated Columns</strong> ra đời để tạo ra các cột có giá trị được tính toán tự động
+                  dựa trên biểu thức từ các cột khác. Chúng ta có hai chế độ lưu trữ: <code>VIRTUAL</code> (Mặc định) và
+                  <code>STORED</code>.
+                </p>
+
+                <table class="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Đặc tính</th>
+                      <th>Cột ảo (VIRTUAL)</th>
+                      <th>Cột lưu trữ (STORED)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Lưu trữ trên đĩa</strong></td>
+                      <td>Không tốn bất kỳ byte nào.</td>
+                      <td>Chiếm dung lượng đĩa tương đương cột thường.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Thời điểm tính toán</strong></td>
+                      <td>Tính toán lại biểu thức mỗi khi dòng đó được đọc (<code>SELECT</code>).</td>
+                      <td>Tính toán một lần duy nhất khi dòng được ghi (<code>INSERT</code>/<code>UPDATE</code>).</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Tốc độ đọc</strong></td>
+                      <td>Chậm hơn (phải tính toán biểu thức).</td>
+                      <td>Nhanh bằng cột thông thường.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Tốc độ ghi</strong></td>
+                      <td>Nhanh (không mất chi phí tính toán khi viết).</td>
+                      <td>Chậm hơn (phải chạy biểu thức trước khi lưu đĩa).</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p>Khai báo cột tự động trích xuất cấu hình từ JSON specs:</p>
+                <pre><code class="language-sql">CREATE TABLE techmart_products (
+  product_id INTEGER PRIMARY KEY,
+  product_name TEXT NOT NULL,
+  specs TEXT,
+  -- Cột ảo: Không tốn dung lượng đĩa
+  device_ram TEXT GENERATED ALWAYS AS (specs ->> '$.RAM') VIRTUAL,
+  -- Cột lưu trữ: Tính sẵn khi ghi, đọc cực nhanh
+  shipping_weight REAL GENERATED ALWAYS AS (CAST(specs ->> '$.weight_kg' AS REAL)) STORED
+);</code></pre>
+
+                <p>
+                  Với khai báo trên, lập trình viên có thể viết các câu truy vấn sạch đẹp như sau mà không cần quan tâm
+                  đến cú pháp JSON phức tạp phía sau:
+                </p>
+                <pre><code class="language-sql">SELECT product_name, device_ram, shipping_weight 
+FROM techmart_products 
+WHERE shipping_weight > 1.5;</code></pre>
+
+                <h2>6. Tối Ưu Hóa Hiệu Năng: Tạo Chỉ Mục Trên Biểu Thức (Index on Expression)</h2>
+                <p>
+                  Mặc dù cột ảo (<code>VIRTUAL</code> Generated Column) không lưu trữ dữ liệu thật trên đĩa, SQLite vẫn
+                  cho phép chúng ta <strong>tạo chỉ mục (Index)</strong> lên trên nó.
+                </p>
+                <p>Khi bạn tạo chỉ mục trên một cột ảo hoặc trực tiếp lên một biểu thức JSON:</p>
+                <pre><code class="language-sql">CREATE INDEX idx_products_weight ON techmart_products(specs ->> '$.weight_kg');</code></pre>
+                <p>
+                  SQLite sẽ trích xuất trước giá trị cân nặng từ JSON, xây dựng một cấu trúc cây chỉ mục B-Tree riêng và
+                  lưu trữ các khóa đó lên đĩa. Điều này mang lại một sự cải thiện hiệu năng khổng lồ:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Trước khi có index:</strong> Hệ thống bắt buộc phải quét tuần tự toàn bảng (Full Table
+                    Scan). Độ phức tạp thời gian là \(O(N)\) phép parse và so sánh JSON.
+                  </li>
+                  <li>
+                    <strong>Sau khi có index:</strong> Hệ thống thực hiện tìm kiếm nhị phân trực tiếp trên B-Tree chỉ
+                    mục. Độ phức tạp giảm xuống mức tối ưu \(O(\log N)\).
+                  </li>
+                </ul>
+
+                <p>Hãy cùng kiểm chứng sự tối ưu hóa này thông qua công cụ phân tích Query Plan dưới đây.</p>
+
+                <!-- SQL Workbench Sandbox -->
+                <div class="sql-workbench">
+                  <div>
+                    <div class="sql-examples" id="sql-examples"></div>
+                  </div>
+                  <div class="sql-workbench__row">
+                    <div>
+                      <textarea
+                        id="sql-editor"
+                        class="sql-editor"
+                        spellcheck="false"
+                        placeholder="Nhập câu lệnh SQL tại đây..."
+                      ></textarea>
+                    </div>
+                    <div class="sql-side-panel">
+                      <button id="sql-run-btn" class="sql-btn sql-btn--primary">Chạy lệnh (Ctrl+Enter)</button>
+                      <button id="sql-schema-toggle" class="sql-btn">📋 Xem Schema</button>
+                      <button id="sql-reset-btn" class="sql-btn" style="border-color: #f38ba8; color: #f38ba8">
+                        🔄 Reset Dữ Liệu
+                      </button>
+                    </div>
+                  </div>
+                  <div class="sql-status-line" id="sql-status-line">Đang tải SQLite-WASM...</div>
+                  <div class="sql-schema-panel" id="sql-schema-panel">
+                    <h4>📋 Sơ đồ bảng hiện có (Schema)</h4>
+                    <div id="sql-schema-content"></div>
+                  </div>
+                  <div class="sql-results-container">
+                    <div id="sql-results">
+                      <div class="sql-results-empty">Kết quả truy vấn sẽ hiển thị ở đây...</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="callout callout--deep">
+                  <div class="callout__title">🔬 Đào sâu: VDBE thực thi biểu thức chỉ mục thế nào?</div>
+                  <div class="callout__content">
+                    Khi bạn thực hiện câu lệnh <code>EXPLAIN</code> trên SQLite cho một truy vấn lọc theo JSON có chỉ
+                    mục, bạn sẽ thấy máy ảo VDBE (Virtual Database Engine) không sử dụng chỉ thị
+                    <code>Function</code> để parse chuỗi JSON nữa. Thay vào đó, nó dùng op-code <code>SeekGE</code> hoặc
+                    <code>SeekLT</code> thẳng tới trang B-Tree của chỉ mục. Việc này biến SQLite thành một kho chứa tài
+                    liệu (Document Store) cực kỳ mạnh mẽ không thua kém gì MongoDB về mặt tốc độ truy vấn các thuộc tính
+                    tùy biến.
+                  </div>
+                </div>
+              </div>
+
+              <!-- Interactive Quiz Section -->
+              <div class="quiz-section">
+                <h2>Kiểm tra kiến thức ôn tập</h2>
+
+                <div class="quiz-container">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 1: Điểm khác biệt lớn nhất về hiệu năng của định dạng nhị phân JSONB so với văn bản JSON thô
+                    (TEXT) trong SQLite là gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'JSONB lưu dữ liệu dưới dạng cấu trúc cây nhị phân đã phân tích cú pháp sẵn (pre-parsed), giúp việc trích xuất các key nhảy thẳng tới offset cần thiết mà không phải parse lại chuỗi thô từ đầu ở mỗi hàng.'
+                        )
+                      "
+                    >
+                      A. JSONB không cần parse chuỗi thô khi truy vấn mà đọc trực tiếp cấu trúc cây nhị phân đã sắp xếp.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'JSONB thực tế chiếm ít dung lượng đĩa hơn JSON thô một chút vì nó loại bỏ khoảng trắng và dấu nháy thừa, không phải là chiếm nhiều dung lượng hơn.'
+                        )
+                      "
+                    >
+                      B. JSONB giúp nén dữ liệu nhỏ hơn 10 lần nhưng tốn CPU để giải nén mỗi khi SELECT.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Cả hai định dạng đều chạy trực tiếp trên trình duyệt hoặc client thông qua các hàm tích hợp sẵn của SQLite.'
+                        )
+                      "
+                    >
+                      C. JSONB chỉ có thể chạy trên server đám mây lớn, không hỗ trợ môi trường trình duyệt WASM.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 2: Tại sao câu lệnh
+                    <code>SELECT product_name FROM techmart_products WHERE specs -> '$.RAM' = '16GB'</code> không trả về
+                    dòng nào mặc dù trong database có specs chứa <code>{"RAM": "16GB"}</code>?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Toán tử -> hoàn toàn được hỗ trợ rộng rãi trong SQLite từ phiên bản 3.38.0.'
+                        )
+                      "
+                    >
+                      A. Vì SQLite không hỗ trợ toán tử mũi tên đơn <code>-&gt;</code> mà bắt buộc dùng hàm
+                      <code>json_extract</code>.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Toán tử -> trả về giá trị dưới dạng một chuỗi JSON hợp lệ, tức là gồm cả dấu nháy bọc ngoài: \u002216GB\u0022. Khi so sánh với chuỗi thường 16GB sẽ không khớp. Để lấy giá trị thô không dấu nháy, phải dùng ->>.'
+                        )
+                      "
+                    >
+                      B. Vì toán tử <code>-&gt;</code> trả về chuỗi định dạng JSON <code>'"16GB"'</code> (có nháy kép),
+                      không khớp với chuỗi SQL thô <code>'16GB'</code>.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Key RAM hoàn toàn viết đúng hoa/thường, vấn đề nằm ở kiểu chuỗi JSON (có dấu nháy) so với chuỗi SQL thô.'
+                        )
+                      "
+                    >
+                      C. Vì viết hoa chữ <code>RAM</code> không đúng định dạng chuẩn viết thường bắt buộc của JSON.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 3: Khi nào bạn nên chọn <code>STORED</code> thay vì <code>VIRTUAL</code> cho một cột Generated
+                    Column?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Ngược lại, VIRTUAL mới là không tốn dung lượng đĩa, còn STORED ghi trực tiếp dữ liệu tính sẵn lên đĩa.'
+                        )
+                      "
+                    >
+                      A. Khi bạn muốn tiết kiệm dung lượng lưu trữ trên đĩa tối đa.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'STORED tính toán một lần duy nhất khi ghi (insert/update) và lưu kết quả lên đĩa. Nó phù hợp cho các trường dữ liệu đọc rất nhiều nhưng ít khi ghi mới, giúp tối ưu tốc độ SELECT.'
+                        )
+                      "
+                    >
+                      B. Khi tần suất đọc cột này cực kỳ lớn và bạn muốn tối ưu hóa tối đa tốc độ truy vấn SELECT bằng
+                      cách tránh tính toán lại mỗi lần đọc.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Ngược lại, STORED làm chậm thao tác ghi do phải thực thi biểu thức trước khi lưu xuống đĩa.'
+                        )
+                      "
+                    >
+                      C. Khi bạn muốn tối ưu hóa tốc độ ghi (INSERT/UPDATE) của ứng dụng.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 4: Có thể tạo Index trên biểu thức JSON (Index on Expression) của một cột ảo (VIRTUAL Generated
+                    Column) được không?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Hoàn toàn được! Mặc dù cột ảo VIRTUAL không tốn dung lượng đĩa để lưu cột, nhưng khi bạn tạo index, SQLite sẽ tính sẵn giá trị biểu thức và ghi các giá trị đó vào cấu trúc cây index B-Tree lưu trên đĩa.'
+                        )
+                      "
+                    >
+                      A. Được, SQLite sẽ tính sẵn giá trị biểu thức và lưu các khóa này vào cấu trúc cây index B-Tree
+                      trên đĩa để tìm kiếm nhanh.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'SQLite hoàn toàn cho phép tạo index lên cột ảo. Đây là một trong những tính năng mạnh mẽ nhất để làm việc với JSON.'
+                        )
+                      "
+                    >
+                      B. Không, vì cột ảo không lưu trữ vật lý trên đĩa nên không có địa chỉ hàng để index trỏ tới.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Không cần chuyển sang STORED. Cột VIRTUAL kết hợp Index vẫn mang lại hiệu suất đọc hoàn hảo mà bảng gốc không bị phình to.'
+                        )
+                      "
+                    >
+                      C. Chỉ được phép nếu cột ảo đó được thay đổi định nghĩa sang kiểu STORED.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+
+                <div class="quiz-container" style="margin-top: 20px">
+                  <h3 class="quiz-title">Trắc nghiệm ôn tập</h3>
+                  <p class="quiz-question">
+                    Câu 5: Khác biệt cốt lõi giữa hai hàm làm phẳng mảng JSON là <code>json_each</code> và
+                    <code>json_tree</code> là gì?
+                  </p>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Cả hai hàm đều dùng được trong mọi môi trường và hỗ trợ đầy đủ các thao tác đọc ghi.'
+                        )
+                      "
+                    >
+                      A. <code>json_each</code> chỉ đọc được mảng số, còn <code>json_tree</code> xử lý được mảng đối
+                      tượng.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          false,
+                          'Cả hai hàm đều trả về một tập các bản ghi ảo giống nhau về mặt số lượng cột, chỉ khác nhau về mức độ duyệt phân cấp.'
+                        )
+                      "
+                    >
+                      B. <code>json_each</code> làm việc ở luồng nền (background), còn <code>json_tree</code> chặn luồng
+                      chính của database.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'json_each chỉ duyệt các phần tử con trực tiếp ở cấp độ 1 của mảng/đối tượng được chỉ định. json_tree đi sâu đệ quy qua toàn bộ cây phân cấp của đối tượng JSON bất kể độ sâu lồng nhau.'
+                        )
+                      "
+                    >
+                      C. <code>json_each</code> chỉ duyệt qua các phần tử con trực tiếp ở cấp độ 1, trong khi
+                      <code>json_tree</code> duyệt đệ quy chiều sâu toàn bộ cấu trúc lồng nhau.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback hidden"></div>
+                </div>
+              </div>
+
+              <div class="article-refs">
+                <h3>📖 Tài liệu tham khảo / References</h3>
+                <ul>
+                  <li>
+                    <a href="https://www.sqlite.org/json1.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — JSON Functions and Operators</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/gencol.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — Generated Columns</a
+                    >
+                  </li>
+                  <li>
+                    <a href="https://www.sqlite.org/expridx.html" target="_blank" rel="noopener noreferrer"
+                      >SQLite Official Docs — Indexes on Expressions</a
+                    >
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Related Articles -->
+              <div class="article-related">
+                <h2>Bài viết liên quan trong series</h2>
+                <div class="article-related__links">
+                  <span class="article-related__link article-related__link--next article-related__link--locked">
+                    Bài 14: FTS5 Full-Text Search (sắp ra mắt)
+                  </span>
+                  <a href="sql-trigger-view-virtual-table" class="article-related__link article-related__link--prev">
+                    Bài 12: Trigger, View &amp; Virtual Table
+                  </a>
+                  <a href="sql-programming-series" class="article-related__link">Quay lại Lộ trình Series SQL</a>
+                </div>
+              </div>
+
+              <!-- Comments section -->
+              <div class="article-comments">
+                <div class="giscus"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script src="vendor/sql-wasm.js" defer></script>
+    <script src="sql-json-generated-columns.js" defer></script>
+  </body>
+</html>
