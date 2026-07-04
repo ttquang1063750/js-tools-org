@@ -227,6 +227,9 @@ const TRANSLATIONS = {
     'learn.git.title': 'Git Internals',
     'learn.git.desc':
       'Object model, branches as pointers, merge/rebase, reflog recovery and remote collaboration — visualized commit graph.',
+    'learn.audio.title': 'Web Audio API',
+    'learn.audio.desc':
+      'AudioContext, oscillators, filters, FFT analysis and spatial sound — hands-on with a real audio node graph.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -457,6 +460,9 @@ const TRANSLATIONS = {
     'learn.git.title': 'Git Nội Bộ',
     'learn.git.desc':
       'Mô hình đối tượng, branch là con trỏ, merge/rebase, phục hồi bằng reflog và hợp tác qua remote — trực quan hoá đồ thị commit.',
+    'learn.audio.title': 'Web Audio API',
+    'learn.audio.desc':
+      'AudioContext, oscillator, filter, phân tích FFT và âm thanh không gian — thực hành trên đồ thị node âm thanh thật.',
   },
 };
 
