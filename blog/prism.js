@@ -923,3 +923,78 @@ var _self =
     punctuation: /[;[\]()`,.]/,
   };
 })(Prism);
+
+/* Bash/Shell — for Docker/CLI setup instructions across the SQL-in-Browser series */
+(function (e) {
+  if (!e || !e.languages) return;
+  e.languages.bash = {
+    comment: { pattern: /(^|[^"{\\])#.*/, lookbehind: true },
+    string: [
+      {
+        pattern: /(^|[^\\])(?:"(?:\\[\s\S]|\$\([^)]*\)|`[^`]*`|[^"\\`$])*"|'[^']*'|\$'(?:[^'\\]|\\[\s\S])*')/,
+        lookbehind: true,
+        greedy: true,
+      },
+    ],
+    variable: [{ pattern: /\$\{[^}]+\}/, greedy: true }, /\$[\w#?*!@$]+/],
+    keyword:
+      /\b(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|function|select|in|return|exit|break|continue|local|declare|export|readonly|unset|trap|source)\b/,
+    builtin: /\b(?:cd|echo|printf|read|pwd|pushd|popd|set|shift|test|kill|wait|eval|exec|alias|unalias|type|command)\b/,
+    function:
+      /\b(?:docker|docker-compose|psql|sqlite3|apt|apt-get|brew|curl|wget|grep|sed|awk|chmod|chown|mkdir|rm|cp|mv|ls|cat|tar|npm|npx|node|git)\b/,
+    boolean: /\b(?:true|false)\b/,
+    number: /\b0x[\dA-Fa-f]+\b|\b\d+\b/,
+    operator: /&&?|\|\|?|==?|!=?|<=?|>=?|=~|[<>]/,
+    punctuation: /[{}[\];()`,.:]/,
+  };
+  e.languages.shell = e.languages.bash;
+})(Prism);
+
+/* YAML — for docker-compose.yml examples in the SQL-in-Browser series */
+(function (e) {
+  if (!e || !e.languages) return;
+  e.languages.yaml = {
+    scalar: {
+      pattern: /([-:]\s*(?:![^\s]+)?[ \t]*[|>])[ \t]*(?:((?:\r?\n|\r)[ \t]+)[^\r\n]+(?:\2[^\r\n]+)*)/,
+      lookbehind: true,
+      alias: 'string',
+    },
+    comment: /#.*/,
+    key: {
+      pattern: /(\s*(?:^|[:\-,[{\r\n?])[ \t]*(?:![^\s]+)?[ \t]*)[^\r\n{[\]},#\s]+?(?=\s*:\s)/,
+      lookbehind: true,
+      alias: 'atrule',
+    },
+    directive: { pattern: /(^[ \t]*)%.+/m, lookbehind: true, alias: 'important' },
+    datetime: {
+      pattern:
+        /(([:\-,[{]\s*)|(?:^\s*))(?:\d{4}-\d\d?-\d\d?(?:[tT]|[ \t]+)\d\d?:\d{2}:\d{2}(?:\.\d*)?(?:[ \t]*(?:Z|[-+]\d\d?(?::\d{2})?))?|\d{4}-\d\d?-\d\d?|\d\d?:\d{2}(?::\d{2}(?:\.\d*)?)?)(?=[ \t]*(?:$|,|\]|\}))/m,
+      lookbehind: true,
+      alias: 'number',
+    },
+    boolean: {
+      pattern: /([:\-,[{]\s*(?:![^\s]+)?[ \t]*)(?:true|false)[ \t]*(?=$|,|\]|\})/im,
+      lookbehind: true,
+      alias: 'important',
+    },
+    null: {
+      pattern: /([:\-,[{]\s*(?:![^\s]+)?[ \t]*)(?:null|~)[ \t]*(?=$|,|\]|\})/im,
+      lookbehind: true,
+      alias: 'important',
+    },
+    string: {
+      pattern: /([:\-,[{]\s*(?:![^\s]+)?[ \t]*)("|')(?:(?!\2)[^\\\r\n]|\\.)*\2(?=[ \t]*(?:$|,|\]|\}|\s*#))/m,
+      lookbehind: true,
+      greedy: true,
+    },
+    number: {
+      pattern:
+        /([:\-,[{]\s*(?:![^\s]+)?[ \t]*)[+-]?(?:0x[\da-f]+|0o[0-7]+|(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|\.inf|\.nan)[ \t]*(?=$|,|\]|\})/im,
+      lookbehind: true,
+    },
+    tag: /![^\s]+/,
+    important: /[&*][\w]+/,
+    punctuation: /---|[:[\]{}\-,|>?]|\.\.\./,
+  };
+  e.languages.yml = e.languages.yaml;
+})(Prism);
