@@ -157,14 +157,19 @@ FROM seq;`;
       resultsEl.innerHTML = '';
       const empty = document.createElement('div');
       empty.className = 'sql-results-empty';
+      const alreadyExists = /already exists/i.test(err.message);
       let message = 'Lỗi SQL: ' + err.message;
-      if (/already exists/i.test(err.message)) {
+      if (alreadyExists) {
         message +=
           ' — Bảng/index này đã được tạo ở bước trước rồi. Bấm "Reset dữ liệu" nếu muốn làm lại từ đầu, hoặc bỏ qua và tiếp tục các bước sau.';
       }
       empty.textContent = message;
       resultsEl.appendChild(empty);
-      setStatus('Lỗi khi thực thi.', true);
+      if (alreadyExists) {
+        setStatus('Không cần chạy lại bước này — bảng/index đã có sẵn từ trước.', false);
+      } else {
+        setStatus('Lỗi khi thực thi.', true);
+      }
       resultsEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       return;
     }
