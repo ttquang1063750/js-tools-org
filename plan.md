@@ -267,6 +267,16 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 - **Giao diện:** Vanilla JS + bảng HTML render kết quả, tái dùng pattern IDE console sẵn có.
 - **Định hướng đối tượng:** nửa đầu (Bài 1-7) nền tảng có chiều sâu; nửa sau (Bài 8-15) chuyên sâu cho người có kinh nghiệm — optimizer, internals, virtual table, FTS5, performance, WAL/OPFS.
 
+### 1b. Chuẩn biên tập BẮT BUỘC cho series này (khác các series trước)
+
+> Yêu cầu trực tiếp từ chủ blog (2026-07-04). Mọi phiên làm việc viết bài SQL phải tuân theo, KHÔNG áp dụng template ngắn ~1.000 từ của các series Web Audio/Git/DSA trước đây.
+
+- **Độ học thuật như sách chuyên nghiệp:** không ràng buộc số lượng câu chữ. Viết đủ sâu như một chương sách — cơ chế bên trong, edge case, trade-off — không dừng ở mức giới thiệu khái niệm.
+- **Mỗi tính năng phải xuất hiện trong NHIỀU tình huống khác nhau** (tối thiểu 3-4 ngữ cảnh/tính năng, không phải 1 ví dụ duy nhất như trước). Ví dụ dạy `HAVING`: lọc doanh thu theo nhóm khách + tìm sản phẩm trùng lặp + phát hiện dữ liệu bất thường + kết hợp window function — người học thấy cùng một công cụ giải nhiều bài toán khác nhau.
+- **Lặp lại có chủ đích qua các ngữ cảnh khác nhau:** tính năng đã dạy ở bài trước phải được dùng lại tự nhiên trong các bài sau (spaced repetition) để người học nắm sâu và thấy tầm quan trọng thực tế của nó.
+- **Nhiều sân chơi tương tác/bài** khi nội dung cần (không giới hạn 1 demo/bài), quiz nhiều hơn 3 câu khi lượng kiến thức xứng đáng.
+- **Mỗi tình huống ví dụ phải là bài toán thật** (doanh thu, log, phân quyền, tồn kho...) chứ không phải bảng foo/bar trừu tượng.
+
 ### 2. Thiết kế Demo tương tác cốt lõi (Core Visualizer Demo)
 
 - **Tên: "In-Browser SQL Workbench"**
