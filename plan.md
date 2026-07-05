@@ -442,6 +442,7 @@ Mọi bài học trong Series 10 phải tuân thủ nghiêm ngặt tiêu chuẩn
 6. **Bài nặng toán scaffold cụ thể → trừu tượng:** Bài 3 giải tay mạch 2 nút bằng KCL/KVL trước rồi mới ma trận hoá MNA; Bài 5 ví dụ pha trễ cụ thể trước khi đưa số phức $j$.
 7. **An toàn điện:** bài mô phỏng điện lưới 220V (Bài 6) hoặc đo áp cao bằng VOM phải có `.callout--warning` an toàn (mô phỏng ≠ thực hành).
 8. **Simulator:** demo chỉ dùng linh kiện đã học tính đến bài đó; trạng thái đọc "0/OL hợp lệ" phải có chú thích ngay trên UI để người học không tưởng demo hỏng; mọi chế độ/nút có trên UI mà không mô phỏng được thì ghi chú giới hạn rõ ràng.
+9. **Không thực hành code lập trình trong series điện tử:** Series này tập trung vào vật lý và mô phỏng mạch điện, không dạy lập trình phần mềm. Vì vậy, KHÔNG viết các bài thực hành code (ví dụ viết thuật toán giải ma trận bằng JS/C/C++). JavaScript chỉ được dùng dưới dạng engine chạy ngầm cho các demo tương tác và giả lập mạch điện (nếu có), không đưa vào làm nội dung thực hành lập trình.
 
 ---
 
