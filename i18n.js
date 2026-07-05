@@ -233,6 +233,9 @@ const TRANSLATIONS = {
     'learn.sql.title': 'SQL In The Browser',
     'learn.sql.desc':
       'Real SQLite compiled to WebAssembly: relational model, JOIN, recursive CTEs, window functions, query optimizer, and internals — no server required.',
+    'learn.electronics.title': 'Circuit Simulation',
+    'learn.electronics.desc':
+      'Learn electronics, analog filters, antennas, logic gates, sequential memory cells, and MCU register programming — completely in-browser.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -469,6 +472,9 @@ const TRANSLATIONS = {
     'learn.sql.title': 'SQL trong Trình duyệt',
     'learn.sql.desc':
       'SQLite thật biên dịch sang WebAssembly: mô hình quan hệ, JOIN, CTE đệ quy, window function, query optimizer và nội tại engine — không cần server.',
+    'learn.electronics.title': 'Điện Tử & Mô Phỏng Vi Mạch',
+    'learn.electronics.desc':
+      'Học điện tử, mạch lọc analog, ăng-ten, cổng logic, ô nhớ tuần tự và lập trình thanh ghi vi điều khiển — hoàn toàn trên trình duyệt.',
   },
 };
 

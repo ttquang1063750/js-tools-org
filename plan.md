@@ -17,7 +17,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 7: SQL**             | **SQL trong Trình duyệt (SQLite-WASM)** | **17/17**      | **17**   | **100%** ✅ |
 | 🎉 **Series 8: Web Audio**       | **Âm Thanh & Visualizer**               | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 9: Git**             | **Mô Hình & Quy Trình Làm Việc**        | **13/13**      | **13**   | **100%** ✅ |
-| Series 10                        | Điện Tử & Mô Phỏng Vi Mạch              | 0/14           | 14       | 0%          |
+| Series 10                        | Điện Tử & Mô Phỏng Vi Mạch              | 1/14           | 14       | 7%          |
 
 ### DSA Series Lessons
 
