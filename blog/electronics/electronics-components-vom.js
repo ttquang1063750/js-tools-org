@@ -187,6 +187,14 @@
         }
         break;
     }
+
+    // Update info text
+    const detail = compDetails[currentComponent];
+    let html = `Linh kiện đang đo: <strong>${detail.title}</strong>. ${detail.desc}`;
+    if (rotaryState === 'V_DC' || rotaryState === 'V_AC') {
+      html += ` <span style="display:block; margin-top:6px; color:#f38ba8; font-weight:bold;">Board không có nguồn cấp nên điện áp đo được = 0.00V là kết quả đúng. Đồng hồ này không mô phỏng thang đo dòng A/mA.</span>`;
+    }
+    compInfo.innerHTML = html;
   }
 
   // Draw the Experiment Board on HTML5 Canvas
@@ -501,10 +509,7 @@
 
       currentComponent = btn.getAttribute('data-comp');
 
-      // Update info text
-      const detail = compDetails[currentComponent];
-      compInfo.innerHTML = `Linh kiện đang đo: <strong>${detail.title}</strong>. ${detail.desc}`;
-
+      // Update info text (delegated to updateMeasurement)
       updateMeasurement();
       drawBoard();
     });
