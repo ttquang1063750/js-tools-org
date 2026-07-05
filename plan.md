@@ -452,12 +452,12 @@ Mọi bài học trong Series 10 phải tuân thủ nghiêm ngặt tiêu chuẩn
 
 _Đạt:_ 9/9 mục checklist (a) về nội dung & hình thức đã xử lý — [!NOTE]/danh sách giả/`data-lang-content`/typo sạch (grep = 0); bổ sung đủ cuộn cảm (1.3), MOSFET (2.2), IC (2.3); ~4.900 từ; 5 callout (2 pitfall) + anti-pattern ❌/✅ thao tác đo; 6 link refs; 4 cross-link nội bộ (algo, audio, c); 4 schematic SVG đúng nghĩa ở §4; KaTeX `\text{}` toàn ASCII; Prettier sạch.
 
-_Regression do commit `334dae4` (thay simulator bằng "bài toán thiết kế mở rộng") — CẦN QUYẾT ĐỊNH & SỬA:_
+_Regression do commit `334dae4` (thay simulator bằng "bài toán thiết kế mở rộng") — ✅ ĐÃ SỬA THEO PHƯƠNG ÁN A (2026-07-05): khôi phục simulator (mục 5) + giữ §4 mở rộng kèm callout nếm trước + nhúng lại 5 code-window + đồng bộ search-index:_
 
-- [ ] **Mất demo tương tác:** Multimeter Simulator bị xoá hoàn toàn (JS chỉ còn thư viện hàm tính toán, không DOM). Vi phạm DoD Phần II §3 (demo bọc `.code-tabs`) và đề cương Phần I (demo Bài 1 = Multimeter Simulator). → Phương án A (khuyến nghị): khôi phục simulator từ commit `3c0f4ea` và giữ §4 mở rộng. Phương án B: chấp nhận bỏ → phải sửa đề cương Phần I + thêm demo tương tác khác (calculator có input thật).
-- [ ] **0 `.code-window`** (rubric ≥4 chạy được): mọi ví dụ code bị dời vào file `.js` tải về, bài viết không còn khối code + Prism nào. → Nhúng lại các hàm chính (`parseResistorColorCode`, `parseCapacitorCode`…) thành ≥4 `.code-window` trong thân bài.
-- [ ] **Forward dependency không callout:** §4.2 cầu phân áp (kiến thức + demo chính của Bài 2), §4.3 BJT switch β/bão hòa (Bài 9), §4.4 lọc RC $f_c$ (Bài 4 & 8) — 0 ghi chú "sẽ học ở Bài N". Vi phạm quy tắc dependency-check §6(b). → Thêm callout "ví dụ nếm trước" cho cả 3, hoặc chuyển 4.3/4.4 về làm bài toán của Bài 9/Bài 8.
-- [ ] **Mất đồng bộ:** `blog/search-index.json` vẫn ghi heading "4. Giả lập đồng hồ vạn năng ảo" (mục đã xoá); đề cương Phần I & các tick ở trên mô tả simulator không còn tồn tại. → Đồng bộ lại sau khi chốt phương án A/B.
+- [x] **Mất demo tương tác:** Multimeter Simulator bị xoá hoàn toàn (JS chỉ còn thư viện hàm tính toán, không DOM). Vi phạm DoD Phần II §3 (demo bọc `.code-tabs`) và đề cương Phần I (demo Bài 1 = Multimeter Simulator). → Phương án A (khuyến nghị): khôi phục simulator từ commit `3c0f4ea` và giữ §4 mở rộng. Phương án B: chấp nhận bỏ → phải sửa đề cương Phần I + thêm demo tương tác khác (calculator có input thật).
+- [x] **0 `.code-window`** (rubric ≥4 chạy được): mọi ví dụ code bị dời vào file `.js` tải về, bài viết không còn khối code + Prism nào. → Nhúng lại các hàm chính (`parseResistorColorCode`, `parseCapacitorCode`…) thành ≥4 `.code-window` trong thân bài.
+- [x] **Forward dependency không callout:** §4.2 cầu phân áp (kiến thức + demo chính của Bài 2), §4.3 BJT switch β/bão hòa (Bài 9), §4.4 lọc RC $f_c$ (Bài 4 & 8) — 0 ghi chú "sẽ học ở Bài N". Vi phạm quy tắc dependency-check §6(b). → Thêm callout "ví dụ nếm trước" cho cả 3, hoặc chuyển 4.3/4.4 về làm bài toán của Bài 9/Bài 8.
+- [x] **Mất đồng bộ:** `blog/search-index.json` vẫn ghi heading "4. Giả lập đồng hồ vạn năng ảo" (mục đã xoá); đề cương Phần I & các tick ở trên mô tả simulator không còn tồn tại. → Đồng bộ lại sau khi chốt phương án A/B.
 
 **(b) Quy tắc rút ra — áp cho MỌI bài Series 10 kế tiếp (và series mới nói chung):**
 
