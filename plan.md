@@ -379,8 +379,6 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ---
 
----
-
 ## ⚡ Series 10: Điện Tử & Mô Phỏng Vi Mạch (Electronics & Circuit Simulation)
 
 ### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
@@ -432,73 +430,18 @@ Mọi bài học trong Series 10 phải tuân thủ nghiêm ngặt tiêu chuẩn
   - **Bài 4, 5, 7, 8** (RC, AC, Diode, Filters) chéo với **Web Audio API (FFT/Oscilloscope)** và **Canvas (Data Visualization)** để trực quan hóa tín hiệu, biên độ và tần số sóng âm AC.
   - **Bài 15, 16** (MCU/Registers/GPIO/Interrupt) chéo với **C/C++ (Pointers & Memory)** để giải thích cách con trỏ trỏ trực tiếp đến địa chỉ thanh ghi phần cứng và thực thi mã máy ảo.
 
-### 5. 📋 Kết quả review Bài 1 (2026-07-05) — việc cần sửa & quy tắc rút ra cho bài 2–15
+### 5. Quy tắc thiết kế rút ra từ 2 vòng review Bài 1 (2026-07-05) — áp cho bài 2–16 & mọi series mới
 
-> Review file `blog/electronics/electronics-components-vom.html` + `.js` sau khi commit `860a739`. Bài viết đạt độ dài (~2.600 từ VI ✅), 3 quiz ✅, simulator VOM hoạt động đúng logic ✅, 4 ảnh linh kiện thực tế + chú giải tốt ✅. Nhưng còn các lỗi/thiếu sót dưới đây — agent nhận việc sửa Bài 1 làm theo checklist (a); agent viết bài mới BẮT BUỘC đọc mục (b) để không lặp lại.
+> Bài 1 đã review 2 vòng và sửa xong (chi tiết trong lịch sử git: `3c0f4ea` → `334dae4` → `07441ba` → `860946c`). Lộ trình đã tái cấu trúc thành 16 bài như bảng §3 (đổi thứ tự khối analog vì lỗi phụ thuộc kiến thức: AC phải học trước biến áp/chỉnh lưu; RF chuyển sau transistor; thêm bài Op-Amp lấp lỗ hổng comparator cho bài 555; tách MCU thành 2 bài; bài 16 là capstone). Dưới đây là các quy tắc còn hiệu lực cho agent viết bài mới:
 
-**(a) Checklist sửa Bài 1 (`electronics-components-vom.html`):**
-
-- [x] **Markdown thô lọt vào HTML (vi phạm Điều kiện chặn #5):** khối `<blockquote>[!NOTE] …</blockquote>` (mục 2.2 — quy trình tìm chân B/E/C của BJT lạ) hiển thị nguyên văn chữ `[!NOTE]`, và các bước "1. … 2. …" dính thành một đoạn chữ liền. HTML không render alert-markdown kiểu GitHub → chuyển thành `.callout--note` (hoặc `--tip`) với `<ol>` từng bước rõ ràng.
-- [x] **Danh sách giả trong `<p>`:** mục 2.1 (đo thuận/đo ngược đi-ốt) dùng ký tự `*` và `-` + `<br />` để liệt kê trong một `<p>` dài; mục 3 (4 thang đo) và mục 4 (các bước giải) cũng dồn "1. … 2. …" vào một `<p>`. Đổi hết sang `<ul>`/`<ol>` thật — vừa đúng ngữ nghĩa vừa dễ đọc hơn hẳn.
-- [x] **Sót `data-lang-content="vi"`** ở khối CTA "Tải file code" (vi phạm quy tắc #7 chỉ-tiếng-Việt): không có cặp EN nên khi người dùng toggle sang EN, khối tải code **biến mất**. Gỡ attribute, giữ nội dung tiếng Việt trần.
-- [x] **Typo & class không tồn tại:** tiêu đề callout "Cảnh báo đo dòng điện và đo **đo** trở kháng" (lặp chữ "đo"); class `.callout--danger` không có trong `blog.css` (chỉ có 5 biến thể `--note/tip/warning/pitfall/deep`) — bỏ class thừa, giữ `--pitfall`.
-- [x] **Thiếu so với rubric định lượng:** hiện chỉ 2 `.code-window` (yêu cầu ≥4, và phải là code **chạy được** — 2 khối hiện tại chỉ toàn comment, nên viết hàm JS parse mã màu điện trở / mã 3 số tụ điện chạy thật); chỉ 2 callout (≥3); chỉ 2 link `.article-refs` (≥3 — có thể thêm datasheet 1N4007/BC547 đã dẫn inline); **0 cross-link nội bộ** (≥3 — gợi ý: DSA cho tư duy tra bảng mã màu, Web Audio cho phần beep AudioContext của simulator, C/Pointers cho phần đọc datasheet); **chưa có ví dụ anti-pattern ❌/✅** (yêu cầu đặc thù Series 10).
-- [x] **Chưa có schematic đúng nghĩa:** SVG hiện có là sơ đồ chân (pinout) TO-92/TO-220, không phải sơ đồ nguyên lý. Bài toán LED §4 cần kèm 1 schematic SVG đơn giản (nguồn 5V → R 200Ω → LED → GND) để đạt yêu cầu "≥1 schematic/bài".
-- [x] **Thiếu nội dung theo đề cương 1.1/1.2:** chưa có cách đọc **thông số cuộn cảm** (vòng màu/mã số, đơn vị µH); chưa có nhận diện chân **MOSFET** (Gate/Drain/Source, ví dụ IRF540 TO-220) và **IC** (chấm/khuyết định vị chân 1, đếm ngược chiều kim đồng hồ). Đề cương Phần I & III đều ghi các mục này cho Bài 1.
-- [x] **Simulator gây khó hiểu ở 2 điểm:** (1) thang V DC/AC luôn hiển thị `0.00` mà không giải thích — người học dễ tưởng demo hỏng; thêm chú thích ngay trên UI/info-card ("board không có nguồn cấp nên V = 0") hoặc thêm linh kiện "Pin 9V" để thang V có ý nghĩa; (2) §3 dạy đo dòng (mắc nối tiếp) nhưng núm xoay không có thang A/mA — hoặc bổ sung, hoặc ghi chú rõ giới hạn của mô hình.
-- [x] (Tuỳ chọn, nhẹ) Công thức mã tụ dùng biến $C$ cho chữ số thứ 3 trong khi $C$ cũng là ký hiệu điện dung — đổi biến số mũ thành $M$ để tránh nhầm.
-
-**📋 Review vòng 2 (2026-07-05, sau commit `3c0f4ea` + `334dae4`) — kết quả kiểm định lại Bài 1:**
-
-_Đạt:_ 9/9 mục checklist (a) về nội dung & hình thức đã xử lý — [!NOTE]/danh sách giả/`data-lang-content`/typo sạch (grep = 0); bổ sung đủ cuộn cảm (1.3), MOSFET (2.2), IC (2.3); ~4.900 từ; 5 callout (2 pitfall) + anti-pattern ❌/✅ thao tác đo; 6 link refs; 4 cross-link nội bộ (algo, audio, c); 4 schematic SVG đúng nghĩa ở §4; KaTeX `\text{}` toàn ASCII; Prettier sạch.
-
-_Regression do commit `334dae4` (thay simulator bằng "bài toán thiết kế mở rộng") — ✅ ĐÃ SỬA THEO PHƯƠNG ÁN A (2026-07-05): khôi phục simulator (mục 5) + giữ §4 mở rộng kèm callout nếm trước + nhúng lại 5 code-window + đồng bộ search-index:_
-
-- [x] **Mất demo tương tác:** Multimeter Simulator bị xoá hoàn toàn (JS chỉ còn thư viện hàm tính toán, không DOM). Vi phạm DoD Phần II §3 (demo bọc `.code-tabs`) và đề cương Phần I (demo Bài 1 = Multimeter Simulator). → Phương án A (khuyến nghị): khôi phục simulator từ commit `3c0f4ea` và giữ §4 mở rộng. Phương án B: chấp nhận bỏ → phải sửa đề cương Phần I + thêm demo tương tác khác (calculator có input thật).
-- [x] **0 `.code-window`** (rubric ≥4 chạy được): mọi ví dụ code bị dời vào file `.js` tải về, bài viết không còn khối code + Prism nào. → Nhúng lại các hàm chính (`parseResistorColorCode`, `parseCapacitorCode`…) thành ≥4 `.code-window` trong thân bài.
-- [x] **Forward dependency không callout:** §4.2 cầu phân áp (kiến thức + demo chính của Bài 2), §4.3 BJT switch β/bão hòa (Bài 9), §4.4 lọc RC $f_c$ (Bài 4 & 8) — 0 ghi chú "sẽ học ở Bài N". Vi phạm quy tắc dependency-check §6(b). → Thêm callout "ví dụ nếm trước" cho cả 3, hoặc chuyển 4.3/4.4 về làm bài toán của Bài 9/Bài 8.
-- [x] **Mất đồng bộ:** `blog/search-index.json` vẫn ghi heading "4. Giả lập đồng hồ vạn năng ảo" (mục đã xoá); đề cương Phần I & các tick ở trên mô tả simulator không còn tồn tại. → Đồng bộ lại sau khi chốt phương án A/B.
-
-**(b) Quy tắc rút ra — áp cho MỌI bài Series 10 kế tiếp (và series mới nói chung):**
-
-1. **KHÔNG dùng `<blockquote>[!NOTE]`/`[!TIP]` kiểu GitHub-alert** — trang là HTML tĩnh, không render markdown. Mọi lưu ý dùng component `.callout--*` chuẩn.
-2. **Danh sách bước/thao tác = `<ol>`/`<ul>` thật.** Cấm dồn "1. … 2. …" hay "\* …" vào một `<p>` bằng `<br />` — Bài 1 mắc lỗi này ở 4 chỗ.
-3. **Grep tự rà trước khi commit:** `grep -n 'data-lang-content\|\[!NOTE\]\|\*\*' <file>` trong `.article-body` phải trống (quy tắc #7 + Điều kiện chặn #5). Chỉ dùng class callout có thật trong `blog.css`.
-4. **Tự đếm rubric TRƯỚC khi báo xong:** ≥4 `.code-window` chạy được + anti-pattern ❌/✅, ≥3 callout, ≥3 `.article-refs`, ≥3 cross-link nội bộ, ≥1 schematic SVG (sơ đồ nguyên lý, pinout không tính). Bài 1 trượt cả 5 mục đếm được này dù nội dung chữ tốt.
-5. **Đối chiếu đề cương từng ý nhỏ (1.1–1.4) trước khi viết dàn bài** — Bài 1 bỏ sót cuộn cảm, MOSFET, IC dù đề cương ghi rõ.
-6. **Simulator phải tự giải thích trạng thái "đo ra 0/OL hợp lệ"** ngay trên UI để người học phân biệt "kết quả đúng của phép đo vô nghĩa" với "demo bị lỗi". Mọi chế độ/nút có trên UI mà không mô phỏng được thì phải có ghi chú giới hạn.
-
-### 6. 🧭 Review logic lộ trình cho người mới (2026-07-05) — ĐÃ CHỐT: đổi thứ tự khối analog & mở rộng thành 16 bài
-
-> Đánh giá đề cương theo **chuỗi phụ thuộc kiến thức** (một bài chỉ được dùng khái niệm của các bài số nhỏ hơn). Khung tổng thể (linh kiện → DC → quá độ RC/RL → AC → bán dẫn → analog → digital → MCU) đúng chuẩn giáo trình, nhưng bản 14-bài cũ có 5 điểm người mới bị "học vượt". Chủ dự án đã duyệt phương án sửa ngày 2026-07-05. **Mọi bảng ở Phần I (Đề cương) và Phần III đã được đánh số lại theo thứ tự MỚI — agent viết bài phải theo số bài mới, không theo commit/lịch sử cũ.**
-
-**Bảng đối chiếu thứ tự MỚI ↔ CŨ (để truy vết):**
-
-| Mới   | Bài học                             | Số cũ (bản 14 bài)      | Lý do đổi                                                                                                                                                                       |
-| ----- | ----------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1–4   | VOM · Ohm · Kirchhoff/MNA · RC/RL   | 1–4 (giữ nguyên)        | —                                                                                                                                                                               |
-| 5     | AC & Trở kháng phức                 | 7                       | Biến áp/chỉnh lưu (cũ 5, 6) dùng sóng sin/tần số/RMS mà chưa học AC → AC phải lên trước.                                                                                        |
-| 6     | Cảm ứng điện từ & Máy biến áp       | 5                       | Đứng sau AC; chuỗi "xây bộ nguồn" 6→7→8 vẫn liền mạch.                                                                                                                          |
-| 7     | Đi-ốt & Chỉnh lưu **+ Ổn áp** (mới) | 6 (mở rộng)             | Gộp thêm Zener + 7805 để câu chuyện bộ nguồn kết thúc ở "DC phẳng, ổn định" thay vì "DC còn gợn".                                                                               |
-| 8     | Mạch lọc tần số                     | 8 (giữ nguyên)          | —                                                                                                                                                                               |
-| 9     | Transistor BJT/MOSFET               | 10                      | Cần trước Op-Amp, RF và CMOS logic.                                                                                                                                             |
-| 10    | **Op-Amp & Comparator (BÀI MỚI)**   | —                       | Lấp lỗ hổng: bài 555 (nay 14) giải thích bằng "bộ so sánh" nhưng cả series cũ không dạy comparator.                                                                             |
-| 11    | Ăng-ten & RF                        | 9                       | Chủ đề analog khó nhất (cộng hưởng, phối hợp trở kháng) chuyển xuống cuối khối analog; radio AM giờ có thể dùng khuếch đại (Bài 9–10).                                          |
-| 12–14 | Logic · Tuần tự/SRAM · 555/PWM      | 11–13                   | Giữ nguyên trật tự nội khối digital.                                                                                                                                            |
-| 15    | Kiến trúc MCU & GPIO                | 14 (tách đôi)           | Bài 14 cũ gánh 4 chủ đề cỡ-một-bài (kiến trúc, GPIO, ngắt, Timer) + capstone; tách để mỗi bài đủ sâu. Bài 15 tập trung kiến trúc + memory-mapped I/O, tiên quyết link Series C. |
-| 16    | Ngắt, Timer & **capstone**          | 14 (tách đôi + mở rộng) | Phần IV §7 yêu cầu series kết bằng dự án tổng hợp: demo bài 16 ghép nguồn (B7) + PWM (B14) + MOSFET (B9) + LED hạn dòng (B2).                                                   |
-
-**Các đứt gãy còn tồn tại trong bài đã viết — xử lý khi sửa Bài 1 (checklist §5) và khi viết bài 2–4:**
-
-- **Bài 1 §4** giải bài toán LED bằng KVL + Ohm (kiến thức Bài 2–3) và demo trùng với demo chính của Bài 2. → Khi sửa Bài 1: đóng khung §4 thành "ví dụ nếm trước" với callout ghi rõ "công thức sẽ được chứng minh ở Bài 2–3", hoặc rút gọn và để phần tính toán đầy đủ cho Bài 2.
-- **Bài 4** (demo Delay Timer) dùng transistor kích LED trong khi transistor ở Bài 9. → Khi viết Bài 4: trình bày transistor như "công tắc điện tử hộp đen" + callout forward-ref "cơ chế bên trong học ở Bài 9", hoặc đổi demo sang quan sát trực tiếp đường cong nạp tụ qua LED ngưỡng sáng.
-
-**Quy tắc thiết kế bài học rút ra (áp cho mọi series từ nay):**
-
-1. **Kiểm tra phụ thuộc trước khi viết:** mở đầu quy trình viết mỗi bài, liệt kê "kiến thức cần có trước" và đối chiếu với đề cương — chỉ được dùng khái niệm của bài số nhỏ hơn. Nếu buộc phải dùng trước, PHẢI có callout ghi rõ "sẽ học chi tiết ở Bài N".
-2. **Bài nặng toán phải scaffold từ cụ thể → trừu tượng:** Bài 3 (MNA) bắt buộc giải tay mạch 2 nút bằng KCL/KVL trước, rồi mới ma trận hoá $A \cdot x = B$ và tổng quát bằng khử Gauss — không mở đầu bằng ma trận. Tương tự Bài 5 (số phức $j$): dạy qua ví dụ pha trễ cụ thể trước khi viết công thức tổng quát.
-3. **An toàn điện:** bài nào mô phỏng điện lưới 220V (Bài 6) hoặc hướng dẫn đo điện áp cao bằng VOM phải có `.callout--warning` an toàn điện (mô phỏng ≠ thực hành; nêu rõ giới hạn khi làm thật).
-4. **Demo mỗi bài chỉ dùng linh kiện đã học tính đến bài đó** — trừ khi cố ý "hộp đen hoá" kèm callout (như Bài 4).
+1. **KHÔNG dùng `<blockquote>[!NOTE]` kiểu GitHub-alert** — HTML tĩnh không render; dùng component `.callout--*` và CHỈ 5 class có thật trong `blog.css` (`--note/tip/warning/pitfall/deep`).
+2. **Danh sách bước = `<ol>`/`<ul>` thật** — cấm dồn "1. … 2. …" hay "\* …" vào một `<p>` bằng `<br />`.
+3. **Grep tự rà trước commit:** `data-lang-content`, `[!NOTE]`, `**` thô, class callout không tồn tại — tất cả phải = 0 trong `.article-body`. Lưu ý màu: trang bài nền TRẮNG (`.article-body strong` màu đen) — component có panel nền tối phải tự override màu `strong`/`code` bên trong (bài 1 từng dính, fix `860946c`).
+4. **Tự đếm rubric TRƯỚC khi báo xong:** ≥4 `.code-window` chạy được + anti-pattern ❌/✅, ≥3 callout (≥1 pitfall), ≥3 `.article-refs`, ≥3 cross-link nội bộ, ≥1 schematic SVG (sơ đồ nguyên lý/timing/trạng thái — pinout KHÔNG tính). Đối chiếu đề cương từng ý nhỏ (N.1–N.4) trước khi viết dàn bài.
+5. **Kiểm tra phụ thuộc kiến thức:** bài chỉ dùng khái niệm của bài số nhỏ hơn; nếu buộc dùng trước thì đóng khung "ví dụ nếm trước" + callout "sẽ học/chứng minh ở Bài N" (mẫu chuẩn: §4 Bài 1). **Lưu ý riêng Bài 4:** demo Delay Timer dùng transistor (Bài 9) → trình bày dạng "công tắc điện tử hộp đen" kèm callout forward-ref, hoặc đổi demo quan sát trực tiếp đường nạp tụ.
+6. **Bài nặng toán scaffold cụ thể → trừu tượng:** Bài 3 giải tay mạch 2 nút bằng KCL/KVL trước rồi mới ma trận hoá MNA; Bài 5 ví dụ pha trễ cụ thể trước khi đưa số phức $j$.
+7. **An toàn điện:** bài mô phỏng điện lưới 220V (Bài 6) hoặc đo áp cao bằng VOM phải có `.callout--warning` an toàn (mô phỏng ≠ thực hành).
+8. **Simulator:** demo chỉ dùng linh kiện đã học tính đến bài đó; trạng thái đọc "0/OL hợp lệ" phải có chú thích ngay trên UI để người học không tưởng demo hỏng; mọi chế độ/nút có trên UI mà không mô phỏng được thì ghi chú giới hạn rõ ràng.
 
 ---
 
@@ -757,8 +700,6 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 
 ---
 
----
-
 # 📚 PHẦN III — ĐỀ CƯƠNG CHI TIẾT MỤC H2 TỪNG BÀI
 
 > Bung mỗi bài thành **3–5 mục H2 con** đúng chuẩn các series đã xuất bản (vd `cpp-move-semantics`: 6 mục, `c-data-structures`: 10 mục). Đây là khung nội dung tối thiểu cho `.article-body` của mỗi trang bài học. **Mỗi bài luôn kết thúc bằng 1 mục "Câu hỏi trắc nghiệm ôn tập" (2–3 câu, dùng `ide.js`)** — không lặp lại bên dưới cho gọn. Agent có thể thêm mục nhưng không được ít hơn số mục liệt kê.
@@ -919,8 +860,6 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - **Bài 12 — ASIC Flow mã nguồn mở: Standard Cell → GDSII:** 12.1 Standard cell library: các cell NAND/NOR/DFF vẽ sẵn ở mức transistor (nối Series 10 bài 12 — CMOS), file `.lib` timing/power và `.lef` hình học — bộ "LEGO" của ASIC · 12.2 Flow vật lý từng bước: synthesis → floorplan (utilization, IO ring) → placement → CTS cây clock (skew — nối bài 8) → routing → signoff DRC/LVS → xuất GDSII · 12.3 PPA và corner PVT (process/voltage/temperature): vì sao setup kiểm ở corner chậm còn hold kiểm ở corner nhanh · 12.4 Hệ sinh thái mở: OpenLane/OpenROAD + SkyWater PDK 130nm, và con đường tape-out thật cho người tự học qua TinyTapeout (link ngoài kèm chi phí thực tế) · 12.5 Pitfall: "code chạy được trên FPGA ≠ sạch cho ASIC" — latch vô tình, clock gating tự chế, reset style lẫn lộn · 12.6 Thực hành Die Viewer ảo: bấm qua từng bước flow thấy die hiện dần các lớp (hàng standard cell → clock tree → routing), zoom xem layout một cell NAND thật. _Tiên quyết: bài 8–10 series này; Series 10 bài 12 (CMOS)._
 - **Bài 13 — Dự án CPU RISC-V RV32I — Phần 1: Datapath:** 13.1 Vì sao chọn RISC-V để học thiết kế CPU: ISA mở, miễn phí bản quyền, format lệnh đều đặn dễ decode — bảng 6 định dạng lệnh R/I/S/B/U/J · 13.2 Tập lệnh RV32I subset của dự án (~15 lệnh): nhóm số học/logic (`add`, `sub`, `and`, `or`, `addi`…), nạp/cất (`lw`/`sw`), rẽ nhánh (`beq`/`bne`), nhảy (`jal`) · 13.3 Các khối datapath single-cycle: PC + instruction memory, register file 32×32-bit (tái dùng thiết kế bài 7), immediate generator (sign-extend theo từng format — nối Series C biểu diễn số bù 2), ALU (nâng cấp từ bài 2) · 13.4 Ghép datapath tăng dần theo nhóm lệnh: R-type → I-type → load/store → branch, mỗi bước vẽ lại sơ đồ đường dữ liệu · 13.5 Control unit sơ khởi: bảng tín hiệu điều khiển (RegWrite, ALUSrc, MemRead, Branch…) theo opcode · 13.6 Thực hành Datapath Visualizer: nhập lệnh assembly `addi`/`add`/`beq`, chạy từng lệnh và xem đường dữ liệu tô sáng qua datapath. _Tiên quyết: bài 2–5 & 7 series này; Series C (biểu diễn số bù 2, con trỏ & bộ nhớ)._
 - **Bài 14 — Dự án CPU RISC-V RV32I — Phần 2: Chạy chương trình thật:** 14.1 Hoàn thiện control unit: decode toàn bộ subset, bảng chân lý điều khiển đầy đủ và cách kiểm chứng bằng testbench (tái dùng kỹ thuật bài 5) · 14.2 Load/store với data memory và **memory-mapped I/O**: màn hình output ảo gắn vào địa chỉ nhớ — nối vòng về Series 10 bài 15 (GPIO cũng chính là memory-mapped I/O, giờ người học tự xây phía bên kia của thanh ghi) · 14.3 Assembler mini bằng JS: dịch assembly → mã máy hex, nạp và chạy chương trình thật (Fibonacci, đảo chuỗi) trên CPU tự thiết kế · 14.4 Debug CPU bằng waveform: cài sẵn bug lệch branch offset kinh điển, hướng dẫn lần ngược tín hiệu qua datapath để tìm — tổng ôn kỹ năng đọc sóng cả series · 14.5 Hướng mở rộng: pipeline 5 tầng (IF/ID/EX/MEM/WB), hazard & forwarding ở mức khái niệm; so sánh $f_{max}$ single-cycle vs pipeline bằng STA Workbench (nối bài 8) · 14.6 Tổng kết lộ trình nghề & bản đồ tài nguyên học tiếp: RTL design, verification (UVM), FPGA engineer, physical design; sách Harris & Harris "Digital Design and Computer Architecture RISC-V Edition", HDLBits, ChipVerify, TinyTapeout — và checklist "bạn đã đi được bao xa" đối chiếu lại từ Series 10 bài 1. _Tiên quyết: bài 13 (đọc liền mạch); đây là bài tổng hợp toàn bộ Series 10 + 11._
-
----
 
 ---
 
