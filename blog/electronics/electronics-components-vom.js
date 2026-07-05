@@ -42,6 +42,11 @@
       desc: 'Cực Anode (Trái) và Cathode (Phải). Đèn LED đỏ sẽ sáng lên khi đo ở thang <strong>Đi-ốt (➔|⫽)</strong> nếu cắm đúng que Đỏ vào Anode (+) và que Đen vào Cathode (-). Sụt áp thuận của LED đỏ vào khoảng 1.8V.',
       color: '#f38ba8',
     },
+    battery: {
+      title: 'Pin 9V một chiều (DC Source)',
+      desc: 'Nguồn cấp điện áp một chiều 9V. Hãy chỉnh núm xoay về nấc <strong>V ⎓ (V DC)</strong> để đo điện áp một chiều của pin. Chú ý đảo ngược vị trí que đo để thấy giá trị điện thế âm.',
+      color: '#f9e2af',
+    },
     shorted: {
       title: 'Linh kiện lỗi (Chập mạch - Shorted)',
       desc: 'Đây là một linh kiện bị chập điện hoàn toàn (điện trở gần như bằng 0). Khi đo ở thang <strong>Thông mạch (➔|⫽)</strong>, đồng hồ sẽ phát tiếng kêu bíp liên tục cảnh báo ngắn mạch.',
@@ -132,7 +137,11 @@
 
     switch (rotaryState) {
       case 'V_DC':
-        vomValue.textContent = '0.00';
+        if (currentComponent === 'battery') {
+          vomValue.textContent = isForward ? '9.00' : '-9.00';
+        } else {
+          vomValue.textContent = '0.00';
+        }
         vomUnit.textContent = 'V';
         break;
       case 'V_AC':
@@ -146,7 +155,7 @@
         } else if (currentComponent === 'shorted') {
           vomValue.textContent = '0.1';
           vomUnit.textContent = 'Ω';
-        } else if (currentComponent === 'open' || currentComponent === 'diode' || currentComponent === 'led') {
+        } else {
           vomValue.textContent = 'O.L';
           vomUnit.textContent = '';
         }
@@ -172,10 +181,7 @@
           vomValue.textContent = '0.001';
           vomUnit.textContent = 'V';
           startBeep(); // Beeps for short/continuity
-        } else if (currentComponent === 'resistor') {
-          vomValue.textContent = 'O.L';
-          vomUnit.textContent = '';
-        } else if (currentComponent === 'open') {
+        } else {
           vomValue.textContent = 'O.L';
           vomUnit.textContent = '';
         }
@@ -375,6 +381,45 @@
       ctx.fillStyle = '#f38ba8';
       ctx.font = '10px sans-serif';
       ctx.fillText('ĐỨT MẠCH', canvas.width / 2 - 26, compCenterY + 28);
+    } else if (currentComponent === 'battery') {
+      // Connecting leads to breadboard
+      ctx.strokeStyle = '#b4befe';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(compLeft, compCenterY);
+      ctx.lineTo(compLeft + 20, compCenterY);
+      ctx.moveTo(compRight, compCenterY);
+      ctx.lineTo(compRight - 20, compCenterY);
+      ctx.stroke();
+
+      // Battery body (sleek dark block)
+      ctx.fillStyle = '#2d3139';
+      ctx.beginPath();
+      ctx.roundRect(compLeft + 20, compCenterY - 18, compWidth - 40, 36, 4);
+      ctx.fill();
+      ctx.strokeStyle = '#f9e2af';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Gold band at the top/side representing a premium battery label
+      ctx.fillStyle = '#f9e2af';
+      ctx.fillRect(compLeft + 21, compCenterY - 17, 24, 34);
+
+      // Label text on the battery
+      ctx.fillStyle = '#1e1e2e';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText('9V', compLeft + 25, compCenterY + 4);
+
+      ctx.fillStyle = '#a6adc8';
+      ctx.font = '10px sans-serif';
+      ctx.fillText('DC Source', compLeft + 52, compCenterY + 4);
+
+      // Positive (+) and Negative (-) terminals on the body
+      ctx.fillStyle = '#f38ba8'; // Red plus
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('+', compLeft + 8, compCenterY - 4);
+      ctx.fillStyle = '#a6adc8'; // Negative sign
+      ctx.fillText('-', compRight - 14, compCenterY - 4);
     }
 
     // Draw the Red Probe tip
