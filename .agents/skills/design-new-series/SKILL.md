@@ -56,6 +56,13 @@ These hold for every series. Don't quietly break them.
 - **No raw markdown left in HTML.** `**bold**` and `` `code` `` must always be
   converted to `<strong>`/`<code>` before shipping — this has slipped through
   more than once, grep for stray `**`/`` ` `` before calling a lesson done.
+- **No GitHub-alert blockquotes.** `<blockquote>[!NOTE] …` does NOT render on a
+  static HTML page — readers see the literal `[!NOTE]` text (shipped once in the
+  electronics series). Use the `.callout--*` components, and only the variants
+  that exist in `blog.css` (`--note/--tip/--warning/--pitfall/--deep` — no
+  invented classes like `--danger`). Same spirit: step-by-step procedures are
+  real `<ol>`/`<ul>` lists, never "1. … 2. …" or "\* …" crammed into one `<p>`
+  with `<br />`.
 - **Comments = giscus only.** Never Facebook / `fb-comments`. Copy the giscus
   block from `blog/c/c-data-structures.html`.
 - **Internal links have no `.html` suffix** (Cloudflare rewrites). External
@@ -150,6 +157,15 @@ Every H2 section must answer four questions (don't just define "what"):
 4. **Pitfall** — the common mistake or misconception (→ a `--pitfall` callout).
 
 Every lesson ends with a "Câu hỏi trắc nghiệm ôn tập" (quiz) section.
+
+**Dependency check (added 2026-07-05, from the electronics-series review):** a
+lesson may only rely on concepts taught in lower-numbered lessons of its own or
+a prerequisite series. While ordering the syllabus, list each lesson's "kiến
+thức cần có trước" and verify the chain — the electronics series originally
+shipped transformers/rectifiers _before_ the AC lesson that defines sine/RMS.
+If a forward reference is unavoidable, the spec must say so explicitly:
+black-box the concept and add a callout "sẽ học chi tiết ở Bài N". Companion
+demos may only use components/ideas already taught up to that lesson.
 
 Layer B is usually the largest step. **Don't expand all lessons in one turn** —
 do a batch of ~3 lessons, append them to the file, checkpoint (tick the lessons

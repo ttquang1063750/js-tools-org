@@ -71,7 +71,26 @@ Five layers, so nothing is left unexplained:
 5. **Formula glosses** — every KaTeX formula gets one sentence explaining each
    symbol.
 
-## 5. Definition of Done (per lesson)
+## 5. Sequencing & simulator rules (2026-07-05, from the electronics-series review)
+
+- **Dependency check:** a lesson only uses concepts from lower-numbered lessons
+  (own series or a prerequisite series). Unavoidable forward references are
+  black-boxed with a callout "sẽ học chi tiết ở Bài N". Demos only use
+  components/ideas already taught.
+- **Scaffold heavy math concrete → abstract:** solve a tiny instance by hand
+  before generalizing (e.g. a 2-node circuit by KCL/KVL before the MNA matrix;
+  one phase-lag example before complex impedance). Never open with the matrix.
+- **Diagrams must match the concept:** a schematic / state diagram / timing
+  diagram / block architecture satisfies the "≥1 diagram" row; a pinout drawing
+  does not.
+- **Simulators explain their "boring" states:** if a mode legitimately reads
+  0 / OL / empty, say so on the UI so learners don't think the demo is broken;
+  any visible control that isn't simulated gets an explicit limitation note.
+- **Only real callout classes:** use the five variants that exist in `blog.css`
+  (`--note/--tip/--warning/--pitfall/--deep`); never invent classes
+  (`--danger` shipped once and silently had no styling).
+
+## 6. Definition of Done (per lesson)
 
 - [ ] Meets every row of the §1 rubric.
 - [ ] Every H2 answers What / Why / When / Pitfall.

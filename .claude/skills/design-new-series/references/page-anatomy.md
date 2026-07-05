@@ -120,6 +120,10 @@ constraints: feature-detect new APIs (`navigator.gpu`), honor autoplay policy
       download links return 200.
 - [ ] Grepping every new lesson for stray `**` or backtick pairs comes back
       clean — no raw markdown left unconverted to `<strong>`/`<code>`.
+- [ ] Grepping every new lesson body also comes back clean for: `[!NOTE]` (or
+      any GitHub-alert blockquote), `data-lang-content` (new series are
+      Vietnamese-only, 2026-07-03+), and callout classes that don't exist in
+      `blog.css` (only `--note/--tip/--warning/--pitfall/--deep` are real).
 - [ ] Search on `blog/index.html` surfaces the new lessons.
 - [ ] giscus loads with no `facebook.net` request; KaTeX renders; sitemap clean.
 - [ ] Prettier clean.
