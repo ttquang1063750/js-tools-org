@@ -48,3 +48,63 @@ function checkQuiz(optionBtn, isCorrect, explanation) {
     feedback.innerHTML = '<strong>' + (isCorrect ? '✓ Chính xác!' : '✗ Chưa chính xác.') + '</strong> ' + explanation;
   }
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+  const submitBtns = document.querySelectorAll('.quiz-submit');
+  submitBtns.forEach(btn => {
+    // If it uses the old onclick method, skip
+    if (btn.hasAttribute('onclick')) return;
+
+    btn.addEventListener('click', function() {
+      const container = this.closest('.quiz-container');
+      const questions = container.querySelectorAll('.quiz-question');
+      let allAnswered = true;
+
+      questions.forEach(q => {
+        const selected = q.querySelector('input[type="radio"]:checked');
+        if (!selected) allAnswered = false;
+      });
+
+      if (!allAnswered) {
+        alert('Vui lòng trả lời tất cả các câu hỏi trước khi kiểm tra!');
+        return;
+      }
+
+      questions.forEach(q => {
+        const correctVal = q.getAttribute('data-answer');
+        const selected = q.querySelector('input[type="radio"]:checked');
+        const explanation = q.querySelector('.quiz-explanation');
+        
+        if (explanation) {
+          explanation.style.display = 'block';
+        }
+        
+        if (selected) {
+          if (selected.value === correctVal) {
+            selected.parentElement.style.color = '#a6e3a1'; // Green
+            selected.parentElement.style.fontWeight = 'bold';
+          } else {
+            selected.parentElement.style.color = '#f38ba8'; // Red
+            selected.parentElement.style.textDecoration = 'line-through';
+          }
+        }
+        
+        // Highlight correct answer
+        const correctInput = q.querySelector(`input[type="radio"][value="${correctVal}"]`);
+        if (correctInput && correctInput !== selected) {
+          correctInput.parentElement.style.color = '#a6e3a1';
+          correctInput.parentElement.style.fontWeight = 'bold';
+        }
+        
+        // Disable inputs
+        const inputs = q.querySelectorAll('input[type="radio"]');
+        inputs.forEach(input => input.disabled = true);
+      });
+      
+      this.textContent = 'Đã kiểm tra';
+      this.disabled = true;
+      this.style.opacity = '0.7';
+      this.style.cursor = 'default';
+    });
+  });
+});
