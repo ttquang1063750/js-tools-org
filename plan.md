@@ -22,11 +22,11 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 7: SQL**             | **SQL trong Trình duyệt (SQLite-WASM)** | **17/17**      | **17**   | **100%** ✅ |
 | 🎉 **Series 8: Web Audio**       | **Âm Thanh & Visualizer**               | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 9: Git**             | **Mô Hình & Quy Trình Làm Việc**        | **13/13**      | **13**   | **100%** ✅ |
-| Series 10                        | Điện Tử & Mô Phỏng Vi Mạch              | 15/16          | 16       | 93%         |
+| 🎉 **Series 10: Điện Tử**         | **Điện Tử & Mô Phỏng Vi Mạch**          | **16/16**      | **16**   | **100%** ✅ |
 | Series 11                        | Thiết Kế Vi Mạch Số & FPGA (VLSI)       | 0/14           | 14       | 0%          |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
-> series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git) khỏi file
+> series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
 > này để giảm context — nội dung đã publish rồi thì trang hub/bài viết thật (`blog/<series>/`)
 > mới là nguồn chính xác, không phải bản thiết kế. Bản đầy đủ vẫn còn nguyên trong lịch sử
 > git (`git log -- plan.md`, commit trước 2026-07-06) nếu cần tham chiếu lại.
