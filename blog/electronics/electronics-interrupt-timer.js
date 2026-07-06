@@ -60,9 +60,65 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('hex-eifr').textContent = `0x${eifr.toString(16).toUpperCase().padStart(2, '0')}`;
   }
 
+  // Code templates
+  const codeTemplates = {
+    none: [
+      { text: 'void main() { setup_timer(); enable_interrupts(); }', class: '' },
+      { text: 'while(1) { // CPU chạy vòng lặp chính rảnh rỗi }', class: '' },
+      { text: '// ISR Handler - Tự nhảy vào khi chân INT0 có ngắt', class: 'is-comment' },
+      { text: 'ISR(INT0_vect) {', class: '' },
+      { text: '  change_pwm_mode(); // Đổi Duty Cycle', class: '' },
+      { text: '  clear_interrupt_flag();', class: '' },
+      { text: '}', class: '' },
+    ],
+    hardware: [
+      { text: 'void main() { setup_timer(); enable_interrupts(); }', class: '' },
+      { text: 'while(1) { // CPU chạy vòng lặp chính rảnh rỗi }', class: '' },
+      { text: '// ISR Handler - Mạch lọc RC phần cứng đã khử dội', class: 'is-comment' },
+      { text: 'ISR(INT0_vect) {', class: '' },
+      { text: '  change_pwm_mode(); // Đổi Duty Cycle', class: '' },
+      { text: '  clear_interrupt_flag();', class: '' },
+      { text: '}', class: '' },
+    ],
+    software: [
+      { text: 'void main() { setup_timer(); enable_interrupts(); }', class: '' },
+      { text: 'while(1) { // CPU chạy vòng lặp chính rảnh rỗi }', class: '' },
+      { text: '// ISR Handler - Khử dội phím bằng phần mềm', class: 'is-comment' },
+      { text: 'ISR(INT0_vect) {', class: '' },
+      { text: '  if (millis() - last_millis > 200) {', class: '' },
+      { text: '    change_pwm_mode(); // Đổi Duty Cycle', class: '' },
+      { text: '    last_millis = millis();', class: '' },
+      { text: '  }', class: '' },
+      { text: '  clear_interrupt_flag();', class: '' },
+      { text: '}', class: '' },
+    ],
+  };
+
+  const codeContainer = document.getElementById('mcu-code-container');
+  const schematicCapacitor = document.getElementById('schematic-capacitor');
+
+  function updateCodeViewer() {
+    if (!codeContainer) return;
+    codeContainer.innerHTML = '';
+    const template = codeTemplates[debounceMode] || codeTemplates.none;
+    template.forEach((line, index) => {
+      const lineDiv = document.createElement('div');
+      lineDiv.id = `code-line-${index + 1}`;
+      lineDiv.className = `mcu-line ${line.class}`;
+      lineDiv.textContent = line.text;
+      codeContainer.appendChild(lineDiv);
+    });
+
+    // Update schematic capacitor opacity
+    if (schematicCapacitor) {
+      schematicCapacitor.style.opacity = debounceMode === 'hardware' ? '1' : '0.15';
+    }
+  }
+
   // Code highlighter
   function highlightCodeLine(lineNum) {
-    for (let i = 1; i <= 7; i++) {
+    const linesCount = debounceMode === 'software' ? 10 : 7;
+    for (let i = 1; i <= linesCount; i++) {
       const el = document.getElementById(`code-line-${i}`);
       if (el) {
         if (i === lineNum) {
@@ -127,6 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   selectDebounce.addEventListener('change', () => {
     debounceMode = selectDebounce.value;
+    updateCodeViewer();
   });
 
   // Quiz logic
@@ -195,40 +252,82 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (isInsideISR) {
       isrFrameCount++;
-      if (isrFrameCount < 15) {
-        // Step 1: Jump to ISR definition
-        currentCodeLine = 4;
-      } else if (isrFrameCount < 35) {
-        // Step 2: Change PWM mode
-        currentCodeLine = 5;
-        if (isrFrameCount === 15) {
-          // Execute mode shift and update OCR0A register
-          mcuMode = (mcuMode + 1) % 4;
-          if (mcuMode === 0) {
-            ocr0a = 0;
-          } else if (mcuMode === 1) {
-            ocr0a = 64; // 25% Duty
-          } else if (mcuMode === 2) {
-            ocr0a = 191; // 75% Duty
-          } else if (mcuMode === 3) {
-            ocr0a = 255; // 1Hz blink mode starting state
-            blinkState = true;
-            blinkTimer = 0;
+      if (debounceMode === 'software') {
+        // Software Debounce (10 lines of code)
+        if (isrFrameCount < 15) {
+          // Step 1: ISR entry
+          currentCodeLine = 4;
+        } else if (isrFrameCount < 30) {
+          // Step 2: check timing condition
+          currentCodeLine = 5;
+        } else if (isrFrameCount < 50) {
+          // Step 3: change mode
+          currentCodeLine = 6;
+          if (isrFrameCount === 30) {
+            mcuMode = (mcuMode + 1) % 4;
+            if (mcuMode === 0) {
+              ocr0a = 0;
+            } else if (mcuMode === 1) {
+              ocr0a = 64; // 25% Duty
+            } else if (mcuMode === 2) {
+              ocr0a = 191; // 75% Duty
+            } else if (mcuMode === 3) {
+              ocr0a = 255; // 1Hz blink starting state
+              blinkState = true;
+              blinkTimer = 0;
+            }
           }
+        } else if (isrFrameCount < 60) {
+          // Step 4: save last_millis
+          currentCodeLine = 7;
+        } else if (isrFrameCount < 75) {
+          // Step 5: clear interrupt flag
+          currentCodeLine = 9;
+          if (isrFrameCount === 60) {
+            eifr = 0;
+          }
+        } else if (isrFrameCount < 85) {
+          // Step 6: ISR exit
+          currentCodeLine = 10;
+        } else {
+          isInsideISR = false;
+          currentCodeLine = 2;
         }
-      } else if (isrFrameCount < 50) {
-        // Step 3: Clear EIFR interrupt flag
-        currentCodeLine = 6;
-        if (isrFrameCount === 35) {
-          eifr = 0; // Clear the interrupt register flag
-        }
-      } else if (isrFrameCount < 60) {
-        // Step 4: Exit ISR
-        currentCodeLine = 7;
       } else {
-        // End of ISR: return to main loop
-        isInsideISR = false;
-        currentCodeLine = 2;
+        // Standard (7 lines of code: none & hardware)
+        if (isrFrameCount < 15) {
+          // Step 1: ISR entry
+          currentCodeLine = 4;
+        } else if (isrFrameCount < 35) {
+          // Step 2: change mode
+          currentCodeLine = 5;
+          if (isrFrameCount === 15) {
+            mcuMode = (mcuMode + 1) % 4;
+            if (mcuMode === 0) {
+              ocr0a = 0;
+            } else if (mcuMode === 1) {
+              ocr0a = 64; // 25% Duty
+            } else if (mcuMode === 2) {
+              ocr0a = 191; // 75% Duty
+            } else if (mcuMode === 3) {
+              ocr0a = 255; // 1Hz blink starting state
+              blinkState = true;
+              blinkTimer = 0;
+            }
+          }
+        } else if (isrFrameCount < 50) {
+          // Step 3: clear interrupt flag
+          currentCodeLine = 6;
+          if (isrFrameCount === 35) {
+            eifr = 0;
+          }
+        } else if (isrFrameCount < 60) {
+          // Step 4: ISR exit
+          currentCodeLine = 7;
+        } else {
+          isInsideISR = false;
+          currentCodeLine = 2;
+        }
       }
     } else {
       currentCodeLine = 2;
@@ -345,6 +444,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Init
+  updateCodeViewer();
   updateRegistersUI();
   loop();
 });
