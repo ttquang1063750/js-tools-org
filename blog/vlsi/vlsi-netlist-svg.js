@@ -518,4 +518,142 @@ class NetlistRenderer {
   }
 }
 
-export { NetlistRenderer, GateRenderer, parseExprToTree, elaborateExpr, elaborateAST, simulateGates };
+// ---- Sơ đồ khối chọn-1-trong-N (Op-select block diagram) ----
+// Dùng cho case/mux mức khối (vd ALU nhiều opcode) — nơi decompose xuống tận
+// cổng logic (đặc biệt phép cộng/trừ) sẽ quá rối và đã có bài riêng (Bài 6:
+// Số học phần cứng) đi sâu. Vẽ N khối phép toán song song + 1 khối MUX chọn,
+// tô sáng đúng nhánh đang active theo opcode hiện tại — đúng bản chất những
+// gì case/always_comb tổng hợp ra ở mức cấu trúc.
+class OpSelectRenderer {
+  constructor(container) {
+    this.container = container;
+  }
+
+  render(labels, activeIndex, opts = {}) {
+    while (this.container.firstChild) {
+      this.container.removeChild(this.container.firstChild);
+    }
+
+    const blockW = 90;
+    const blockH = 30;
+    const rowGap = 10;
+    const marginLeft = 20;
+    const marginTop = 20;
+    const muxX = marginLeft + blockW + 90;
+    const muxW = 50;
+    const totalH = labels.length * (blockH + rowGap) - rowGap;
+    const muxH = totalH;
+    const width = muxX + muxW + 90;
+    const height = marginTop * 2 + totalH;
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', height);
+    svg.setAttribute('style', 'border: 1px solid #ddd; background: #fafafa; border-radius: 6px;');
+
+    const wireGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    svg.appendChild(wireGroup);
+
+    labels.forEach((label, i) => {
+      const y = marginTop + i * (blockH + rowGap);
+      const active = i === activeIndex;
+
+      // Khối phép toán
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', marginLeft);
+      rect.setAttribute('y', y);
+      rect.setAttribute('width', blockW);
+      rect.setAttribute('height', blockH);
+      rect.setAttribute('rx', 4);
+      rect.setAttribute('fill', active ? 'rgba(101,163,13,0.1)' : '#fff');
+      rect.setAttribute('stroke', active ? '#65a30d' : '#94a3b8');
+      rect.setAttribute('stroke-width', active ? '2.5' : '1.5');
+      svg.appendChild(rect);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', marginLeft + blockW / 2);
+      text.setAttribute('y', y + blockH / 2 + 4);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('font-size', '11');
+      text.setAttribute('font-family', 'monospace');
+      text.setAttribute('font-weight', active ? 'bold' : 'normal');
+      text.setAttribute('fill', active ? '#3f6212' : '#334155');
+      text.textContent = label;
+      svg.appendChild(text);
+
+      // Dây từ khối tới cạnh trái của mux
+      const wire = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const fromX = marginLeft + blockW;
+      const fromY = y + blockH / 2;
+      const toX = muxX;
+      const toY = marginTop + muxH / 2;
+      wire.setAttribute(
+        'points',
+        `${fromX},${fromY} ${(fromX + toX) / 2},${fromY} ${(fromX + toX) / 2},${toY} ${toX},${toY}`
+      );
+      wire.setAttribute('fill', 'none');
+      wire.setAttribute('stroke', active ? '#65a30d' : '#cbd5e1');
+      wire.setAttribute('stroke-width', active ? '2.5' : '1');
+      wireGroup.insertBefore(wire, wireGroup.firstChild);
+    });
+
+    // Khối MUX (hình thang chọn 1 trong N theo opcode)
+    const muxPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const mTop = marginTop;
+    const mBottom = marginTop + muxH;
+    muxPath.setAttribute(
+      'd',
+      `M ${muxX} ${mTop + 6} L ${muxX + muxW} ${mTop + muxH * 0.3} L ${muxX + muxW} ${mBottom - muxH * 0.3} L ${muxX} ${mBottom - 6} Z`
+    );
+    muxPath.setAttribute('fill', '#fff');
+    muxPath.setAttribute('stroke', '#334155');
+    muxPath.setAttribute('stroke-width', '1.5');
+    svg.appendChild(muxPath);
+
+    const muxLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    muxLabel.setAttribute('x', muxX + muxW / 2);
+    muxLabel.setAttribute('y', mTop + muxH / 2 + 4);
+    muxLabel.setAttribute('text-anchor', 'middle');
+    muxLabel.setAttribute('font-size', '11');
+    muxLabel.setAttribute('font-family', 'monospace');
+    muxLabel.setAttribute('fill', '#334155');
+    muxLabel.textContent = 'MUX';
+    svg.appendChild(muxLabel);
+
+    const opcodeLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    opcodeLabel.setAttribute('x', muxX + muxW / 2);
+    opcodeLabel.setAttribute('y', mTop - 6);
+    opcodeLabel.setAttribute('text-anchor', 'middle');
+    opcodeLabel.setAttribute('font-size', '10');
+    opcodeLabel.setAttribute('fill', '#65a30d');
+    opcodeLabel.setAttribute('font-weight', 'bold');
+    opcodeLabel.textContent = 'opcode';
+    svg.appendChild(opcodeLabel);
+
+    // Dây output + nhãn "y"
+    const outLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    const outY = marginTop + muxH / 2;
+    outLine.setAttribute('x1', muxX + muxW);
+    outLine.setAttribute('y1', outY);
+    outLine.setAttribute('x2', muxX + muxW + 30);
+    outLine.setAttribute('y2', outY);
+    outLine.setAttribute('stroke', '#65a30d');
+    outLine.setAttribute('stroke-width', '2.5');
+    svg.appendChild(outLine);
+
+    const outLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    outLabel.setAttribute('x', muxX + muxW + 36);
+    outLabel.setAttribute('y', outY + 4);
+    outLabel.setAttribute('font-size', '12');
+    outLabel.setAttribute('font-family', 'monospace');
+    outLabel.setAttribute('font-weight', 'bold');
+    outLabel.setAttribute('fill', '#1e293b');
+    outLabel.textContent = opts.outputLabel || 'y';
+    svg.appendChild(outLabel);
+
+    this.container.appendChild(svg);
+  }
+}
+
+export { NetlistRenderer, GateRenderer, parseExprToTree, elaborateExpr, elaborateAST, simulateGates, OpSelectRenderer };
