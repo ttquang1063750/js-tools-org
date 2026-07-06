@@ -56,26 +56,31 @@ document.addEventListener('DOMContentLoaded', () => {
       html += '<text x="140" y="20" fill="#a6e3a1" font-size="11" text-anchor="middle">D1</text>';
     } 
     else if (mode === 'bridge') {
-      // Bridge Rectifier (4 diodes)
+      // Bridge Rectifier (4 diodes in a diamond)
       // AC wires to bridge
-      html += '<line x1="30" y1="40" x2="100" y2="40" stroke="#fab387" stroke-width="2" />';
-      html += '<line x1="30" y1="140" x2="100" y2="100" stroke="#585b70" stroke-width="2" />';
-      // Bridge body (diamond)
-      // Points: Top (130, 40), Bottom (130, 100), Left (100, 70), Right (160, 70)
-      html += '<rect x="95" y="35" width="70" height="70" fill="none" stroke="#585b70" stroke-width="1.5" rx="5" />';
+      html += '<line x1="30" y1="40" x2="100" y2="70" stroke="#fab387" stroke-width="2" />';
+      html += '<line x1="30" y1="140" x2="160" y2="70" stroke="#585b70" stroke-width="2" />';
       
-      // D1 (top-left to top)
-      html += '<polygon points="105,65 125,45 110,45" fill="#a6e3a1" opacity="0.8" />';
-      // D2 (bottom-left to bottom)
-      html += '<polygon points="105,75 125,95 110,95" fill="#a6e3a1" opacity="0.8" />';
-      // D3 (top to top-right)
-      html += '<polygon points="135,45 155,65 150,45" fill="#a6e3a1" opacity="0.8" />';
-      // D4 (bottom to bottom-right)
-      html += '<polygon points="135,95 155,75 150,95" fill="#a6e3a1" opacity="0.8" />';
+      // Bridge wires (diamond)
+      html += '<path d="M 130 40 L 100 70 L 130 100 L 160 70 Z" fill="none" stroke="#585b70" stroke-width="1.5" />';
       
-      // Output wire from bridge right (160, 70) to load
-      html += '<line x1="160" y1="70" x2="330" y2="40" stroke="#89b4fa" stroke-width="2" />';
-      // Ground connection from bottom (130, 100) to ground
+      // Helper to generate a diode symbol rotated
+      const diode = (x, y, angle) => `
+        <g transform="translate(${x}, ${y}) rotate(${angle})">
+          <polygon points="-6,-5 -6,5 4,0" fill="#a6e3a1" />
+          <line x1="4" y1="-5" x2="4" y2="5" stroke="#a6e3a1" stroke-width="2" />
+        </g>
+      `;
+      
+      // Place diodes on the 4 branches
+      html += diode(115, 85, 225); // Bottom to Left
+      html += diode(145, 85, 315); // Bottom to Right
+      html += diode(115, 55, 315); // Left to Top
+      html += diode(145, 55, 225); // Right to Top
+      
+      // Output wire from Top (130, 40) to load
+      html += '<line x1="130" y1="40" x2="330" y2="40" stroke="#89b4fa" stroke-width="2" />';
+      // Ground connection from bottom (130, 100) to ground line
       html += '<line x1="130" y1="100" x2="130" y2="140" stroke="#585b70" stroke-width="2" />';
       
       html += '<text x="130" y="25" fill="#a6e3a1" font-size="11" text-anchor="middle">Bridge</text>';
@@ -83,14 +88,32 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (mode === 'filter') {
       // Bridge + Capacitor in parallel
       // AC wires to bridge
-      html += '<line x1="30" y1="40" x2="100" y2="40" stroke="#fab387" stroke-width="2" />';
-      html += '<line x1="30" y1="140" x2="100" y2="100" stroke="#585b70" stroke-width="2" />';
-      // Bridge (100,70 to 160,70)
-      html += '<rect x="95" y="35" width="70" height="70" fill="none" stroke="#585b70" stroke-width="1.5" rx="5" />';
-      html += '<text x="130" y="25" fill="#a6e3a1" font-size="11" text-anchor="middle">Bridge</text>';
+      html += '<line x1="30" y1="40" x2="100" y2="70" stroke="#fab387" stroke-width="2" />';
+      html += '<line x1="30" y1="140" x2="160" y2="70" stroke="#585b70" stroke-width="2" />';
       
-      // Main output line
-      html += '<line x1="160" y1="70" x2="330" y2="40" stroke="#89b4fa" stroke-width="2" />';
+      // Bridge wires (diamond)
+      html += '<path d="M 130 40 L 100 70 L 130 100 L 160 70 Z" fill="none" stroke="#585b70" stroke-width="1.5" />';
+      
+      // Helper to generate a diode symbol rotated
+      const diode = (x, y, angle) => `
+        <g transform="translate(${x}, ${y}) rotate(${angle})">
+          <polygon points="-6,-5 -6,5 4,0" fill="#a6e3a1" />
+          <line x1="4" y1="-5" x2="4" y2="5" stroke="#a6e3a1" stroke-width="2" />
+        </g>
+      `;
+      
+      // Place diodes on the 4 branches
+      html += diode(115, 85, 225);
+      html += diode(145, 85, 315);
+      html += diode(115, 55, 315);
+      html += diode(145, 55, 225);
+      
+      // Output wire from Top (130, 40)
+      html += '<line x1="130" y1="40" x2="330" y2="40" stroke="#89b4fa" stroke-width="2" />';
+      // Ground connection from bottom (130, 100) to ground line
+      html += '<line x1="130" y1="100" x2="130" y2="140" stroke="#585b70" stroke-width="2" />';
+      
+      html += '<text x="130" y="25" fill="#a6e3a1" font-size="11" text-anchor="middle">Bridge</text>';
       
       // Capacitor (x = 230)
       // Positive plate (top)
@@ -108,10 +131,25 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (mode === 'regulator') {
       // Bridge + Capacitor + 7805 IC
       // AC wires to bridge
-      html += '<line x1="30" y1="40" x2="100" y2="40" stroke="#fab387" stroke-width="2" />';
-      html += '<line x1="30" y1="140" x2="100" y2="100" stroke="#585b70" stroke-width="2" />';
-      // Bridge
-      html += '<rect x="95" y="35" width="70" height="70" fill="none" stroke="#585b70" stroke-width="1.5" rx="5" />';
+      html += '<line x1="30" y1="40" x2="100" y2="70" stroke="#fab387" stroke-width="2" />';
+      html += '<line x1="30" y1="140" x2="160" y2="70" stroke="#585b70" stroke-width="2" />';
+      
+      // Bridge wires (diamond)
+      html += '<path d="M 130 40 L 100 70 L 130 100 L 160 70 Z" fill="none" stroke="#585b70" stroke-width="1.5" />';
+      
+      // Helper to generate a diode symbol rotated
+      const diode = (x, y, angle) => `
+        <g transform="translate(${x}, ${y}) rotate(${angle})">
+          <polygon points="-6,-5 -6,5 4,0" fill="#a6e3a1" />
+          <line x1="4" y1="-5" x2="4" y2="5" stroke="#a6e3a1" stroke-width="2" />
+        </g>
+      `;
+      
+      // Place diodes
+      html += diode(115, 85, 225);
+      html += diode(145, 85, 315);
+      html += diode(115, 55, 315);
+      html += diode(145, 55, 225);
       
       // Capacitor C (x = 180)
       html += '<line x1="180" y1="40" x2="180" y2="75" stroke="#a6e3a1" stroke-width="2" />';
@@ -119,9 +157,10 @@ document.addEventListener('DOMContentLoaded', () => {
       html += '<rect x="170" y="85" width="20" height="4" fill="#cdd6f4" />';
       html += '<line x1="180" y1="89" x2="180" y2="140" stroke="#585b70" stroke-width="2" />';
       
-      // Wire from bridge to Cap, and Cap to 7805 Vin
-      html += '<line x1="160" y1="70" x2="180" y2="40" stroke="#fab387" stroke-width="2" />';
-      html += '<line x1="180" y1="40" x2="230" y2="40" stroke="#fab387" stroke-width="2" />';
+      // Wire from bridge output (Top 130,40) to Cap and 7805 Vin
+      html += '<line x1="130" y1="40" x2="230" y2="40" stroke="#fab387" stroke-width="2" />';
+      // Ground connection from bottom (130, 100) to ground line
+      html += '<line x1="130" y1="100" x2="130" y2="140" stroke="#585b70" stroke-width="2" />';
       
       // 7805 IC (x = 230 to 270, y = 30 to 60)
       html += '<rect x="230" y="25" width="40" height="30" fill="#313244" stroke="#cdd6f4" stroke-width="1.5" rx="3" />';
