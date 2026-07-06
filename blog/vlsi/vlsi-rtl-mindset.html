@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 1: Từ cổng logic đến RTL — Tư duy mô tả phần cứng — js-tools</title>
+    <meta name="description" content="Tìm hiểu 4 mức trừu tượng thiết kế vi mạch (transistor, gate, RTL, behavioral), tại sao HDL khác lập trình, toàn cảnh design flow RTL→GDSII, và cách viết mux 2-1 bằng 3 kiểu SystemVerilog." />
+    <link rel="canonical" href="https://js-tools.org/blog/vlsi/vlsi-rtl-mindset" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg class="icon-open" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg class="icon-close" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--vlsi">
+        <div class="container">
+          <a href="vlsi-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--vlsi">Bài 1 · Thiết Kế Vi Mạch Số & FPGA</div>
+          <h1 class="article-hero__title">Từ cổng logic đến RTL: Tư duy mô tả phần cứng</h1>
+          <div class="article-hero__meta">6 tháng 7, 2026 · 25 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div>
+            <h2>1. Bốn mức trừu tượng thiết kế vi mạch</h2>
+            <p>
+              Khi thiết kế một vi mạch, kỹ sư không viết code từng transistor. Thay vào đó, họ làm việc ở các <strong>mức trừu tượng khác nhau</strong>, từ cơ bản nhất (transistor cứng) đến cao nhất (mô tả hành vi toán học):
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Mức</th>
+                  <th>Tên gọi</th>
+                  <th>Mô tả</th>
+                  <th>Ví dụ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>1</strong></td>
+                  <td><abbr title="Transistor Level">Transistor</abbr></td>
+                  <td>Viết điều kiện dẫn (conductivity) từng transistor NMOS/PMOS. Tính toán độ rộng/dài (W/L ratio) để điều chỉnh dòng.</td>
+                  <td><code>NMOS with W=2µm, L=100nm</code></td>
+                </tr>
+                <tr>
+                  <td><strong>2</strong></td>
+                  <td><abbr title="Gate-level or Structural">Gate / Cổng Logic</abbr></td>
+                  <td>Ghép nối các cổng logic (AND, OR, XOR, FF). Bao gồm thông số dây nối và transistor tuning từ mức trước.</td>
+                  <td>Mux 2-1: <code>y = (s) ? a : b</code> = 1 XOR + 2 AND + 1 OR</td>
+                </tr>
+                <tr>
+                  <td><strong>3</strong></td>
+                  <td><abbr title="Register-Transfer Level">RTL</abbr></td>
+                  <td>Mô tả sự chuyển tiếp dữ liệu giữa các thanh ghi (registers) qua logic tổ hợp (combinational). Code HDL (Verilog, SystemVerilog, VHDL).</td>
+                  <td><code>always_ff @(posedge clk) result <= data_in;</code></td>
+                </tr>
+                <tr>
+                  <td><strong>4</strong></td>
+                  <td><abbr title="Behavioral or System-level">Behavioral / Hệ thống</abbr></td>
+                  <td>Mô tả hành vi toàn chuỗi (pipeline, state machine, protocol). Tương đương với mô hình toán học cao cấp (SystemC, Chisel).</td>
+                  <td><code>output = FFT(input)</code> (mô tả chiều cao, không chi tiết)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Các mức này được gọi là <strong>"hierarchical design"</strong> — mỗi mức phục vụ một mục đích:
+            </p>
+            <ul>
+              <li><strong>Transistor</strong>: Tối ưu hóa tiêu thụ điện, tốc độ, diện tích ở mức chi tiết nhất (công việc của layout designer).</li>
+              <li><strong>Gate</strong>: Kiến trúc cơ bản của các module (công việc của digital designer).</li>
+              <li><strong>RTL</strong>: Thiết kế chính (công việc của RTL designer) — <strong>phần bạn sẽ học ở series này</strong>.</li>
+              <li><strong>Behavioral</strong>: Kiểm chứng (verification) và mô hình hoá hệ thống (system modeling).</li>
+            </ul>
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="/blog/electronics/electronics-digital-logic">Series 10 Bài 12 (Cổng Logic)</a> + <a href="/blog/electronics/electronics-sequential-storage">Bài 13 (Mạch tuần tự, Flip-Flop)</a>.
+                <br><strong>Nên có:</strong> <a href="/blog/electronics/electronics-sequential-storage">Series 10 Bài 13 (Timing: setup/hold)</a>.
+                <br><strong>Tài nguyên ngoài:</strong> <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">HDLBits</a>, <a href="https://www.chipverify.com" target="_blank" rel="noopener noreferrer">ChipVerify</a>, <a href="https://www.edaplayground.com" target="_blank" rel="noopener noreferrer">EDA Playground</a>.
+              </div>
+            </div>
+
+            <h2>2. HDL khác lập trình lập trình thế nào?</h2>
+            <p>
+              Đây là <strong>hiểu nhầm số 1</strong> của lập trình viên khi chuyển sang HDL: "Ồ, Verilog là ngôn ngữ lập trình, tôi viết code như C, chạy từ trên xuống dưới". <strong>Sai!</strong>
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: HDL là mô tả phần cứng song song, không tuần tự</div>
+              <div class="callout__content">
+                <strong>Lập trình (C/Python):</strong>
+                <pre><code class="language-c">int x = 5;
+x = x + 10;  // Thực thi từng dòng, x lúc này = 15
+printf("%d", x);
+</code></pre>
+                <strong>HDL (Verilog):</strong>
+                <pre><code class="language-verilog">assign y = a + b;  // Đây KHÔNG phải "câu lệnh" tuần tự
+always_comb z = x & y;  // Cả hai lệnh chạy ĐỒNG THỜI, không theo thứ tự
+</code></pre>
+                Cả <code>assign</code> và <code>always_comb</code> <strong>chạy cùng lúc</strong>, y và z cập nhật tức thời khi a, b, hoặc x thay đổi. Nếu bạn viết code như Python, trình tổng hợp (synthesis tool) sẽ tạo ra phần cứng <strong>sai hoàn toàn</strong>.
+              </div>
+            </div>
+
+            <p>
+              <strong>Sự khác biệt cốt lõi:</strong>
+            </p>
+            <ul>
+              <li><strong>Lập trình:</strong> "Làm cái này rồi làm cái kia" (tuần tự, serial)</li>
+              <li><strong>HDL:</strong> "Tất cả cái này chạy cùng lúc, kết nối với nhau" (song song, parallel)</li>
+            </ul>
+
+            <h2>3. Design Flow: RTL → GDSII</h2>
+            <p>
+              Khi bạn viết code RTL, nó không phải là "chương trình chạy trên máy tính". Nó là <strong>bản thiết kế</strong> mà công cụ EDA (Electronic Design Automation) sẽ chuyển đổi thành <strong>sơ đồ mạch thực tế</strong> (bản vẽ chip).
+            </p>
+
+            <p>
+              Toàn bộ quy trình được gọi là <strong>Design Flow</strong>:
+            </p>
+
+            <ol>
+              <li><strong>RTL Code</strong>: Viết Verilog/SystemVerilog/VHDL mô tả phần cứng ở mức RTL.</li>
+              <li><strong>Simulation</strong>: Dùng simulator (Modelsim, VCS) kiểm chứng logic hoạt động đúng (testbench).</li>
+              <li><strong>Synthesis</strong>: Tool (Yosys, Design Compiler) chuyển RTL → netlist cổng logic (gate-level netlist).</li>
+              <li><strong>Place &amp; Route</strong>: Tool (Cadence Innovus, nextpnr) đặt cổng trên die và dây nối tối ưu → layout.</li>
+              <li><strong>DRC/LVS</strong>: Kiểm tra thiết kế vật lý tuân thủ quy tắc (Design Rule Check, Layout vs Schematic).</li>
+              <li><strong>GDS II Generation</strong>: Tạo file bản vẽ cuối cùng (GDSII) gửi tới nhà máy (fab) để in chip.</li>
+            </ol>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Lưu ý</div>
+              <div class="callout__content">
+                Ở series này, chúng ta tập trung vào bước <strong>1–3 (RTL → Synthesis)</strong>. Các bước 4–6 (Physical Design, GDS) sẽ được giới thiệu nhưng không đi sâu (vì đó là công việc của Physical Design Engineer, không phải RTL Designer).
+              </div>
+            </div>
+
+            <h2>4. Verilog vs SystemVerilog vs VHDL vs Chisel vs HLS</h2>
+            <p>
+              Có nhiều ngôn ngữ HDL khác nhau. Series này chọn <strong>SystemVerilog</strong> vì sao?
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Ngôn ngữ</th>
+                  <th>Xuất xứ</th>
+                  <th>Đặc điểm</th>
+                  <th>Phổ biến ở</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Verilog (1984)</strong></td>
+                  <td>Cadence Design Systems</td>
+                  <td>Đơn giản, giống C, cũ. Ít tính năng verification.</td>
+                  <td>Dự án cũ, FPGA hobbist</td>
+                </tr>
+                <tr>
+                  <td><strong>SystemVerilog (2005)</strong></td>
+                  <td>IEEE 1800-2017. Superset của Verilog.</td>
+                  <td>Thêm assertion (SVA), testbench OOP, constraint random. Chuẩn công nghiệp.</td>
+                  <td><strong>ASIC design, verification</strong> ✓</td>
+                </tr>
+                <tr>
+                  <td><strong>VHDL (1987)</strong></td>
+                  <td>VHSIC (Quốc phòng Mỹ)</td>
+                  <td>Dài dòng, ada-like syntax, mạnh verification. Ít phổ biến ở công nghiệp hiện đại.</td>
+                  <td>Aerospace, quốc phòng</td>
+                </tr>
+                <tr>
+                  <td><strong>Chisel (2012)</strong></td>
+                  <td>UC Berkeley</td>
+                  <td>HDL sinh ra từ Scala (JVM). Giảm bớt boilerplate code.</td>
+                  <td>Startup, RISC-V design</td>
+                </tr>
+                <tr>
+                  <td><strong>HLS (High-Level Synthesis)</strong></td>
+                  <td>Catapult, Vivado HLS (Xilinx)</td>
+                  <td>Viết C/C++ → tự sinh Verilog. Nhanh prototype nhưng kết quả tối ưu kém.</td>
+                  <td>Mẫu nhanh, xử lý tín hiệu</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              <strong>Series này dạy SystemVerilog</strong> vì:
+            </p>
+            <ul>
+              <li>✅ Chuẩn công nghiệp ASIC/FPGA hiện tại</li>
+              <li>✅ Cú pháp gần C → dễ tiếp cận lập trình viên</li>
+              <li>✅ Mạnh verification (SVA, constraint)</li>
+              <li>✅ Mỗi bài sẽ note cú pháp Verilog cũ tương đương → đọc được code legacy</li>
+            </ul>
+
+            <h2>5. Ví dụ: Mux 2-1 viết 3 kiểu</h2>
+            <p>
+              Cùng một mạch logic đơn giản (Mux 2-1: chọn a hoặc b tùy theo selector s) có thể viết bằng 3 kiểu RTL khác nhau, nhưng tất cả khi synthesis sẽ ra <strong>cùng một netlist cổng logic</strong>.
+            </p>
+
+            <h3>Kiểu 1: Structural (ghép nối cổng logic)</h3>
+            <pre><code class="language-verilog">module mux2_1_structural (
+  input a, b, s,
+  output y
+);
+  wire not_s, and_a, and_b;
+
+  not NOT_GATE (not_s, s);
+  and AND_A (and_a, a, not_s);
+  and AND_B (and_b, b, s);
+  or OR_GATE (y, and_a, and_b);
+endmodule
+</code></pre>
+            <p><strong>Style:</strong> Liệt kê từng cổng AND, OR, NOT như bản thiết kế vật lý. Bạn thấy đúng những cổng nào được dùng.</p>
+
+            <h3>Kiểu 2: Dataflow (viết công thức Boolean)</h3>
+            <pre><code class="language-verilog">module mux2_1_dataflow (
+  input a, b, s,
+  output y
+);
+  assign y = (a & ~s) | (b & s);
+endmodule
+</code></pre>
+            <p><strong>Style:</strong> Ghi công thức Boolean trực tiếp. Trình synthesis tự phân tích và tạo cổng.</p>
+
+            <h3>Kiểu 3: Behavioral (viết điều kiện if-else)</h3>
+            <pre><code class="language-verilog">module mux2_1_behavioral (
+  input a, b, s,
+  output reg y
+);
+  always @(a, b, s) begin
+    if (s == 0)
+      y = a;
+    else
+      y = b;
+  end
+endmodule
+</code></pre>
+            <p><strong>Style:</strong> Viết như lập trình, trình synthesis sẽ suy ra đó là multiplexer. Dễ đọc, code sạch nhất.</p>
+
+            <p>
+              <strong>Khi synthesis, tất cả 3 kiểu đều ra netlist giống nhau:</strong>
+            </p>
+            <pre><code class="language-plaintext">1 XOR gate + 2 AND gate + 1 OR gate
+(vì y = (a & ~s) | (b & s) tương đương s ? b : a)
+</code></pre>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: Tại sao 3 kiểu khác nhau?</div>
+              <div class="callout__content">
+                <ul>
+                  <li><strong>Structural:</strong> Dùng khi bạn <strong>biết chính xác</strong> cổng nào cần (tối ưu điện năng, diện tích). Khó bảo trì (thay đổi logic = viết lại tất cả).</li>
+                  <li><strong>Dataflow:</strong> Cân bằng giữa rõ ràng và linh hoạt. Thường được dùng ở phần tổ hợp (combinational).</li>
+                  <li><strong>Behavioral:</strong> Dễ viết, dễ hiểu, dễ bảo trì. Trình synthesis phải "suy ra" từng cổng. Thường dùng ở phần tuần tự (sequential).</li>
+                </ul>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <p>
+              Bài này giới thiệu <strong>tư duy chuyển đổi từ cổng logic sang RTL</strong>:
+            </p>
+            <ul>
+              <li>✅ HDL là <strong>mô tả phần cứng song song</strong>, không phải lập trình tuần tự.</li>
+              <li>✅ Design flow: RTL → Simulation → Synthesis → P&amp;R → GDSII (chúng ta tập trung RTL đến Synthesis).</li>
+              <li>✅ SystemVerilog là chuẩn công nghiệp hiện tại.</li>
+              <li>✅ Cùng một mạch có thể viết 3 kiểu (structural, dataflow, behavioral), synthesis ra netlist giống nhau.</li>
+            </ul>
+
+            <p>
+              <strong>Bài tiếp theo</strong> sẽ bắt đầu viết code SystemVerilog tổ hợp (combinational) thực tế trên <strong>RTL Playground</strong> — một trình mô phỏng tương tác giúp bạn thấy code → netlist → waveform theo thời gian thực.
+            </p>
+
+            <!-- Article navigation -->
+            <div class="article-related">
+              <a href="vlsi-combinational-logic" class="article-related__next">
+                <span>Bài tiếp theo →</span>
+                <strong>Bài 2: SystemVerilog tổ hợp (Combinational Logic)</strong>
+              </a>
+            </div>
+
+            <!-- Giscus Comments section -->
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="/blog/" class="footer-link">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; opacity: 0.6">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+  </body>
+</html>
