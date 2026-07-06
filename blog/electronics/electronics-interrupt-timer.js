@@ -187,30 +187,56 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // 3. Process Interrupt Flag (EIFR)
+    // 3. Process Interrupt Flag (EIFR) & ISR Stepping Animation
     if (eifr === 1 && !isInsideISR) {
       isInsideISR = true;
       isrFrameCount = 0;
-      eifr = 0; // Clear interrupt flag
-
-      // Shift mode
-      mcuMode = (mcuMode + 1) % 4;
-
-      // Update OCR0A register value according to mode
-      if (mcuMode === 0) {
-        ocr0a = 0;
-      } else if (mcuMode === 1) {
-        ocr0a = 64; // 25% Duty
-      } else if (mcuMode === 2) {
-        ocr0a = 191; // 75% Duty
-      } else if (mcuMode === 3) {
-        ocr0a = 255; // 1Hz blink mode starting state
-        blinkState = true;
-      }
     }
 
+    if (isInsideISR) {
+      isrFrameCount++;
+      if (isrFrameCount < 15) {
+        // Step 1: Jump to ISR definition
+        currentCodeLine = 4;
+      } else if (isrFrameCount < 35) {
+        // Step 2: Change PWM mode
+        currentCodeLine = 5;
+        if (isrFrameCount === 15) {
+          // Execute mode shift and update OCR0A register
+          mcuMode = (mcuMode + 1) % 4;
+          if (mcuMode === 0) {
+            ocr0a = 0;
+          } else if (mcuMode === 1) {
+            ocr0a = 64; // 25% Duty
+          } else if (mcuMode === 2) {
+            ocr0a = 191; // 75% Duty
+          } else if (mcuMode === 3) {
+            ocr0a = 255; // 1Hz blink mode starting state
+            blinkState = true;
+            blinkTimer = 0;
+          }
+        }
+      } else if (isrFrameCount < 50) {
+        // Step 3: Clear EIFR interrupt flag
+        currentCodeLine = 6;
+        if (isrFrameCount === 35) {
+          eifr = 0; // Clear the interrupt register flag
+        }
+      } else if (isrFrameCount < 60) {
+        // Step 4: Exit ISR
+        currentCodeLine = 7;
+      } else {
+        // End of ISR: return to main loop
+        isInsideISR = false;
+        currentCodeLine = 2;
+      }
+    } else {
+      currentCodeLine = 2;
+    }
+    highlightCodeLine(currentCodeLine);
+
     // 4. Handle Mode 3 (Blinking via simulated timer interrupt)
-    if (mcuMode === 3) {
+    if (mcuMode === 3 && !isInsideISR) {
       blinkTimer++;
       if (blinkTimer >= 30) {
         // Toggle every 30 frames (approx 500ms)
@@ -219,20 +245,6 @@ document.addEventListener('DOMContentLoaded', () => {
         blinkTimer = 0;
       }
     }
-
-    // 5. Handle code line highlighting jump to ISR
-    if (isInsideISR) {
-      currentCodeLine = 5; // highlight line 5 inside ISR
-      isrFrameCount++;
-      if (isrFrameCount > 20) {
-        // stay inside ISR for 20 frames
-        isInsideISR = false;
-        currentCodeLine = 2; // return to while(1) loop
-      }
-    } else {
-      currentCodeLine = 2;
-    }
-    highlightCodeLine(currentCodeLine);
 
     // 6. Update visual loads (LED intensity)
     let dutyPct = 0;
