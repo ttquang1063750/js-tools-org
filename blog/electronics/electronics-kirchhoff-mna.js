@@ -20,21 +20,27 @@ document.addEventListener('DOMContentLoaded', () => {
   const outIv = document.getElementById('out-iv');
 
   const matrixA = [
-    document.getElementById('mat-a00'), document.getElementById('mat-a01'), document.getElementById('mat-a02'),
-    document.getElementById('mat-a10'), document.getElementById('mat-a11'), document.getElementById('mat-a12'),
-    document.getElementById('mat-a20'), document.getElementById('mat-a21'), document.getElementById('mat-a22')
+    document.getElementById('mat-a00'),
+    document.getElementById('mat-a01'),
+    document.getElementById('mat-a02'),
+    document.getElementById('mat-a10'),
+    document.getElementById('mat-a11'),
+    document.getElementById('mat-a12'),
+    document.getElementById('mat-a20'),
+    document.getElementById('mat-a21'),
+    document.getElementById('mat-a22'),
   ];
   const matrixB = [
     document.getElementById('mat-b0'),
     document.getElementById('mat-b1'),
-    document.getElementById('mat-b2')
+    document.getElementById('mat-b2'),
   ];
 
   // Gauss Elimination Solver
   function solveGauss(A, B) {
     const n = B.length;
     let x = new Array(n).fill(0);
-    
+
     // Copy matrix to avoid mutating original
     let mat = [];
     for (let i = 0; i < n; i++) {
@@ -108,7 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const A = [
       [g1, -g1, -1],
       [-g1, g1 + g2 + g3, 0],
-      [1, 0, 0]
+      [1, 0, 0],
     ];
     const B = [0, 0, Vs];
 
@@ -141,7 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Update Output
     outV1.textContent = V1.toFixed(3);
     outV2.textContent = V2.toFixed(3);
-    
+
     // Convert Iv to mA for better readability if small
     let ivDisplay = Iv.toFixed(3) + ' A';
     if (Math.abs(Iv) < 1) {

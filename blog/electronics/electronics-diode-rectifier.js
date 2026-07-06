@@ -4,32 +4,32 @@ document.addEventListener('DOMContentLoaded', () => {
   const sliderVin = document.getElementById('slider-vin');
   const sliderCap = document.getElementById('slider-cap');
   const sliderIload = document.getElementById('slider-iload');
-  
+
   const labelVin = document.getElementById('label-vin');
   const labelCap = document.getElementById('label-cap');
   const labelIload = document.getElementById('label-iload');
-  
+
   const valVpeak = document.getElementById('val-vpeak');
   const valVripple = document.getElementById('val-vripple');
   const valTemp = document.getElementById('val-temp');
   const valVout = document.getElementById('val-vout');
-  
+
   const groupCap = document.getElementById('group-cap');
   const rowRipple = document.getElementById('row-ripple');
   const rowTemp = document.getElementById('row-temp');
   const legendVrect = document.getElementById('legend-vrect');
-  
+
   const svgComponents = document.getElementById('svg-components');
   const canvasWave = document.getElementById('rectifier-wave');
   const ctxWave = canvasWave.getContext('2d');
-  
+
   // State
   let mode = selectMode.value;
   let VinRMS = parseFloat(sliderVin.value);
   let Cap = parseFloat(sliderCap.value); // uF
   let Iload = parseFloat(sliderIload.value) / 1000; // A
   let time = 0;
-  
+
   function resizeCanvas() {
     canvasWave.width = canvasWave.parentElement.clientWidth;
     canvasWave.height = 140;
@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Draw SVG Components dynamically
   function updateSVG() {
     let html = '';
-    
+
     // Mode-specific components
     if (mode === 'halfwave') {
       // 1 Diode in series (x: 100 to 140)
@@ -54,16 +54,15 @@ document.addEventListener('DOMContentLoaded', () => {
       html += '<line x1="150" y1="40" x2="330" y2="40" stroke="#89b4fa" stroke-width="2" />';
       // Label
       html += '<text x="140" y="20" fill="#a6e3a1" font-size="11" text-anchor="middle">D1</text>';
-    } 
-    else if (mode === 'bridge') {
+    } else if (mode === 'bridge') {
       // Bridge Rectifier (4 diodes in a diamond)
       // AC wires to bridge
       html += '<line x1="30" y1="40" x2="100" y2="70" stroke="#fab387" stroke-width="2" />';
       html += '<line x1="30" y1="140" x2="160" y2="70" stroke="#585b70" stroke-width="2" />';
-      
+
       // Bridge wires (diamond)
       html += '<path d="M 130 40 L 100 70 L 130 100 L 160 70 Z" fill="none" stroke="#585b70" stroke-width="1.5" />';
-      
+
       // Helper to generate a diode symbol rotated
       const diode = (x, y, angle) => `
         <g transform="translate(${x}, ${y}) rotate(${angle})">
@@ -71,29 +70,28 @@ document.addEventListener('DOMContentLoaded', () => {
           <line x1="4" y1="-5" x2="4" y2="5" stroke="#a6e3a1" stroke-width="2" />
         </g>
       `;
-      
+
       // Place diodes on the 4 branches
       html += diode(115, 85, 225); // Bottom to Left
       html += diode(145, 85, 315); // Bottom to Right
       html += diode(115, 55, 315); // Left to Top
       html += diode(145, 55, 225); // Right to Top
-      
+
       // Output wire from Top (130, 40) to load
       html += '<line x1="130" y1="40" x2="330" y2="40" stroke="#89b4fa" stroke-width="2" />';
       // Ground connection from bottom (130, 100) to ground line
       html += '<line x1="130" y1="100" x2="130" y2="140" stroke="#585b70" stroke-width="2" />';
-      
+
       html += '<text x="130" y="25" fill="#a6e3a1" font-size="11" text-anchor="middle">Bridge</text>';
-    }
-    else if (mode === 'filter') {
+    } else if (mode === 'filter') {
       // Bridge + Capacitor in parallel
       // AC wires to bridge
       html += '<line x1="30" y1="40" x2="100" y2="70" stroke="#fab387" stroke-width="2" />';
       html += '<line x1="30" y1="140" x2="160" y2="70" stroke="#585b70" stroke-width="2" />';
-      
+
       // Bridge wires (diamond)
       html += '<path d="M 130 40 L 100 70 L 130 100 L 160 70 Z" fill="none" stroke="#585b70" stroke-width="1.5" />';
-      
+
       // Helper to generate a diode symbol rotated
       const diode = (x, y, angle) => `
         <g transform="translate(${x}, ${y}) rotate(${angle})">
@@ -101,20 +99,20 @@ document.addEventListener('DOMContentLoaded', () => {
           <line x1="4" y1="-5" x2="4" y2="5" stroke="#a6e3a1" stroke-width="2" />
         </g>
       `;
-      
+
       // Place diodes on the 4 branches
       html += diode(115, 85, 225);
       html += diode(145, 85, 315);
       html += diode(115, 55, 315);
       html += diode(145, 55, 225);
-      
+
       // Output wire from Top (130, 40)
       html += '<line x1="130" y1="40" x2="330" y2="40" stroke="#89b4fa" stroke-width="2" />';
       // Ground connection from bottom (130, 100) to ground line
       html += '<line x1="130" y1="100" x2="130" y2="140" stroke="#585b70" stroke-width="2" />';
-      
+
       html += '<text x="130" y="25" fill="#a6e3a1" font-size="11" text-anchor="middle">Bridge</text>';
-      
+
       // Capacitor (x = 230)
       // Positive plate (top)
       html += '<line x1="230" y1="40" x2="230" y2="75" stroke="#a6e3a1" stroke-width="2" />';
@@ -122,21 +120,20 @@ document.addEventListener('DOMContentLoaded', () => {
       // Negative plate (bottom)
       html += '<rect x="220" y="85" width="20" height="4" fill="#cdd6f4" />';
       html += '<line x1="230" y1="89" x2="230" y2="140" stroke="#585b70" stroke-width="2" />';
-      
+
       // Labels
       html += '<text x="250" y="75" fill="#a6e3a1" font-size="12" font-weight="bold">+</text>';
       html += '<text x="250" y="95" fill="#cdd6f4" font-size="12">-</text>';
       html += '<text x="230" y="60" fill="#a6e3a1" font-size="11" text-anchor="middle">C</text>';
-    }
-    else if (mode === 'regulator') {
+    } else if (mode === 'regulator') {
       // Bridge + Capacitor + 7805 IC
       // AC wires to bridge
       html += '<line x1="30" y1="40" x2="100" y2="70" stroke="#fab387" stroke-width="2" />';
       html += '<line x1="30" y1="140" x2="160" y2="70" stroke="#585b70" stroke-width="2" />';
-      
+
       // Bridge wires (diamond)
       html += '<path d="M 130 40 L 100 70 L 130 100 L 160 70 Z" fill="none" stroke="#585b70" stroke-width="1.5" />';
-      
+
       // Helper to generate a diode symbol rotated
       const diode = (x, y, angle) => `
         <g transform="translate(${x}, ${y}) rotate(${angle})">
@@ -144,31 +141,32 @@ document.addEventListener('DOMContentLoaded', () => {
           <line x1="4" y1="-5" x2="4" y2="5" stroke="#a6e3a1" stroke-width="2" />
         </g>
       `;
-      
+
       // Place diodes
       html += diode(115, 85, 225);
       html += diode(145, 85, 315);
       html += diode(115, 55, 315);
       html += diode(145, 55, 225);
-      
+
       // Capacitor C (x = 180)
       html += '<line x1="180" y1="40" x2="180" y2="75" stroke="#a6e3a1" stroke-width="2" />';
       html += '<rect x="170" y="75" width="20" height="4" fill="#a6e3a1" />';
       html += '<rect x="170" y="85" width="20" height="4" fill="#cdd6f4" />';
       html += '<line x1="180" y1="89" x2="180" y2="140" stroke="#585b70" stroke-width="2" />';
-      
+
       // Wire from bridge output (Top 130,40) to Cap and 7805 Vin
       html += '<line x1="130" y1="40" x2="230" y2="40" stroke="#fab387" stroke-width="2" />';
       // Ground connection from bottom (130, 100) to ground line
       html += '<line x1="130" y1="100" x2="130" y2="140" stroke="#585b70" stroke-width="2" />';
-      
+
       // 7805 IC (x = 230 to 270, y = 30 to 60)
-      html += '<rect x="230" y="25" width="40" height="30" fill="#313244" stroke="#cdd6f4" stroke-width="1.5" rx="3" />';
+      html +=
+        '<rect x="230" y="25" width="40" height="30" fill="#313244" stroke="#cdd6f4" stroke-width="1.5" rx="3" />';
       html += '<text x="250" y="44" fill="#cdd6f4" font-size="10" text-anchor="middle" font-weight="bold">7805</text>';
-      
+
       // GND connection (pin 2)
       html += '<line x1="250" y1="55" x2="250" y2="140" stroke="#585b70" stroke-width="2" />';
-      
+
       // Output wire from pin 3 (Vout) to Load
       html += '<line x1="270" y1="40" x2="330" y2="40" stroke="#89b4fa" stroke-width="2" />';
     }
@@ -182,14 +180,14 @@ document.addEventListener('DOMContentLoaded', () => {
     VinRMS = parseFloat(sliderVin.value);
     Cap = parseFloat(sliderCap.value);
     Iload = parseFloat(sliderIload.value) / 1000;
-    
+
     labelVin.textContent = `${VinRMS} V`;
     labelCap.textContent = `${Cap} uF`;
     labelIload.textContent = `${sliderIload.value} mA`;
-    
+
     const Vpeak = VinRMS * Math.sqrt(2);
     valVpeak.textContent = `${Vpeak.toFixed(1)} V`;
-    
+
     // Show/hide controls based on mode
     if (mode === 'halfwave' || mode === 'bridge') {
       groupCap.style.display = 'none';
@@ -206,55 +204,52 @@ document.addEventListener('DOMContentLoaded', () => {
         rowTemp.style.display = 'none';
       }
     }
-    
+
     // Calculations for Vout and Ripple
     let VrectPeak = 0;
     let Vripple = 0;
     let VoutAvg = 0;
-    
+
     if (mode === 'halfwave') {
       VrectPeak = Math.max(0, Vpeak - 0.7);
       VoutAvg = VrectPeak / Math.PI;
       valVout.textContent = `~${VoutAvg.toFixed(1)} V (xung)`;
-    } 
-    else if (mode === 'bridge') {
+    } else if (mode === 'bridge') {
       VrectPeak = Math.max(0, Vpeak - 1.4);
       VoutAvg = (2 * VrectPeak) / Math.PI;
       valVout.textContent = `~${VoutAvg.toFixed(1)} V (xung)`;
-    } 
-    else if (mode === 'filter') {
+    } else if (mode === 'filter') {
       VrectPeak = Math.max(0, Vpeak - 1.4);
       // Frequency of ripple is 100Hz for full-wave
       Vripple = Iload / (100 * (Cap * 1e-6));
       Vripple = Math.min(Vripple, VrectPeak); // Cap ripple cannot exceed peak
-      
+
       const Vmin = Math.max(0, VrectPeak - Vripple);
       VoutAvg = VrectPeak - Vripple / 2;
       valVripple.textContent = `${Vripple.toFixed(2)} V`;
       valVout.textContent = `~${VoutAvg.toFixed(1)} V DC`;
-    } 
-    else if (mode === 'regulator') {
+    } else if (mode === 'regulator') {
       VrectPeak = Math.max(0, Vpeak - 1.4);
       Vripple = Iload / (100 * (Cap * 1e-6));
       Vripple = Math.min(Vripple, VrectPeak);
       valVripple.textContent = `${Vripple.toFixed(2)} V`;
-      
+
       const Vmin = Math.max(0, VrectPeak - Vripple);
       const VinAvg = VrectPeak - Vripple / 2;
-      
+
       // Heat Calculation
       // Ploss = (VinAvg - Vout) * Iload
       let voutTemp = 5.0;
       let isOverheat = false;
-      
+
       if (Vmin < 7.0) {
         // Dropout
         voutTemp = Math.max(0, Vmin - 2.0);
       }
-      
+
       const Ploss = Math.max(0, (VinAvg - voutTemp) * Iload);
       const tempJunction = 25 + Ploss * 65; // TO-220 Rthja is 65 C/W
-      
+
       if (tempJunction >= 125) {
         isOverheat = true;
         valTemp.textContent = `${tempJunction.toFixed(0)}°C (QUÁ NHIỆT - TẮT NGUỒN!)`;
@@ -272,7 +267,7 @@ document.addEventListener('DOMContentLoaded', () => {
           valTemp.textContent = `${tempJunction.toFixed(0)}°C (Nóng - Cần tản nhiệt)`;
           valTemp.style.color = '#fab387';
         }
-        
+
         if (Vmin < 7.0) {
           valVout.textContent = `~${voutTemp.toFixed(1)} V (Sụt nguồn)`;
           valVout.style.color = '#f9e2af';
@@ -282,27 +277,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     }
-    
+
     updateSVG();
   }
 
   // Draw loop
   function drawLoop() {
     ctxWave.clearRect(0, 0, canvasWave.width, canvasWave.height);
-    
+
     const width = canvasWave.width;
     const height = canvasWave.height;
     const midY = height / 2;
-    
+
     const Vpeak = VinRMS * Math.sqrt(2);
     // Scale Y such that max voltage (e.g. 35V) fits
     const scaleY = (height / 2 - 15) / 35;
-    
+
     // Draw grid lines
     ctxWave.strokeStyle = '#313244';
     ctxWave.lineWidth = 1;
     ctxWave.beginPath();
-    ctxWave.moveTo(0, midY); ctxWave.lineTo(width, midY); // center
+    ctxWave.moveTo(0, midY);
+    ctxWave.lineTo(width, midY); // center
     ctxWave.stroke();
 
     // 1. Draw Vin (Orange)
@@ -320,8 +316,8 @@ document.addEventListener('DOMContentLoaded', () => {
     ctxWave.stroke();
 
     // 2. Draw Rectified/Capacitor Voltage (Yellow/Green)
-    const VrectPeak = (mode === 'halfwave') ? Math.max(0, Vpeak - 0.7) : Math.max(0, Vpeak - 1.4);
-    
+    const VrectPeak = mode === 'halfwave' ? Math.max(0, Vpeak - 0.7) : Math.max(0, Vpeak - 1.4);
+
     if (mode === 'halfwave') {
       ctxWave.strokeStyle = '#f9e2af';
       ctxWave.lineWidth = 2;
@@ -338,8 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else ctxWave.lineTo(x, y);
       }
       ctxWave.stroke();
-    }
-    else if (mode === 'bridge') {
+    } else if (mode === 'bridge') {
       ctxWave.strokeStyle = '#f9e2af';
       ctxWave.lineWidth = 2;
       ctxWave.beginPath();
@@ -352,8 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else ctxWave.lineTo(x, y);
       }
       ctxWave.stroke();
-    }
-    else if (mode === 'filter' || mode === 'regulator') {
+    } else if (mode === 'filter' || mode === 'regulator') {
       // Capacitor charging and discharging exponential curve
       // For drawing, we can simulate the capacitor voltage.
       // Every half-period of AC (pi / omega), the voltage peaks.
@@ -361,26 +355,26 @@ document.addEventListener('DOMContentLoaded', () => {
       ctxWave.strokeStyle = '#a6e3a1';
       ctxWave.lineWidth = 2;
       ctxWave.beginPath();
-      
+
       const omega = (Math.PI * 6) / width;
       const ripple = Iload / (100 * (Cap * 1e-6));
-      
+
       let lastCapY = 0;
       for (let x = 0; x < width; x++) {
         // Find phase in rectified wave (ranges from 0 to Pi)
         const phase = (omega * x - time) % Math.PI;
         const normalPhase = phase < 0 ? phase + Math.PI : phase;
-        
+
         // Rectified voltage at this point
         const vRect = Math.max(0, Vpeak * Math.sin(normalPhase) - 1.4);
-        
+
         // Approximate capacitor voltage:
         // Cap charges instantly when vRect > vCap
         // Otherwise it decays with RC constant (simulated here by linear/exponential decay)
         // Decays from VrectPeak down by 'ripple' voltage towards the end of half-cycle (normalPhase = Pi)
         const decayTimeFraction = normalPhase / Math.PI; // 0 to 1
         const vCap = Math.max(vRect, VrectPeak - ripple * decayTimeFraction);
-        
+
         const y = midY - vCap * scaleY;
         if (x === 0) ctxWave.moveTo(x, y);
         else ctxWave.lineTo(x, y);
@@ -392,16 +386,16 @@ document.addEventListener('DOMContentLoaded', () => {
     ctxWave.strokeStyle = '#89b4fa';
     ctxWave.lineWidth = 2.5;
     ctxWave.beginPath();
-    
+
     const ripple = Iload / (100 * (Cap * 1e-6));
     const Vmin = Math.max(0, VrectPeak - ripple);
     const VinAvg = VrectPeak - ripple / 2;
-    
+
     // Thermal check
     const Ploss = Math.max(0, (VinAvg - 5.0) * Iload);
     const tempJunction = 25 + Ploss * 65;
-    const isOverheat = (tempJunction >= 125);
-    
+    const isOverheat = tempJunction >= 125;
+
     if (mode === 'halfwave') {
       // Same as rectified for halfwave
       for (let x = 0; x < width; x++) {
@@ -415,8 +409,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (x === 0) ctxWave.moveTo(x, y);
         else ctxWave.lineTo(x, y);
       }
-    }
-    else if (mode === 'bridge') {
+    } else if (mode === 'bridge') {
       for (let x = 0; x < width; x++) {
         const omega = (Math.PI * 6) / width;
         const sinVal = Math.sin(omega * x - time);
@@ -425,8 +418,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (x === 0) ctxWave.moveTo(x, y);
         else ctxWave.lineTo(x, y);
       }
-    }
-    else if (mode === 'filter') {
+    } else if (mode === 'filter') {
       // Same as capacitor voltage
       for (let x = 0; x < width; x++) {
         const omega = (Math.PI * 6) / width;
@@ -439,8 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (x === 0) ctxWave.moveTo(x, y);
         else ctxWave.lineTo(x, y);
       }
-    }
-    else if (mode === 'regulator') {
+    } else if (mode === 'regulator') {
       if (isOverheat) {
         // Shutdown (0V)
         ctxWave.moveTo(0, midY);
@@ -454,12 +445,12 @@ document.addEventListener('DOMContentLoaded', () => {
           const vRect = Math.max(0, Vpeak * Math.sin(normalPhase) - 1.4);
           const decayTimeFraction = normalPhase / Math.PI;
           const vCap = Math.max(vRect, VrectPeak - ripple * decayTimeFraction);
-          
+
           let vout = 5.0;
           if (vCap < 7.0) {
             vout = Math.max(0, vCap - 2.0); // Dropout tracking capacitor ripple minus 2V
           }
-          
+
           const y = midY - vout * scaleY;
           if (x === 0) ctxWave.moveTo(x, y);
           else ctxWave.lineTo(x, y);
@@ -467,7 +458,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
     ctxWave.stroke();
-    
+
     time += 0.03;
     requestAnimationFrame(drawLoop);
   }
@@ -477,7 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
   sliderVin.addEventListener('input', update);
   sliderCap.addEventListener('input', update);
   sliderIload.addEventListener('input', update);
-  
+
   // Initialize
   update();
   drawLoop();

@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnDischarge = document.getElementById('btn-discharge');
   const sliderR = document.getElementById('sim-r');
   const sliderC = document.getElementById('sim-c');
-  
+
   const valR = document.getElementById('val-r');
   const valC = document.getElementById('val-c');
   const valTau = document.getElementById('val-tau');
@@ -16,8 +16,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let state = 'discharge'; // 'charge' or 'discharge'
   let R = 10; // kOhm
   let C = 100; // µF
-  let tau = R * C / 1000; // in seconds
-  
+  let tau = (R * C) / 1000; // in seconds
+
   // Simulation variables
   let t = 0; // Current time in seconds
   let dt = 0.05; // Time step
@@ -32,10 +32,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateValues() {
     R = parseFloat(sliderR.value); // kOhm
     C = parseFloat(sliderC.value); // µF
-    
+
     valR.textContent = `${R} kΩ`;
     valC.textContent = `${C} µF`;
-    
+
     // tau = R (kOhm) * C (uF) = R*1e3 * C*1e-6 = R*C*1e-3 seconds
     tau = (R * C) / 1000;
     valTau.textContent = `${tau.toFixed(2)} s`;
@@ -58,18 +58,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function drawGrid() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    
+
     // Vertical lines (Time)
     for (let i = 0; i <= 10; i++) {
       let x = (i / 10) * canvas.width;
       ctx.moveTo(x, 0);
       ctx.lineTo(x, canvas.height);
     }
-    
+
     // Horizontal lines (Voltage)
     for (let i = 0; i <= 5; i++) {
       let y = canvas.height - (i / 5) * canvas.height;
@@ -90,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function loop(now) {
     if (!isRunning) return;
-    
+
     let deltaTime = (now - lastFrameTime) / 1000; // in real seconds
     lastFrameTime = now;
 
@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 1 real second = 1 simulation second.
     if (t < maxTime) {
       t += deltaTime;
-      
+
       // Calculate exact voltage based on equation to avoid euler integration drift
       if (state === 'charge') {
         // v_c(t) = v_initial + (Vs - v_initial) * (1 - e^(-t/tau))
@@ -111,23 +111,23 @@ document.addEventListener('DOMContentLoaded', () => {
     // i = C * dv/dt => dv = (i/C) * dt
     // Charge: i = (Vs - Vc)/R
     // Discharge: i = -Vc/R
-    
+
     // Convert R to Ohms and C to Farads
     let R_ohms = R * 1000;
     let C_farads = C * 0.000001;
 
     let steps = 10; // multi-step for stability
     let dt_sim = deltaTime / steps;
-    
-    for(let i=0; i<steps; i++) {
-        let current;
-        if (state === 'charge') {
-            current = (Vs - Vc) / R_ohms;
-        } else {
-            current = -Vc / R_ohms;
-        }
-        let dV = (current / C_farads) * dt_sim;
-        Vc += dV;
+
+    for (let i = 0; i < steps; i++) {
+      let current;
+      if (state === 'charge') {
+        current = (Vs - Vc) / R_ohms;
+      } else {
+        current = -Vc / R_ohms;
+      }
+      let dV = (current / C_farads) * dt_sim;
+      Vc += dV;
     }
 
     // Cap values
@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Actually, let's make it a scrolling oscilloscope
     history.push(Vc);
     if (history.length > canvas.width) {
-        history.shift();
+      history.shift();
     }
 
     drawGrid();

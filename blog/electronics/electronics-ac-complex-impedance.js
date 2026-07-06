@@ -46,9 +46,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  btnR.addEventListener('click', () => { mode = 'R'; updateMode(); });
-  btnC.addEventListener('click', () => { mode = 'C'; updateMode(); });
-  btnL.addEventListener('click', () => { mode = 'L'; updateMode(); });
+  btnR.addEventListener('click', () => {
+    mode = 'R';
+    updateMode();
+  });
+  btnC.addEventListener('click', () => {
+    mode = 'C';
+    updateMode();
+  });
+  btnL.addEventListener('click', () => {
+    mode = 'L';
+    updateMode();
+  });
 
   function drawArrow(ctx, fromX, fromY, toX, toY, color) {
     const headlen = 10;
@@ -95,8 +104,10 @@ document.addEventListener('DOMContentLoaded', () => {
     ctxPhasor.strokeStyle = 'rgba(255, 255, 255, 0.1)';
     ctxPhasor.lineWidth = 1;
     ctxPhasor.beginPath();
-    ctxPhasor.moveTo(0, cy); ctxPhasor.lineTo(canvasPhasor.width, cy);
-    ctxPhasor.moveTo(cx, 0); ctxPhasor.lineTo(cx, canvasPhasor.height);
+    ctxPhasor.moveTo(0, cy);
+    ctxPhasor.lineTo(canvasPhasor.width, cy);
+    ctxPhasor.moveTo(cx, 0);
+    ctxPhasor.lineTo(cx, canvasPhasor.height);
     ctxPhasor.stroke();
     ctxPhasor.fillStyle = 'rgba(255, 255, 255, 0.3)';
     ctxPhasor.font = '12px monospace';
@@ -121,13 +132,14 @@ document.addEventListener('DOMContentLoaded', () => {
     ctxWave.strokeStyle = 'rgba(255, 255, 255, 0.1)';
     ctxWave.lineWidth = 1;
     ctxWave.beginPath();
-    ctxWave.moveTo(0, wy); ctxWave.lineTo(canvasWave.width, wy);
+    ctxWave.moveTo(0, wy);
+    ctxWave.lineTo(canvasWave.width, wy);
     ctxWave.stroke();
 
     // Record history
     waveHistory.push({
       v: -Vm * Math.sin(time),
-      i: -Im * Math.sin(time + phaseShift)
+      i: -Im * Math.sin(time + phaseShift),
     });
     if (waveHistory.length > canvasWave.width) {
       waveHistory.shift();

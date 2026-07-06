@@ -49,18 +49,18 @@ function checkQuiz(optionBtn, isCorrect, explanation) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
   const submitBtns = document.querySelectorAll('.quiz-submit');
-  submitBtns.forEach(btn => {
+  submitBtns.forEach((btn) => {
     // If it uses the old onclick method, skip
     if (btn.hasAttribute('onclick')) return;
 
-    btn.addEventListener('click', function() {
+    btn.addEventListener('click', function () {
       const container = this.closest('.quiz-container');
       const questions = container.querySelectorAll('.quiz-question');
       let allAnswered = true;
 
-      questions.forEach(q => {
+      questions.forEach((q) => {
         const selected = q.querySelector('input[type="radio"]:checked');
         if (!selected) allAnswered = false;
       });
@@ -70,15 +70,15 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
 
-      questions.forEach(q => {
+      questions.forEach((q) => {
         const correctVal = q.getAttribute('data-answer');
         const selected = q.querySelector('input[type="radio"]:checked');
         const explanation = q.querySelector('.quiz-explanation');
-        
+
         if (explanation) {
           explanation.style.display = 'block';
         }
-        
+
         if (selected) {
           if (selected.value === correctVal) {
             selected.parentElement.style.color = '#a6e3a1'; // Green
@@ -88,19 +88,19 @@ document.addEventListener('DOMContentLoaded', function() {
             selected.parentElement.style.textDecoration = 'line-through';
           }
         }
-        
+
         // Highlight correct answer
         const correctInput = q.querySelector(`input[type="radio"][value="${correctVal}"]`);
         if (correctInput && correctInput !== selected) {
           correctInput.parentElement.style.color = '#a6e3a1';
           correctInput.parentElement.style.fontWeight = 'bold';
         }
-        
+
         // Disable inputs
         const inputs = q.querySelectorAll('input[type="radio"]');
-        inputs.forEach(input => input.disabled = true);
+        inputs.forEach((input) => (input.disabled = true));
       });
-      
+
       this.textContent = 'Đã kiểm tra';
       this.disabled = true;
       this.style.opacity = '0.7';
