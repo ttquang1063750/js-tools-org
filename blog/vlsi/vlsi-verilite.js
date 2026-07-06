@@ -1,9 +1,11 @@
 /**
  * VeriLite: Lightweight SystemVerilog Parser and Simulator
  * Uses regex-based parsing for robustness, no formal lexer/tokens.
- * Supports: module/port, logic/wire/reg declaration, assign (dataflow),
- * gate-primitive instantiation (not/and/or/xor/nand/nor/xnor/buf — structural),
- * and single-condition if/else inside always/always_comb (behavioral).
+ * Supports: module/port (kể cả vector [N:0]), logic/wire/reg declaration,
+ * assign (dataflow), gate-primitive instantiation (not/and/or/xor/nand/
+ * nor/xnor/buf — structural), if/else và case/endcase đơn giản bên trong
+ * always/always_comb (behavioral), số literal có kích thước kiểu Verilog
+ * (vd 4'b0000, 3'd5, 4'h1).
  */
 
 class VeriLiteParser {
@@ -16,7 +18,7 @@ class VeriLiteParser {
     const ports = this.extractPorts();
     const decls = this.extractDeclarations();
     const gates = this.extractGates();
-    const assigns = [...this.extractAssigns(), ...this.extractAlwaysAssigns()];
+    const assigns = [...this.extractAssigns(), ...this.extractAlwaysAssigns(), ...this.extractCaseAssigns()];
 
     return {
       name: moduleName,
@@ -36,7 +38,9 @@ class VeriLiteParser {
     const portMatch = this.code.match(/module\s+\w+\s*\((.*?)\)/s);
     if (!portMatch) return [];
 
-    const portStr = portMatch[1];
+    // Bỏ vector width [N:0] TRƯỚC khi tách từ, tránh bắt nhầm số bên trong
+    // ngoặc vuông (vd "3", "0" trong "[3:0]") thành tên tín hiệu.
+    const portStr = portMatch[1].replace(/\[[^\]]*\]/g, ' ');
     const ports = [];
     let match;
 
@@ -45,7 +49,7 @@ class VeriLiteParser {
       const word = match[1];
       if (['input', 'output', 'inout'].includes(word)) {
         direction = word;
-      } else if (!['logic', 'wire', 'reg', 'bit'].includes(word)) {
+      } else if (!['logic', 'wire', 'reg', 'bit', 'signed', 'unsigned'].includes(word)) {
         ports.push({ name: word, direction });
       }
     }
@@ -123,6 +127,60 @@ class VeriLiteParser {
     }
     return assigns;
   }
+
+  // case (sel) label1: lhs = expr1; label2: lhs = expr2; ... default: lhs = exprN; endcase
+  // Chuyển thành 1 chuỗi ternary lồng nhau tương đương:
+  // (sel==label1) ? (expr1) : (sel==label2) ? (expr2) : ... : (exprDefault)
+  extractCaseAssigns() {
+    const assigns = [];
+    const caseRegex = /case\s*\(([^)]+)\)([\s\S]*?)endcase/g;
+    let caseMatch;
+    while ((caseMatch = caseRegex.exec(this.code)) !== null) {
+      const selector = caseMatch[1].trim();
+      const body = caseMatch[2];
+
+      const itemRegex = /(default|[^\s:;]+)\s*:\s*(\w+)\s*=\s*([^;]+);/g;
+      let itemMatch;
+      let lhs = null;
+      const branches = [];
+      let defaultExpr = null;
+
+      while ((itemMatch = itemRegex.exec(body)) !== null) {
+        const label = itemMatch[1].trim();
+        lhs = itemMatch[2].trim();
+        const expr = itemMatch[3].trim();
+        if (label === 'default') {
+          defaultExpr = expr;
+        } else {
+          branches.push({ label, expr });
+        }
+      }
+
+      if (!lhs || branches.length === 0) continue;
+
+      let rhs = defaultExpr !== null ? `(${defaultExpr})` : '0';
+      for (let i = branches.length - 1; i >= 0; i--) {
+        const labelValue = this.parseVerilogLiteral(branches[i].label);
+        rhs = `(${selector} == ${labelValue}) ? (${branches[i].expr}) : ${rhs}`;
+      }
+      assigns.push({ lhs, rhs });
+    }
+    return assigns;
+  }
+
+  // Chuyển literal kiểu Verilog (4'b0000, 3'd5, 4'h1) thành số thập phân dạng chuỗi,
+  // để dùng lại được trong evalExpression (vốn chỉ hiểu số thập phân/0b/0x thuần).
+  parseVerilogLiteral(token) {
+    const sized = token.match(/^\d*'([bBoOdDhH])([0-9a-fA-Fxz_]+)$/);
+    if (sized) {
+      const base = sized[1].toLowerCase();
+      const digits = sized[2].replace(/_/g, '');
+      const radix = { b: 2, o: 8, d: 10, h: 16 }[base];
+      const value = parseInt(digits, radix);
+      return Number.isNaN(value) ? '0' : String(value);
+    }
+    return token;
+  }
 }
 
 class VeriSimulator {
@@ -167,6 +225,14 @@ class VeriSimulator {
     if (/^0b[01]+$/.test(expr)) return parseInt(expr.slice(2), 2);
     if (/^0x[0-9a-fA-F]+$/.test(expr)) return parseInt(expr, 16);
 
+    // Literal kích thước kiểu Verilog: 4'b0000, 3'd5, 4'h1
+    const sizedLiteral = expr.match(/^\d*'([bBoOdDhH])([0-9a-fA-Fxz_]+)$/);
+    if (sizedLiteral) {
+      const radix = { b: 2, o: 8, d: 10, h: 16 }[sizedLiteral[1].toLowerCase()];
+      const value = parseInt(sizedLiteral[2].replace(/_/g, ''), radix);
+      return Number.isNaN(value) ? 0 : value;
+    }
+
     // Identifiers
     if (/^\w+$/.test(expr)) return state[expr] !== undefined ? state[expr] : 0;
 
@@ -185,6 +251,8 @@ class VeriSimulator {
     }
 
     // Binary operators - process in order of precedence
+    // Chú ý: << và >> PHẢI kiểm tra trước <=/>=/</> — nếu không, regex 1 ký tự
+    // "<" sẽ khớp nhầm vào giữa "a << 1" và cắt biểu thức sai.
     const ops = [
       { regex: /(.+?)\s*\|\|\s*(.+)/, op: '||' },
       { regex: /(.+?)\s*&&\s*(.+)/, op: '&&' },
@@ -193,6 +261,8 @@ class VeriSimulator {
       { regex: /(.+?)\s*&\s*(.+)/, op: '&' },
       { regex: /(.+?)\s*==\s*(.+)/, op: '==' },
       { regex: /(.+?)\s*!=\s*(.+)/, op: '!=' },
+      { regex: /(.+?)\s*<<\s*(.+)/, op: '<<' },
+      { regex: /(.+?)\s*>>\s*(.+)/, op: '>>' },
       { regex: /(.+?)\s*<=\s*(.+)/, op: '<=' },
       { regex: /(.+?)\s*>=\s*(.+)/, op: '>=' },
       { regex: /(.+?)\s*<\s*(.+)/, op: '<' },
@@ -213,12 +283,13 @@ class VeriSimulator {
       }
     }
 
-    // Unary operators
+    // Unary operators — "!" là logical NOT (luôn ra 0/1), "~" là bitwise NOT
+    // (đảo từng bit, khác nhau rõ với tín hiệu đa-bit như vector [3:0]).
     if (expr.startsWith('!')) {
       return this.evalExpression(expr.slice(1), state) ? 0 : 1;
     }
     if (expr.startsWith('~')) {
-      return this.evalExpression(expr.slice(1), state) ? 0 : 1;
+      return ~this.evalExpression(expr.slice(1), state);
     }
     if (expr.startsWith('-')) {
       return -this.evalExpression(expr.slice(1), state);
@@ -245,6 +316,10 @@ class VeriSimulator {
         return left | right;
       case '^':
         return left ^ right;
+      case '<<':
+        return left << right;
+      case '>>':
+        return left >> right;
       case '&&':
         return left && right ? 1 : 0;
       case '||':
