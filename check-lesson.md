@@ -137,6 +137,16 @@ grep -c '<abbr' <file>
 #    (không đụng vào nav footer). Diff để xác nhận thay vì đọc bằng mắt:
 diff <(awk '/<footer class="site-footer">/,/<\/footer>/' <file>) \
      <(awk '/<footer class="site-footer">/,/<\/footer>/' <file-mẫu-cùng-series-đã-đúng>)
+
+# 8. Link điều hướng bài viết (.article-related__link): mũi tên ← → là do CSS ::before/::after
+#    tự thêm dựa theo class (--prev = ←, --next = → sau text, mặc định không class = → trước
+#    text). KHÔNG BAO GIỜ gõ tay mũi tên "←"/"→" trong text — sẽ bị chồng lên mũi tên CSS,
+#    ra 2 mũi tên (cùng hướng hoặc ngược hướng, xem PHẦN D #9). Kiểm tra không còn mũi tên
+#    viết tay:
+grep -n 'article-related__link' -A 2 <file> | grep -P '[←→]'
+#    Nếu lệnh trên có output → xoá mũi tên khỏi text, để CSS tự vẽ.
+#    Đối chiếu thêm: bài đầu series (không có bài trước) chỉ có 2 link (next, về hub) theo
+#    thứ tự next trước — hub sau; bài giữa series có đủ 3 link (prev, next, hub) cùng thứ tự.
 ```
 
 ### C2. Kiểm tra thủ công trên trình duyệt
@@ -215,3 +225,15 @@ diff <(awk '/<footer class="site-footer">/,/<\/footer>/' <file>) \
    mục 7 (`diff` khối `<footer>` với file mẫu). Bài học: footer/header là **chrome dùng
    chung toàn site**, không bao giờ được gõ tay lại từ trí nhớ — luôn copy nguyên khối từ 1
    file mẫu đã xác nhận đúng, kể cả khi "chỉ khác vài link".
+9. **2026-07-06, Bài 1 VLSI:** link điều hướng `.article-related__link` bị **mũi tên đúp/
+   ngược hướng** — CSS (`blog.css`) đã tự vẽ mũi tên qua `::before`/`::after` dựa theo class
+   (`--prev` → `←` trước text, `--next` → `→` sau text, mặc định không class → `→` trước
+   text), nhưng đồng thời text HTML lại gõ tay thêm "← Quay lại..." và "Bài tiếp theo →...".
+   Kết quả hiện ra: `→ ← Quay lại...` (2 mũi tên ngược hướng dính nhau) và
+   `Bài tiếp theo → Bài 2: ... →` (2 mũi tên cùng hướng, 1 giữa 1 cuối dòng). Ngoài ra thứ tự
+   link cũng sai: đặt link "quay lại hub" trước link "bài tiếp theo", trong khi quy ước thật
+   (đối chiếu `electronics-components-vom.html`, `electronics-ohm-voltage-divider.html`) là
+   **prev (nếu có) → next → quay lại hub**, và **không class nào trong 3 link được tự ý gõ
+   mũi tên vào text**. Chỉ phát hiện được qua ảnh chụp màn hình do người dùng gửi, không lộ
+   ra khi đọc code hay khi chạy `prettier --check` (không phải lỗi cú pháp). → sinh ra PHẦN
+   C1 mục 8 (grep tìm ký tự `←`/`→` viết tay trong khối `.article-related__link`).
