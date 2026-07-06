@@ -286,6 +286,21 @@ No build step required. Edit HTML/CSS/JS directly and refresh.
 
 ## Notes for Agents
 
+### Working on the `blog/` lesson series
+
+If your task touches anything under `blog/<series>/` (writing, reviewing, or fixing a lesson
+page), read these two files **first**, in this order:
+
+1. **[`check-lesson.md`](check-lesson.md)** — the QA gate. Read PHẦN A before starting a
+   lesson; run every check in PHẦN C before saying a lesson is done. This exists because the
+   same basic mistakes (copy-pasted canonical URLs, quiz buttons calling a function signature
+   that doesn't exist, mismatched HTML tags) kept recurring across dozens of lesson files —
+   PHẦN C gives copy-pasteable commands that catch all of them mechanically.
+2. **[`plan.md`](plan.md)** — the content design doc (tech stack, syllabus, per-series rules)
+   for series still in progress. Series that are 100% published (WebGPU, DSA, CSS, SQL, Web
+   Audio, Git) have had their design sections removed from this file — the actual pages under
+   `blog/<series>/` are the source of truth for those, not `plan.md`.
+
 ### Before Modifying Code
 
 1. **Check CSS patterns**: Use flexbox + gap (no old margin/padding stacking)
