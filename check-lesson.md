@@ -33,6 +33,24 @@
    **cấm** dùng `.code-window` code JS thực hành — chỉ dùng JS làm engine ngầm cho
    simulator, xem `plan.md` Series 10 §5 mục 9). Đọc mục "Quy tắc thiết kế" / "Quality
    Contract" riêng của series trong `plan.md` trước khi áp rule mặc định.
+6. **Riêng Series 11 (VLSI):** mẫu tham chiếu cho "demo tương tác + quiz + file tải về" đã
+   xác minh chạy đúng là `blog/vlsi/vlsi-rtl-mindset.html` (Bài 1, xem PHẦN D #10). **Copy
+   nguyên khối pattern JS** của bài đó cho các bài sau, không viết lại từ đầu:
+   - Cấu trúc `.code-tabs` gồm 1 panel "Xem trước" (demo tương tác thật) + N panel code
+     (`.code-window` cho từng kiểu/biến thể) — xem khối `#mux-tour` làm mẫu.
+   - Script `type="module"` cuối `<body>` (trước `<footer>`) import trực tiếp từ engine dùng
+     chung `vlsi-verilite.js` (`VeriLiteParser`) và `vlsi-netlist-svg.js`
+     (`NetlistRenderer`/`elaborateAST`/`simulateGates`) — KHÔNG copy-paste lại logic
+     parser/simulator vào từng bài.
+   - Pattern 3 phần trong demo: **style-selector** (nút chọn biến thể code đang mô phỏng) +
+     **input-toggle** (nút bấm đổi từng tín hiệu 0/1) + render netlist SVG có tô sáng dây
+     đang mang giá trị 1 (`activeSignals`) — tái sử dụng y hệt tên hàm
+     `renderXxxDemo()`/`initXxxDemo()` và cách gọi `elaborateAST` + `simulateGates` đã verify
+     đúng, chỉ đổi code mẫu (`muxCode` → tên biến phù hợp bài) và id phần tử DOM.
+   - Nếu bài cần mở rộng engine (cú pháp SV mới chưa parse được) → sửa trực tiếp
+     `vlsi-verilite.js`/`vlsi-netlist-svg.js` dùng chung, KHÔNG fork riêng bản sao cho từng
+     bài — viết lại self-test bằng `node --input-type=module -e "..."` (xem PHẦN D #10) để
+     xác nhận không phá vỡ các bài trước đã dùng engine này.
 
 ---
 
@@ -237,3 +255,25 @@ grep -n 'article-related__link' -A 2 <file> | grep -P '[←→]'
    mũi tên vào text**. Chỉ phát hiện được qua ảnh chụp màn hình do người dùng gửi, không lộ
    ra khi đọc code hay khi chạy `prettier --check` (không phải lỗi cú pháp). → sinh ra PHẦN
    C1 mục 8 (grep tìm ký tự `←`/`→` viết tay trong khối `.article-related__link`).
+10. **2026-07-06, Bài 1 VLSI, review nội dung sâu:** bản đầu Bài 1 thiếu gần hết phần "chứng
+    minh được" mà đề cương yêu cầu — demo tương tác (chỉ có text tĩnh "1 XOR + 2 AND + 1 OR"),
+    sơ đồ netlist SVG (0 sơ đồ), quiz (0 câu), file `.sv` tải về (0 file); độ dài 1310 từ dưới
+    mức tối thiểu 1500. Khi xây demo tương tác thật mới lộ ra **engine `vlsi-verilite.js` và
+    `vlsi-netlist-svg.js` có bug nghiêm trọng chưa từng bị phát hiện**: hàm cắt ngoặc
+    `evalExpression` coi `"(a & ~s) | (b & s)"` là 1 cặp ngoặc bao ngoài (chỉ check
+    `startsWith('(') && endsWith(')')` mà không đếm độ sâu ngoặc) nên cắt sai và làm vỡ biểu
+    thức; `NetlistRenderer.renderFromAST` gọi `assign.rhs.op` tưởng `rhs` là object cây cú
+    pháp trong khi nó là **chuỗi thô**, khiến netlist luôn render rỗng không cổng nào — bug
+    này tồn tại từ lúc viết RTL Playground nhưng không bị phát hiện vì chưa ai thực sự dùng
+    thử với input phức tạp hơn 1 toán tử. Sau khi vá xong (thêm `isFullyParenthesized()` đếm
+    độ sâu; viết `elaborateAST`/`simulateGates` phân tích chuỗi thành cây cú pháp thật), Bài 1
+    đã dựng được demo tương tác đầy đủ: chọn kiểu code (structural/dataflow/behavioral) toggle
+    input a/b/s, netlist SVG tô sáng dây theo thời gian thực — xác nhận cả 3 kiểu ra đúng
+    cùng 1 netlist tối giản (test bằng `node --input-type=module -e "..."` cho toàn bộ 8 tổ
+    hợp input, không đoán bằng mắt). → Bài học kép: (a) review nội dung phải đối chiếu **số
+    lượng thật** với rubric (đếm `.code-window`, sơ đồ SVG, quiz, file tải về — đừng tin
+    "chắc có rồi"), không chỉ đọc văn phong; (b) khi 1 engine dùng chung nhiều bài chưa có
+    demo nào thật sự thử nghiệm nó với input phức tạp, khả năng cao có bug ẩn — viết self-test
+    Node độc lập cho engine TRƯỚC khi tin nó chạy đúng trong UI. File
+    `blog/vlsi/vlsi-rtl-mindset.html` sau khi vá là **mẫu tham chiếu đã xác minh** cho toàn bộ
+    bài sau của Series 11 — xem PHẦN A mục 6.
