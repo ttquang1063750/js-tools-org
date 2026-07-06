@@ -129,6 +129,14 @@ grep -c 'class="code-window"' <file>       # ví dụ code chạy được (nế
 grep -c 'callout callout--' <file>         # tổng callout, cần ≥3 và ≥1 pitfall
 grep -c 'quiz-container\|quiz-question' <file>
 grep -c '<abbr' <file>
+
+# 7. Footer PHẢI khớp 100% với 1 file mẫu đã đúng cùng series/dự án — KHÔNG tự viết tay,
+#    KHÔNG tự chế thêm/bớt link (xem PHẦN D #8: từng bị bịa "GitHub"/"Feedback" không tồn
+#    tại, đồng thời thiếu Image Optimizer/Remove BG/QR/ColorQuarium/About/Contact/Privacy).
+#    Luôn COPY nguyên khối <footer>...</footer> từ file mẫu, chỉ sửa phần nội dung bài
+#    (không đụng vào nav footer). Diff để xác nhận thay vì đọc bằng mắt:
+diff <(awk '/<footer class="site-footer">/,/<\/footer>/' <file>) \
+     <(awk '/<footer class="site-footer">/,/<\/footer>/' <file-mẫu-cùng-series-đã-đúng>)
 ```
 
 ### C2. Kiểm tra thủ công trên trình duyệt
@@ -198,3 +206,12 @@ grep -c '<abbr' <file>
    `<div`/`</div>` tổng quát** (số liệu tổng vẫn gợi ý được có lệch, nhưng vị trí chính xác cần
    `npx prettier --check`, công cụ này parse HTML thật và báo đúng dòng lỗi). → đây là lý do
    PHẦN C1 đặt `prettier --check` làm lệnh **đầu tiên**, không phải lệnh phụ.
+8. **2026-07-06, Bài 1 VLSI:** footer bị viết tay từ trí nhớ thay vì copy file mẫu — chỉ có
+   5 link (Blog, GitHub, Feedback, Terms, Donate), trong đó **GitHub và Feedback là link bịa
+   ra, không tồn tại** trong bất kỳ footer thật nào của site; đồng thời **thiếu 5 link thật**
+   (Image Optimizer, Remove BG, QR Generator, ColorQuarium, About, Contact, Privacy Policy).
+   Lỗi tồn tại qua **nhiều vòng "báo xong"** vì không có lệnh nào trong PHẦN C cũ kiểm tra
+   footer — chỉ bị phát hiện khi người duyệt so ảnh chụp màn hình bằng mắt. → sinh ra PHẦN C1
+   mục 7 (`diff` khối `<footer>` với file mẫu). Bài học: footer/header là **chrome dùng
+   chung toàn site**, không bao giờ được gõ tay lại từ trí nhớ — luôn copy nguyên khối từ 1
+   file mẫu đã xác nhận đúng, kể cả khi "chỉ khác vài link".
