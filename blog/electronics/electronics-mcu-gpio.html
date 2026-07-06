@@ -1,0 +1,929 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 15: Kiến trúc vi điều khiển (MCU) &amp; Giao tiếp GPIO — js-tools</title>
+    <meta
+      name="description"
+      content="Kiến trúc bên trong vi điều khiển (CPU, SRAM, Flash, bus hệ thống). Memory-mapped I/O và bộ ba thanh ghi DDRx/PORTx/PINx điều khiển chân GPIO. Kỹ thuật đọc-sửa-ghi bằng phép toán bitwise, cùng trình giả lập MCU ảo lập trình C nhấp nháy LED từng lệnh một."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/electronics/electronics-mcu-gpio" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="electronics-mcu-gpio.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+          ignoredTags: ['noscript', 'style', 'script', 'code', 'pre'],
+        });
+      });
+    </script>
+    <style>
+      /* MCU GPIO Simulator styles */
+      .mcu-sandbox {
+        background: #181825;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 28px 0;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 24px;
+        color: #cdd6f4;
+      }
+      @media (max-width: 800px) {
+        .mcu-sandbox {
+          grid-template-columns: 1fr;
+        }
+      }
+      .mcu-sandbox strong {
+        color: #cdd6f4;
+      }
+      .mcu-sandbox code {
+        background: #11111b;
+        color: #f38ba8;
+        border: 1px solid #45475a;
+      }
+      .mcu-program {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-family: 'Fira Code', Consolas, monospace;
+        font-size: 12.5px;
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .mcu-program h4 {
+        margin: 0 0 6px;
+        font-size: 13px;
+        color: #a6e3a1;
+      }
+      .mcu-line {
+        padding: 4px 8px;
+        border-radius: 4px;
+        color: #a6adc8;
+        white-space: pre;
+      }
+      .mcu-line.is-current {
+        background: rgba(137, 180, 250, 0.18);
+        color: #89b4fa;
+        font-weight: bold;
+      }
+      .mcu-line.is-comment {
+        color: #585b70;
+        font-style: italic;
+      }
+      .mcu-controls {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+      .mcu-btn {
+        padding: 7px 12px;
+        border-radius: 6px;
+        background: #313244;
+        border: 1px solid var(--border);
+        color: #cdd6f4;
+        cursor: pointer;
+        font-size: 12.5px;
+        transition: all 0.15s;
+      }
+      .mcu-btn:hover {
+        background: #45475a;
+        color: #fff;
+      }
+      .mcu-btn.is-danger {
+        background: #742a3a;
+        border-color: #f38ba8;
+        color: #f5c2e7;
+      }
+      .mcu-registers {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .mcu-reg-row {
+        display: grid;
+        grid-template-columns: 70px 1fr 60px;
+        align-items: center;
+        gap: 8px;
+      }
+      .mcu-reg-name {
+        font-family: monospace;
+        font-size: 13px;
+        font-weight: bold;
+      }
+      .mcu-bits {
+        display: flex;
+        gap: 3px;
+      }
+      .mcu-bit {
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        background: #313244;
+        border: 1px solid #45475a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-family: monospace;
+        color: #7a80a0;
+        position: relative;
+      }
+      .mcu-bit.is-set {
+        background: #89b4fa;
+        color: #11111b;
+        font-weight: bold;
+      }
+      .mcu-bit.is-pb5 {
+        border: 2px solid #f9e2af;
+      }
+      .mcu-reg-hex {
+        font-family: monospace;
+        font-size: 12px;
+        color: #a6e3a1;
+        text-align: right;
+      }
+      .mcu-board {
+        margin-top: 4px;
+        background: #11111b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        min-height: 120px;
+      }
+      .mcu-note {
+        margin-top: 4px;
+        font-size: 12.5px;
+        color: #7a80a0;
+        line-height: 1.5;
+        border-left: 3px solid var(--border);
+        padding-left: 10px;
+        min-height: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--electronics">
+        <div class="container">
+          <a href="electronics-programming-series" class="article-hero__back">← Quay lại Lộ Trình Series</a>
+          <div class="article-hero__tag article-hero__tag--electronics">Bài 15 · Lộ trình Điện Tử & Vi Mạch</div>
+          <h1 class="article-hero__title">Kiến Trúc Vi Điều Khiển (MCU) &amp; Giao Tiếp GPIO</h1>
+          <div class="article-hero__meta">6 tháng 7, 2026 · 18 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <p>Để tiếp thu bài học này tốt nhất, bạn nên ôn lại:</p>
+                <ul>
+                  <li>
+                    <a href="electronics-digital-logic">Bài 12: Cổng Logic &amp; Mạch tổ hợp</a> (hiểu mức điện áp logic
+                    nhị phân HIGH/LOW).
+                  </li>
+                  <li>
+                    <a href="electronics-sequential-storage">Bài 13: Mạch tuần tự &amp; Thiết kế bộ nhớ</a> (một thanh
+                    ghi thực chất là nhiều Flip-Flop ghép lại — sẽ dùng lại khái niệm này).
+                  </li>
+                  <li>
+                    <a href="../c/c-pointers-deep-dive">Series C — Bài 8: Làm chủ Con Trỏ</a> (địa chỉ bộ nhớ và ép kiểu
+                    con trỏ — nền tảng để hiểu memory-mapped I/O bên dưới).
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <p>
+              Từ Bài 1 đến Bài 14, mọi mạch trong series đều là <strong>mạch cứng</strong>: hành vi của nó cố định vĩnh
+              viễn theo cách bạn hàn dây và chọn linh kiện. Muốn đổi hành vi — phải hàn lại mạch. Vi điều khiển (<abbr
+                title="Microcontroller Unit - Vi điều khiển"
+                >MCU</abbr
+              >) phá vỡ giới hạn đó: cùng một con chip vật lý, chỉ cần nạp một đoạn mã lệnh khác là toàn bộ hành vi mạch
+              thay đổi hoàn toàn — không cần chạm vào dây dẫn hay linh kiện nào.
+            </p>
+            <p>
+              Bài học này mở ra nửa sau của series: thay vì thiết kế mạch tương tự (analog) hay số (digital) cố định,
+              bạn sẽ học cách một chương trình phần mềm <em>điều khiển trực tiếp</em> phần cứng thông qua các thanh ghi
+              đặc biệt, và tự tay lập trình một MCU ảo để nhấp nháy đèn LED — cellphone, máy giặt, hay chính bàn phím
+              bạn đang gõ đều chạy trên nguyên lý giống hệt.
+            </p>
+
+            <h2>1. Kiến trúc tổng quan bên trong vi điều khiển</h2>
+            <p>
+              Một MCU gói gọn cả một "máy tính mini" vào một con chip duy nhất: bộ xử lý trung tâm (<abbr
+                title="Central Processing Unit - Bộ xử lý trung tâm"
+                >CPU</abbr
+              >) để thực thi lệnh, bộ nhớ Flash để lưu chương trình vĩnh viễn (giữ dữ liệu kể cả khi mất điện), và
+              <abbr title="Static Random-Access Memory - Bộ nhớ truy xuất ngẫu nhiên tĩnh">SRAM</abbr>
+              để lưu biến tạm thời trong lúc chạy (mất hết khi ngắt điện — bạn đã gặp SRAM 6-transistor ở Bài 13). Ba
+              khối này nói chuyện với nhau qua một <strong>bus hệ thống</strong> — một "xa lộ" dây dẫn chung mang địa
+              chỉ, dữ liệu và tín hiệu điều khiển qua lại.
+            </p>
+
+            <div class="example-circuit" style="margin: 16px 0; text-align: center">
+              <svg
+                width="420"
+                height="220"
+                viewBox="0 0 420 220"
+                xmlns="http://www.w3.org/2000/svg"
+                style="background: #1e1e2e; border: 1px solid var(--border); border-radius: 6px"
+              >
+                <text x="210" y="18" fill="#89b4fa" font-size="10" text-anchor="middle" font-weight="bold">
+                  Sơ đồ khối kiến trúc bên trong một MCU
+                </text>
+                <rect x="20" y="35" width="380" height="150" fill="none" stroke="#585b70" stroke-width="1.5" rx="6" />
+                <text x="30" y="30" fill="#7a80a0" font-size="8">Vỏ chip MCU</text>
+
+                <rect x="40" y="80" width="90" height="60" rx="4" fill="#11111b" stroke="#f38ba8" stroke-width="1.5" />
+                <text x="85" y="105" fill="#f38ba8" font-size="10" text-anchor="middle" font-weight="bold">CPU</text>
+                <text x="85" y="120" fill="#a6adc8" font-size="7" text-anchor="middle">(Fetch-Decode-Execute)</text>
+
+                <rect x="165" y="55" width="90" height="45" rx="4" fill="#11111b" stroke="#a6e3a1" stroke-width="1.5" />
+                <text x="210" y="75" fill="#a6e3a1" font-size="10" text-anchor="middle" font-weight="bold">Flash</text>
+                <text x="210" y="88" fill="#a6adc8" font-size="7" text-anchor="middle">Chương trình (vĩnh viễn)</text>
+
+                <rect
+                  x="165"
+                  y="120"
+                  width="90"
+                  height="45"
+                  rx="4"
+                  fill="#11111b"
+                  stroke="#89b4fa"
+                  stroke-width="1.5"
+                />
+                <text x="210" y="140" fill="#89b4fa" font-size="10" text-anchor="middle" font-weight="bold">SRAM</text>
+                <text x="210" y="153" fill="#a6adc8" font-size="7" text-anchor="middle">
+                  Biến tạm (mất khi cúp điện)
+                </text>
+
+                <rect
+                  x="290"
+                  y="80"
+                  width="100"
+                  height="60"
+                  rx="4"
+                  fill="#11111b"
+                  stroke="#f9e2af"
+                  stroke-width="1.5"
+                />
+                <text x="340" y="102" fill="#f9e2af" font-size="9" text-anchor="middle" font-weight="bold">
+                  Thanh ghi I/O
+                </text>
+                <text x="340" y="115" fill="#a6adc8" font-size="7" text-anchor="middle">DDRx / PORTx / PINx</text>
+                <text x="340" y="127" fill="#a6adc8" font-size="7" text-anchor="middle">(mục 2–3 bên dưới)</text>
+
+                <!-- Bus lines -->
+                <line x1="130" y1="110" x2="165" y2="77" stroke="#7a80a0" stroke-width="1.5" />
+                <line x1="130" y1="110" x2="165" y2="142" stroke="#7a80a0" stroke-width="1.5" />
+                <line x1="255" y1="110" x2="290" y2="110" stroke="#7a80a0" stroke-width="1.5" />
+                <text x="270" y="105" fill="#7a80a0" font-size="6">bus</text>
+
+                <!-- External pins -->
+                <line x1="390" y1="95" x2="410" y2="95" stroke="#f9e2af" stroke-width="2" />
+                <line x1="390" y1="125" x2="410" y2="125" stroke="#f9e2af" stroke-width="2" />
+                <text x="412" y="97" fill="#f9e2af" font-size="7">PB5</text>
+                <text x="412" y="127" fill="#f9e2af" font-size="7">PB0</text>
+              </svg>
+            </div>
+
+            <p>
+              Điểm khác biệt cốt lõi so với "vi xử lý" (như CPU trong máy tính bàn) là MCU tích hợp <em>luôn</em> Flash
+              + SRAM + các khối ngoại vi (I/O, Timer, ADC...) vào một chip duy nhất — không cần RAM rời, ổ cứng rời. Cái
+              giá phải trả là tài nguyên rất hạn chế: một MCU 8-bit phổ biến trong lớp học chỉ có vài KB SRAM (so với
+              hàng GB của máy tính) — đủ cho các tác vụ điều khiển thiết bị nhưng không đủ chạy hệ điều hành đầy đủ.
+            </p>
+
+            <h2>2. Memory-Mapped I/O — địa chỉ hoá phần cứng</h2>
+            <p>
+              Đây là ý tưởng quan trọng nhất của bài học:
+              <strong>các thanh ghi điều khiển chân vật lý được đặt trong CÙNG một không gian địa chỉ với SRAM</strong>.
+              Với CPU, ghi một byte vào ô nhớ 0x25 và ghi một byte vào "thanh ghi điều khiển chân GPIO" là
+              <em>cùng một thao tác</em> — chỉ khác địa chỉ đích. Cách tiếp cận này gọi là
+              <strong>Memory-Mapped I/O</strong>.
+            </p>
+            <p>
+              Nhắc lại <a href="../c/c-pointers-deep-dive">Series C — con trỏ</a>: một con trỏ chỉ là một địa chỉ bộ
+              nhớ. Khi thư viện MCU viết <code>PORTB = 0x20;</code>, trình biên dịch thực chất dịch nó thành:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-title">register-macro.c — PORTB thực chất là gì phía sau hậu trường</span>
+              </div>
+              <pre><code class="language-c">// "PORTB" chỉ là một macro cho con trỏ trỏ tới địa chỉ cố định 0x25
+#define PORTB (*(volatile uint8_t *)0x25)
+
+// Viết PORTB = 0x20 thực chất là:
+*(volatile uint8_t *)0x25 = 0x20;
+// Ghi thẳng byte 0x20 vào ô nhớ 0x25 — CPU không hề biết (và không cần biết)
+// ô nhớ đó là RAM hay một thanh ghi điều khiển chân vật lý.</code></pre>
+            </div>
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Vì sao từ khoá <code>volatile</code> bắt buộc phải có</div>
+              <div class="callout__content">
+                Trình biên dịch C thường "thông minh hoá" code: nếu thấy một biến được đọc nhiều lần mà không có dòng
+                lệnh nào (mà nó biết) thay đổi giá trị, nó sẽ tối ưu bằng cách chỉ đọc một lần rồi dùng lại kết quả cũ
+                trong thanh ghi CPU (cache). Nhưng giá trị của <code>PINB</code> có thể đổi bất cứ lúc nào do
+                <em>tín hiệu điện bên ngoài</em> — một sự kiện trình biên dịch không thấy được. Từ khoá
+                <code>volatile</code> ra lệnh cho trình biên dịch: "luôn đọc/ghi thật từ địa chỉ này, không được tối ưu,
+                không được dùng giá trị cũ trong cache". Thiếu <code>volatile</code>, code đọc chân nút nhấn có thể bị
+                "đóng băng" ở giá trị đọc lần đầu tiên mãi mãi.
+              </div>
+            </div>
+
+            <h2>3. Bộ ba thanh ghi GPIO: DDRx, PORTx, PINx</h2>
+            <p>
+              Mỗi cổng <abbr title="General-Purpose Input/Output - Vào/ra đa dụng">GPIO</abbr> 8-chân (ví dụ cổng B)
+              được điều khiển bởi đúng 3 thanh ghi 8-bit, mỗi bit ứng với một chân vật lý:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thanh ghi</th>
+                  <th>Vai trò</th>
+                  <th>Bit = 1 nghĩa là gì</th>
+                  <th>Bit = 0 nghĩa là gì</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>DDRx</strong> (Data Direction Register)</td>
+                  <td>Chọn <em>chiều</em> của chân: input hay output</td>
+                  <td>Chân là OUTPUT</td>
+                  <td>Chân là INPUT</td>
+                </tr>
+                <tr>
+                  <td><strong>PORTx</strong></td>
+                  <td>Nếu chân là output: điều khiển mức áp ra chân</td>
+                  <td>Chân xuất ra mức HIGH (thường ~5V/3.3V)</td>
+                  <td>Chân xuất ra mức LOW (0V)</td>
+                </tr>
+                <tr>
+                  <td><strong>PORTx</strong> (khi chân là input)</td>
+                  <td>Bật/tắt điện trở kéo lên nội bộ (internal pull-up)</td>
+                  <td>Bật pull-up (chân "nghỉ" ở mức HIGH khi không nối gì)</td>
+                  <td>Thả nổi hoàn toàn (floating — dễ nhiễu, xem cạm bẫy bên dưới)</td>
+                </tr>
+                <tr>
+                  <td><strong>PINx</strong></td>
+                  <td>Chỉ để <em>đọc</em> — phản ánh mức điện áp thật đang có ở chân</td>
+                  <td>Chân đang đo được mức HIGH</td>
+                  <td>Chân đang đo được mức LOW</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Nói cách khác: <strong>DDRx quyết định "vai trò"</strong> của chân (nói hay nghe), còn
+              <strong>PORTx và PINx là hai chiều dữ liệu khác nhau</strong> của cùng một chân — PORTx là "miệng"
+              (ghi/xuất), PINx là "tai" (đọc/nhập). Chúng không thể dùng thay nhau.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-title"
+                  >read-button.c — Đọc nút nhấn bằng pull-up nội bộ (không cần điện trở ngoài)</span
+                >
+              </div>
+              <pre><code class="language-c">#define PB0 0
+
+void setup(void) {
+  DDRB  &= ~(1 << PB0);  // PB0 là INPUT (mặc định, nhưng ghi rõ cho dễ đọc)
+  PORTB |=  (1 << PB0);  // Chân INPUT: bit PORT này bật điện trở pull-up nội bộ
+                         // → chân "nghỉ" ở mức HIGH khi nút nhấn chưa được bấm
+}
+
+int docNutNhan(void) {
+  // Nút nhấn thường đấu một đầu xuống GND, đầu kia vào chân PB0.
+  // Khi CHƯA bấm: pull-up kéo chân lên HIGH → PINB bit 0 = 1.
+  // Khi ĐANG bấm: nút nối thẳng chân xuống GND → PINB bit 0 = 0 (logic đảo ngược!).
+  return (PINB & (1 << PB0)) == 0;  // trả về 1 (true) khi nút ĐANG được bấm
+}</code></pre>
+            </div>
+            <p>
+              Chú ý logic bị <strong>đảo ngược</strong> so với trực giác: nút nhấn <em>đang bấm</em> lại đọc được mức
+              LOW, còn <em>chưa bấm</em> đọc được mức HIGH — vì điện trở pull-up mặc định kéo chân lên cao, nút nhấn chỉ
+              có tác dụng "kéo tuột" chân xuống đất khi đóng mạch. Đây là mẫu đọc nút nhấn phổ biến nhất trong thực tế
+              vì không cần thêm điện trở rời bên ngoài.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Mẹo phần cứng: ghi 1 vào PINx để đảo bit PORTx (toggle atomic)</div>
+              <div class="callout__content">
+                Trên nhiều dòng MCU hiện đại (như AVR), <code>PINx</code> tuy là thanh ghi "chỉ đọc" nhưng có một hành
+                vi đặc biệt ở phần cứng:
+                <strong>ghi giá trị 1 vào một bit của PINx sẽ đảo (toggle) đúng bit đó của PORTx</strong> — không đụng
+                tới các bit khác. Đây là cách nhấp nháy LED nhanh hơn và an toàn hơn viết
+                <code>PORTB ^= (1 &lt;&lt; PB5);</code> vì nó không cần đọc giá trị cũ trước (tránh race condition khi
+                có ngắt xảy ra giữa chừng — khái niệm bạn sẽ gặp lại ở Bài 16).
+              </div>
+            </div>
+
+            <h2>4. Kỹ thuật đọc–sửa–ghi bằng phép toán bitwise</h2>
+            <p>
+              Vì một thanh ghi 8-bit điều khiển <em>8 chân cùng lúc</em>, bạn gần như không bao giờ được phép ghi đè
+              nguyên byte (trừ khi chủ đích muốn đổi cả 8 chân). Thay vào đó, dùng phép toán bitwise để chỉ sửa đúng bit
+              mình cần, giữ nguyên 7 bit còn lại:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-title">bitwise-ops.c — Bốn thao tác bit nền tảng trên thanh ghi GPIO</span>
+              </div>
+              <pre><code class="language-c">// Giả sử LED nối chân PB5 (giống hệt LED tích hợp sẵn trên board Arduino Uno)
+#define PB5 5
+
+// 1. SET một bit (đưa lên 1, giữ nguyên các bit khác) — dùng OR
+PORTB |= (1 << PB5);   // (1 << 5) = 0b00100000 → chỉ bật riêng bit 5
+
+// 2. CLEAR một bit (đưa về 0, giữ nguyên các bit khác) — dùng AND với số đã đảo bit
+PORTB &= ~(1 << PB5);  // ~(0b00100000) = 0b11011111 → chỉ tắt riêng bit 5
+
+// 3. TOGGLE một bit (đảo trạng thái) — dùng XOR
+PORTB ^= (1 << PB5);   // bit 5: 0→1 hoặc 1→0, các bit khác giữ nguyên
+
+// 4. ĐỌC một bit (kiểm tra chân đang HIGH hay LOW) — dùng AND rồi so 0
+if (PINB & (1 << PB0)) {
+  // Chân PB0 đang ở mức HIGH (ví dụ: nút nhấn đang được thả ra nhờ pull-up)
+}</code></pre>
+            </div>
+
+            <div class="example-box">
+              <div class="example-title">Ví dụ tính toán: Cấu hình DDRB cho 2 chân output, còn lại input</div>
+              <div class="example-content">
+                <p>
+                  <strong>Đề bài:</strong> Board có LED nối chân PB5 và Relay nối chân PB3, các chân PB còn lại
+                  (PB0–PB2, PB4, PB6–PB7) dùng làm input đọc cảm biến. Hãy tính giá trị nhị phân và thập lục phân cần
+                  ghi vào <code>DDRB</code> để cấu hình đúng một lần duy nhất lúc khởi động.
+                </p>
+                <div class="callout callout--note" style="margin-top: 12px; margin-bottom: 0">
+                  <div class="callout__title">Lời giải</div>
+                  <div class="callout__content">
+                    <p>
+                      1. Đánh số bit từ 7 (trái) xuống 0 (phải): <code>DDRB = [b7 b6 b5 b4 b3 b2 b1 b0]</code>. Bit
+                      output (=1) là bit 5 (LED) và bit 3 (Relay); tất cả bit còn lại là input (=0).
+                    </p>
+                    <p>2. Xếp thành chuỗi nhị phân 8-bit:</p>
+                    <p>
+                      $$DDRB =
+                      0b\underbrace{0}_{7}\underbrace{0}_{6}\underbrace{1}_{5}\underbrace{0}_{4}\underbrace{1}_{3}\underbrace{0}_{2}\underbrace{0}_{1}\underbrace{0}_{0}
+                      = 0b00101000$$
+                    </p>
+                    <p>3. Đổi sang thập lục phân (nhóm 4 bit một): $0010_2 = 2_{16}$, $1000_2 = 8_{16}$</p>
+                    <p>$$DDRB = 0b00101000 = 0x28 = 40_{10}$$</p>
+                    <p>
+                      Kết luận: chỉ cần một dòng lệnh duy nhất <code>DDRB = 0x28;</code> lúc khởi động — hoặc rõ ràng
+                      hơn về mặt ý nghĩa: <code>DDRB = (1 &lt;&lt; PB5) | (1 &lt;&lt; PB3);</code>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: quên cấu hình DDR trước khi ghi PORT</div>
+              <div class="callout__content">
+                Đây là lỗi phổ biến nhất của người mới học GPIO: ghi <code>PORTB |= (1 &lt;&lt; PB5);</code> để bật LED
+                nhưng LED không sáng — vì chân vẫn đang ở chế độ mặc định (thường là INPUT, DDR bit = 0). Khi DDR bit là
+                0, giá trị PORT bit không điều khiển điện áp ra chân nữa mà chỉ bật/tắt điện trở pull-up nội bộ — dòng
+                điện qua điện trở pull-up quá yếu để làm sáng LED công suất bình thường. Luôn cấu hình DDR
+                <strong>trước</strong>, PORT <strong>sau</strong>, không bao giờ đảo thứ tự.
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-title">❌ Sai vs ✅ Đúng — hai lỗi kinh điển khi lập trình GPIO</span>
+              </div>
+              <pre><code class="language-c">// ❌ SAI #1: Quên set DDR trước — LED không bao giờ sáng
+PORTB |= (1 &lt;&lt; PB5);   // Chân PB5 vẫn đang là INPUT (DDR mặc định = 0)!
+
+// ✅ ĐÚNG #1: Luôn cấu hình chiều DDR trước khi điều khiển PORT
+DDRB  |= (1 &lt;&lt; PB5);   // Bước 1: khai báo PB5 là OUTPUT
+PORTB |= (1 &lt;&lt; PB5);   // Bước 2: bây giờ mới bật mức HIGH cho LED
+
+// ❌ SAI #2: Gán đè cả byte — xoá mất cấu hình PB3 (Relay) đã set trước đó
+DDRB = (1 &lt;&lt; PB5);      // Ghi đè toàn bộ 8 bit! PB3 vô tình bị đưa về 0 (input)
+
+// ✅ ĐÚNG #2: Dùng OR để chỉ bật thêm bit mới, giữ nguyên các bit đã cấu hình
+DDRB |= (1 &lt;&lt; PB5);     // Chỉ bật thêm bit 5, bit 3 (Relay) vẫn nguyên vẹn</code></pre>
+            </div>
+
+            <h2>5. Trình giả lập: Lập trình GPIO cho MCU ảo</h2>
+            <p>
+              Bảng dưới đây mô phỏng một MCU ảo với LED nối ở chân PB5 (giống hệt LED tích hợp sẵn trên board Arduino
+              Uno). Bấm <strong>▶ Chạy từng lệnh</strong> để thực thi tuần tự đoạn mã chớp tắt LED, quan sát giá trị 3
+              thanh ghi <code>DDRB</code>/<code>PORTB</code>/<code>PINB</code> đổi theo từng dòng lệnh và đèn LED thật
+              sự sáng/tắt tương ứng. Nút <strong>❌ Bỏ qua bước set DDR</strong> tái hiện chính xác cạm bẫy ở mục 4.
+            </p>
+
+            <div class="mcu-sandbox">
+              <div class="mcu-program">
+                <h4>Chương trình (chớp tắt LED)</h4>
+                <div id="mcuProgramList"></div>
+                <div class="mcu-controls">
+                  <button class="mcu-btn" id="btnStep">▶ Chạy từng lệnh</button>
+                  <button class="mcu-btn" id="btnAuto">🔁 Tự động chạy</button>
+                  <button class="mcu-btn" id="btnReset">⏮ Reset</button>
+                </div>
+                <div class="mcu-controls">
+                  <button class="mcu-btn is-danger" id="btnSkipDDR">❌ Bỏ qua bước set DDR (thử lỗi)</button>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 12px">
+                <div class="mcu-registers">
+                  <div class="mcu-reg-row">
+                    <span class="mcu-reg-name" style="color: #f9e2af">DDRB</span>
+                    <div class="mcu-bits" id="bitsDDRB"></div>
+                    <span class="mcu-reg-hex" id="hexDDRB">0x00</span>
+                  </div>
+                  <div class="mcu-reg-row">
+                    <span class="mcu-reg-name" style="color: #89b4fa">PORTB</span>
+                    <div class="mcu-bits" id="bitsPORTB"></div>
+                    <span class="mcu-reg-hex" id="hexPORTB">0x00</span>
+                  </div>
+                  <div class="mcu-reg-row">
+                    <span class="mcu-reg-name" style="color: #a6e3a1">PINB</span>
+                    <div class="mcu-bits" id="bitsPINB"></div>
+                    <span class="mcu-reg-hex" id="hexPINB">0x00</span>
+                  </div>
+                </div>
+
+                <div class="mcu-board">
+                  <svg width="90" height="90" viewBox="0 0 90 90">
+                    <rect
+                      x="15"
+                      y="15"
+                      width="60"
+                      height="60"
+                      rx="4"
+                      fill="#313244"
+                      stroke="#585b70"
+                      stroke-width="2"
+                    />
+                    <text x="45" y="48" fill="#cdd6f4" font-size="9" text-anchor="middle" font-weight="bold">MCU</text>
+                    <text x="45" y="60" fill="#7a80a0" font-size="7" text-anchor="middle">PB5 →</text>
+                    <line x1="75" y1="45" x2="95" y2="45" stroke="#7a80a0" stroke-width="2" />
+                  </svg>
+                  <svg width="60" height="90" viewBox="0 0 60 90">
+                    <line x1="0" y1="45" x2="20" y2="45" stroke="#7a80a0" stroke-width="2" />
+                    <circle id="mcuLed" cx="35" cy="45" r="16" fill="#313244" stroke="#585b70" stroke-width="2" />
+                    <text x="35" y="75" fill="#a6adc8" font-size="8" text-anchor="middle">LED</text>
+                  </svg>
+                </div>
+
+                <div class="mcu-note" id="mcuNote">
+                  Bấm "Chạy từng lệnh" để bắt đầu — dòng lệnh đang thực thi sẽ tô sáng bên trái.
+                </div>
+              </div>
+            </div>
+
+            <h2>6. Câu hỏi trắc nghiệm ôn tập</h2>
+            <div class="article-quiz">
+              <div class="quiz-container">
+                <div class="quiz-question" data-answer="2">
+                  <p>
+                    <strong>Câu 1:</strong> Bạn ghi <code>PORTB |= (1 &lt;&lt; PB5);</code> để bật LED nối chân PB5
+                    nhưng LED hoàn toàn không sáng. Nguyên nhân nhiều khả năng nhất là gì?
+                  </p>
+                  <div class="quiz-options">
+                    <label class="quiz-option"
+                      ><input type="radio" name="q1" value="0" /> Toán tử OR (<code>|=</code>) không dùng được để bật
+                      bit.</label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q1" value="1" /> LED bị hỏng, cần thay LED mới.</label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q1" value="2" /> Quên cấu hình bit tương ứng trong
+                      <code>DDRB</code> thành OUTPUT trước đó.</label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q1" value="3" /> Cần dùng <code>PINB</code> thay vì
+                      <code>PORTB</code> để bật LED.</label
+                    >
+                  </div>
+                  <div class="quiz-explanation">
+                    <strong>Đáp án đúng: Quên cấu hình DDR trước.</strong> Nếu DDR bit vẫn là 0 (mặc định INPUT), giá
+                    trị PORT bit không điều khiển điện áp ra chân mà chỉ bật/tắt điện trở pull-up nội bộ — dòng quá yếu
+                    để LED sáng rõ.
+                  </div>
+                </div>
+
+                <div class="quiz-question" data-answer="1">
+                  <p>
+                    <strong>Câu 2:</strong> Vì sao thanh ghi <code>PINB</code> (đọc trạng thái chân) thường phải khai
+                    báo với từ khoá <code>volatile</code> trong C?
+                  </p>
+                  <div class="quiz-options">
+                    <label class="quiz-option"
+                      ><input type="radio" name="q2" value="0" /> Vì <code>volatile</code> giúp chương trình chạy nhanh
+                      hơn.</label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q2" value="1" /> Vì giá trị của nó có thể đổi bất cứ lúc nào do tín
+                      hiệu điện ngoài, trình biên dịch không được phép dùng lại giá trị cũ từ cache.</label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q2" value="2" /> Vì <code>PINB</code> là thanh ghi 16-bit cần từ khoá
+                      đặc biệt để khai báo.</label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q2" value="3" /> Vì nếu không có <code>volatile</code>, chương trình sẽ
+                      không biên dịch được.</label
+                    >
+                  </div>
+                  <div class="quiz-explanation">
+                    <strong>Đáp án đúng: Ngăn trình biên dịch tối ưu sai.</strong> Không có <code>volatile</code>, biến
+                    có thể bị "đóng băng" ở giá trị đọc lần đầu, không phản ánh thay đổi thật từ phần cứng bên ngoài.
+                  </div>
+                </div>
+
+                <div class="quiz-question" data-answer="3">
+                  <p>
+                    <strong>Câu 3:</strong> Bạn cần bật thêm chân PB2 làm output mà không ảnh hưởng đến PB5 (LED) đã
+                    được cấu hình output từ trước. Dòng lệnh nào đúng?
+                  </p>
+                  <div class="quiz-options">
+                    <label class="quiz-option"
+                      ><input type="radio" name="q3" value="0" /> <code>DDRB = (1 &lt;&lt; PB2);</code></label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q3" value="1" /> <code>DDRB &amp;= (1 &lt;&lt; PB2);</code></label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q3" value="2" /> <code>DDRB = 0x04;</code></label
+                    >
+                    <label class="quiz-option"
+                      ><input type="radio" name="q3" value="3" /> <code>DDRB |= (1 &lt;&lt; PB2);</code></label
+                    >
+                  </div>
+                  <div class="quiz-explanation">
+                    <strong>Đáp án đúng: <code>DDRB |= (1 &lt;&lt; PB2);</code></strong> Toán tử OR chỉ bật thêm bit 2,
+                    giữ nguyên bit 5 đã set trước đó. Ba đáp án còn lại đều ghi đè hoặc dùng sai toán tử, xoá mất cấu
+                    hình PB5.
+                  </div>
+                </div>
+                <button class="quiz-submit">Kiểm tra kết quả</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="article-refs">
+            <h3>📖 Tài liệu tham khảo / References</h3>
+            <ul>
+              <li>
+                <a
+                  href="https://ww1.microchip.com/downloads/en/DeviceDoc/ATmega328-328P_Datasheet.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Microchip — Datasheet ATmega328P (chương I/O Ports)</a
+                >
+              </li>
+              <li>
+                <a href="https://www.arduino.cc/en/Reference/PortManipulation" target="_blank" rel="noopener noreferrer"
+                  >Arduino Reference — Port Manipulation (DDRx/PORTx/PINx)</a
+                >
+              </li>
+              <li>
+                <a href="https://en.cppreference.com/w/c/language/volatile" target="_blank" rel="noopener noreferrer"
+                  >cppreference.com — Từ khoá <code>volatile</code> trong C</a
+                >
+              </li>
+              <li>
+                <a href="https://en.wikipedia.org/wiki/Memory-mapped_I/O" target="_blank" rel="noopener noreferrer"
+                  >Wikipedia — Memory-mapped I/O</a
+                >
+              </li>
+            </ul>
+          </div>
+
+          <div class="article-related">
+            <h2>Bài viết liên quan trong series</h2>
+            <div class="article-related__links">
+              <a href="electronics-timer-555" class="article-related__link article-related__link--prev">
+                Bài 14: IC định thời 555 &amp; Mạch tạo xung điều rộng (PWM)
+              </a>
+              <span class="article-related__link article-related__link--next article-related__link--locked">
+                Bài 16: Ngắt, Timer &amp; Dự án tổng hợp cuối series 🔒
+              </span>
+              <a href="electronics-programming-series" class="article-related__link">
+                Quay lại Lộ trình Series Điện Tử &amp; Vi Mạch
+              </a>
+            </div>
+          </div>
+
+          <div class="article-comments">
+            <div class="giscus"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

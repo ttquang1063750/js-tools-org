@@ -22,7 +22,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 7: SQL**             | **SQL trong Trình duyệt (SQLite-WASM)** | **17/17**      | **17**   | **100%** ✅ |
 | 🎉 **Series 8: Web Audio**       | **Âm Thanh & Visualizer**               | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 9: Git**             | **Mô Hình & Quy Trình Làm Việc**        | **13/13**      | **13**   | **100%** ✅ |
-| Series 10                        | Điện Tử & Mô Phỏng Vi Mạch              | 14/16          | 16       | 87%         |
+| Series 10                        | Điện Tử & Mô Phỏng Vi Mạch              | 15/16          | 16       | 94%         |
 | Series 11                        | Thiết Kế Vi Mạch Số & FPGA (VLSI)       | 0/14           | 14       | 0%          |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
