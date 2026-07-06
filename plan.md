@@ -2,6 +2,11 @@
 
 Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công nghệ (tech stack), thiết kế giao diện demo tương tác và nội dung học thuật chuyên sâu** cho từng bài học trong 5 series mới để phục vụ thẩm định trước khi triển khai thực tế.
 
+> ⚠️ **Quy tắc kỹ thuật/QA (Điều kiện chặn, Definition of Done, checklist trước khi báo "xong")
+> đã chuyển sang [`check-lesson.md`](check-lesson.md)** — đọc file đó TRƯỚC KHI viết bài và
+> chạy lại TRƯỚC KHI báo hoàn thành. File này (`plan.md`) chỉ còn giữ **thiết kế nội dung**
+> (đề cương, tech stack, đề bài) và các quyết định **đặc thù riêng từng series**.
+
 ---
 
 ## 📈 Progress & Status (Cập nhật 2026-07-03)
@@ -432,17 +437,13 @@ Mọi bài học trong Series 10 phải tuân thủ nghiêm ngặt tiêu chuẩn
 
 ### 5. Quy tắc thiết kế rút ra từ 2 vòng review Bài 1 (2026-07-05) — áp cho bài 2–16 & mọi series mới
 
-> Bài 1 đã review 2 vòng và sửa xong (chi tiết trong lịch sử git: `3c0f4ea` → `334dae4` → `07441ba` → `860946c`). Lộ trình đã tái cấu trúc thành 16 bài như bảng §3 (đổi thứ tự khối analog vì lỗi phụ thuộc kiến thức: AC phải học trước biến áp/chỉnh lưu; RF chuyển sau transistor; thêm bài Op-Amp lấp lỗ hổng comparator cho bài 555; tách MCU thành 2 bài; bài 16 là capstone). Dưới đây là các quy tắc còn hiệu lực cho agent viết bài mới:
+> Bài 1 đã review 2 vòng và sửa xong (chi tiết trong lịch sử git: `3c0f4ea` → `334dae4` → `07441ba` → `860946c`). Lộ trình đã tái cấu trúc thành 16 bài như bảng §3 (đổi thứ tự khối analog vì lỗi phụ thuộc kiến thức: AC phải học trước biến áp/chỉnh lưu; RF chuyển sau transistor; thêm bài Op-Amp lấp lỗ hổng comparator cho bài 555; tách MCU thành 2 bài; bài 16 là capstone). Quy tắc kỹ thuật chung (cấm `[!NOTE]`, danh sách thật, grep trước commit, đếm rubric...) đã chuyển sang [`check-lesson.md`](check-lesson.md) — dưới đây chỉ còn quy tắc **đặc thù riêng Series 10**:
 
-1. **KHÔNG dùng `<blockquote>[!NOTE]` kiểu GitHub-alert** — HTML tĩnh không render; dùng component `.callout--*` và CHỈ 5 class có thật trong `blog.css` (`--note/tip/warning/pitfall/deep`).
-2. **Danh sách bước = `<ol>`/`<ul>` thật** — cấm dồn "1. … 2. …" hay "\* …" vào một `<p>` bằng `<br />`.
-3. **Grep tự rà trước commit:** `data-lang-content`, `[!NOTE]`, `**` thô, class callout không tồn tại — tất cả phải = 0 trong `.article-body`. Lưu ý màu: trang bài nền TRẮNG (`.article-body strong` màu đen) — component có panel nền tối phải tự override màu `strong`/`code` bên trong (bài 1 từng dính, fix `860946c`).
-4. **Tự đếm rubric TRƯỚC khi báo xong:** ≥4 `.code-window` chạy được + anti-pattern ❌/✅, ≥3 callout (≥1 pitfall), ≥3 `.article-refs`, ≥3 cross-link nội bộ, ≥1 schematic SVG (sơ đồ nguyên lý/timing/trạng thái — pinout KHÔNG tính). Đối chiếu đề cương từng ý nhỏ (N.1–N.4) trước khi viết dàn bài.
-5. **Kiểm tra phụ thuộc kiến thức:** bài chỉ dùng khái niệm của bài số nhỏ hơn; nếu buộc dùng trước thì đóng khung "ví dụ nếm trước" + callout "sẽ học/chứng minh ở Bài N" (mẫu chuẩn: §4 Bài 1). **Lưu ý riêng Bài 4:** demo Delay Timer dùng transistor (Bài 9) → trình bày dạng "công tắc điện tử hộp đen" kèm callout forward-ref, hoặc đổi demo quan sát trực tiếp đường nạp tụ.
-6. **Bài nặng toán scaffold cụ thể → trừu tượng:** Bài 3 giải tay mạch 2 nút bằng KCL/KVL trước rồi mới ma trận hoá MNA; Bài 5 ví dụ pha trễ cụ thể trước khi đưa số phức $j$.
-7. **An toàn điện:** bài mô phỏng điện lưới 220V (Bài 6) hoặc đo áp cao bằng VOM phải có `.callout--warning` an toàn (mô phỏng ≠ thực hành).
-8. **Simulator:** demo chỉ dùng linh kiện đã học tính đến bài đó; trạng thái đọc "0/OL hợp lệ" phải có chú thích ngay trên UI để người học không tưởng demo hỏng; mọi chế độ/nút có trên UI mà không mô phỏng được thì ghi chú giới hạn rõ ràng.
-9. **Không thực hành code lập trình trong series điện tử:** Series này tập trung vào vật lý và mô phỏng mạch điện, không dạy lập trình phần mềm. Vì vậy, KHÔNG viết các bài thực hành code (ví dụ viết thuật toán giải ma trận bằng JS/C/C++). JavaScript chỉ được dùng dưới dạng engine chạy ngầm cho các demo tương tác và giả lập mạch điện (nếu có), không đưa vào làm nội dung thực hành lập trình.
+1. **Kiểm tra phụ thuộc kiến thức:** bài chỉ dùng khái niệm của bài số nhỏ hơn; nếu buộc dùng trước thì đóng khung "ví dụ nếm trước" + callout "sẽ học/chứng minh ở Bài N" (mẫu chuẩn: §4 Bài 1). **Lưu ý riêng Bài 4:** demo Delay Timer dùng transistor (Bài 9) → trình bày dạng "công tắc điện tử hộp đen" kèm callout forward-ref, hoặc đổi demo quan sát trực tiếp đường nạp tụ.
+2. **Bài nặng toán scaffold cụ thể → trừu tượng:** Bài 3 giải tay mạch 2 nút bằng KCL/KVL trước rồi mới ma trận hoá MNA; Bài 5 ví dụ pha trễ cụ thể trước khi đưa số phức $j$.
+3. **An toàn điện:** bài mô phỏng điện lưới 220V (Bài 6) hoặc đo áp cao bằng VOM phải có `.callout--warning` an toàn (mô phỏng ≠ thực hành).
+4. **Simulator:** demo chỉ dùng linh kiện đã học tính đến bài đó; trạng thái đọc "0/OL hợp lệ" phải có chú thích ngay trên UI để người học không tưởng demo hỏng; mọi chế độ/nút có trên UI mà không mô phỏng được thì ghi chú giới hạn rõ ràng.
+5. **Không thực hành code lập trình trong series điện tử:** Series này tập trung vào vật lý và mô phỏng mạch điện, không dạy lập trình phần mềm. Vì vậy, KHÔNG viết các bài thực hành code (ví dụ viết thuật toán giải ma trận bằng JS/C/C++). JavaScript chỉ được dùng dưới dạng engine chạy ngầm cho các demo tương tác và giả lập mạch điện (nếu có), không đưa vào làm nội dung thực hành lập trình.
 
 ---
 
@@ -545,11 +546,11 @@ Mọi bài học Series 11 tuân thủ toàn bộ rubric chung tại `.agents/sk
 - [ ] `sitemap.xml` (hub 0.8, bài + visualizer 0.7) · `blog/search-index.json` (headings VI) · `README.md`/`AGENTS.md` (cây thư mục, số series/bài, Last Updated).
 - [ ] Mỗi file `.sv` co-located ghi comment đầu file lệnh chạy thật: `verilator --lint-only` / link EDA Playground.
 
-**Điều kiện chặn bổ sung cho Series 11** (cộng với 7 điều kiện chặn chung Phần II):
+**Điều kiện chặn bổ sung cho Series 11** (cộng với checklist chung trong [`check-lesson.md`](check-lesson.md)):
 
-8. Khối "📚 Điều kiện tiên quyết" hiện diện đầu MỌI bài, link đúng slug không đuôi `.html`.
-9. Mọi ví dụ SV chạy được trên VeriLite hoặc ghi rõ "ngoài subset"; grep `data-lang-content` trong article-body = 0.
-10. Sơ đồ đúng loại bài (§4) — netlist/timing/trạng thái/kiến trúc; pinout không tính.
+1. Khối "📚 Điều kiện tiên quyết" hiện diện đầu MỌI bài, link đúng slug không đuôi `.html`.
+2. Mọi ví dụ SV chạy được trên VeriLite hoặc ghi rõ "ngoài subset".
+3. Sơ đồ đúng loại bài (§4) — netlist/timing/trạng thái/kiến trúc; pinout không tính.
 
 ---
 
@@ -572,15 +573,8 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 
 ## 🚫 Điều kiện chặn — BẮT BUỘC đúng trước khi coi 1 bài là "xong"
 
-Đây là các lỗi đã lặp lại nhiều lần ở series trước (WebGPU, CSS). Tự kiểm tra đủ 7 mục dưới đây cho **từng bài** trước khi báo hoàn thành, không đợi người dùng phát hiện lại:
-
-1. **Header/Footer đồng nhất.** Copy nguyên văn header (hamburger nav) và footer (full nav + AdSense slot) từ file mẫu chuẩn của series gần nhất đã hoàn thành (hiện tại: `webgl-shaders-glsl.html` hoặc bài WebGPU/CSS mới nhất). Không tự viết lại, không thiếu mục nav nào.
-2. **Liên kết giữa các trang đúng & đủ.** Hub → từng bài (đúng thứ tự, đúng slug không đuôi `.html`); mỗi bài có link bài trước/bài sau + về hub (`.article-related`); danh sách bài trên hub (`.lessons-list`) khớp 100% với các file thực tế đã tạo — không link tới bài chưa tồn tại, không sót bài đã tạo.
-3. **Công thức toán học phải highlight qua KaTeX.** Mọi công thức (`$…$` inline, `$$…$$` block) phải render qua `katex.min.js` + `auto-render.min.js` (local, không CDN). Test thực tế trên trình duyệt — không được để công thức hiện dạng text thô `$...$`.
-4. **Code demo bắt buộc có tab hiển thị code.** Dùng component `.code-tabs` (chuẩn từ WebGPU/CSS series): tối thiểu 3 tab **Xem trước (Preview) | <ngôn ngữ chính: WGSL/CSS/…> | JavaScript**, mỗi tab có Prism syntax highlight đúng `language-*`. KHÔNG dùng lại pattern cũ "chỉ 1 nút ⟨⟩ Xem Code" cho bài mới — đó là pattern lỗi thời trước WebGPU.
-5. **Không còn markdown thô chưa convert.** Quét toàn bộ nội dung bài để chắc chắn không còn `**text**` (phải là `<strong>text</strong>`) hay `` `code` `` (phải là `<code>code</code>`) hiển thị dưới dạng ký tự thô. Grep từng file mới để tự rà trước khi commit.
-6. **Thêm vào ROOT `index.html` (không phải `blog/index.html`).** Sau khi 1 series có bài đầu tiên hoàn thành, thêm 1 `a.learn-card` vào section "Programming Courses" của **`index.html` ở thư mục gốc** (khác với `blog/index.html` — dễ nhầm lẫn, đã từng bị bỏ sót). Card gồm `.learn-card__tag`, `h3.learn-card__title`, `p.learn-card__desc` (dùng `data-i18n`, không phải `data-lang-content`). Đối chiếu số lượng `learn-card` ở root `index.html` phải luôn khớp số lượng `blog-card` series ở `blog/index.html`.
-7. **⚠️ CHỈ TIẾNG VIỆT cho series mới, không song ngữ EN/VI (áp dụng từ series DSA, 2026-07-03).** Nội dung bài (`.article-hero` title/meta/back-link, `.article-body`, `.article-related`) viết 1 khối tiếng Việt duy nhất, KHÔNG dùng cặp `data-lang-content="en"`/`"vi"` và KHÔNG cần nút toggle ngôn ngữ cho nội dung bài. Header/footer/nav vẫn giữ `data-i18n` (chrome dùng chung toàn site, không đổi). Các series cũ (C, C++, JS, Canvas, WebGL, Bash, WebGPU, CSS) đã lỡ làm song ngữ/VI-stub thì giữ nguyên, KHÔNG cần viết lại — quy tắc này chỉ áp dụng cho nội dung viết mới từ đây trở đi.
+> Đã chuyển toàn bộ sang [`check-lesson.md`](check-lesson.md) PHẦN B + PHẦN C (kèm lệnh
+> grep/prettier chạy được, không còn chỉ mô tả suông). Đọc file đó, không đọc mục này nữa.
 
 ## 0. Quy ước slug thư mục & ID series
 
@@ -627,19 +621,11 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 
 ## 3. Definition of Done cho MỖI trang bài học
 
-Mỗi file `<series>-<topic>.html` phải có đủ:
-
-- [ ] **`<head>`**: `<title>Bài N: … — js-tools</title>`, `<meta name="description">`, `<link rel="canonical" href="https://js-tools.org/blog/<series>/<file>" />` (không `.html`), OG/Twitter tags, JSON-LD `Article`/`TechArticle`, link CSS: `../blog.css`, `../ide.css`, `../prism.css`.
-- [ ] **Header** hamburger nav + **Footer** full nav: copy nguyên văn từ file chuẩn (kèm `data-i18n` nav, AdSense slot).
-- [ ] **`.article-hero`**: back-link về hub (song ngữ), `h1.article-hero__title` (2 bản EN/VI), `.article-hero__meta` (ngày + "X phút đọc", song ngữ).
-- [ ] **`.article-body`**: 2 khối song song `div[data-lang-content="en"]` và `div[data-lang-content="vi"]` chứa toàn bộ nội dung CS chuyên sâu theo đề cương Phần I. Code block bọc Prism (`<pre><code class="language-…">`).
-- [ ] **Demo tương tác**: nhúng visualizer (`<canvas>`/`<svg>` + script inline, hoặc iframe tới file demo) **bọc trong component `.code-tabs`** với tab **Xem trước (Preview) | <ngôn ngữ chính> | JavaScript** — pattern chuẩn từ WebGPU/CSS series (KHÔNG dùng lại nút `⟨⟩ Xem Code` đơn lẻ kiểu series cũ). Xem chi tiết ở "🚫 Điều kiện chặn" #4.
-- [ ] **`js-playground`** (nếu hợp): textarea nhập code + ô log console output (chỉ với bài chạy được JS thuần).
-- [ ] **Quiz**: 2–3 câu trắc nghiệm dùng `ide.js`/`ide.css` (pattern "Trắc nghiệm N").
-- [ ] **Link tải code**: "Tải file code thực hành" trỏ tới file co-located.
-- [ ] **`.article-related`**: link bài trước/sau + về hub (song ngữ).
-- [ ] **`.article-discuss`** + widget **giscus** (map đúng repo/category).
-- [ ] Chạy Prettier (`npx prettier --write`) trước khi commit.
+> Đã chuyển sang [`check-lesson.md`](check-lesson.md) PHẦN B (anatomy trang bài học) + PHẦN C
+> (checklist chạy thật trước khi báo xong, gồm cả lệnh kiểm tra `.code-tabs`, canonical, quiz).
+> Lưu ý: mục "2 khối song song EN/VI" trong bản cũ chỉ áp cho series **cũ hơn** DSA
+> (2026-07-03) — series mới viết 1 khối tiếng Việt duy nhất, xem quy tắc ngôn ngữ trong
+> `check-lesson.md` PHẦN B.
 
 ## 4. Visualizer cốt lõi cần dựng (1 demo/series — phần nặng nhất)
 
@@ -661,7 +647,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 ## 5. Tích hợp toàn cục (sau khi xong mỗi series)
 
 - [ ] **`blog/index.html`**: thêm 1 `a.blog-card` trỏ tới `<series>/<series>-programming-series` với `span.blog-card__tag--<x>`, tiêu đề + excerpt song ngữ (`data-lang-content`), `.blog-card__meta`, "Start learning → / Bắt đầu học →". Đặt cùng nhóm các series lập trình.
-- [ ] **⚠️ ROOT `index.html`** (thư mục gốc, KHÁC `blog/index.html`): thêm 1 `a.learn-card` vào section "Programming Courses" — xem chi tiết & lý do ở mục "🚫 Điều kiện chặn" #6 phía trên. Bước này đã bị bỏ sót ở WebGPU/CSS series trước đây, luôn kiểm tra lại số lượng card khớp giữa 2 file.
+- [ ] **⚠️ ROOT `index.html`** (thư mục gốc, KHÁC `blog/index.html`): thêm 1 `a.learn-card` vào section "Programming Courses" — xem lý do & lịch sử bỏ sót trong [`check-lesson.md`](check-lesson.md). Luôn kiểm tra lại số lượng card khớp giữa 2 file.
 - [ ] **`sitemap.xml`**: thêm 1 block `<url>` cho hub + mỗi bài + mỗi visualizer. Mẫu:
   ```xml
   <url>
@@ -677,13 +663,8 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 
 ## 6. QA trước khi bàn giao mỗi series
 
-- [ ] Mở `npx serve -l 5500 .`, duyệt hub → từng bài → visualizer, không lỗi console.
-- [ ] Toggle ngôn ngữ EN/VI: mọi khối hiển thị đúng, không sót khối nào.
-- [ ] Responsive: mobile <600px, hamburger <880px, desktop.
-- [ ] Nút "⟨⟩ Xem Code" fetch & highlight đúng; quiz chấm đúng; link tải code trả 200.
-- [ ] Tìm kiếm trên `blog/index.html` ra được bài mới (đã có trong search-index).
-- [x] **giscus** load đúng (không lỗi console), không còn request `facebook.net` (ĐÃ HOÀN THÀNH); sitemap không trùng/sai URL.
-- [ ] Prettier sạch toàn bộ file mới.
+> Đã chuyển sang [`check-lesson.md`](check-lesson.md) PHẦN C (C1 lệnh tự động, C2 kiểm tra thủ
+> công trên trình duyệt, C3 tích hợp chéo file).
 
 ## 7. Thứ tự ưu tiên đề xuất
 
@@ -949,9 +930,6 @@ Mỗi mục H2 KHÔNG chỉ mô tả "cái gì". Phải bao trùm:
 
 ## 8. Definition of Done bổ sung (gộp vào checklist Phần II §3)
 
-- [ ] Đạt **toàn bộ** rubric §2.
-- [ ] Mỗi mục H2 trả lời đủ 4 câu hỏi §1.
-- [ ] Có `.article-refs` ≥3 link ngoài hợp lệ (mở tab mới).
-- [ ] Có ≥3 cross-link nội bộ theo bản đồ §4.
-- [ ] Có ≥3 callout, glossary/`<abbr>` cho thuật ngữ mới.
-- [ ] Đối chiếu lại độ sâu với 1 bài chuẩn của series cũ (vd `c-data-structures`, `cpp-move-semantics`) — không được nông hơn.
+> Đã chuyển vào [`check-lesson.md`](check-lesson.md) PHẦN C1 (mục "Đếm rubric tối thiểu").
+> Rubric định lượng đầy đủ vẫn ở §2 phía trên (bảng số liệu — giữ nguyên tại đây vì là nội
+> dung thiết kế, không phải quy tắc QA thuần).
