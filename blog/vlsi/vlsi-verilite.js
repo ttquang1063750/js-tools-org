@@ -1,6 +1,9 @@
 /**
  * VeriLite: Lightweight SystemVerilog Parser and Simulator
- * Uses regex-based parsing for robustness, no formal lexer/tokens
+ * Uses regex-based parsing for robustness, no formal lexer/tokens.
+ * Supports: module/port, logic/wire/reg declaration, assign (dataflow),
+ * gate-primitive instantiation (not/and/or/xor/nand/nor/xnor/buf — structural),
+ * and single-condition if/else inside always/always_comb (behavioral).
  */
 
 class VeriLiteParser {
@@ -11,15 +14,16 @@ class VeriLiteParser {
   parse() {
     const moduleName = this.extractModuleName();
     const ports = this.extractPorts();
-    const assigns = this.extractAssigns();
     const decls = this.extractDeclarations();
+    const gates = this.extractGates();
+    const assigns = [...this.extractAssigns(), ...this.extractAlwaysAssigns()];
 
     return {
       name: moduleName,
       ports,
       decls,
+      gates,
       assigns,
-      always: []
     };
   }
 
@@ -34,7 +38,6 @@ class VeriLiteParser {
 
     const portStr = portMatch[1];
     const ports = [];
-    const portRegex = /(input|output|inout)?\s*(logic|wire|reg|bit)?\s*(\w+)/g;
     let match;
 
     let direction = 'input';
@@ -42,7 +45,7 @@ class VeriLiteParser {
       const word = match[1];
       if (['input', 'output', 'inout'].includes(word)) {
         direction = word;
-      } else if (!['logic', 'wire', 'reg', 'bit', 'module', 'endmodule'].includes(word)) {
+      } else if (!['logic', 'wire', 'reg', 'bit'].includes(word)) {
         ports.push({ name: word, direction });
       }
     }
@@ -50,12 +53,22 @@ class VeriLiteParser {
     return ports;
   }
 
+  // Chỉ khớp khai báo `wire`/`logic`/`reg`/`bit` khi đứng ĐẦU DÒNG (không phải sau
+  // input/output trong danh sách port) — hỗ trợ cú pháp nhiều tên trên 1 dòng
+  // (vd `wire not_s, and_a, and_b;`), mỗi tên tách bằng dấu phẩy.
   extractDeclarations() {
     const decls = [];
-    const declRegex = /(logic|wire|reg|bit)\s+(\w+)/g;
+    const declRegex = /^[ \t]*(logic|wire|reg|bit)\s+([^;]+);/gm;
     let match;
     while ((match = declRegex.exec(this.code)) !== null) {
-      decls.push({ type: match[1], name: match[2] });
+      const type = match[1];
+      const names = match[2].split(',');
+      for (const raw of names) {
+        const name = raw.replace(/\[[^\]]*\]/g, '').trim();
+        if (name && /^\w+$/.test(name)) {
+          decls.push({ type, name });
+        }
+      }
     }
     return decls;
   }
@@ -71,6 +84,43 @@ class VeriLiteParser {
       assigns.push({ lhs, rhs });
     }
 
+    return assigns;
+  }
+
+  // Cổng nguyên thủy (structural): `and NAME (out, in1, in2, ...);`
+  extractGates() {
+    const gates = [];
+    const gateRegex = /\b(not|buf|and|or|xor|nand|nor|xnor)\s+(\w+)\s*\(([^)]+)\)\s*;/g;
+    let match;
+    while ((match = gateRegex.exec(this.code)) !== null) {
+      const type = match[1];
+      const instanceName = match[2];
+      const args = match[3].split(',').map((s) => s.trim());
+      const output = args[0];
+      const inputs = args.slice(1);
+      gates.push({ type, instanceName, output, inputs });
+    }
+    return gates;
+  }
+
+  // Behavioral tối giản: `if (cond) lhs = a; else lhs = b;` bên trong always/always_comb.
+  // Chuyển thành 1 "assign" tương đương lhs = cond ? a : b (đủ cho case dạy học đơn giản).
+  extractAlwaysAssigns() {
+    const assigns = [];
+    const blockRegex = /always[_\w]*\s*(?:@\([^)]*\))?\s*begin([\s\S]*?)end/g;
+    let blockMatch;
+    while ((blockMatch = blockRegex.exec(this.code)) !== null) {
+      const body = blockMatch[1];
+      const ifElseRegex = /if\s*\(([^)]+)\)\s*(\w+)\s*=\s*([^;]+);\s*else\s*\2\s*=\s*([^;]+);/g;
+      let stmtMatch;
+      while ((stmtMatch = ifElseRegex.exec(body)) !== null) {
+        const cond = stmtMatch[1].trim();
+        const lhs = stmtMatch[2].trim();
+        const thenExpr = stmtMatch[3].trim();
+        const elseExpr = stmtMatch[4].trim();
+        assigns.push({ lhs, rhs: `(${cond}) ? (${thenExpr}) : (${elseExpr})` });
+      }
+    }
     return assigns;
   }
 }
@@ -89,6 +139,22 @@ class VeriSimulator {
     for (const decl of this.ast.decls) {
       this.state[decl.name] = 0;
     }
+    for (const gate of this.ast.gates || []) {
+      if (this.state[gate.output] === undefined) this.state[gate.output] = 0;
+    }
+  }
+
+  isFullyParenthesized(expr) {
+    if (!expr.startsWith('(') || !expr.endsWith(')')) return false;
+    let depth = 0;
+    for (let i = 0; i < expr.length; i++) {
+      if (expr[i] === '(') depth++;
+      else if (expr[i] === ')') {
+        depth--;
+        if (depth === 0 && i < expr.length - 1) return false;
+      }
+    }
+    return true;
   }
 
   evalExpression(expr, state) {
@@ -104,8 +170,10 @@ class VeriSimulator {
     // Identifiers
     if (/^\w+$/.test(expr)) return state[expr] !== undefined ? state[expr] : 0;
 
-    // Parentheses
-    if (expr.startsWith('(') && expr.endsWith(')')) {
+    // Parentheses — chỉ cắt bỏ nếu dấu '(' đầu tiên thực sự khớp dấu ')' cuối cùng
+    // (tức cả biểu thức nằm trong 1 cặp ngoặc duy nhất, không phải 2 cụm ngoặc
+    // riêng biệt như "(a & ~s) | (b & s)").
+    if (this.isFullyParenthesized(expr)) {
       return this.evalExpression(expr.slice(1, -1), state);
     }
 
@@ -133,7 +201,7 @@ class VeriSimulator {
       { regex: /(.+?)\s*-\s*(.+)/, op: '-' },
       { regex: /(.+?)\s*\*\s*(.+)/, op: '*' },
       { regex: /(.+?)\s*\/\s*(.+)/, op: '/' },
-      { regex: /(.+?)\s*%\s*(.+)/, op: '%' }
+      { regex: /(.+?)\s*%\s*(.+)/, op: '%' },
     ];
 
     for (const { regex, op } of ops) {
@@ -150,7 +218,7 @@ class VeriSimulator {
       return this.evalExpression(expr.slice(1), state) ? 0 : 1;
     }
     if (expr.startsWith('~')) {
-      return ~this.evalExpression(expr.slice(1), state);
+      return this.evalExpression(expr.slice(1), state) ? 0 : 1;
     }
     if (expr.startsWith('-')) {
       return -this.evalExpression(expr.slice(1), state);
@@ -161,23 +229,63 @@ class VeriSimulator {
 
   applyOp(op, left, right) {
     switch (op) {
-      case '+': return left + right;
-      case '-': return left - right;
-      case '*': return left * right;
-      case '/': return right !== 0 ? Math.floor(left / right) : 0;
-      case '%': return right !== 0 ? left % right : 0;
-      case '&': return left & right;
-      case '|': return left | right;
-      case '^': return left ^ right;
-      case '&&': return (left && right) ? 1 : 0;
-      case '||': return (left || right) ? 1 : 0;
-      case '==': return left === right ? 1 : 0;
-      case '!=': return left !== right ? 1 : 0;
-      case '<': return left < right ? 1 : 0;
-      case '>': return left > right ? 1 : 0;
-      case '<=': return left <= right ? 1 : 0;
-      case '>=': return left >= right ? 1 : 0;
-      default: return 0;
+      case '+':
+        return left + right;
+      case '-':
+        return left - right;
+      case '*':
+        return left * right;
+      case '/':
+        return right !== 0 ? Math.floor(left / right) : 0;
+      case '%':
+        return right !== 0 ? left % right : 0;
+      case '&':
+        return left & right;
+      case '|':
+        return left | right;
+      case '^':
+        return left ^ right;
+      case '&&':
+        return left && right ? 1 : 0;
+      case '||':
+        return left || right ? 1 : 0;
+      case '==':
+        return left === right ? 1 : 0;
+      case '!=':
+        return left !== right ? 1 : 0;
+      case '<':
+        return left < right ? 1 : 0;
+      case '>':
+        return left > right ? 1 : 0;
+      case '<=':
+        return left <= right ? 1 : 0;
+      case '>=':
+        return left >= right ? 1 : 0;
+      default:
+        return 0;
+    }
+  }
+
+  evalGate(type, inVals) {
+    switch (type) {
+      case 'not':
+        return inVals[0] ? 0 : 1;
+      case 'buf':
+        return inVals[0] ? 1 : 0;
+      case 'and':
+        return inVals.every((v) => v) ? 1 : 0;
+      case 'or':
+        return inVals.some((v) => v) ? 1 : 0;
+      case 'xor':
+        return inVals.reduce((a, b) => a ^ b, 0);
+      case 'nand':
+        return inVals.every((v) => v) ? 0 : 1;
+      case 'nor':
+        return inVals.some((v) => v) ? 0 : 1;
+      case 'xnor':
+        return inVals.reduce((a, b) => a ^ b, 0) ? 0 : 1;
+      default:
+        return 0;
     }
   }
 
@@ -191,7 +299,16 @@ class VeriSimulator {
       }
     }
 
-    // Evaluate assigns
+    // Evaluate cổng nguyên thủy (structural) — 2 lượt để chịu được thứ tự khai báo
+    // không đúng thứ tự phụ thuộc (vd cổng dùng biến được cổng sau mới gán).
+    for (let pass = 0; pass < 2; pass++) {
+      for (const gate of this.ast.gates || []) {
+        const inVals = gate.inputs.map((name) => (newState[name] !== undefined ? newState[name] : 0));
+        newState[gate.output] = this.evalGate(gate.type, inVals);
+      }
+    }
+
+    // Evaluate assigns (dataflow + behavioral if/else đã được chuyển thành ternary)
     for (const assign of this.ast.assigns) {
       newState[assign.lhs] = this.evalExpression(assign.rhs, newState);
     }
