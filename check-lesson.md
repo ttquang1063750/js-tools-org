@@ -44,6 +44,7 @@
   cặp `data-lang-content="en"`/`"vi"`, không có div `en` với text "chỉ có tiếng Việt". Header
   /footer/nav vẫn giữ `data-i18n` (chrome dùng chung site, không đổi). Series cũ (C, C++, JS,
   Canvas, WebGL, Bash, WebGPU, CSS) đã lỡ song ngữ thì giữ nguyên, không viết lại.
+- **Lưu ý riêng Series Điện Tử:** Khi giới thiệu hoặc đề cập đến bất kỳ linh kiện bán dẫn hay chip thật nào (như đi-ốt 1N4007, transistor TIP120/IRF540N, IC 555, vi điều khiển ATmega328P, PIC16F877A, STM32F103, ESP32), **bắt buộc** phải chèn liên kết (`<a>` với `target="_blank"` và `rel="noopener noreferrer"`) dẫn đến datasheet chính thức từ nhà sản xuất gốc (như Microchip, Texas Instruments, Infineon, STMicroelectronics, Espressif).
 - **Không dùng `<blockquote>[!NOTE]` kiểu GitHub-alert** — trang tĩnh không render cú pháp
   này, người đọc thấy nguyên chữ `[!NOTE]`. Dùng component `.callout--*`.
 - **Chỉ 5 class callout có thật trong `blog.css`**: `--note`, `--tip`, `--warning`,
