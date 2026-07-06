@@ -997,4 +997,30 @@ var _self =
     punctuation: /---|[:[\]{}\-,|>?]|\.\.\./,
   };
   e.languages.yml = e.languages.yaml;
+
+  /* Verilog/SystemVerilog — for Series 11 (VLSI/Digital IC Design) */
+  if (!e || !e.languages) return;
+  e.languages.verilog = {
+    comment: [
+      { pattern: /\/\/.*/, greedy: true },
+      { pattern: /\/\*[\s\S]*?\*\//, greedy: true },
+    ],
+    string: {
+      pattern: /"(?:\\.|[^"\\])*"/,
+      greedy: true,
+    },
+    keyword: /\b(?:module|endmodule|input|output|inout|wire|reg|logic|parameter|localparam|always|always_ff|always_comb|initial|begin|end|if|else|case|default|for|while|function|task|assign|posedge|negedge|typedef|enum|interface|endinterface|class|endclass|automatic|signed|unsigned|real|time|integer|bit|byte|string|event|package|endpackage|virtual|super|this|new)\b/,
+    boolean: /\b(?:true|false)\b/,
+    number: [
+      /\b\d+[_\d]*\b/,
+      /\b\d+[_\d]*\.\d+[_\d]*\b/,
+      /'[bB][01xXzZ][_01xXzZ]*/,
+      /'[oO][0-7xXzZ][_0-7xXzZ]*/,
+      /'[dD]\d[_0-9xXzZ]*/,
+      /'[hH][0-9a-fA-FxXzZ][_0-9a-fA-FxXzZ]*/,
+    ],
+    operator: /===|!==|==|!=|<=|>=|&&|\|\||!|\+|-|\*|\/|%|&|\||\^|~|<<|>>|<|>|=|\?:/,
+    punctuation: /[{}[\]();:.,]/,
+  };
+
 })(Prism);
