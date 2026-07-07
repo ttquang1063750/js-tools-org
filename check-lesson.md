@@ -372,3 +372,25 @@ grep -A 1 'article-related__link--next"' <file> | grep -o 'href="[^"]*"'
     bộ `applyAlwaysFF()`; điều kiện `if` cũng đổi sang đọc từ `snapshot` thay vì `state` sống
     cho nhất quán. Regression test lại mọi bài trước (ALU, FSM, PWM/shift-register, RCA/CLA)
     — không đổi kết quả vì các bài đó chỉ có 1 khối `always_ff`/module, không bị ảnh hưởng.
+17. **2026-07-08, Bài 4 VLSI (phát hiện khi đang viết Bài 6, fix sau khi Bài 6 đã xong):**
+    `cycle()` áp dụng thứ tự (1) input mới → (2) `applyAlwaysFF` (dùng `next_state` CŨ, tính
+    từ CUỐI cycle TRƯỚC, tức dựa trên input CỦA CYCLE TRƯỚC chứ không phải input vừa áp dụng)
+    → (3) gates → (4) assigns (tính lại `next_state`, nhưng chỉ kịp dùng ở cycle SAU). Theo
+    ngữ nghĩa SystemVerilog/phần cứng thật, tín hiệu tổ hợp như `next_state` (sinh bởi
+    `always_comb`/`case` trong template FSM 2-process) phải "ổn định liên tục" giữa 2 cạnh
+    clock — tức phải được tính lại với STATE HIỆN TẠI + INPUT MỚI ngay TRƯỚC khi always_ff
+    lấy mẫu, không phải sau. Hậu quả: FSM trễ đúng 1 chu kỳ so với input thật. Phát hiện qua
+    self-test Node (bộ phát hiện chuỗi `1011` với dãy bit `1,0,1,1,0,1,1` — bài
+    `vlsi-fsm.html` khẳng định có 2 lần phát hiện chồng lấp, nhưng simulator chỉ báo 1 lần,
+    và báo sai bit — bit có giá trị 0). Xác nhận qua `git stash` rằng bug này CÓ TRƯỚC cả fix
+    paren-depth ở PHẦN D #14 (không phải regression mới), chỉ là chưa từng bị bắt vì demo
+    tương tác trên trang chỉ có người bấm tay từng bit, không có self-test khớp chính xác số
+    lần phát hiện. → Fix: thêm `settleCombinational(state)` (gộp gates 2-lượt + assigns +
+    mask thành 1 hàm dùng chung), gọi nó 2 LẦN trong `cycle()` — 1 lần TRƯỚC `applyAlwaysFF`
+    (refresh input mới), 1 lần SAU (refresh output phụ thuộc state mới, như `detected`).
+    Regression test lại ALU (Bài 2), shift register blocking/non-blocking + PWM (Bài 3), FSM
+    đèn giao thông (Bài 4), RCA + bộ nhân shift-add (Bài 6) — tất cả giữ nguyên kết quả y hệt
+    trước khi fix; riêng bộ phát hiện chuỗi `1011` giờ báo ĐÚNG 2 lần, đúng vị trí bit. Kiểm
+    tra qua browser xác nhận demo tương tác của `vlsi-fsm.html` (đèn giao thông + bộ phát
+    hiện) tự động đúng theo fix — không cần sửa gì trong HTML/JS của bài đó, vì demo gọi
+    `cycle()` đúng 1 lần mỗi lần bấm Step Clock, khớp hệt cách self-test gọi.

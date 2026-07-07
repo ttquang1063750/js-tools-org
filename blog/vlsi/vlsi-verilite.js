@@ -604,34 +604,49 @@ class VeriSimulator {
       }
     }
 
-    // Áp dụng 1 cạnh clock (always_ff) TRƯỚC — mỗi lần gọi cycle() coi như 1 cạnh
-    // clock đã xảy ra (khớp nút "Step Clock" của RTL Playground). Bài không có
-    // always_ff (Bài 1, 2) thì alwaysFF rỗng, dòng này không đổi gì (an toàn ngược).
+    // "Ổn định" tổ hợp TRƯỚC cạnh clock — always_comb (vd logic case sinh next_state
+    // trong template FSM 2-process) phải chạy LIÊN TỤC giữa 2 cạnh clock theo đúng ngữ
+    // nghĩa phần cứng thật, nên phải refresh với STATE HIỆN TẠI + INPUT MỚI vừa áp dụng
+    // trước khi always_ff lấy mẫu. Thiếu bước này, always_ff sẽ đọc next_state CŨ (tính
+    // từ input của chu kỳ TRƯỚC), khiến FSM trễ mất 1 chu kỳ so với input thật (state chỉ
+    // "đuổi kịp" input ở đúng chu kỳ tiếp theo) — xem PHẦN D #17 trong check-lesson.md.
+    this.settleCombinational(newState);
+
+    // Áp dụng 1 cạnh clock (always_ff) — mỗi lần gọi cycle() coi như 1 cạnh clock đã
+    // xảy ra (khớp nút "Step Clock" của RTL Playground). Bài không có always_ff
+    // (Bài 1, 2) thì alwaysFF rỗng, dòng này không đổi gì (an toàn ngược).
     this.applyAlwaysFF(newState);
 
-    // Evaluate cổng nguyên thủy (structural) — 2 lượt để chịu được thứ tự khai báo
-    // không đúng thứ tự phụ thuộc (vd cổng dùng biến được cổng sau mới gán).
-    for (let pass = 0; pass < 2; pass++) {
-      for (const gate of this.ast.gates || []) {
-        const inVals = gate.inputs.map((name) => (newState[name] !== undefined ? newState[name] : 0));
-        newState[gate.output] = this.evalGate(gate.type, inVals);
-      }
-    }
-
-    // Evaluate assigns (dataflow + behavioral if/else đã được chuyển thành ternary)
-    for (const assign of this.ast.assigns) {
-      newState[assign.lhs] = this.evalExpression(assign.rhs, newState);
-    }
-
-    // Mask cuối cùng theo độ rộng bit khai báo — counter/thanh ghi tự cuộn vòng đúng.
-    for (const name of Object.keys(this.widths)) {
-      if (newState[name] !== undefined) {
-        newState[name] = this.maskToWidth(name, newState[name]);
-      }
-    }
+    // Ổn định lại tổ hợp SAU cạnh clock — refresh các output phụ thuộc STATE MỚI
+    // (vd Moore output "detected" = f(state) phải phản ánh state VỪA cập nhật).
+    this.settleCombinational(newState);
 
     this.state = newState;
     return { ...this.state };
+  }
+
+  // Evaluate cổng nguyên thủy (structural, 2 lượt để chịu thứ tự khai báo không đúng
+  // thứ tự phụ thuộc) + mọi assign tổ hợp (dataflow + behavioral if/else/case đã
+  // chuyển thành ternary), rồi mask theo độ rộng bit khai báo. Gọi 2 lần trong 1
+  // cycle() — trước và sau always_ff — để mọi tín hiệu tổ hợp luôn "tươi" đúng lúc
+  // cần (xem ghi chú trong cycle()).
+  settleCombinational(state) {
+    for (let pass = 0; pass < 2; pass++) {
+      for (const gate of this.ast.gates || []) {
+        const inVals = gate.inputs.map((name) => (state[name] !== undefined ? state[name] : 0));
+        state[gate.output] = this.evalGate(gate.type, inVals);
+      }
+    }
+
+    for (const assign of this.ast.assigns) {
+      state[assign.lhs] = this.evalExpression(assign.rhs, state);
+    }
+
+    for (const name of Object.keys(this.widths)) {
+      if (state[name] !== undefined) {
+        state[name] = this.maskToWidth(name, state[name]);
+      }
+    }
   }
 
   getState() {
