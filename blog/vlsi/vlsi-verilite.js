@@ -193,7 +193,10 @@ class VeriLiteParser {
   // hoàn toàn khác (giữ trạng thái qua cạnh clock), được extractAlwaysFF xử lý riêng.
   extractAlwaysAssigns() {
     const assigns = [];
-    const blockRegex = /always(?!_ff)[_\w]*\s*(?:@\([^)]*\))?\s*begin([\s\S]*?)end/g;
+    // \b quanh begin/end — KHÔNG chỉ "end" trần: 1 tên tín hiệu như "addend" tự nó chứa
+    // chuỗi con "end" ở cuối, nếu không ràng buộc word-boundary cả 2 phía thì regex tưởng
+    // nhầm đó là từ khoá đóng khối, cắt cụt nội dung ngay giữa tên biến (xem PHẦN D #15).
+    const blockRegex = /always(?!_ff)[_\w]*\s*(?:@\([^)]*\))?\s*\bbegin\b([\s\S]*?)\bend\b/g;
     let blockMatch;
     while ((blockMatch = blockRegex.exec(this.code)) !== null) {
       const body = blockMatch[1];
@@ -257,7 +260,8 @@ class VeriLiteParser {
   // chỉ giải thích suông.
   extractAlwaysFF() {
     const results = [];
-    const blockRegex = /always_ff\s*@\s*\(\s*posedge\s+(\w+)\s*\)\s*begin([\s\S]*?)end\b/g;
+    // \b bắt buộc cả 2 phía "end" — xem ghi chú PHẦN D #15 ở extractAlwaysAssigns().
+    const blockRegex = /always_ff\s*@\s*\(\s*posedge\s+(\w+)\s*\)\s*\bbegin\b([\s\S]*?)\bend\b/g;
     let m;
     while ((m = blockRegex.exec(this.code)) !== null) {
       const clock = m[1];
@@ -396,6 +400,23 @@ class VeriSimulator {
     return null;
   }
 
+  // Tìm vị trí toán tử nhị phân NGOÀI CÙNG (depth 0 trong ngoặc) khớp đúng chuỗi `op`,
+  // bỏ qua mọi ký tự trùng nằm bên trong ngoặc con — vd "1 & (a ^ b)": nếu chỉ regex.match
+  // ngây thơ tìm "^" sẽ khớp nhầm dấu "^" nằm TRONG ngoặc, cắt sai thành "1 & (a " và "b)"
+  // (xem PHẦN D #14 trong check-lesson.md).
+  findTopLevelOp(expr, op) {
+    let depth = 0;
+    for (let i = 0; i <= expr.length - op.length; i++) {
+      const c = expr[i];
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      else if (depth === 0 && expr.slice(i, i + op.length) === op) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   evalExpression(expr, state) {
     if (!expr) return 0;
 
@@ -437,35 +458,19 @@ class VeriSimulator {
       return cond ? this.evalExpression(thenStr, state) : this.evalExpression(elseStr, state);
     }
 
-    // Binary operators - process in order of precedence
-    // Chú ý: << và >> PHẢI kiểm tra trước <=/>=/</> — nếu không, regex 1 ký tự
-    // "<" sẽ khớp nhầm vào giữa "a << 1" và cắt biểu thức sai.
+    // Binary operators - process in order of precedence (yếu nhất trước, để tách đúng
+    // toán tử NGOÀI CÙNG trước). Chú ý: << và >> PHẢI kiểm tra trước <=/>=/</> — nếu
+    // không, sẽ khớp nhầm "<" vào giữa "a << 1". Dùng findTopLevelOp (quét theo độ sâu
+    // ngoặc) thay vì regex.match ngây thơ — xem PHẦN D #14.
     const ops = [
-      { regex: /(.+?)\s*\|\|\s*(.+)/, op: '||' },
-      { regex: /(.+?)\s*&&\s*(.+)/, op: '&&' },
-      { regex: /(.+?)\s*\|\s*(.+)/, op: '|' },
-      { regex: /(.+?)\s*\^\s*(.+)/, op: '^' },
-      { regex: /(.+?)\s*&\s*(.+)/, op: '&' },
-      { regex: /(.+?)\s*==\s*(.+)/, op: '==' },
-      { regex: /(.+?)\s*!=\s*(.+)/, op: '!=' },
-      { regex: /(.+?)\s*<<\s*(.+)/, op: '<<' },
-      { regex: /(.+?)\s*>>\s*(.+)/, op: '>>' },
-      { regex: /(.+?)\s*<=\s*(.+)/, op: '<=' },
-      { regex: /(.+?)\s*>=\s*(.+)/, op: '>=' },
-      { regex: /(.+?)\s*<\s*(.+)/, op: '<' },
-      { regex: /(.+?)\s*>\s*(.+)/, op: '>' },
-      { regex: /(.+?)\s*\+\s*(.+)/, op: '+' },
-      { regex: /(.+?)\s*-\s*(.+)/, op: '-' },
-      { regex: /(.+?)\s*\*\s*(.+)/, op: '*' },
-      { regex: /(.+?)\s*\/\s*(.+)/, op: '/' },
-      { regex: /(.+?)\s*%\s*(.+)/, op: '%' },
+      '||', '&&', '|', '^', '&', '==', '!=', '<<', '>>', '<=', '>=', '<', '>', '+', '-', '*', '/', '%',
     ];
 
-    for (const { regex, op } of ops) {
-      const match = expr.match(regex);
-      if (match) {
-        const left = this.evalExpression(match[1], state);
-        const right = this.evalExpression(match[2], state);
+    for (const op of ops) {
+      const idx = this.findTopLevelOp(expr, op);
+      if (idx !== -1) {
+        const left = this.evalExpression(expr.slice(0, idx), state);
+        const right = this.evalExpression(expr.slice(idx + op.length), state);
         return this.applyOp(op, left, right);
       }
     }
@@ -555,31 +560,38 @@ class VeriSimulator {
   // blocking "=" (mutate `state` ngay, câu lệnh sau thấy được giá trị mới) vs
   // non-blocking "<=" (RHS luôn đọc từ `snapshot` đóng băng tại đầu cạnh clock, LHS chỉ
   // áp dụng đồng loạt ở cuối) — đúng ngữ nghĩa phần cứng thật, không phải giả lập suông.
+  //
+  // `snapshot` PHẢI lấy 1 LẦN DUY NHẤT cho TẤT CẢ khối always_ff của cạnh clock này —
+  // không phải lấy lại cho từng khối. Nếu lấy riêng từng khối, khối chạy SAU sẽ vô tình
+  // đọc giá trị ĐÃ CẬP NHẬT (post-edge) của khối chạy TRƯỚC dù về mặt phần cứng cả 2 khối
+  // "xảy ra" cùng 1 cạnh clock — sai ngữ nghĩa non-blocking khi nhiều thanh ghi tham chiếu
+  // chéo nhau (vd bộ nhân shift-add Bài 6: busy/count/mrem/addend/acc mỗi cái 1 khối
+  // always_ff riêng nhưng cùng đọc trạng thái của nhau). Xem PHẦN D #16.
   applyAlwaysFF(state) {
-    for (const block of this.ast.alwaysFF || []) {
-      const snapshot = { ...state };
-      const pendingNonBlocking = {};
+    const snapshot = { ...state };
+    const pendingNonBlocking = {};
 
-      const run = (stmts) => {
-        for (const stmt of stmts) {
-          if (stmt.type === 'if') {
-            const cond = this.evalExpression(stmt.cond, state);
-            const branch = cond ? stmt.then : stmt.else;
-            if (branch) run(branch);
-          } else if (stmt.type === 'assign') {
-            if (stmt.op === '<=') {
-              pendingNonBlocking[stmt.lhs] = this.maskToWidth(stmt.lhs, this.evalExpression(stmt.rhs, snapshot));
-            } else {
-              state[stmt.lhs] = this.maskToWidth(stmt.lhs, this.evalExpression(stmt.rhs, state));
-            }
+    const run = (stmts) => {
+      for (const stmt of stmts) {
+        if (stmt.type === 'if') {
+          const cond = this.evalExpression(stmt.cond, snapshot);
+          const branch = cond ? stmt.then : stmt.else;
+          if (branch) run(branch);
+        } else if (stmt.type === 'assign') {
+          if (stmt.op === '<=') {
+            pendingNonBlocking[stmt.lhs] = this.maskToWidth(stmt.lhs, this.evalExpression(stmt.rhs, snapshot));
+          } else {
+            state[stmt.lhs] = this.maskToWidth(stmt.lhs, this.evalExpression(stmt.rhs, state));
           }
         }
-      };
+      }
+    };
+    for (const block of this.ast.alwaysFF || []) {
       run(block.statements);
-      // Mask NGAY khi merge — các assign tổ hợp chạy sau applyAlwaysFF (vd so sánh
-      // count < duty) phải thấy giá trị ĐÃ cuộn vòng, không phải giá trị thô chưa mask.
-      Object.assign(state, pendingNonBlocking);
     }
+    // Mask NGAY khi merge — các assign tổ hợp chạy sau applyAlwaysFF (vd so sánh
+    // count < duty) phải thấy giá trị ĐÃ cuộn vòng, không phải giá trị thô chưa mask.
+    Object.assign(state, pendingNonBlocking);
   }
 
   cycle(inputs) {

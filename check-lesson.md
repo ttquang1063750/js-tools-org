@@ -339,3 +339,36 @@ grep -A 1 'article-related__link--next"' <file> | grep -o 'href="[^"]*"'
     (trước đây chỉ dùng cho "hết series") với text kiểu `🔒 Bài N: <tên> — sắp ra mắt`. Đã
     thêm PHẦN C1 mục 10 để tự động phát hiện trường hợp này (grep href của link `--next`, đối
     chiếu file có tồn tại hay không) thay vì dựa vào người dùng bấm thử.
+14. **2026-07-08, Bài 6 VLSI (chuẩn bị demo RCA/CLA):** `evalExpression()` trong
+    `vlsi-verilite.js` tách toán tử nhị phân bằng `regex.match()` ngây thơ, không quét theo
+    độ sâu ngoặc — với biểu thức như `1 & (a ^ b)`, do mảng ops kiểm tra `^` (yếu hơn) TRƯỚC
+    `&`, regex tìm thấy dấu `^` nằm BÊN TRONG ngoặc con trước cả khi biết dấu `&` mới là toán
+    tử ngoài cùng, cắt sai thành `"1 & (a "` và `"b)"`. Bug này tồn tại từ Bài 1 nhưng chỉ lộ
+    ra khi Bài 6 viết bộ cộng carry-lookahead (`c1 = g0 | (p0 & cin)` — dạng "toán tử yếu bên
+    ngoài, toán tử mạnh hơn trong ngoặc" chưa từng xuất hiện ở bài trước). Phát hiện qua
+    self-test Node (512 tổ hợp a/b/cin cho ripple-carry adder ra 280 lỗi), không phải qua
+    browser. → Fix bằng `findTopLevelOp(expr, op)` (quét ký tự, theo dõi độ sâu ngoặc, chỉ
+    khớp khi depth===0) thay hoàn toàn cho vòng lặp `regex.match`, cùng cách tiếp cận với
+    `findTopLevelTernary` đã fix ở Bài 4. Regression test lại ALU (Bài 2), FSM đèn giao thông
+    (Bài 4), PWM/shift-register (Bài 3) — tất cả vẫn đúng.
+15. **2026-07-08, Bài 6 VLSI (chuẩn bị demo bộ nhân shift-add):** regex tách khối
+    `begin...end` trong `extractAlwaysAssigns()`/`extractAlwaysFF()` dùng `end` hoặc `end\b`
+    KHÔNG ràng buộc word-boundary ở đầu — 1 tên tín hiệu như `addend` tự nó CÓ SẴN chuỗi con
+    "end" ở 3 ký tự cuối, nên regex tưởng nhầm đó là từ khoá đóng khối, cắt cụt nội dung
+    always_ff ngay giữa tên biến (`"if (rst) add"` rồi dừng). Phát hiện qua self-test Node
+    (module dùng tên `addend` cho 1 thanh ghi shift, parser trả về `statements: []` rỗng bất
+    thường cho đúng khối đó). → Fix bằng `\bend\b` (ràng buộc boundary CẢ 2 phía, không chỉ
+    phía sau) ở cả 2 regex. Bài học: tên tín hiệu tiếng Anh phổ biến trong HDL rất dễ chứa
+    "end" làm đuôi (addend, append, extend, depend...) — cẩn thận khi đặt tên biến demo mới.
+16. **2026-07-08, Bài 6 VLSI (chuẩn bị demo bộ nhân shift-add):** `applyAlwaysFF()` lấy
+    `snapshot = {...state}` RIÊNG cho từng khối `always_ff` (bên trong vòng `for` lặp qua
+    `this.ast.alwaysFF`), thay vì lấy 1 lần chung cho cả cạnh clock. Hậu quả: nếu 1 module có
+    NHIỀU khối `always_ff` tham chiếu chéo lẫn nhau (vd bộ nhân shift-add Bài 6: `busy`,
+    `count`, `mrem`, `addend`, `acc` mỗi cái 1 khối riêng nhưng đều đọc trạng thái của nhau),
+    khối chạy SAU sẽ vô tình đọc giá trị ĐÃ CẬP NHẬT (post-edge) của khối chạy TRƯỚC ngay
+    trong CÙNG 1 cạnh clock — sai ngữ nghĩa non-blocking (đáng lẽ mọi khối phải "thấy" cùng 1
+    trạng thái đóng băng trước cạnh clock). Phát hiện qua self-test Node (quét 256 tổ hợp
+    a×b, 225/256 sai). → Fix: đưa `snapshot` ra NGOÀI vòng lặp khối, lấy đúng 1 lần cho toàn
+    bộ `applyAlwaysFF()`; điều kiện `if` cũng đổi sang đọc từ `snapshot` thay vì `state` sống
+    cho nhất quán. Regression test lại mọi bài trước (ALU, FSM, PWM/shift-register, RCA/CLA)
+    — không đổi kết quả vì các bài đó chỉ có 1 khối `always_ff`/module, không bị ảnh hưởng.
