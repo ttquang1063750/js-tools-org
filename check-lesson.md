@@ -178,6 +178,16 @@ grep -n 'article-related__link' -A 2 <file> | grep -P '[←→]'
 #    lỗi cú pháp/console nào cả — chỉ lộ ra khi nhìn ảnh chụp thật).
 grep -c 'class="article-body"' <file>
 #    Phải ra đúng 1. Nếu ra 0 → tìm div bọc nội dung ngay dưới .article-wrap, thêm class.
+
+# 10. Link "bài kế tiếp" trong .article-related__link--next KHÔNG được trỏ tới 1 bài chưa
+#     viết (mới nhất chỉ được unlock TỚI bài vừa hoàn thành) — nếu không, người đọc bấm vào
+#     sẽ dính 404. Nếu bài kế tiếp chưa tồn tại: đổi <a href="...veil"> thành
+#     <span class="article-related__link article-related__link--next article-related__link--locked">
+#     kèm 🔒 + "— sắp ra mắt" (pattern --locked đã có sẵn trong blog.css, trước đây chỉ dùng cho
+#     "hết series"; giờ cũng dùng cho "bài kế tiếp chưa viết" giữa series, xem PHẦN D #13).
+grep -A 1 'article-related__link--next"' <file> | grep -o 'href="[^"]*"'
+#    Nếu có output (tức đang là <a href>) → xác nhận file đó đã tồn tại thật (ls <slug>.html),
+#    nếu chưa tồn tại thì đổi sang <span>...--locked</span> như trên.
 ```
 
 ### C2. Kiểm tra thủ công trên trình duyệt
@@ -320,3 +330,12 @@ grep -c 'class="article-body"' <file>
     qua bất kỳ lệnh tự động nào** (không phải cú pháp sai) — chỉ có cách phòng ngừa là chủ
     động viết khối này ngay từ đầu, đối chiếu với ≥1 bài mẫu đã hoàn thành trước khi coi phần
     mở bài là xong.
+13. **2026-07-07, Bài 5 VLSI:** link "bài kế tiếp" trong `.article-related__link--next` trỏ
+    thẳng tới `vlsi-arithmetic` (Bài 6) — file này **chưa được viết**, nên bấm vào sẽ ra 404
+    y hệt sự cố Bài 4→5 trước đó (lúc đó được chấp nhận vì đang trong quá trình viết Bài 5
+    ngay sau; lần này người dùng chỉ ra rằng nên **khoá** link thay vì để 404 treo lại nhiều
+    ngày/tuần cho tới khi Bài 6 xong). → Quy ước mới: link kế tiếp chỉ dùng `<a href>` khi
+    file đích đã tồn tại thật; nếu chưa, dùng lại pattern `--locked` có sẵn trong `blog.css`
+    (trước đây chỉ dùng cho "hết series") với text kiểu `🔒 Bài N: <tên> — sắp ra mắt`. Đã
+    thêm PHẦN C1 mục 10 để tự động phát hiện trường hợp này (grep href của link `--next`, đối
+    chiếu file có tồn tại hay không) thay vì dựa vào người dùng bấm thử.
