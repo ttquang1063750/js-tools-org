@@ -656,4 +656,174 @@ class OpSelectRenderer {
   }
 }
 
-export { NetlistRenderer, GateRenderer, parseExprToTree, elaborateExpr, elaborateAST, simulateGates, OpSelectRenderer };
+// ---- Sơ đồ trạng thái (State Diagram) — dùng cho FSM (Bài 4) ----
+// Bố trí N trạng thái đều quanh 1 vòng tròn, vẽ mũi tên có nhãn điều kiện giữa các
+// trạng thái, tô sáng trạng thái hiện hành. Tự-loop (self-transition) vẽ thành vòng
+// nhỏ phía trên node thay vì đường thẳng (đường thẳng từ 1 điểm về chính nó suy biến).
+class StateDiagramRenderer {
+  constructor(container) {
+    this.container = container;
+  }
+
+  render(states, transitions, currentStateIndex, opts = {}) {
+    while (this.container.firstChild) {
+      this.container.removeChild(this.container.firstChild);
+    }
+
+    const width = opts.width || 460;
+    const height = opts.height || 380;
+    const cx = width / 2;
+    const cy = height / 2 - 10;
+    const radius = Math.min(width, height) / 2 - 70;
+    const nodeR = 32;
+
+    const positions = states.map((_, i) => {
+      const angle = (2 * Math.PI * i) / states.length - Math.PI / 2;
+      return { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
+    });
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', height);
+    svg.setAttribute('style', 'border: 1px solid #ddd; background: #fafafa; border-radius: 6px;');
+
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+    marker.setAttribute('id', 'fsm-arrow');
+    marker.setAttribute('viewBox', '0 0 10 10');
+    marker.setAttribute('refX', '8');
+    marker.setAttribute('refY', '5');
+    marker.setAttribute('markerWidth', '7');
+    marker.setAttribute('markerHeight', '7');
+    marker.setAttribute('orient', 'auto-start-reverse');
+    const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    arrowPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+    arrowPath.setAttribute('fill', '#64748b');
+    marker.appendChild(arrowPath);
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    // Vẽ transitions trước (để node đè lên trên)
+    transitions.forEach((t) => {
+      const from = positions[t.from];
+      const to = positions[t.to];
+      const active =
+        opts.activeTransition && opts.activeTransition.from === t.from && opts.activeTransition.to === t.to;
+      const stroke = active ? '#65a30d' : '#94a3b8';
+      const strokeWidth = active ? '2.5' : '1.5';
+
+      if (t.from === t.to) {
+        // Self-loop: vẽ vòng nhỏ phía trên node
+        const loopPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const lx = from.x;
+        const ly = from.y - nodeR;
+        loopPath.setAttribute(
+          'd',
+          `M ${lx - 14} ${ly} C ${lx - 24} ${ly - 30}, ${lx + 24} ${ly - 30}, ${lx + 14} ${ly}`
+        );
+        loopPath.setAttribute('fill', 'none');
+        loopPath.setAttribute('stroke', stroke);
+        loopPath.setAttribute('stroke-width', strokeWidth);
+        loopPath.setAttribute('marker-end', 'url(#fsm-arrow)');
+        svg.appendChild(loopPath);
+
+        if (t.label) {
+          const labelEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          labelEl.setAttribute('x', lx);
+          labelEl.setAttribute('y', ly - 32);
+          labelEl.setAttribute('text-anchor', 'middle');
+          labelEl.setAttribute('font-size', '10');
+          labelEl.setAttribute('font-family', 'monospace');
+          labelEl.setAttribute('fill', active ? '#65a30d' : '#64748b');
+          labelEl.textContent = t.label;
+          svg.appendChild(labelEl);
+        }
+        return;
+      }
+
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const ux = dx / dist;
+      const uy = dy / dist;
+      const startX = from.x + ux * nodeR;
+      const startY = from.y + uy * nodeR;
+      const endX = to.x - ux * nodeR;
+      const endY = to.y - uy * nodeR;
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', startX);
+      line.setAttribute('y1', startY);
+      line.setAttribute('x2', endX);
+      line.setAttribute('y2', endY);
+      line.setAttribute('stroke', stroke);
+      line.setAttribute('stroke-width', strokeWidth);
+      line.setAttribute('marker-end', 'url(#fsm-arrow)');
+      svg.appendChild(line);
+
+      if (t.label) {
+        const midX = (startX + endX) / 2;
+        const midY = (startY + endY) / 2;
+        const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        const labelEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        labelEl.setAttribute('x', midX);
+        labelEl.setAttribute('y', midY);
+        labelEl.setAttribute('text-anchor', 'middle');
+        labelEl.setAttribute('font-size', '10');
+        labelEl.setAttribute('font-family', 'monospace');
+        labelEl.setAttribute('fill', active ? '#65a30d' : '#64748b');
+        labelEl.textContent = t.label;
+        labelBg.setAttribute('x', midX - t.label.length * 3.2);
+        labelBg.setAttribute('y', midY - 10);
+        labelBg.setAttribute('width', t.label.length * 6.4);
+        labelBg.setAttribute('height', 13);
+        labelBg.setAttribute('fill', '#fafafa');
+        svg.appendChild(labelBg);
+        svg.appendChild(labelEl);
+      }
+    });
+
+    // Vẽ node trạng thái
+    states.forEach((name, i) => {
+      const pos = positions[i];
+      const active = i === currentStateIndex;
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', pos.x);
+      circle.setAttribute('cy', pos.y);
+      circle.setAttribute('r', nodeR);
+      circle.setAttribute('fill', active ? 'rgba(101,163,13,0.15)' : '#fff');
+      circle.setAttribute('stroke', active ? '#65a30d' : '#334155');
+      circle.setAttribute('stroke-width', active ? '3' : '1.5');
+      g.appendChild(circle);
+
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', pos.x);
+      label.setAttribute('y', pos.y + 4);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('font-size', '11');
+      label.setAttribute('font-family', 'monospace');
+      label.setAttribute('font-weight', active ? 'bold' : 'normal');
+      label.setAttribute('fill', active ? '#3f6212' : '#334155');
+      label.textContent = name;
+      g.appendChild(label);
+
+      svg.appendChild(g);
+    });
+
+    this.container.appendChild(svg);
+  }
+}
+
+export {
+  NetlistRenderer,
+  GateRenderer,
+  parseExprToTree,
+  elaborateExpr,
+  elaborateAST,
+  simulateGates,
+  OpSelectRenderer,
+  StateDiagramRenderer,
+};
