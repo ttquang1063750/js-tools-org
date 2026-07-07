@@ -1009,7 +1009,8 @@ var _self =
       pattern: /"(?:\\.|[^"\\])*"/,
       greedy: true,
     },
-    keyword: /\b(?:module|endmodule|input|output|inout|wire|reg|logic|parameter|localparam|always|always_ff|always_comb|initial|begin|end|if|else|case|default|for|while|function|task|assign|posedge|negedge|typedef|enum|interface|endinterface|class|endclass|automatic|signed|unsigned|real|time|integer|bit|byte|string|event|package|endpackage|virtual|super|this|new)\b/,
+    keyword:
+      /\b(?:module|endmodule|input|output|inout|wire|reg|logic|parameter|localparam|always|always_ff|always_comb|initial|begin|end|if|else|case|default|for|while|function|task|assign|posedge|negedge|typedef|enum|interface|endinterface|class|endclass|automatic|signed|unsigned|real|time|integer|bit|byte|string|event|package|endpackage|virtual|super|this|new)\b/,
     boolean: /\b(?:true|false)\b/,
     number: [
       /\b\d+[_\d]*\b/,
@@ -1022,5 +1023,4 @@ var _self =
     operator: /===|!==|==|!=|<=|>=|&&|\|\||!|\+|-|\*|\/|%|&|\||\^|~|<<|>>|<|>|=|\?:/,
     punctuation: /[{}[\]();:.,]/,
   };
-
 })(Prism);
