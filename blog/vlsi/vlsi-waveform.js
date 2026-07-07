@@ -11,11 +11,21 @@ class WaveformViewer {
     this.timeScale = 1; // pixels per time unit
     this.panX = 0;
     this.panY = 0;
-    this.maxTime = 100;
+    this.maxTime = 0;
     this.rowHeight = 60;
     this.margin = { top: 30, left: 100, right: 20, bottom: 30 };
+    this.userZoomed = false;
 
     this.setupEventListeners();
+  }
+
+  // Tự co giãn timeScale để lấp đầy chiều rộng canvas theo số mốc thời gian thực có —
+  // nếu không, timeScale mặc định 1px/đơn vị sẽ nén cả waveform vào một góc nhỏ khi
+  // chỉ có vài chục mốc thời gian (bug thật gặp khi test: sóng dồn hết về mép trái).
+  autoFit() {
+    if (this.userZoomed || this.maxTime <= 0) return;
+    const availableWidth = this.canvas.width - this.margin.left - this.margin.right;
+    this.timeScale = Math.max(1, availableWidth / this.maxTime);
   }
 
   setupEventListeners() {
@@ -45,6 +55,7 @@ class WaveformViewer {
 
   handleZoom(e) {
     e.preventDefault();
+    this.userZoomed = true;
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -64,9 +75,11 @@ class WaveformViewer {
 
   clearSignals() {
     this.signals = [];
+    this.maxTime = 0;
   }
 
   redraw() {
+    this.autoFit();
     const w = this.canvas.width;
     const h = this.canvas.height;
 
@@ -260,6 +273,7 @@ class WaveformViewer {
     this.panX = 0;
     this.panY = 0;
     this.timeScale = 1;
+    this.userZoomed = false;
   }
 }
 
