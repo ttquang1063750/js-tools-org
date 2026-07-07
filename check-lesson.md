@@ -165,6 +165,13 @@ grep -n 'article-related__link' -A 2 <file> | grep -P '[←→]'
 #    Nếu lệnh trên có output → xoá mũi tên khỏi text, để CSS tự vẽ.
 #    Đối chiếu thêm: bài đầu series (không có bài trước) chỉ có 2 link (next, về hub) theo
 #    thứ tự next trước — hub sau; bài giữa series có đủ 3 link (prev, next, hub) cùng thứ tự.
+
+# 9. Div nội dung bài PHẢI có class="article-body" (không phải <div> trơn) — 15 rule CSS
+#    trong blog.css (h2/h3/p/ul/ol/li/strong/a/inline-code/table...) chỉ áp dụng khi có class
+#    này bao ngoài (xem PHẦN D #11: thiếu class này khiến bảng mất hết border mà KHÔNG có
+#    lỗi cú pháp/console nào cả — chỉ lộ ra khi nhìn ảnh chụp thật).
+grep -c 'class="article-body"' <file>
+#    Phải ra đúng 1. Nếu ra 0 → tìm div bọc nội dung ngay dưới .article-wrap, thêm class.
 ```
 
 ### C2. Kiểm tra thủ công trên trình duyệt
@@ -277,3 +284,19 @@ grep -n 'article-related__link' -A 2 <file> | grep -P '[←→]'
     Node độc lập cho engine TRƯỚC khi tin nó chạy đúng trong UI. File
     `blog/vlsi/vlsi-rtl-mindset.html` sau khi vá là **mẫu tham chiếu đã xác minh** cho toàn bộ
     bài sau của Series 11 — xem PHẦN A mục 6.
+11. **2026-07-07, Bài 1 & 2 VLSI:** div bọc nội dung ngay dưới `.article-wrap` chỉ là
+    `<div>` trơn, thiếu `class="article-body"` — sai khác nhỏ so với file mẫu (electronics
+    có `<div class="article-wrap"><div class="article-body">`, 2 lớp lồng nhau). Hậu quả:
+    toàn bộ **15 rule CSS** trong `blog.css` scope theo `.article-body` (heading h2/h3,
+    paragraph, list, `strong`, link, inline `<code>`, và **table border/header
+    background/zebra-stripe**) bị mất hoàn toàn, âm thầm không có lỗi cú pháp/console nào —
+    trang vẫn "trông ổn" tổng thể (nhờ `styles.css` global lo phần font/layout cơ bản) nên
+    dễ bị bỏ qua khi chỉ lướt qua ảnh chụp toàn trang; chỉ lộ rõ khi nhìn kỹ 1 bảng cụ thể
+    thấy thiếu hẳn viền. Người dùng phát hiện qua ảnh chụp bảng "Toán tử bitwise/logical"
+    của Bài 2 hoàn toàn không có border. Đối chiếu file mẫu xác nhận: **cả Bài 1 lẫn Bài 2
+    đều thiếu** (lỗi bị copy nguyên khi nhân bản chrome từ Bài 1 sang Bài 2). → sinh ra PHẦN
+    C1 mục 9. Ghi chú thêm: hub (`*-programming-series.html`) KHÔNG dùng `.article-body`
+    (xác nhận qua đối chiếu `electronics-programming-series.html` cũng chỉ có
+    `.article-wrap` không có `.article-body`) — glossary table trên hub vì vậy cũng không có
+    border, nhưng đây là pattern đã tồn tại từ trước ở mọi hub, không phải lỗi phát sinh từ
+    Series 11, nên không tự ý sửa hàng loạt nếu không được yêu cầu.
