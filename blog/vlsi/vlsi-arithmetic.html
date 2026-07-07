@@ -1,0 +1,1199 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 6: Số học phần cứng — Ripple-Carry, Carry-Lookahead, Nhân & Fixed-point — js-tools</title>
+    <meta
+      name="description"
+      content="Ripple-carry vs carry-lookahead adder (độ trễ O(n) vs O(log n)), nhân phần cứng shift-add vs array multiplier, fixed-point Qm.n bão hoà vs tràn số — kèm demo tương tác đua adder và bộ nhân."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/vlsi/vlsi-arithmetic" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--vlsi">
+        <div class="container">
+          <a href="vlsi-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--vlsi">Bài 6 · Thiết Kế Vi Mạch Số & FPGA</div>
+          <h1 class="article-hero__title">Số học phần cứng: Ripple-Carry, Carry-Lookahead & Fixed-point</h1>
+          <div class="article-hero__meta">8 tháng 7, 2026 · 26 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Vì sao chip 64-bit không nhanh gấp đôi chip 32-bit khi cộng số?</h2>
+            <p>
+              Trực giác phần mềm mách bảo: cộng 2 số 64-bit chỉ là "cộng 2 số 32-bit, làm gấp đôi khối lượng" — CPU nào
+              đủ mạnh thì chi phí gần như không đổi. Nhưng ở mức mạch số, phép cộng
+              <strong>không hề miễn phí theo độ rộng bit</strong>. Bộ cộng đơn giản nhất — nối chuỗi các bộ cộng 1-bit,
+              mỗi bit chờ cờ nhớ (carry) từ bit liền trước — có độ trễ tăng <strong>tuyến tính</strong> theo số bit:
+              cộng 64-bit chậm gấp <em>16 lần</em> so với cộng 4-bit, không phải "gấp đôi". Đây chính là lý do CPU
+              64-bit thật không dùng bộ cộng ngây thơ này — họ trả thêm diện tích silicon để đổi lấy một kiến trúc cộng
+              có độ trễ tăng theo <strong>logarit</strong>, gần như không đổi khi bit tăng gấp đôi.
+            </p>
+            <p>
+              Bài này mổ xẻ 2 kiến trúc bộ cộng kinh điển — Ripple-Carry (lan truyền nhớ) và Carry-Lookahead (nhìn trước
+              nhớ) — chứng minh bằng công thức vì sao cái sau nhanh hơn hẳn khi bit-width lớn, dù tốn thêm diện tích.
+              Sau đó bạn sẽ thấy đánh đổi tương tự ở phép nhân (tuần tự ít diện tích vs tổ hợp 1 chu kỳ nhưng tốn diện
+              tích), và một cạm bẫy số học kinh điển khác: khi số fixed-point tràn, mạch của bạn nên
+              <strong>bão hoà</strong> hay <strong>lặng lẽ cuộn vòng</strong> — chọn sai sẽ tạo ra bug chỉ lộ diện ở
+              đúng vài tổ hợp input hiếm gặp. Toàn bộ bộ cộng, bộ nhân trong bài đều chạy thật trên engine VeriLite của
+              trang này — không phải sơ đồ minh hoạ suông.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong>
+                <a href="vlsi-combinational-logic">Bài 2 (SystemVerilog tổ hợp)</a> — <code>assign</code>/toán tử
+                bitwise dùng xuyên suốt bài này;
+                <a href="/blog/electronics/electronics-digital-logic"
+                  >Series Điện Tử Bài 12 (Cổng Logic &amp; Adder 1-bit)</a
+                >
+                — bài này xây trực tiếp trên full adder 1-bit đã học ở đó. <br /><strong>Tài nguyên ngoài:</strong>
+                <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">HDLBits</a>,
+                <a href="https://www.chipverify.com" target="_blank" rel="noopener noreferrer">ChipVerify</a>,
+                <a href="https://www.edaplayground.com" target="_blank" rel="noopener noreferrer">EDA Playground</a>.
+              </div>
+            </div>
+
+            <h2>1. Ripple-Carry Adder: cộng đúng, nhưng chờ nhau từng bit</h2>
+            <p>
+              Cách "hiển nhiên" nhất để cộng 2 số nhiều bit: ghép nối <var>n</var> bộ cộng đầy đủ (full adder) 1-bit,
+              mỗi bộ nhận cờ nhớ <code>cin</code> từ bộ liền trước và tạo ra cờ nhớ <code>cout</code> cho bộ liền sau —
+              giống hệt cách bạn cộng tay 2 số nhiều chữ số, cộng từ hàng đơn vị rồi "nhớ" dần sang hàng chục, hàng
+              trăm. Đây gọi là <strong>Ripple-Carry Adder</strong> (<abbr title="Ripple-Carry Adder">RCA</abbr>) —
+              "ripple" (gợn sóng) vì cờ nhớ lan truyền tuần tự qua từng tầng, không tầng nào tính được trước khi tầng
+              trước nó xong.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">rca4.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">module rca4 (
+  input  logic a0, a1, a2, a3,  // toán hạng A, bit 0 (LSB) → bit 3 (MSB)
+  input  logic b0, b1, b2, b3,  // toán hạng B
+  input  logic cin,             // carry-in ban đầu
+  output logic s0, s1, s2, s3,  // tổng, từng bit
+  output logic cout             // carry-out cuối cùng (bit tràn)
+);
+  logic c1, c2, c3;             // carry nội bộ giữa các tầng — đây là "dây gợn sóng"
+
+  // Tầng 0: full adder — PHẢI xong trước khi tầng 1 có carry để dùng
+  assign s0 = a0 ^ b0 ^ cin;
+  assign c1 = (a0 & b0) | (cin & (a0 ^ b0));
+
+  // Tầng 1: chờ c1 từ tầng 0
+  assign s1 = a1 ^ b1 ^ c1;
+  assign c2 = (a1 & b1) | (c1 & (a1 ^ b1));
+
+  // Tầng 2: chờ c2 từ tầng 1
+  assign s2 = a2 ^ b2 ^ c2;
+  assign c3 = (a2 & b2) | (c2 & (a2 ^ b2));
+
+  // Tầng 3: chờ c3 từ tầng 2 — carry đã "gợn sóng" qua đủ 4 tầng
+  assign s3 = a3 ^ b3 ^ c3;
+  assign cout = (a3 & b3) | (c3 & (a3 ^ b3));
+endmodule
+</code></pre>
+            </div>
+            <p>
+              Vì tầng thứ <var>i</var> không thể tính <code>sum</code> hay <code>carry-out</code> của mình cho tới khi
+              nhận được <code>carry-in</code> từ tầng <var>i</var>-1, toàn bộ chuỗi <var>n</var> tầng phải hoàn tất tuần
+              tự. Nếu mỗi full adder có độ trễ cổng là <span>$t_{FA}$</span>, độ trễ đường tới hạn (critical path) của
+              cả bộ cộng <var>n</var>-bit là:
+            </p>
+            <p>$$T_{RCA}(n) = n \cdot t_{FA} = O(n)$$</p>
+            <p>
+              Tăng gấp đôi bit-width, độ trễ tăng gấp đôi — <strong>tuyến tính</strong>. Đây chính là lý do nêu ở đầu
+              bài: bộ cộng 64-bit kiểu RCA chậm gấp 16 lần bộ cộng 4-bit, không phải nhanh hơn nhờ "công nghệ hiện đại"
+              — bản chất kiến trúc quyết định, không phải tốc độ transistor.
+            </p>
+
+            <h2>2. Carry-Lookahead Adder: tính trước cờ nhớ, không chờ dây gợn sóng</h2>
+            <p>
+              Ý tưởng của <strong>Carry-Lookahead Adder</strong> (<abbr title="Carry-Lookahead Adder">CLA</abbr>): thay
+              vì để mỗi tầng chờ carry từ tầng trước, tính <strong>trước</strong> mọi cờ nhớ trung gian, song song, chỉ
+              dựa vào <code>a</code>, <code>b</code> và <code>cin</code> ban đầu — không tầng nào phải chờ tầng khác.
+              Chìa khoá là 2 tín hiệu trung gian cho mỗi bit <var>i</var>:
+            </p>
+            <ul>
+              <li>
+                <strong>Generate</strong> <span>$G_i = a_i \cdot b_i$</span> — bit này <strong>tự sinh</strong> carry
+                (cả 2 đều là 1, chắc chắn có nhớ, không cần biết carry vào là gì).
+              </li>
+              <li>
+                <strong>Propagate</strong> <span>$P_i = a_i \oplus b_i$</span> — bit này
+                <strong>truyền tiếp</strong> carry (đúng 1 trong 2 là 1: nếu có carry vào thì có carry ra, không thì
+                không).
+              </li>
+            </ul>
+            <p>
+              Với <span>$G_i$</span>, <span>$P_i$</span> đã biết (tính song song, chỉ tốn 1 tầng cổng), mọi carry trung
+              gian có thể viết lại thành công thức <strong>chỉ phụ thuộc</strong> <code>a</code>, <code>b</code>,
+              <code>cin</code> ban đầu — không còn phụ thuộc dây chuyền:
+            </p>
+            <p>
+              $$c_1 = G_0 + P_0 \cdot c_{in}$$ $$c_2 = G_1 + P_1 G_0 + P_1 P_0 \cdot c_{in}$$ $$c_3 = G_2 + P_2 G_1 +
+              P_2 P_1 G_0 + P_2 P_1 P_0 \cdot c_{in}$$
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">cla4.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">module cla4 (
+  input  logic a0, a1, a2, a3,
+  input  logic b0, b1, b2, b3,
+  input  logic cin,
+  output logic s0, s1, s2, s3,
+  output logic cout
+);
+  logic g0, g1, g2, g3;  // generate — bit này TỰ SINH carry
+  logic p0, p1, p2, p3;  // propagate — bit này TRUYỀN TIẾP carry
+  logic c1, c2, c3;
+
+  // Tầng 0: sinh G/P cho CẢ 4 bit CÙNG LÚC — không bit nào chờ bit nào
+  assign g0 = a0 & b0;  assign p0 = a0 ^ b0;
+  assign g1 = a1 & b1;  assign p1 = a1 ^ b1;
+  assign g2 = a2 & b2;  assign p2 = a2 ^ b2;
+  assign g3 = a3 & b3;  assign p3 = a3 ^ b3;
+
+  // Tầng 1: mỗi carry tính THẲNG từ g/p + cin — KHÔNG đợi carry bit liền trước
+  assign c1 = g0 | (p0 & cin);
+  assign c2 = g1 | (p1 & g0) | (p1 & p0 & cin);
+  assign c3 = g2 | (p2 & g1) | (p2 & p1 & g0) | (p2 & p1 & p0 & cin);
+  assign cout = g3 | (p3 & g2) | (p3 & p2 & g1) | (p3 & p2 & p1 & g0) | (p3 & p2 & p1 & p0 & cin);
+
+  // Tầng 2: sum chỉ cần p và carry tương ứng (2 tầng cổng, không phụ thuộc chuỗi dài)
+  assign s0 = p0 ^ cin;
+  assign s1 = p1 ^ c1;
+  assign s2 = p2 ^ c2;
+  assign s3 = p3 ^ c3;
+endmodule
+</code></pre>
+            </div>
+            <p>
+              Nhìn công thức <span>$c_3$</span>, số lượng số hạng OR tăng theo bit-width — một bộ CLA "phẳng" 1 tầng cho
+              cả 64-bit sẽ có cổng OR/AND với <strong>fan-in khổng lồ</strong> (không thực tế trên silicon thật). Giải
+              pháp công nghiệp: chia thành các khối nhỏ (vd 4-bit/khối), mỗi khối tự CLA nội bộ, rồi ghép nhiều khối
+              theo <strong>cây lookahead phân cấp</strong> (giống hệt sơ đồ cộng tay theo nhóm chữ số). Với cách ghép
+              cây nhị phân này, số tầng cần thiết chỉ tăng theo <span>$\log_2 n$</span>:
+            </p>
+            <p>$$T_{CLA}(n) \approx t_{PG} + \lceil \log_2 n \rceil \cdot t_{level} = O(\log n)$$</p>
+            <p>
+              trong đó <span>$t_{PG}$</span> là độ trễ tầng sinh G/P ban đầu (1 tầng cố định), còn
+              <span>$t_{level}$</span> là độ trễ mỗi tầng kết hợp lookahead trong cây. Khi <var>n</var> tăng gấp đôi,
+              <span>$T_{CLA}$</span> chỉ tăng thêm <strong>đúng 1 tầng</strong> — khác hẳn RCA phải tăng gấp đôi toàn bộ
+              độ trễ.
+            </p>
+
+            <h2>3. Demo tương tác: Đua Ripple-Carry vs Carry-Lookahead</h2>
+            <p>
+              Cả 2 module trên chạy thật trên VeriLite — đổi từng bit <code>a</code>/<code>b</code>/<code>cin</code> để
+              tự kiểm chứng chúng luôn cho ra <strong>cùng kết quả</strong> (khác kiến trúc, giống chức năng). Bên dưới
+              là bảng "<abbr title="Static Timing Analysis">STA</abbr> mini" — mô hình ước lượng đơn giản hoá độ trễ
+              theo công thức <span>$T_{RCA}(n)$</span>/<span>$T_{CLA}(n)$</span> ở trên (không phải phân tích STA đầy đủ
+              từng cổng thật — đó là chủ đề Bài 8), cho phép chọn bit-width để thấy khoảng cách 2 đường cong doãng ra
+              thế nào.
+            </p>
+
+            <div class="code-tabs" id="adder-race-tour">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">⚡ Đua RCA vs CLA</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="sv">SystemVerilog</button>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 10px; font-size: 14px; font-weight: 600">
+                    Kiểm chứng chức năng (chạy trên VeriLite):
+                  </p>
+                  <div class="mux-demo__controls">
+                    <div class="mux-demo__inputs">
+                      <button class="mux-input-btn" type="button" id="race-a3">
+                        a3=<span id="race-val-a3">0</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="race-a2">
+                        a2=<span id="race-val-a2">1</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="race-a1">
+                        a1=<span id="race-val-a1">1</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="race-a0">
+                        a0=<span id="race-val-a0">0</span>
+                      </button>
+                      <span style="width: 8px"></span>
+                      <button class="mux-input-btn" type="button" id="race-b3">
+                        b3=<span id="race-val-b3">0</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="race-b2">
+                        b2=<span id="race-val-b2">0</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="race-b1">
+                        b1=<span id="race-val-b1">1</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="race-b0">
+                        b0=<span id="race-val-b0">1</span>
+                      </button>
+                      <span style="width: 8px"></span>
+                      <button class="mux-input-btn" type="button" id="race-cin">
+                        cin=<span id="race-val-cin">0</span>
+                      </button>
+                    </div>
+                    <div class="mux-demo__output" id="race-result">RCA và CLA sẽ hiện kết quả ở đây</div>
+                  </div>
+                  <p class="mux-demo__hint">
+                    Bấm bất kỳ bit nào — 2 module chạy 2 kiến trúc hoàn toàn khác nhau nhưng luôn phải khớp kết quả.
+                  </p>
+
+                  <p style="margin: 20px 0 10px; font-size: 14px; font-weight: 600">
+                    STA mini — độ trễ ước lượng theo bit-width (đơn vị: số tầng cổng logic):
+                  </p>
+                  <div class="mux-demo__style-select">
+                    <span>Bit-width n:</span>
+                    <button class="mux-style-btn" type="button" data-sta-n="4">4</button>
+                    <button class="mux-style-btn" type="button" data-sta-n="8">8</button>
+                    <button class="mux-style-btn is-active" type="button" data-sta-n="16">16</button>
+                    <button class="mux-style-btn" type="button" data-sta-n="32">32</button>
+                    <button class="mux-style-btn" type="button" data-sta-n="64">64</button>
+                  </div>
+                  <div id="sta-bars" style="margin-top: 14px"></div>
+                  <p class="mux-demo__hint" id="sta-hint"></p>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel" data-panel="sv">
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">rca4_cla4.sv</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">// Xem đầy đủ 2 module rca4 / cla4 ở Mục 1 và Mục 2 phía trên,
+// hoặc tải file adder_race.sv ở cuối bài để chạy trên Verilator/EDA Playground.</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: "STA mini" khác gì STA thật?</div>
+              <div class="callout__content">
+                Bảng trên dùng công thức lý thuyết <span>$T_{RCA}(n) = n$</span> và
+                <span>$T_{CLA}(n) \approx 1 + \lceil \log_2 n \rceil$</span> (đơn vị "tầng cổng", giả định mọi cổng có
+                độ trễ bằng nhau) — đủ để <strong>thấy hình dạng đường cong</strong> tuyến tính vs logarit. STA thật
+                (Bài 8) đọc độ trễ TỪNG cổng cụ thể từ thư viện standard cell (liberty timing), cộng dồn theo đúng
+                netlist đã tổng hợp, và phải tính thêm độ trễ dây dẫn (routing) — phức tạp hơn nhiều nhưng cùng bản
+                chất: đếm số tầng trên đường tới hạn.
+              </div>
+            </div>
+
+            <h2>4. Nhân phần cứng: 1 chu kỳ tốn diện tích, hay nhiều chu kỳ tiết kiệm diện tích?</h2>
+            <p>
+              Phép nhân phần cứng đối mặt đánh đổi diện tích ↔ tốc độ tương tự, nhưng ở một trục khác — số
+              <strong>chu kỳ clock</strong> cần thiết:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Kiến trúc</th>
+                  <th>Số chu kỳ</th>
+                  <th>Diện tích</th>
+                  <th>Cách hoạt động</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Shift-add (tuần tự)</strong></td>
+                  <td><var>n</var> chu kỳ (n = bit-width)</td>
+                  <td>Rất nhỏ — chỉ 1 bộ cộng dùng lại nhiều lần</td>
+                  <td>
+                    Mỗi chu kỳ: nếu bit thấp nhất của số nhân là 1 thì cộng dồn số bị nhân (đã dịch trái) vào tổng, rồi
+                    dịch cả 2 thanh ghi — giống hệt cách nhân tay bằng bit.
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Array multiplier (tổ hợp)</strong></td>
+                  <td>1 chu kỳ</td>
+                  <td>Lớn — lưới <span>$n \times n$</span> cổng AND + cây cộng</td>
+                  <td>
+                    Sinh toàn bộ <span>$n \times n$</span> tích riêng phần (partial product) <strong>song song</strong>,
+                    cộng dồn bằng lưới bộ cộng tổ hợp — không cần thanh ghi trung gian, ra kết quả ngay trong 1 chu kỳ.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Bộ nhân shift-add dưới đây tách thành 5 thanh ghi riêng biệt (mỗi thanh ghi 1 khối
+              <code>always_ff</code>): cờ <code>busy</code>, bộ đếm <code>count</code>, phần dư số nhân
+              <code>mrem</code> (dịch phải mỗi chu kỳ), số hạng cộng <code>addend</code> (dịch trái mỗi chu kỳ), và bộ
+              tích luỹ <code>acc</code>. Bấm <strong>Step Clock</strong> nhiều lần để xem <code>acc</code> "lớn dần" qua
+              từng chu kỳ — trực quan hoá đúng bản chất tuần tự của kiến trúc này.
+            </p>
+
+            <div class="code-tabs" id="mult-tour">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">✖️ Bộ nhân Shift-Add 4-bit</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="sv">SystemVerilog</button>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__controls">
+                    <div class="mux-demo__inputs">
+                      <button class="mux-input-btn" type="button" id="mult-a3">
+                        a3=<span id="mult-val-a3">0</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="mult-a2">
+                        a2=<span id="mult-val-a2">1</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="mult-a1">
+                        a1=<span id="mult-val-a1">0</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="mult-a0">
+                        a0=<span id="mult-val-a0">1</span>
+                      </button>
+                      <span style="width: 8px"></span>
+                      <button class="mux-input-btn" type="button" id="mult-b3">
+                        b3=<span id="mult-val-b3">0</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="mult-b2">
+                        b2=<span id="mult-val-b2">0</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="mult-b1">
+                        b1=<span id="mult-val-b1">1</span>
+                      </button>
+                      <button class="mux-input-btn" type="button" id="mult-b0">
+                        b0=<span id="mult-val-b0">1</span>
+                      </button>
+                    </div>
+                    <div class="mux-demo__inputs">
+                      <button class="mux-input-btn" type="button" id="mult-start-btn">▶ Start</button>
+                      <button class="mux-input-btn" type="button" id="mult-step-btn">⏭ Step Clock</button>
+                      <button class="mux-input-btn" type="button" id="mult-reset-btn">⏹ Reset</button>
+                    </div>
+                  </div>
+                  <div class="mux-demo__output" id="mult-result">Bấm Start rồi Step Clock để xem quá trình nhân</div>
+                  <p class="mux-demo__hint" id="mult-hint">
+                    a = 5, b = 3 (mặc định) → tích đúng phải là 15. Mỗi Step Clock là 1 chu kỳ — cần đủ 4 chu kỳ (bằng
+                    bit-width) để <code>done</code> lên 1.
+                  </p>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel" data-panel="sv">
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">mult4_shiftadd.sv</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">module mult4_shiftadd (
+  input  logic clk, rst, start,
+  input  logic [3:0] a, b,
+  output logic [7:0] product,
+  output logic done
+);
+  logic [7:0] acc, addend;
+  logic [3:0] mrem;
+  logic [2:0] count;
+  logic busy;
+
+  // 5 thanh ghi, MỖI thanh ghi 1 khối always_ff riêng — engine áp dụng đồng loạt
+  // cho TẤT CẢ khối cùng 1 cạnh clock, nên chúng đọc đúng trạng thái CHUNG trước
+  // cạnh clock, dù khai báo ở 5 khối tách biệt.
+  always_ff @(posedge clk) begin
+    if (rst) busy <= 0;
+    else busy <= (start && !busy) ? 1 : (busy && (count == 3)) ? 0 : busy;
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) count <= 0;
+    else count <= (start && !busy) ? 0 : (busy) ? (count + 1) : count;
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) mrem <= 0;
+    else mrem <= (start && !busy) ? b : (busy) ? (mrem >> 1) : mrem;
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) addend <= 0;
+    else addend <= (start && !busy) ? a : (busy) ? (addend << 1) : addend;
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) acc <= 0;
+    else acc <= (start && !busy) ? 0 : (busy && (mrem % 2 == 1)) ? (acc + addend) : acc;
+  end
+
+  assign product = acc;
+  assign done = !busy;
+endmodule
+
+// So sánh: array multiplier tổ hợp — CHỈ 1 dòng, 1 chu kỳ, nhưng "1 dòng" này
+// tổng hợp ra cả lưới n×n cổng AND + cây cộng thật trên silicon:
+module mult4_array (
+  input  logic [3:0] a, b,
+  output logic [7:0] product
+);
+  assign product = a * b;
+endmodule
+</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>5. Fixed-point Qm.n: Tràn số nên bão hoà hay lặng lẽ cuộn vòng?</h2>
+            <p>
+              Phần cứng không có kiểu <code>float</code> miễn phí — nhiều hệ thống nhúng/DSP dùng
+              <strong>fixed-point</strong>: số nguyên có dấu chấm "ảo" cố định, ký hiệu <code>Qm.n</code> (m bit phần
+              nguyên, n bit phần thập phân). Vấn đề xảy ra khi phép cộng 2 số fixed-point cho kết quả
+              <strong>vượt quá</strong> giá trị lớn nhất biểu diễn được — và đây là lúc 2 triết lý xử lý tràn số dẫn tới
+              hậu quả rất khác nhau.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: Tràn số lặng lẽ cuộn vòng (silent wrap-around)</div>
+              <div class="callout__content">
+                <p>
+                  Mặc định của phép toán nhị phân có độ rộng cố định là <strong>wrap-around</strong>: bit tràn ra ngoài
+                  bị cắt bỏ âm thầm, không báo lỗi, không cảnh báo. Với tín hiệu audio/DSP, hậu quả là tiếng
+                  "click"/nhiễu chói tai khi biên độ vượt ngưỡng — vì giá trị không dừng ở mức tối đa mà
+                  <strong>nhảy vọt sang cực trị ngược dấu</strong>.
+                </p>
+                <div class="code-window" style="margin-top: 12px">
+                  <div class="code-header">
+                    <span class="code-filename">fixed_point_overflow.sv</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">// ❌ SAI: wrap-around ngầm định — không ai cảnh báo khi tràn
+module fixed_add_wrap (
+  input  logic [3:0] a, b,   // Q4.0 đơn giản: 4-bit không dấu, tối đa = 15
+  output logic [3:0] sum
+);
+  assign sum = a + b;  // 10 + 7 = 17 → tràn 4-bit → CUỘN VÒNG thành 1! (17 mod 16)
+endmodule
+
+// ✅ ĐÚNG: bão hoà (saturate) — kẹp về giá trị lớn nhất khi phát hiện tràn
+module fixed_add_saturate (
+  input  logic [3:0] a, b,
+  output logic [3:0] sum
+);
+  logic [4:0] raw;               // PHẢI rộng hơn 1 bit để giữ được thông tin tràn
+  assign raw = a + b;            // 10 + 7 = 17 — raw đủ rộng nên KHÔNG mất bit tràn
+  assign sum = (raw > 15) ? 15 : raw;  // phát hiện tràn → kẹp về 15, không cuộn vòng
+endmodule
+</code></pre>
+                </div>
+                <p style="margin-top: 12px">
+                  Tự kiểm chứng: <code>a=10, b=7</code> → bản wrap cho <code>sum=1</code> (SAI hoàn toàn, trông như "17
+                  mod 16"), bản saturate cho <code>sum=15</code> (đúng ngữ nghĩa "đã đầy, không cộng thêm được nữa").
+                  Với 2 số không tràn (vd <code>a=3, b=4</code>), cả 2 phiên bản cho cùng kết quả <code>7</code> — đây
+                  chính là kiểu bug chỉ lộ diện ở <strong>một số tổ hợp input cụ thể</strong>, giống hệt bài học về
+                  testbench ở <a href="vlsi-testbench">Bài 5</a>: test vài giá trị nhỏ "trông ổn" không có nghĩa là mạch
+                  đúng.
+                </p>
+              </div>
+            </div>
+            <p>
+              Không phải lúc nào wrap-around cũng sai — bộ đếm địa chỉ vòng, con trỏ FIFO (sẽ gặp ở
+              <a href="vlsi-programming-series">Bài 7</a>), hay số học modulo cố tình dùng wrap-around vì đó
+              <em>chính là</em> ngữ nghĩa mong muốn. Vấn đề là <strong>chọn có chủ đích</strong>, không phải để mặc định
+              ngầm định quyết định thay bạn. Đây cũng là cạm bẫy con dao 2 lưỡi tương tự lỗi tràn số nguyên trong phần
+              mềm (<a href="/blog/c/c-basics-and-bitwise">xem ví dụ tràn <code>int</code> trong Series C</a>) — chỉ khác
+              là ở phần cứng, bạn phải tự thiết kế đúng logic bão hoà, không có thư viện chuẩn nào làm hộ.
+            </p>
+
+            <h2>Tóm lược</h2>
+            <p>Bài này trang bị tư duy đánh đổi diện tích ↔ tốc độ ↔ độ an toàn trong số học phần cứng:</p>
+            <ul>
+              <li>
+                ✅ <strong>Ripple-Carry Adder</strong>: đơn giản, ít diện tích, nhưng độ trễ <span>$O(n)$</span> — carry
+                phải lan truyền tuần tự qua từng tầng.
+              </li>
+              <li>
+                ✅ <strong>Carry-Lookahead Adder</strong>: tính trước carry song song qua tín hiệu generate/propagate,
+                đạt độ trễ <span>$O(\log n)$</span> — đổi lại tốn thêm diện tích cho logic lookahead.
+              </li>
+              <li>
+                ✅ <strong>Nhân phần cứng</strong>: shift-add tuần tự (<var>n</var> chu kỳ, ít diện tích) vs array
+                multiplier tổ hợp (1 chu kỳ, tốn diện tích lưới <span>$n \times n$</span>).
+              </li>
+              <li>
+                ✅ <strong>Fixed-point Qm.n</strong>: tràn số phải xử lý có chủ đích — bão hoà (saturate) hay cuộn vòng
+                (wrap) đều hợp lệ tuỳ ngữ cảnh, nhưng để mặc định quyết định thay bạn là cạm bẫy kinh điển.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">Vì sao Ripple-Carry Adder có độ trễ tăng tuyến tính theo số bit?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Mỗi tầng full adder phải chờ carry-out của tầng liền trước mới tính được kết quả của mình, nên toàn bộ chuỗi n tầng phải hoàn tất tuần tự.'
+                    )
+                  "
+                >
+                  A. Mỗi tầng phải chờ carry từ tầng liền trước mới tính được, nên n tầng phải nối tiếp nhau
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'RCA hoàn toàn có thể tổng hợp và chạy được trên FPGA — vấn đề không nằm ở công nghệ chế tạo mà ở kiến trúc lan truyền carry tuần tự.'
+                    )
+                  "
+                >
+                  B. Vì RCA không tổng hợp được trên FPGA, chỉ chạy được mô phỏng
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Số lượng cổng logic của RCA tăng tuyến tính theo n, nhưng đó là DIỆN TÍCH — câu hỏi đang hỏi về ĐỘ TRỄ, vốn tăng vì lý do lan truyền carry tuần tự, không phải vì đếm cổng.'
+                    )
+                  "
+                >
+                  C. Vì số lượng cổng logic tăng theo cấp số nhân khi n tăng
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Tín hiệu "Generate" (<code>G_i = a_i · b_i</code>) trong Carry-Lookahead Adder có ý nghĩa gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(this, false, 'Đây là ý nghĩa của Propagate (P_i = a_i XOR b_i), không phải Generate.')
+                  "
+                >
+                  A. Bit này truyền tiếp carry-in thành carry-out nếu có carry-in
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Khi cả a_i và b_i đều là 1, bit này CHẮC CHẮN sinh ra carry-out, bất kể carry-in là gì — đó là lý do gọi là Generate.'
+                    )
+                  "
+                >
+                  B. Bit này TỰ SINH ra carry-out (bằng 1) bất kể carry-in là gì, vì cả a_i và b_i đều bằng 1
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Generate không liên quan đến việc lưu trữ carry — nó là 1 tín hiệu tổ hợp tức thời, tính song song cho mọi bit.'
+                    )
+                  "
+                >
+                  C. Bit này lưu trữ carry-out để dùng ở chu kỳ clock sau
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                So với bộ nhân shift-add tuần tự, array multiplier tổ hợp đánh đổi điều gì để đạt 1 chu kỳ?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ngược lại — array multiplier CHÍNH XÁC HƠN không kém gì shift-add, cả 2 đều cho kết quả đúng tuyệt đối, chỉ khác kiến trúc/tốc độ/diện tích.'
+                    )
+                  "
+                >
+                  A. Đánh đổi độ chính xác — kết quả có thể sai lệch nhỏ ở vài tổ hợp
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Array multiplier sinh toàn bộ lưới n×n tích riêng phần và cộng dồn bằng logic tổ hợp thuần — không cần thanh ghi trung gian nên chỉ 1 chu kỳ, nhưng số cổng logic tăng theo n², tốn diện tích silicon đáng kể.'
+                    )
+                  "
+                >
+                  B. Đánh đổi diện tích — cần lưới n×n cổng AND cộng cây bộ cộng để tính song song mọi tích riêng phần
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cả 2 kiến trúc đều cần clock để hoạt động đồng bộ với hệ thống xung quanh — array multiplier vẫn thường có thanh ghi ở đầu vào/đầu ra, chỉ là KHÔNG cần nhiều chu kỳ để tính xong phép nhân.'
+                    )
+                  "
+                >
+                  C. Đánh đổi việc không cần dùng clock nữa
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Với 2 số Q4.0 4-bit <code>a=10</code>, <code>b=7</code>, phiên bản wrap-around cho <code>sum</code> bằng
+                bao nhiêu?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      '17 là kết quả TOÁN HỌC đúng, nhưng 4-bit không dấu chỉ biểu diễn được 0–15 — 17 sẽ bị cắt bit tràn, không giữ nguyên.'
+                    )
+                  "
+                >
+                  A. 17 — vì 10 + 7 = 17 theo đúng phép cộng số học
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! 17 tràn khỏi 4-bit (tối đa 15) — wrap-around cắt bỏ bit tràn âm thầm: 17 mod 16 = 1. Đây chính là cạm bẫy: kết quả trông như 1 số hợp lệ, không có dấu hiệu báo lỗi nào.'
+                    )
+                  "
+                >
+                  B. 1 — vì 17 vượt quá 15 (tối đa 4-bit), phần tràn bị cắt bỏ lặng lẽ (17 mod 16)
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      '15 là kết quả của phiên bản BÃO HOÀ (saturate), không phải wrap-around — 2 chiến lược xử lý tràn cho ra 2 kết quả khác nhau.'
+                    )
+                  "
+                >
+                  C. 15 — vì mạch tự động bão hoà về giá trị lớn nhất
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File SystemVerilog gồm RCA/CLA 4-bit, bộ nhân shift-add + array multiplier, và ví dụ fixed-point
+                wrap-around vs saturate — tất cả đã tự kiểm chứng chạy đúng trên VeriLite. Chạy được trên Verilator hoặc
+                dán vào EDA Playground:
+              </p>
+              <a
+                href="hardware_arithmetic.sv"
+                download
+                class="btn-facebook"
+                style="background: #65a30d; text-decoration: none"
+              >
+                Tải về hardware_arithmetic.sv
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Carry-lookahead_adder"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Carry-lookahead adder
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Adder_(electronics)" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Adder (electronics)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Binary_multiplier" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Binary multiplier
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Q_(number_format)" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Q (number format, fixed-point)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">
+                    HDLBits — Arithmetic circuit exercises
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.chipverify.com/" target="_blank" rel="noopener noreferrer">
+                    ChipVerify — SystemVerilog arithmetic examples
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="vlsi-testbench" class="article-related__link article-related__link--prev">
+                  Bài 5: Testbench &amp; Verification cơ bản
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 7: Bộ nhớ, FIFO &amp; Clock Domain Crossing — sắp ra mắt
+                </span>
+                <a href="vlsi-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Thiết Kế Vi Mạch Số &amp; FPGA
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { VeriLiteParser, VeriSimulator } from './vlsi-verilite.js';
+
+      // ---- Demo 1: Đua RCA vs CLA (kiểm chứng chức năng) ----
+      const rcaCode = `module rca4 (
+  input logic a0, a1, a2, a3, b0, b1, b2, b3, cin,
+  output logic s0, s1, s2, s3, cout
+);
+  logic c1, c2, c3;
+  assign s0 = a0 ^ b0 ^ cin;
+  assign c1 = (a0 & b0) | (cin & (a0 ^ b0));
+  assign s1 = a1 ^ b1 ^ c1;
+  assign c2 = (a1 & b1) | (c1 & (a1 ^ b1));
+  assign s2 = a2 ^ b2 ^ c2;
+  assign c3 = (a2 & b2) | (c2 & (a2 ^ b2));
+  assign s3 = a3 ^ b3 ^ c3;
+  assign cout = (a3 & b3) | (c3 & (a3 ^ b3));
+endmodule`;
+
+      const claCode = `module cla4 (
+  input logic a0, a1, a2, a3, b0, b1, b2, b3, cin,
+  output logic s0, s1, s2, s3, cout
+);
+  logic g0, g1, g2, g3, p0, p1, p2, p3, c1, c2, c3;
+  assign g0 = a0 & b0; assign p0 = a0 ^ b0;
+  assign g1 = a1 & b1; assign p1 = a1 ^ b1;
+  assign g2 = a2 & b2; assign p2 = a2 ^ b2;
+  assign g3 = a3 & b3; assign p3 = a3 ^ b3;
+  assign c1 = g0 | (p0 & cin);
+  assign c2 = g1 | (p1 & g0) | (p1 & p0 & cin);
+  assign c3 = g2 | (p2 & g1) | (p2 & p1 & g0) | (p2 & p1 & p0 & cin);
+  assign cout = g3 | (p3 & g2) | (p3 & p2 & g1) | (p3 & p2 & p1 & g0) | (p3 & p2 & p1 & p0 & cin);
+  assign s0 = p0 ^ cin; assign s1 = p1 ^ c1; assign s2 = p2 ^ c2; assign s3 = p3 ^ c3;
+endmodule`;
+
+      const raceAst = { rca: new VeriLiteParser(rcaCode).parse(), cla: new VeriLiteParser(claCode).parse() };
+      const raceBits = { a3: 0, a2: 1, a1: 1, a0: 0, b3: 0, b2: 0, b1: 1, b0: 1, cin: 0 };
+
+      function updateRace() {
+        const rcaSim = new VeriSimulator(raceAst.rca);
+        const claSim = new VeriSimulator(raceAst.cla);
+        const rcaState = rcaSim.cycle(raceBits);
+        const claState = claSim.cycle(raceBits);
+        const rcaSum = rcaState.s0 | (rcaState.s1 << 1) | (rcaState.s2 << 2) | (rcaState.s3 << 3);
+        const claSum = claState.s0 | (claState.s1 << 1) | (claState.s2 << 2) | (claState.s3 << 3);
+        const a = raceBits.a0 | (raceBits.a1 << 1) | (raceBits.a2 << 2) | (raceBits.a3 << 3);
+        const b = raceBits.b0 | (raceBits.b1 << 1) | (raceBits.b2 << 2) | (raceBits.b3 << 3);
+        const match = rcaSum === claSum && rcaState.cout === claState.cout;
+        const resultEl = document.getElementById('race-result');
+        resultEl.innerHTML =
+          `a=${a} b=${b} cin=${raceBits.cin} → RCA: sum=${rcaSum},cout=${rcaState.cout} · CLA: sum=${claSum},cout=${claState.cout} ` +
+          (match
+            ? '<strong style="color:#65a30d">✓ khớp</strong>'
+            : '<strong style="color:#dc2626">✗ LỆCH (không nên xảy ra!)</strong>');
+      }
+
+      function initRaceDemo() {
+        if (!document.getElementById('race-result')) return;
+        ['a3', 'a2', 'a1', 'a0', 'b3', 'b2', 'b1', 'b0', 'cin'].forEach((name) => {
+          const btn = document.getElementById(`race-${name}`);
+          btn.addEventListener('click', () => {
+            raceBits[name] = raceBits[name] ? 0 : 1;
+            document.getElementById(`race-val-${name}`).textContent = raceBits[name];
+            updateRace();
+          });
+        });
+        updateRace();
+      }
+
+      // ---- STA mini: bar chart độ trễ RCA vs CLA theo bit-width ----
+      function staDelay(n) {
+        return { rca: n, cla: 1 + Math.ceil(Math.log2(n)) };
+      }
+
+      function renderSta(n) {
+        const { rca, cla } = staDelay(n);
+        const maxVal = Math.max(rca, cla);
+        const scale = 260 / maxVal;
+        const container = document.getElementById('sta-bars');
+        container.innerHTML = `
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+            <span style="width:110px; font-size:13px;">RCA (O(n))</span>
+            <div style="background:#dc2626; height:22px; width:${rca * scale}px; border-radius:3px;"></div>
+            <span style="font-size:13px; font-weight:600;">${rca} tầng</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="width:110px; font-size:13px;">CLA (O(log n))</span>
+            <div style="background:#65a30d; height:22px; width:${cla * scale}px; border-radius:3px;"></div>
+            <span style="font-size:13px; font-weight:600;">${cla} tầng</span>
+          </div>
+        `;
+        document.getElementById('sta-hint').textContent =
+          `n=${n}: RCA mất ${rca} tầng, CLA chỉ ${cla} tầng — CLA nhanh hơn khoảng ${(rca / cla).toFixed(1)} lần.`;
+      }
+
+      function initStaDemo() {
+        if (!document.getElementById('sta-bars')) return;
+        document.querySelectorAll('[data-sta-n]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('[data-sta-n]').forEach((b) => b.classList.toggle('is-active', b === btn));
+            renderSta(parseInt(btn.getAttribute('data-sta-n'), 10));
+          });
+        });
+        renderSta(16);
+      }
+
+      // ---- Demo 2: Bộ nhân Shift-Add ----
+      const multCode = `module mult4_shiftadd (
+  input logic clk, rst, start,
+  input logic [3:0] a, b,
+  output logic [7:0] product,
+  output logic done
+);
+  logic [7:0] acc, addend;
+  logic [3:0] mrem;
+  logic [2:0] count;
+  logic busy;
+
+  always_ff @(posedge clk) begin
+    if (rst) busy <= 0; else busy <= (start && !busy) ? 1 : (busy && (count == 3)) ? 0 : busy;
+  end
+  always_ff @(posedge clk) begin
+    if (rst) count <= 0; else count <= (start && !busy) ? 0 : (busy) ? (count + 1) : count;
+  end
+  always_ff @(posedge clk) begin
+    if (rst) mrem <= 0; else mrem <= (start && !busy) ? b : (busy) ? (mrem >> 1) : mrem;
+  end
+  always_ff @(posedge clk) begin
+    if (rst) addend <= 0; else addend <= (start && !busy) ? a : (busy) ? (addend << 1) : addend;
+  end
+  always_ff @(posedge clk) begin
+    if (rst) acc <= 0; else acc <= (start && !busy) ? 0 : (busy && (mrem % 2 == 1)) ? (acc + addend) : acc;
+  end
+
+  assign product = acc;
+  assign done = !busy;
+endmodule`;
+
+      const multAst = new VeriLiteParser(multCode).parse();
+      let multSim = null;
+      const multBits = { a3: 0, a2: 1, a1: 0, a0: 1, b3: 0, b2: 0, b1: 1, b0: 1 };
+      let multCycles = 0;
+
+      function busVal(prefix, bits) {
+        return bits[prefix + '0'] | (bits[prefix + '1'] << 1) | (bits[prefix + '2'] << 2) | (bits[prefix + '3'] << 3);
+      }
+
+      function resetMultSim() {
+        multSim = new VeriSimulator(multAst);
+        multCycles = 0;
+        const a = busVal('a', multBits);
+        const b = busVal('b', multBits);
+        multSim.cycle({ rst: 1, start: 0, a, b });
+        document.getElementById('mult-result').textContent = `a=${a} b=${b} — đã reset, bấm Start`;
+      }
+
+      function startMult() {
+        if (!multSim) resetMultSim();
+        const a = busVal('a', multBits);
+        const b = busVal('b', multBits);
+        const s = multSim.cycle({ rst: 0, start: 1, a, b });
+        multCycles = 0;
+        document.getElementById('mult-result').textContent = `a=${a} b=${b} — đang chạy (busy=${s.busy})`;
+      }
+
+      function stepMult() {
+        if (!multSim) {
+          resetMultSim();
+          return;
+        }
+        const a = busVal('a', multBits);
+        const b = busVal('b', multBits);
+        const s = multSim.cycle({ rst: 0, start: 0, a, b });
+        multCycles++;
+        const exp = a * b;
+        const resultEl = document.getElementById('mult-result');
+        if (s.done) {
+          const match = s.product === exp;
+          resultEl.innerHTML =
+            `a=${a} b=${b} sau ${multCycles} chu kỳ → product=${s.product} (kỳ vọng ${exp}) ` +
+            (match ? '<strong style="color:#65a30d">✓ DONE</strong>' : '<strong style="color:#dc2626">✗ SAI</strong>');
+        } else {
+          resultEl.textContent = `a=${a} b=${b} — chu kỳ ${multCycles}: acc đang tích luỹ = ${s.product} (chưa done)`;
+        }
+      }
+
+      function initMultDemo() {
+        if (!document.getElementById('mult-result')) return;
+        ['a3', 'a2', 'a1', 'a0', 'b3', 'b2', 'b1', 'b0'].forEach((name) => {
+          const btn = document.getElementById(`mult-${name}`);
+          btn.addEventListener('click', () => {
+            multBits[name] = multBits[name] ? 0 : 1;
+            document.getElementById(`mult-val-${name}`).textContent = multBits[name];
+            resetMultSim();
+          });
+        });
+        document.getElementById('mult-start-btn').addEventListener('click', startMult);
+        document.getElementById('mult-step-btn').addEventListener('click', stepMult);
+        document.getElementById('mult-reset-btn').addEventListener('click', resetMultSim);
+        resetMultSim();
+      }
+
+      initRaceDemo();
+      initStaDemo();
+      initMultDemo();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
