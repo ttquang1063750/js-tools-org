@@ -14,9 +14,19 @@ class VeriLiteParser {
   }
 
   parse() {
+    // typedef enum {A, B, C} state_t; — thay parameter magic-number kiểu Verilog cũ.
+    // Thay thế TRỰC TIẾP tên trạng thái bằng số thứ tự (0,1,2,...) ngay trong mã nguồn
+    // TRƯỚC khi các bước extract khác chạy — mọi so sánh/case (vd `state == RED`,
+    // `case(state) RED: ...`) sau đó chỉ cần hiểu số nguyên như bình thường, không cần
+    // dạy evalExpression khái niệm "tên định danh enum" riêng.
+    const enumInfo = this.extractTypedefEnum();
+    if (Object.keys(enumInfo.values).length > 0) {
+      this.code = this.substituteEnumNames(this.code, enumInfo.values);
+    }
+
     const moduleName = this.extractModuleName();
     const ports = this.extractPorts();
-    const decls = this.extractDeclarations();
+    const decls = this.extractDeclarations(enumInfo.typeNames, enumInfo.typeWidths);
     const gates = this.extractGates();
     const assigns = [...this.extractAssigns(), ...this.extractAlwaysAssigns(), ...this.extractCaseAssigns()];
     const alwaysFF = this.extractAlwaysFF();
@@ -28,7 +38,57 @@ class VeriLiteParser {
       gates,
       assigns,
       alwaysFF,
+      enumNames: enumInfo.names,
     };
+  }
+
+  // typedef enum {A, B, C} state_t; -> { values: {A:0,B:1,C:2}, typeNames: ['state_t'],
+  // typeWidths: {state_t: 2}, names: ['A','B','C'] }
+  // typeWidths TÍNH ĐỦ SỐ BIT để chứa hết N trạng thái (ceil(log2(N))) — thiếu bước này
+  // thì biến state_t mặc định width=1 (không có [N:0]) sẽ bị mask cụt các trạng thái
+  // có mã số >= 2 (xem PHẦN D check-lesson.md: bug thật gặp khi test FSM đèn giao thông).
+  extractTypedefEnum() {
+    const values = {};
+    const typeNames = [];
+    const typeWidths = {};
+    const names = [];
+    const enumRegex = /typedef\s+enum\s*(?:logic\s*\[[^\]]*\])?\s*\{([^}]*)\}\s*(\w+)\s*;/g;
+    let m;
+    while ((m = enumRegex.exec(this.code)) !== null) {
+      const members = m[1]
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      members.forEach((name, i) => {
+        values[name] = i;
+        names.push(name);
+      });
+      const typeName = m[2];
+      typeNames.push(typeName);
+      typeWidths[typeName] = Math.max(1, Math.ceil(Math.log2(members.length)));
+    }
+    return { values, typeNames, typeWidths, names };
+  }
+
+  // Thay mọi lần xuất hiện TÊN TRẠNG THÁI (whole-word) bằng giá trị số nguyên tương
+  // ứng — chỉ áp dụng ngoài chính dòng typedef (để giữ nguyên định nghĩa gốc cho dễ đọc
+  // khi debug), nên xử lý trên phần code SAU dòng typedef cuối cùng.
+  substituteEnumNames(code, values) {
+    const lastTypedefEnd = (() => {
+      const re = /typedef\s+enum\s*(?:logic\s*\[[^\]]*\])?\s*\{[^}]*\}\s*\w+\s*;/g;
+      let last = 0;
+      let m;
+      while ((m = re.exec(code)) !== null) last = re.lastIndex;
+      return last;
+    })();
+
+    const head = code.slice(0, lastTypedefEnd);
+    let tail = code.slice(lastTypedefEnd);
+    for (const [name, value] of Object.entries(values)) {
+      const re = new RegExp('\\b' + name + '\\b', 'g');
+      tail = tail.replace(re, String(value));
+    }
+    return head + tail;
   }
 
   extractModuleName() {
@@ -70,14 +130,22 @@ class VeriLiteParser {
   // Chỉ khớp khai báo `wire`/`logic`/`reg`/`bit` khi đứng ĐẦU DÒNG (không phải sau
   // input/output trong danh sách port) — hỗ trợ cú pháp nhiều tên trên 1 dòng
   // (vd `wire not_s, and_a, and_b;`), mỗi tên tách bằng dấu phẩy.
-  extractDeclarations() {
+  // customTypes: tên kiểu do typedef enum sinh ra (vd "state_t") — cho phép khai báo
+  // biến trạng thái FSM (vd `state_t state, next_state;`) được nhận diện như 1 declaration
+  // bình thường, cùng cơ chế với logic/wire/reg/bit.
+  extractDeclarations(customTypes = [], customTypeWidths = {}) {
     const decls = [];
-    const declRegex = /^[ \t]*(logic|wire|reg|bit)\s+([^;]+);/gm;
+    const typeAlternation = ['logic', 'wire', 'reg', 'bit', ...customTypes]
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
+    const declRegex = new RegExp(`^[ \\t]*(${typeAlternation})\\s+([^;]+);`, 'gm');
     let match;
     while ((match = declRegex.exec(this.code)) !== null) {
       const type = match[1];
       const widthMatch = match[2].match(/^\s*\[\s*(\d+)\s*:\s*(\d+)\s*\]/);
-      const width = widthMatch ? parseInt(widthMatch[1], 10) - parseInt(widthMatch[2], 10) + 1 : 1;
+      const width = widthMatch
+        ? parseInt(widthMatch[1], 10) - parseInt(widthMatch[2], 10) + 1
+        : customTypeWidths[type] || 1;
       const names = match[2].replace(/\[[^\]]*\]/g, '').split(',');
       for (const raw of names) {
         const name = raw.trim();
@@ -309,6 +377,25 @@ class VeriSimulator {
     return true;
   }
 
+  // Tìm vị trí "?" và ":" của TOÁN TỬ TERNARY NGOÀI CÙNG (depth 0 trong ngoặc), bỏ
+  // qua mọi "?"/":" nằm bên trong ngoặc con — cho phép ternary lồng ternary đúng
+  // (vd case/FSM sinh ra "(a) ? (b?c:d) : (e)").
+  findTopLevelTernary(expr) {
+    let depth = 0;
+    let qPos = -1;
+    for (let i = 0; i < expr.length; i++) {
+      const c = expr[i];
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      else if (c === '?' && depth === 0 && qPos === -1) {
+        qPos = i;
+      } else if (c === ':' && depth === 0 && qPos !== -1) {
+        return { q: qPos, c: i };
+      }
+    }
+    return null;
+  }
+
   evalExpression(expr, state) {
     if (!expr) return 0;
 
@@ -337,11 +424,17 @@ class VeriSimulator {
       return this.evalExpression(expr.slice(1, -1), state);
     }
 
-    // Ternary operator (sel ? b : a)
-    const ternaryMatch = expr.match(/^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$/);
-    if (ternaryMatch) {
-      const cond = this.evalExpression(ternaryMatch[1], state);
-      return cond ? this.evalExpression(ternaryMatch[2], state) : this.evalExpression(ternaryMatch[3], state);
+    // Ternary operator (sel ? b : a) — PHẢI quét theo độ sâu ngoặc, không dùng regex
+    // "?"/":" đầu tiên ngây thơ. Case/FSM sinh ra ternary LỒNG trong ternary (vd
+    // "(state==0) ? (bit_in?1:0) : (state==1) ? ..."), nếu chỉ tìm ":" đầu tiên sẽ bắt
+    // nhầm dấu ":" của ternary CON bên trong ngoặc, làm hỏng toàn bộ phép tách nhánh.
+    const ternaryPos = this.findTopLevelTernary(expr);
+    if (ternaryPos) {
+      const condStr = expr.slice(0, ternaryPos.q).trim();
+      const thenStr = expr.slice(ternaryPos.q + 1, ternaryPos.c).trim();
+      const elseStr = expr.slice(ternaryPos.c + 1).trim();
+      const cond = this.evalExpression(condStr, state);
+      return cond ? this.evalExpression(thenStr, state) : this.evalExpression(elseStr, state);
     }
 
     // Binary operators - process in order of precedence
