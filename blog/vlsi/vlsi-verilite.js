@@ -19,6 +19,7 @@ class VeriLiteParser {
     const decls = this.extractDeclarations();
     const gates = this.extractGates();
     const assigns = [...this.extractAssigns(), ...this.extractAlwaysAssigns(), ...this.extractCaseAssigns()];
+    const alwaysFF = this.extractAlwaysFF();
 
     return {
       name: moduleName,
@@ -26,6 +27,7 @@ class VeriLiteParser {
       decls,
       gates,
       assigns,
+      alwaysFF,
     };
   }
 
@@ -34,23 +36,31 @@ class VeriLiteParser {
     return match ? match[1] : 'unknown';
   }
 
+  // Giữ lại thông tin độ rộng bit [N:0] (thay vì bỏ hẳn như trước) để engine biết
+  // tự "cuộn vòng" (wrap-around) đúng — vd counter 4-bit phải quay về 0 sau 15, không
+  // tăng vô hạn. Token hoá xen kẽ: từ khoá direction / khối [N:0] / định danh.
   extractPorts() {
     const portMatch = this.code.match(/module\s+\w+\s*\((.*?)\)/s);
     if (!portMatch) return [];
 
-    // Bỏ vector width [N:0] TRƯỚC khi tách từ, tránh bắt nhầm số bên trong
-    // ngoặc vuông (vd "3", "0" trong "[3:0]") thành tên tín hiệu.
-    const portStr = portMatch[1].replace(/\[[^\]]*\]/g, ' ');
+    const portStr = portMatch[1];
     const ports = [];
-    let match;
-
     let direction = 'input';
-    for (match of portStr.matchAll(/(\w+)/g)) {
-      const word = match[1];
-      if (['input', 'output', 'inout'].includes(word)) {
-        direction = word;
-      } else if (!['logic', 'wire', 'reg', 'bit', 'signed', 'unsigned'].includes(word)) {
-        ports.push({ name: word, direction });
+    let currentWidth = 1;
+
+    const tokenRegex = /(input|output|inout)|\[\s*(\d+)\s*:\s*(\d+)\s*\]|(\w+)/g;
+    let match;
+    while ((match = tokenRegex.exec(portStr)) !== null) {
+      if (match[1]) {
+        direction = match[1];
+        currentWidth = 1;
+      } else if (match[2] !== undefined) {
+        currentWidth = parseInt(match[2], 10) - parseInt(match[3], 10) + 1;
+      } else if (match[4]) {
+        const word = match[4];
+        if (!['logic', 'wire', 'reg', 'bit', 'signed', 'unsigned'].includes(word)) {
+          ports.push({ name: word, direction, width: currentWidth });
+        }
       }
     }
 
@@ -66,11 +76,13 @@ class VeriLiteParser {
     let match;
     while ((match = declRegex.exec(this.code)) !== null) {
       const type = match[1];
-      const names = match[2].split(',');
+      const widthMatch = match[2].match(/^\s*\[\s*(\d+)\s*:\s*(\d+)\s*\]/);
+      const width = widthMatch ? parseInt(widthMatch[1], 10) - parseInt(widthMatch[2], 10) + 1 : 1;
+      const names = match[2].replace(/\[[^\]]*\]/g, '').split(',');
       for (const raw of names) {
-        const name = raw.replace(/\[[^\]]*\]/g, '').trim();
+        const name = raw.trim();
         if (name && /^\w+$/.test(name)) {
-          decls.push({ type, name });
+          decls.push({ type, name, width });
         }
       }
     }
@@ -109,9 +121,11 @@ class VeriLiteParser {
 
   // Behavioral tối giản: `if (cond) lhs = a; else lhs = b;` bên trong always/always_comb.
   // Chuyển thành 1 "assign" tương đương lhs = cond ? a : b (đủ cho case dạy học đơn giản).
+  // CHÚ Ý: loại trừ always_ff (negative lookahead "(?!_ff)") — khối tuần tự có ngữ nghĩa
+  // hoàn toàn khác (giữ trạng thái qua cạnh clock), được extractAlwaysFF xử lý riêng.
   extractAlwaysAssigns() {
     const assigns = [];
-    const blockRegex = /always[_\w]*\s*(?:@\([^)]*\))?\s*begin([\s\S]*?)end/g;
+    const blockRegex = /always(?!_ff)[_\w]*\s*(?:@\([^)]*\))?\s*begin([\s\S]*?)end/g;
     let blockMatch;
     while ((blockMatch = blockRegex.exec(this.code)) !== null) {
       const body = blockMatch[1];
@@ -168,6 +182,50 @@ class VeriLiteParser {
     return assigns;
   }
 
+  // always_ff @(posedge clk) begin ... end — logic TUẦN TỰ thật, khác hẳn always_comb:
+  // giữ trạng thái qua cạnh clock, phân biệt rõ blocking "=" (mutate ngay, thấy được ở
+  // câu lệnh sau) và non-blocking "<=" (đọc giá trị CŨ, áp dụng đồng loạt cuối khối) —
+  // đây chính là engine dùng để CHỨNG MINH cạm bẫy blocking vs non-blocking, không phải
+  // chỉ giải thích suông.
+  extractAlwaysFF() {
+    const results = [];
+    const blockRegex = /always_ff\s*@\s*\(\s*posedge\s+(\w+)\s*\)\s*begin([\s\S]*?)end\b/g;
+    let m;
+    while ((m = blockRegex.exec(this.code)) !== null) {
+      const clock = m[1];
+      const statements = this.parseStatementList(m[2]);
+      results.push({ clock, statements });
+    }
+    return results;
+  }
+
+  // Hỗ trợ 2 dạng câu lệnh đủ dùng cho Bài 3: (a) if (cond) lhs op expr; else lhs op expr;
+  // (mỗi nhánh đúng 1 câu lệnh phẳng, không lồng begin/end — mẫu counter/reset kinh điển)
+  // và (b) chuỗi câu lệnh phẳng liên tiếp (mẫu thanh ghi dịch nhiều tầng).
+  parseStatementList(text) {
+    text = text.trim();
+    const statements = [];
+
+    const ifElseRegex = /if\s*\(([^)]+)\)\s*(\w+)\s*(<=|=)\s*([^;]+);\s*else\s*\2\s*(<=|=)\s*([^;]+);/;
+    const ifMatch = text.match(ifElseRegex);
+    if (ifMatch) {
+      statements.push({
+        type: 'if',
+        cond: ifMatch[1].trim(),
+        then: [{ type: 'assign', lhs: ifMatch[2], op: ifMatch[3], rhs: ifMatch[4].trim() }],
+        else: [{ type: 'assign', lhs: ifMatch[2], op: ifMatch[5], rhs: ifMatch[6].trim() }],
+      });
+      return statements;
+    }
+
+    const assignRegex = /(\w+)\s*(<=|=)\s*([^;]+);/g;
+    let m;
+    while ((m = assignRegex.exec(text)) !== null) {
+      statements.push({ type: 'assign', lhs: m[1], op: m[2], rhs: m[3].trim() });
+    }
+    return statements;
+  }
+
   // Chuyển literal kiểu Verilog (4'b0000, 3'd5, 4'h1) thành số thập phân dạng chuỗi,
   // để dùng lại được trong evalExpression (vốn chỉ hiểu số thập phân/0b/0x thuần).
   parseVerilogLiteral(token) {
@@ -187,7 +245,25 @@ class VeriSimulator {
   constructor(ast) {
     this.ast = ast;
     this.state = {};
+    this.widths = this.buildWidthMap();
     this.initState();
+  }
+
+  // Bảng độ rộng bit (tên tín hiệu -> số bit) từ port + declaration, dùng để tự "cuộn
+  // vòng" (wrap-around) đúng — vd counter 4-bit phải quay về 0 sau 15, không tăng vô hạn.
+  buildWidthMap() {
+    const widths = {};
+    for (const port of this.ast.ports) widths[port.name] = port.width || 1;
+    for (const decl of this.ast.decls) widths[decl.name] = decl.width || 1;
+    return widths;
+  }
+
+  // JS "&" trên số âm dùng bù 2 sẵn, nên mask cũng tự đúng cho trường hợp trừ tràn số
+  // (vd 4'b0000 - 1 phải "cuộn vòng" thành 4'b1111 = 15, không phải -1).
+  maskToWidth(name, value) {
+    const width = this.widths[name];
+    if (!width || width >= 32) return value;
+    return value & ((1 << width) - 1);
   }
 
   initState() {
@@ -200,6 +276,24 @@ class VeriSimulator {
     for (const gate of this.ast.gates || []) {
       if (this.state[gate.output] === undefined) this.state[gate.output] = 0;
     }
+    for (const block of this.ast.alwaysFF || []) {
+      for (const name of this.collectFFTargets(block.statements)) {
+        if (this.state[name] === undefined) this.state[name] = 0;
+      }
+    }
+  }
+
+  collectFFTargets(statements) {
+    const targets = [];
+    for (const stmt of statements) {
+      if (stmt.type === 'if') {
+        targets.push(...this.collectFFTargets(stmt.then));
+        if (stmt.else) targets.push(...this.collectFFTargets(stmt.else));
+      } else if (stmt.type === 'assign') {
+        targets.push(stmt.lhs);
+      }
+    }
+    return targets;
   }
 
   isFullyParenthesized(expr) {
@@ -364,6 +458,37 @@ class VeriSimulator {
     }
   }
 
+  // Áp dụng 1 cạnh clock cho MỌI khối always_ff — đây là chỗ chứng minh khác biệt
+  // blocking "=" (mutate `state` ngay, câu lệnh sau thấy được giá trị mới) vs
+  // non-blocking "<=" (RHS luôn đọc từ `snapshot` đóng băng tại đầu cạnh clock, LHS chỉ
+  // áp dụng đồng loạt ở cuối) — đúng ngữ nghĩa phần cứng thật, không phải giả lập suông.
+  applyAlwaysFF(state) {
+    for (const block of this.ast.alwaysFF || []) {
+      const snapshot = { ...state };
+      const pendingNonBlocking = {};
+
+      const run = (stmts) => {
+        for (const stmt of stmts) {
+          if (stmt.type === 'if') {
+            const cond = this.evalExpression(stmt.cond, state);
+            const branch = cond ? stmt.then : stmt.else;
+            if (branch) run(branch);
+          } else if (stmt.type === 'assign') {
+            if (stmt.op === '<=') {
+              pendingNonBlocking[stmt.lhs] = this.maskToWidth(stmt.lhs, this.evalExpression(stmt.rhs, snapshot));
+            } else {
+              state[stmt.lhs] = this.maskToWidth(stmt.lhs, this.evalExpression(stmt.rhs, state));
+            }
+          }
+        }
+      };
+      run(block.statements);
+      // Mask NGAY khi merge — các assign tổ hợp chạy sau applyAlwaysFF (vd so sánh
+      // count < duty) phải thấy giá trị ĐÃ cuộn vòng, không phải giá trị thô chưa mask.
+      Object.assign(state, pendingNonBlocking);
+    }
+  }
+
   cycle(inputs) {
     const newState = { ...this.state };
 
@@ -373,6 +498,11 @@ class VeriSimulator {
         newState[key] = value;
       }
     }
+
+    // Áp dụng 1 cạnh clock (always_ff) TRƯỚC — mỗi lần gọi cycle() coi như 1 cạnh
+    // clock đã xảy ra (khớp nút "Step Clock" của RTL Playground). Bài không có
+    // always_ff (Bài 1, 2) thì alwaysFF rỗng, dòng này không đổi gì (an toàn ngược).
+    this.applyAlwaysFF(newState);
 
     // Evaluate cổng nguyên thủy (structural) — 2 lượt để chịu được thứ tự khai báo
     // không đúng thứ tự phụ thuộc (vd cổng dùng biến được cổng sau mới gán).
@@ -386,6 +516,13 @@ class VeriSimulator {
     // Evaluate assigns (dataflow + behavioral if/else đã được chuyển thành ternary)
     for (const assign of this.ast.assigns) {
       newState[assign.lhs] = this.evalExpression(assign.rhs, newState);
+    }
+
+    // Mask cuối cùng theo độ rộng bit khai báo — counter/thanh ghi tự cuộn vòng đúng.
+    for (const name of Object.keys(this.widths)) {
+      if (newState[name] !== undefined) {
+        newState[name] = this.maskToWidth(name, newState[name]);
+      }
     }
 
     this.state = newState;
