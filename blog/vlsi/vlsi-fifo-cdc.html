@@ -1,0 +1,1169 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 7: Bộ nhớ, FIFO & Clock Domain Crossing — js-tools</title>
+    <meta
+      name="description"
+      content="RAM/ROM inference, register file 2-port, FIFO đồng bộ (con trỏ, full/empty), vượt miền xung nhịp (CDC): metastability, bộ đồng bộ 2-FF, FIFO bất đồng bộ với Gray code — kèm demo tương tác FIFO và mô phỏng metastability."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/vlsi/vlsi-fifo-cdc" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--vlsi">
+        <div class="container">
+          <a href="vlsi-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--vlsi">Bài 7 · Thiết Kế Vi Mạch Số & FPGA</div>
+          <h1 class="article-hero__title">Bộ nhớ, FIFO & Clock Domain Crossing</h1>
+          <div class="article-hero__meta">8 tháng 7, 2026 · 27 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Con bug chỉ xảy ra "thỉnh thoảng", không bao giờ tái hiện được 2 lần giống nhau</h2>
+            <p>
+              Mạch của bạn chạy hoàn hảo trên testbench, hoàn hảo khi debug bằng waveform, hoàn hảo suốt hàng giờ thử
+              nghiệm — rồi đột nhiên, một lần trong hàng triệu chu kỳ, dữ liệu sai lệch. Bạn thêm lại đúng điều kiện đó
+              để tái hiện bug, mạch lại chạy đúng. Đây không phải bug logic thông thường — đây là dấu hiệu kinh điển của
+              việc <strong>2 tín hiệu từ 2 vùng đồng hồ (clock domain) khác nhau chạm mặt nhau</strong> mà không có biện
+              pháp bảo vệ. Tín hiệu tưởng chừng "chỉ là 1 sợi dây" khi băng qua ranh giới đó có thể vi phạm cửa sổ
+              setup/hold của flip-flop nhận, đẩy nó vào trạng thái <strong>bất ổn định (metastable)</strong> — không hẳn
+              0, không hẳn 1 — trong một khoảng thời gian không thể đoán trước.
+            </p>
+            <p>
+              Bài này giải quyết 2 vấn đề tưởng không liên quan nhưng luôn đi cùng nhau trong thiết kế thực tế: cách suy
+              luận (infer) bộ nhớ RAM/ROM và register file từ SystemVerilog thuần, và cách xây dựng
+              <strong>FIFO</strong> — hàng đợi phần cứng dùng để "đệm" dữ liệu giữa 2 khối chạy tốc độ khác nhau. Khi 2
+              khối đó dùng <strong>2 đồng hồ độc lập</strong>, FIFO buộc phải vượt qua ranh giới miền xung nhịp một cách
+              an toàn — đây chính là lúc bộ đồng bộ 2-FF (2-flip-flop synchronizer) và mã Gray xuất hiện, không phải vì
+              "đúng chuẩn cho có" mà vì thiếu chúng, mạch của bạn sẽ mang đúng loại bug đã mô tả ở trên: hiếm gặp, không
+              tái hiện được, và cực kỳ khó debug.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong>
+                <a href="vlsi-sequential-flops">Bài 3 (SystemVerilog tuần tự)</a> — FIFO và bộ đồng bộ đều xây trên
+                <code>always_ff</code>;
+                <a href="/blog/electronics/electronics-sequential-storage"
+                  >Series Điện Tử Bài 13 (Mạch tuần tự &amp; setup/hold)</a
+                >
+                — bài này giả định bạn đã hiểu vì sao vi phạm setup/hold gây ra trạng thái bất ổn định.
+                <br /><strong>Tài nguyên ngoài:</strong>
+                <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">HDLBits</a>,
+                <a href="https://www.chipverify.com" target="_blank" rel="noopener noreferrer">ChipVerify</a>,
+                <a href="https://www.edaplayground.com" target="_blank" rel="noopener noreferrer">EDA Playground</a>.
+              </div>
+            </div>
+
+            <h2>1. RAM/ROM inference: mảng bộ nhớ trong SystemVerilog</h2>
+            <p>
+              Không có khai báo <code>module ram</code> hay từ khoá đặc biệt nào cho bộ nhớ — công cụ tổng hợp
+              (synthesis) <strong>suy luận</strong> (infer) RAM/ROM từ một khai báo mảng <code>logic</code> thông
+              thường, được đọc/ghi theo một khuôn mẫu (pattern) mà nó nhận diện được:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ram_infer.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">// ⚠️ Ngoài subset VeriLite — cần mảng bộ nhớ (memory array) + indexing động
+// bằng địa chỉ (addr), engine của trang này chưa hỗ trợ. Chạy thật trên
+// Verilator/EDA Playground.
+module ram_infer (
+  input  logic clk,
+  input  logic we,           // write-enable
+  input  logic [7:0] addr,
+  input  logic [7:0] din,
+  output logic [7:0] dout
+);
+  logic [7:0] mem [0:255];   // khai báo mảng 256 ô, mỗi ô 8-bit → tool suy luận RAM 256×8
+
+  always_ff @(posedge clk) begin
+    if (we) mem[addr] <= din;  // ghi đồng bộ
+    dout <= mem[addr];          // đọc đồng bộ (registered read) — trễ 1 chu kỳ, phổ biến ở BRAM FPGA
+  end
+endmodule
+</code></pre>
+            </div>
+            <p>
+              Điểm mấu chốt: <code>dout</code> được gán bên trong <code>always_ff</code> nên là
+              <strong>đọc đồng bộ</strong> — giá trị xuất hiện <em>1 chu kỳ sau</em> khi địa chỉ đổi, không phải ngay
+              lập tức. Đây chính là cách hầu hết BRAM (Block RAM) trên FPGA hoạt động thật (sẽ gặp lại ở
+              <a href="vlsi-programming-series">Bài 9</a>) — cố tình gán <code>dout</code> bằng <code>assign</code>
+              (đọc tổ hợp, không đăng ký) thường buộc tool phải dùng LUT-RAM (tốn logic) thay vì BRAM chuyên dụng (rẻ,
+              nhanh, có sẵn số lượng lớn trên chip).
+            </p>
+
+            <h2>2. Register File 2-Read/1-Write: trái tim tương lai của CPU</h2>
+            <p>
+              Một dạng bộ nhớ đặc biệt quan trọng: <strong>register file</strong> — tập hợp thanh ghi nhỏ (thường 16-32
+              thanh ghi) với khả năng đọc <strong>2 địa chỉ cùng lúc</strong> (2 toán hạng nguồn của 1 lệnh ALU) và ghi
+              1 địa chỉ. Đây chính là cấu trúc bạn sẽ dùng để xây datapath CPU RISC-V ở
+              <a href="vlsi-programming-series">Bài 13-14</a>.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">regfile_2r1w.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">// ⚠️ Ngoài subset VeriLite — cùng lý do: mảng bộ nhớ + indexing động.
+module regfile_2r1w (
+  input  logic clk,
+  input  logic we,
+  input  logic [4:0] waddr, raddr1, raddr2,   // 5 bit → 32 thanh ghi
+  input  logic [31:0] wdata,
+  output logic [31:0] rdata1, rdata2
+);
+  logic [31:0] regs [0:31];
+
+  always_ff @(posedge clk) begin
+    if (we) regs[waddr] <= wdata;   // GHI: đồng bộ, chỉ 1 cổng ghi
+  end
+
+  // ĐỌC: tổ hợp (combinational) — không chờ clock, đọc 2 thanh ghi CÙNG LÚC
+  // trong 1 chu kỳ. Đây là lý do register file có "2 cổng đọc, 1 cổng ghi":
+  // 1 lệnh ALU cần 2 toán hạng nguồn NGAY LẬP TỨC, không thể đợi tuần tự.
+  assign rdata1 = regs[raddr1];
+  assign rdata2 = regs[raddr2];
+endmodule
+</code></pre>
+            </div>
+            <p>
+              Khác với <code>ram_infer</code> ở Mục 1 (đọc đồng bộ, trễ 1 chu kỳ), register file thường đọc
+              <strong>tổ hợp</strong> (combinational) — vì CPU cần giá trị thanh ghi ngay trong cùng 1 chu kỳ để đưa vào
+              ALU, không có thời gian chờ thêm 1 chu kỳ như BRAM.
+            </p>
+
+            <h2>3. FIFO đồng bộ: con trỏ, bộ đếm, và cạm bẫy "đầy hay rỗng"</h2>
+            <p>
+              <strong><abbr title="First-In-First-Out">FIFO</abbr></strong> là hàng đợi phần cứng: dữ liệu ghi vào
+              (push) theo thứ tự nào thì đọc ra (pop) đúng thứ tự đó. Bên trong là bộ nhớ (Mục 1) cộng với
+              <strong>logic điều khiển</strong> — chính là phần dạy được trên VeriLite, vì chỉ cần đếm, không cần mảng
+              bộ nhớ thật:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">fifo_ctrl.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">module fifo_ctrl (
+  input  logic clk, rst,
+  input  logic push, pop,     // yêu cầu ghi / đọc từ 2 phía
+  output logic full, empty,
+  output logic [3:0] count    // FIFO sâu 8 ô — count chạy 0..8
+);
+  always_ff @(posedge clk) begin
+    if (rst)
+      count <= 0;
+    else
+      count <= (push && !full && pop && !empty) ? count :       // ghi+đọc đồng thời: giữ nguyên
+                (push && !full)                 ? count + 1 :   // chỉ ghi (còn chỗ)
+                (pop && !empty)                  ? count - 1 :   // chỉ đọc (còn dữ liệu)
+                count;                                            // ghi khi đầy / đọc khi rỗng: bỏ qua
+  end
+
+  assign full  = (count == 8);
+  assign empty = (count == 0);
+endmodule
+</code></pre>
+            </div>
+            <p>
+              Cạm bẫy kinh điển của FIFO: nếu bạn chỉ so sánh con trỏ ghi (<code>wptr</code>) và con trỏ đọc
+              (<code>rptr</code>) để suy ra trạng thái — <code>wptr == rptr</code> vừa có thể nghĩa là
+              <strong>"rỗng hoàn toàn"</strong> (chưa ghi gì) vừa có thể nghĩa là <strong>"đầy hoàn toàn"</strong> (đã
+              ghi đủ 1 vòng, con trỏ đọc đuổi kịp con trỏ ghi) — 2 trạng thái đối lập nhưng cùng 1 điều kiện so sánh!
+              Cách sửa kinh điển: dùng thêm 1 bộ đếm mức đầy riêng biệt (như <code>count</code> ở trên) hoặc thêm 1 bit
+              mở rộng cho con trỏ để phân biệt "đã vòng qua chưa". Demo bên dưới chạy đúng module
+              <code>fifo_ctrl</code> — bấm Push/Pop để tự kiểm chứng full/empty không bao giờ nhầm lẫn.
+            </p>
+
+            <div class="code-tabs" id="fifo-tour">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">📥 FIFO đồng bộ — Push/Pop</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="sv">SystemVerilog</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__controls">
+                    <div class="mux-demo__inputs">
+                      <button class="mux-input-btn" type="button" id="fifo-push-btn">⬇ Push</button>
+                      <button class="mux-input-btn" type="button" id="fifo-pop-btn">⬆ Pop</button>
+                      <button class="mux-input-btn" type="button" id="fifo-reset-btn">⏹ Reset</button>
+                    </div>
+                    <div class="mux-demo__output" id="fifo-result">count=0, empty=1, full=0</div>
+                  </div>
+                  <div id="fifo-bar" style="margin-top: 14px; display: flex; gap: 3px"></div>
+                  <p class="mux-demo__hint">
+                    Bấm Push 8 lần liên tiếp để thấy <code>full</code> lên 1 và ô thứ 9 bị bỏ qua; bấm Pop khi rỗng để
+                    thấy <code>count</code> không bao giờ tụt xuống âm.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="sv">
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">fifo_ctrl.sv</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">// Xem module đầy đủ ở Mục 3 phía trên, hoặc tải file fifo_and_cdc.sv
+// ở cuối bài để chạy trên Verilator/EDA Playground.</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>4. Vượt miền xung nhịp (CDC): Metastability & bộ đồng bộ 2-FF</h2>
+            <p>
+              Khi FIFO nối 2 khối chạy 2 đồng hồ độc lập (vd producer ở <code>clk_a</code> 100MHz, consumer ở
+              <code>clk_b</code> 133MHz không đồng bộ pha), các cờ <code>full</code>/<code>empty</code> phải
+              <strong>băng qua ranh giới đồng hồ</strong> để bên kia đọc được. Vấn đề: flip-flop nhận yêu cầu tín hiệu
+              đầu vào <strong>ổn định</strong> trong 1 cửa sổ nhỏ quanh cạnh clock (setup/hold — đã học ở
+              <a href="/blog/electronics/electronics-sequential-storage">Series Điện Tử Bài 13</a>). Tín hiệu đến từ 1
+              đồng hồ khác có thể đổi giá trị <strong>bất kỳ lúc nào</strong>, kể cả đúng lúc flip-flop đang "nhìn" nó —
+              vi phạm cửa sổ đó đẩy flip-flop vào trạng thái bất ổn định (metastable): điện áp lơ lửng giữa mức 0 và 1
+              trong một khoảng thời gian <strong>không xác định</strong>, trước khi ngẫu nhiên "rơi" về 0 hoặc 1.
+            </p>
+
+            <div class="mux-demo__netlist" style="margin: 20px 0">
+              <svg
+                viewBox="0 0 700 335"
+                width="100%"
+                height="335"
+                style="border: 1px solid #ddd; background: #fafafa; border-radius: 6px"
+              >
+                <defs>
+                  <marker id="fifo-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L6,3 z" fill="#475569" />
+                  </marker>
+                </defs>
+                <rect
+                  x="10"
+                  y="10"
+                  width="320"
+                  height="260"
+                  fill="none"
+                  stroke="#84cc16"
+                  stroke-width="1.5"
+                  stroke-dasharray="5,4"
+                  rx="8"
+                />
+                <text x="170" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#65a30d">
+                  Miền clk_a (ghi)
+                </text>
+                <rect
+                  x="370"
+                  y="10"
+                  width="320"
+                  height="260"
+                  fill="none"
+                  stroke="#0ea5e9"
+                  stroke-width="1.5"
+                  stroke-dasharray="5,4"
+                  rx="8"
+                />
+                <text x="530" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#0284c7">
+                  Miền clk_b (đọc)
+                </text>
+
+                <rect x="35" y="50" width="130" height="46" fill="#fff" stroke="#334155" rx="6" />
+                <text x="100" y="78" text-anchor="middle" font-size="13" fill="#111827">Producer</text>
+
+                <rect x="35" y="130" width="270" height="60" fill="#ecfccb" stroke="#65a30d" rx="6" />
+                <text x="170" y="155" text-anchor="middle" font-size="12" fill="#111827">FIFO Write Logic</text>
+                <text x="170" y="173" text-anchor="middle" font-size="11" fill="#4b5563">wptr (Gray code)</text>
+
+                <rect x="395" y="130" width="270" height="60" fill="#e0f2fe" stroke="#0284c7" rx="6" />
+                <text x="530" y="155" text-anchor="middle" font-size="12" fill="#111827">FIFO Read Logic</text>
+                <text x="530" y="173" text-anchor="middle" font-size="11" fill="#4b5563">rptr (Gray code)</text>
+
+                <rect x="535" y="50" width="130" height="46" fill="#fff" stroke="#334155" rx="6" />
+                <text x="600" y="78" text-anchor="middle" font-size="13" fill="#111827">Consumer</text>
+
+                <rect x="250" y="230" width="200" height="46" fill="#fff" stroke="#334155" rx="6" />
+                <text x="350" y="257" text-anchor="middle" font-size="12" fill="#111827">Dual-Port Memory</text>
+
+                <rect x="315" y="120" width="70" height="26" fill="#fef3c7" stroke="#b45309" rx="4" />
+                <text x="350" y="137" text-anchor="middle" font-size="10" fill="#78350f">2-FF Sync</text>
+                <rect x="315" y="172" width="70" height="26" fill="#fef3c7" stroke="#b45309" rx="4" />
+                <text x="350" y="189" text-anchor="middle" font-size="10" fill="#78350f">2-FF Sync</text>
+
+                <path
+                  d="M100,96 L100,130"
+                  stroke="#475569"
+                  stroke-width="1.5"
+                  marker-end="url(#fifo-arrow)"
+                  fill="none"
+                />
+                <path
+                  d="M600,96 L600,130"
+                  stroke="#475569"
+                  stroke-width="1.5"
+                  marker-end="url(#fifo-arrow)"
+                  fill="none"
+                  rotate="180"
+                  transform="rotate(180 600 113)"
+                />
+                <path
+                  d="M305,150 L315,133"
+                  stroke="#b45309"
+                  stroke-width="1.5"
+                  marker-end="url(#fifo-arrow)"
+                  fill="none"
+                />
+                <path
+                  d="M385,133 L395,150"
+                  stroke="#b45309"
+                  stroke-width="1.5"
+                  marker-end="url(#fifo-arrow)"
+                  fill="none"
+                />
+                <path
+                  d="M395,170 L385,187"
+                  stroke="#b45309"
+                  stroke-width="1.5"
+                  marker-end="url(#fifo-arrow)"
+                  fill="none"
+                />
+                <path
+                  d="M315,187 L305,170"
+                  stroke="#b45309"
+                  stroke-width="1.5"
+                  marker-end="url(#fifo-arrow)"
+                  fill="none"
+                />
+                <path
+                  d="M170,190 L280,235"
+                  stroke="#475569"
+                  stroke-width="1.5"
+                  marker-end="url(#fifo-arrow)"
+                  fill="none"
+                />
+                <path
+                  d="M420,235 L530,190"
+                  stroke="#475569"
+                  stroke-width="1.5"
+                  marker-end="url(#fifo-arrow)"
+                  fill="none"
+                />
+
+                <text x="350" y="300" text-anchor="middle" font-size="10.5" fill="#64748b">
+                  wptr (Gray) băng sang miền clk_b để tính "empty" · rptr (Gray) băng sang miền clk_a để tính "full"
+                </text>
+                <text x="350" y="317" text-anchor="middle" font-size="10.5" fill="#64748b">
+                  — cả 2 đều qua bộ đồng bộ 2-FF, không có đường tắt
+                </text>
+              </svg>
+            </div>
+            <p class="mux-demo__hint" style="margin-bottom: 20px">
+              Sơ đồ kiến trúc FIFO bất đồng bộ (đầy đủ ở Mục 5): 2 miền clock độc lập chỉ trao đổi đúng 2 tín hiệu con
+              trỏ, cả 2 đều đi qua bộ đồng bộ 2-FF trước khi được dùng để tính full/empty ở phía đối diện — không có
+              đường tắt nào bỏ qua bộ đồng bộ.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: Thiếu bộ đồng bộ khi vượt miền xung nhịp</div>
+              <div class="callout__content">
+                <p>
+                  Đưa thẳng tín hiệu từ miền clock khác vào logic tổ hợp (hoặc chỉ qua 1 flip-flop) là
+                  <strong>không đủ an toàn</strong>: nếu flip-flop đó rơi vào trạng thái bất ổn định, giá trị lơ lửng có
+                  thể lan ra toàn mạch trước khi kịp ổn định, gây lỗi logic không tái hiện được — đúng bug mô tả ở đầu
+                  bài.
+                </p>
+                <div class="code-window" style="margin-top: 12px">
+                  <div class="code-header">
+                    <span class="code-filename">synchronizer.sv</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">// ❌ SAI: chỉ 1 tầng flip-flop — không đủ thời gian để trạng thái bất ổn
+// định (nếu có) ổn định lại trước khi giá trị này được logic khác dùng
+module synchronizer_1ff_bad (
+  input  logic clk, async_in,
+  output logic sync_out
+);
+  always_ff @(posedge clk) begin
+    sync_out <= async_in;   // async_in đổi bất kỳ lúc nào — vi phạm setup/hold ở đây
+  end                        // là "phơi" thẳng ra ngoài, không ai chặn lại
+endmodule
+
+// ✅ ĐÚNG: 2 tầng flip-flop nối tiếp — nếu ff1 lỡ bất ổn định, nó có TRỌN
+// VẸN 1 chu kỳ clock để ổn định lại trước khi ff2 lấy mẫu. sync_out luôn
+// là giá trị ĐÃ ổn định, đổi lại trễ thêm đúng 1 chu kỳ.
+module synchronizer_2ff (
+  input  logic clk, async_in,
+  output logic sync_out
+);
+  logic ff1;
+  always_ff @(posedge clk) begin
+    ff1       <= async_in;  // tầng 1: có thể bất ổn định, KHÔNG dùng trực tiếp giá trị này
+    sync_out  <= ff1;        // tầng 2: lấy mẫu ff1 SAU KHI đã có 1 chu kỳ để ổn định
+  end
+endmodule
+</code></pre>
+                </div>
+                <p style="margin-top: 12px">
+                  <abbr title="Mean Time Between Failures">MTBF</abbr> (thời gian trung bình giữa 2 lần lỗi) của bộ đồng
+                  bộ 2-FF tăng theo hàm mũ so với 1-FF, vì xác suất trạng thái bất ổn định <strong>vẫn chưa</strong> ổn
+                  định sau trọn 1 chu kỳ clock là cực nhỏ. Đây là lý do "2 tầng" gần như luôn đủ trong thực tế công
+                  nghiệp — 3+ tầng chỉ dùng cho hệ thống tần số cực cao hoặc yêu cầu an toàn khắt khe.
+                </p>
+              </div>
+            </div>
+
+            <div class="code-tabs" id="meta-tour">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title"
+                  >🎲 Mô phỏng khái niệm: 1-FF vs 2-FF khi tín hiệu đổi sát cạnh clock</span
+                >
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__controls">
+                    <div class="mux-demo__inputs">
+                      <button class="mux-input-btn" type="button" id="meta-safe-btn">
+                        🕐 Đổi tín hiệu SỚM (an toàn)
+                      </button>
+                      <button class="mux-input-btn" type="button" id="meta-risky-btn">
+                        ⚡ Đổi tín hiệu SÁT cạnh clock (nguy hiểm)
+                      </button>
+                    </div>
+                    <div class="mux-demo__inputs">
+                      <button class="mux-input-btn" type="button" id="meta-step-btn">⏭ Step Clock</button>
+                      <button class="mux-input-btn" type="button" id="meta-reset-btn">⏹ Reset</button>
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 20px; margin-top: 14px; flex-wrap: wrap">
+                    <div class="mux-demo__output" id="meta-1ff-result" style="flex: 1; min-width: 220px">
+                      ❌ 1-FF: sync_out = 0
+                    </div>
+                    <div class="mux-demo__output" id="meta-2ff-result" style="flex: 1; min-width: 220px">
+                      ✅ 2-FF: sync_out = 0
+                    </div>
+                  </div>
+                  <p class="mux-demo__hint">
+                    Bấm "Đổi tín hiệu SÁT cạnh clock" rồi "Step Clock" nhiều lần — 1-FF có thể "phơi" ra giá trị
+                    <strong>❓ bất ổn định</strong> ngay chu kỳ đó, còn 2-FF luôn chờ đủ 1 chu kỳ đệm nên
+                    <code>sync_out</code> không bao giờ bất ổn định (chỉ trễ hơn). Đây là mô hình khái niệm đơn giản hoá
+                    để minh hoạ — VeriLite không mô phỏng điện áp thật, xem thêm khung "Đào sâu" bên dưới.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: Demo trên có phải mô phỏng metastability thật không?</div>
+              <div class="callout__content">
+                Không. VeriLite (và phần lớn trình mô phỏng RTL) chỉ hiểu tín hiệu số <strong>0 hoặc 1</strong>, không
+                có khái niệm điện áp trung gian hay thời gian liên tục — về mặt lý thuyết, RTL simulator
+                <strong>không thể</strong> mô phỏng metastability thật (đó là hiện tượng mức analog, cần mô phỏng
+                SPICE/transistor). Demo trên chỉ minh hoạ đúng 1 quy tắc thiết kế: "đổi tín hiệu sát cạnh clock" đặt giá
+                trị vào vùng nguy hiểm, và số tầng flip-flop quyết định giá trị đó được "phơi" ra ngoài hay được cho
+                thêm thời gian ổn định trước khi dùng — bản chất kỹ thuật, không phải điện áp thật.
+              </div>
+            </div>
+
+            <h2>5. FIFO bất đồng bộ: vì sao con trỏ nhị phân "chết" khi vượt miền clock</h2>
+            <p>
+              FIFO đồng bộ ở Mục 3 dùng 1 bộ đếm chung cho cả ghi lẫn đọc — chỉ đúng khi ghi và đọc
+              <strong>cùng 1 đồng hồ</strong>. FIFO bất đồng bộ (asynchronous FIFO) phải tách thành 2 con trỏ độc lập
+              (<code>wptr</code> ở miền ghi, <code>rptr</code> ở miền đọc), rồi đồng bộ hoá TỪNG con trỏ sang miền đối
+              diện bằng bộ đồng bộ 2-FF ở Mục 4 để tính <code>full</code>/<code>empty</code>. Vấn đề: con trỏ nhị phân
+              thông thường có thể đổi <strong>nhiều bit cùng lúc</strong> khi tăng — ví dụ <code>011 → 100</code> đổi cả
+              3 bit. Nếu bộ đồng bộ 2-FF lấy mẫu đúng lúc con trỏ đang chuyển tiếp, mỗi bit có thể được "chụp" ở thời
+              điểm khác nhau, tạo ra một giá trị trung gian sai hoàn toàn (vd <code>111</code> hoặc <code>000</code>) —
+              không phải giá trị cũ, cũng không phải giá trị mới.
+            </p>
+            <p>
+              Giải pháp: mã hoá con trỏ bằng <strong>Gray code</strong> — bảng mã nhị phân đặc biệt nơi
+              <strong>chỉ đúng 1 bit đổi</strong> giữa 2 giá trị liên tiếp:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Giá trị</th>
+                  <th>Binary</th>
+                  <th>Gray code</th>
+                  <th>Số bit đổi so với dòng trước</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0</td>
+                  <td><code>000</code></td>
+                  <td><code>000</code></td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <td>1</td>
+                  <td><code>001</code></td>
+                  <td><code>001</code></td>
+                  <td>1</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td><code>010</code></td>
+                  <td><code>011</code></td>
+                  <td>1</td>
+                </tr>
+                <tr>
+                  <td>3</td>
+                  <td><code>011</code></td>
+                  <td><code>010</code></td>
+                  <td>1</td>
+                </tr>
+                <tr>
+                  <td>4</td>
+                  <td><code>100</code></td>
+                  <td><code>110</code></td>
+                  <td>1</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              So sánh dòng 3→4: binary đổi <code>011 → 100</code> (cả 3 bit), Gray code đổi <code>010 → 110</code> (chỉ
+              bit cao nhất). Vì bộ đồng bộ 2-FF lấy mẫu độc lập từng bit, việc <strong>chỉ 1 bit đổi</strong> đảm bảo
+              kết quả lấy mẫu chỉ có 2 khả năng: giá trị cũ hoặc giá trị mới — không bao giờ ra một giá trị "lai" không
+              tồn tại. Đổi lại, mọi phép so sánh <code>wptr</code>/<code>rptr</code> (để tính full/empty) phải làm việc
+              trực tiếp trên mã Gray, phức tạp hơn phép trừ số học thông thường của FIFO đồng bộ — đánh đổi độ an toàn
+              lấy độ phức tạp thiết kế.
+            </p>
+
+            <h2>Tóm lược</h2>
+            <p>Bài này khép lại chủ đề bộ nhớ và ranh giới đồng hồ trong thiết kế số:</p>
+            <ul>
+              <li>
+                ✅ <strong>RAM/ROM inference</strong>: khai báo mảng <code>logic</code> + khuôn mẫu đọc/ghi trong
+                <code>always_ff</code>, không cần cú pháp đặc biệt.
+              </li>
+              <li>
+                ✅ <strong>Register file 2R/1W</strong>: ghi đồng bộ 1 cổng, đọc tổ hợp 2 cổng cùng lúc — nền tảng
+                datapath CPU.
+              </li>
+              <li>
+                ✅ <strong>FIFO đồng bộ</strong>: bộ đếm mức đầy tránh cạm bẫy nhập nhằng "đầy hay rỗng" của phép so
+                sánh con trỏ trần.
+              </li>
+              <li>
+                ✅ <strong><abbr title="Clock Domain Crossing">CDC</abbr></strong
+                >: bộ đồng bộ 2-FF cho tín hiệu đơn bit, đổi lấy 1 chu kỳ trễ để có MTBF an toàn.
+              </li>
+              <li>
+                ✅ <strong>FIFO bất đồng bộ</strong>: Gray code đảm bảo con trỏ đa-bit chỉ đổi 1 bit mỗi bước, an toàn
+                khi đồng bộ hoá qua ranh giới clock.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao <code>dout</code> trong module <code>ram_infer</code> được gán bên trong
+                <code>always_ff</code> thay vì dùng <code>assign</code>?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Gán dout trong always_ff tạo ra đọc đồng bộ (registered read) — khuôn mẫu mà công cụ tổng hợp nhận diện để map vào BRAM chuyên dụng của FPGA, thay vì phải dùng LUT-RAM tốn logic hơn.'
+                    )
+                  "
+                >
+                  A. Để tạo khuôn mẫu đọc đồng bộ mà tool tổng hợp nhận diện, ánh xạ được vào BRAM thay vì LUT-RAM
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'VeriLite không mô phỏng ram_infer (module này ngoài subset) — lý do thật sự nằm ở cách công cụ tổng hợp THẬT nhận diện khuôn mẫu bộ nhớ, không liên quan gì đến engine của trang.'
+                    )
+                  "
+                >
+                  B. Vì VeriLite chỉ hỗ trợ always_ff, không hỗ trợ assign cho output
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'always_ff không có tác dụng gì lên tốc độ đọc dữ liệu về mặt vật lý — ngược lại nó THÊM trễ 1 chu kỳ so với đọc tổ hợp. Lý do chọn nó là để tool suy luận đúng loại bộ nhớ, không phải để nhanh hơn.'
+                    )
+                  "
+                >
+                  C. Vì always_ff giúp đọc dữ liệu nhanh hơn về mặt vật lý
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">Cạm bẫy "đầy hay rỗng" của FIFO xảy ra khi nào?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! wptr == rptr có thể nghĩa là FIFO vừa rỗng (chưa ghi gì) hoặc vừa đầy (đọc đuổi kịp ghi sau 1 vòng) — 2 trạng thái đối lập nhưng cùng 1 điều kiện so sánh, nên chỉ dùng con trỏ trần là không đủ.'
+                    )
+                  "
+                >
+                  A. Khi chỉ so sánh wptr == rptr để suy ra trạng thái — không phân biệt được "chưa ghi gì" với "đọc đã
+                  đuổi kịp ghi sau 1 vòng"
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'FIFO trong bài này không dùng mã Gray (đó là phần của FIFO bất đồng bộ ở Mục 5) — cạm bẫy đầy/rỗng xảy ra ngay cả với FIFO đồng bộ đơn giản nhất, chỉ dùng con trỏ nhị phân thường.'
+                    )
+                  "
+                >
+                  B. Khi FIFO dùng mã Gray thay vì nhị phân thường cho con trỏ
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Độ sâu FIFO không phải nguyên nhân — cạm bẫy này xảy ra với BẤT KỲ độ sâu nào (kể cả FIFO 2 ô), miễn là thiết kế chỉ so sánh con trỏ trần mà không có cách phân biệt đầy/rỗng.'
+                    )
+                  "
+                >
+                  C. Khi FIFO có độ sâu (depth) là số lẻ
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">Bộ đồng bộ 2-FF an toàn hơn 1-FF vì lý do gì?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cả 2 thiết kế đều dùng cùng loại flip-flop D thông thường — không có gì đặc biệt về loại linh kiện, khác biệt nằm ở SỐ TẦNG nối tiếp.'
+                    )
+                  "
+                >
+                  A. Vì 2-FF dùng loại flip-flop khác, chống nhiễu tốt hơn về mặt vật lý
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Tầng đầu (ff1) có thể rơi vào trạng thái bất ổn định, nhưng nó KHÔNG được dùng trực tiếp — nó có trọn vẹn 1 chu kỳ clock để ổn định lại trước khi tầng 2 lấy mẫu, nên sync_out luôn là giá trị đã ổn định.'
+                    )
+                  "
+                >
+                  B. Vì tầng đầu có 1 chu kỳ clock trọn vẹn để ổn định lại trước khi tầng 2 lấy mẫu, nên output cuối
+                  luôn ổn định
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ngược lại — 2-FF chậm HƠN 1-FF đúng 1 chu kỳ clock (thêm 1 tầng trễ). Đánh đổi là độ an toàn, không phải tốc độ.'
+                    )
+                  "
+                >
+                  C. Vì 2-FF nhanh hơn 1-FF đúng 1 chu kỳ clock
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">Vì sao FIFO bất đồng bộ dùng Gray code cho con trỏ thay vì nhị phân thường?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Gray code không hề tiết kiệm bit — 1 con trỏ N-bit vẫn cần N bit dù mã hoá kiểu gì. Lý do dùng Gray code là AN TOÀN khi đồng bộ hoá, không phải tiết kiệm diện tích.'
+                    )
+                  "
+                >
+                  A. Vì Gray code dùng ít bit hơn nhị phân thường, tiết kiệm diện tích
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Vì Gray code chỉ đổi đúng 1 bit giữa 2 giá trị liên tiếp, khi bộ đồng bộ 2-FF lấy mẫu đúng lúc con trỏ đang chuyển tiếp, kết quả chỉ có thể là giá trị cũ hoặc giá trị mới — không bao giờ ra 1 giá trị lai sai hoàn toàn như binary có thể gặp.'
+                    )
+                  "
+                >
+                  B. Vì Gray code chỉ đổi đúng 1 bit mỗi bước, nên lấy mẫu giữa lúc chuyển tiếp không bao giờ ra giá trị
+                  lai sai
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Phép cộng/trừ số học thông thường không áp dụng trực tiếp trên Gray code — đây là ĐÁNH ĐỔI của Gray code (phức tạp hơn khi tính full/empty), không phải lý do NGƯỜI TA CHỌN nó.'
+                    )
+                  "
+                >
+                  C. Vì Gray code cho phép cộng trừ số học dễ hơn nhị phân
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File SystemVerilog gồm FIFO controller, bộ đồng bộ 1-FF/2-FF, và ví dụ RAM/register file (ngoài subset
+                VeriLite nhưng chạy thật trên Verilator/EDA Playground), kèm testbench kiểm tra full/empty và so sánh độ
+                trễ 2 bộ đồng bộ:
+              </p>
+              <a
+                href="fifo_and_cdc.sv"
+                download
+                class="btn-facebook"
+                style="background: #65a30d; text-decoration: none"
+              >
+                Tải về fifo_and_cdc.sv
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Metastability_(electronics)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Metastability (electronics)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Gray_code" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Gray code
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/FIFO_(computing_and_electronics)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — FIFO (computing and electronics)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Clock_domain_crossing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Clock domain crossing
+                  </a>
+                </li>
+                <li>
+                  <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">
+                    HDLBits — Memory &amp; FIFO exercises
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.chipverify.com/" target="_blank" rel="noopener noreferrer">
+                    ChipVerify — CDC &amp; synchronizer examples
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="vlsi-arithmetic" class="article-related__link article-related__link--prev">
+                  Bài 6: Số học phần cứng (Hardware Arithmetic)
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 8: Timing &amp; Phân tích thời gian tĩnh (STA) — sắp ra mắt
+                </span>
+                <a href="vlsi-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Thiết Kế Vi Mạch Số &amp; FPGA
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { VeriLiteParser, VeriSimulator } from './vlsi-verilite.js';
+
+      // ---- Demo 1: FIFO đồng bộ (push/pop) ----
+      const fifoCode = `module fifo_ctrl (
+  input logic clk, rst,
+  input logic push, pop,
+  output logic full, empty,
+  output logic [3:0] count
+);
+  always_ff @(posedge clk) begin
+    if (rst) count <= 0;
+    else count <= (push && !full && pop && !empty) ? count :
+                  (push && !full) ? count + 1 :
+                  (pop && !empty) ? count - 1 : count;
+  end
+  assign full = (count == 8);
+  assign empty = (count == 0);
+endmodule`;
+
+      const fifoAst = new VeriLiteParser(fifoCode).parse();
+      let fifoSim = null;
+
+      function renderFifoBar(count) {
+        const bar = document.getElementById('fifo-bar');
+        let html = '';
+        for (let i = 0; i < 8; i++) {
+          const filled = i < count;
+          html += `<div style="width:28px;height:28px;border-radius:4px;background:${filled ? '#65a30d' : 'rgba(132,204,22,0.15)'};border:1px solid #65a30d;"></div>`;
+        }
+        bar.innerHTML = html;
+      }
+
+      function resetFifoSim() {
+        fifoSim = new VeriSimulator(fifoAst);
+        const s = fifoSim.cycle({ rst: 1, push: 0, pop: 0 });
+        document.getElementById('fifo-result').textContent = `count=${s.count}, empty=${s.empty}, full=${s.full}`;
+        renderFifoBar(s.count);
+      }
+
+      function stepFifo(push, pop) {
+        if (!fifoSim) resetFifoSim();
+        const s = fifoSim.cycle({ rst: 0, push, pop });
+        document.getElementById('fifo-result').textContent = `count=${s.count}, empty=${s.empty}, full=${s.full}`;
+        renderFifoBar(s.count);
+      }
+
+      function initFifoDemo() {
+        if (!document.getElementById('fifo-result')) return;
+        document.getElementById('fifo-push-btn').addEventListener('click', () => stepFifo(1, 0));
+        document.getElementById('fifo-pop-btn').addEventListener('click', () => stepFifo(0, 1));
+        document.getElementById('fifo-reset-btn').addEventListener('click', resetFifoSim);
+        resetFifoSim();
+      }
+
+      // ---- Demo 2: Mô phỏng khái niệm 1-FF vs 2-FF ----
+      const oneFfCode = `module synchronizer_1ff_bad (
+  input logic clk, async_in,
+  output logic sync_out
+);
+  always_ff @(posedge clk) begin
+    sync_out <= async_in;
+  end
+endmodule`;
+
+      const twoFfCode = `module synchronizer_2ff (
+  input logic clk, async_in,
+  output logic sync_out
+);
+  logic ff1;
+  always_ff @(posedge clk) begin
+    ff1 <= async_in;
+    sync_out <= ff1;
+  end
+endmodule`;
+
+      const oneFfAst = new VeriLiteParser(oneFfCode).parse();
+      const twoFfAst = new VeriLiteParser(twoFfCode).parse();
+      let oneFfSim = null;
+      let twoFfSim = null;
+      let asyncIn = 0;
+      let riskyPending = false;
+
+      function resetMetaSim() {
+        oneFfSim = new VeriSimulator(oneFfAst);
+        twoFfSim = new VeriSimulator(twoFfAst);
+        asyncIn = 0;
+        riskyPending = false;
+        document.getElementById('meta-1ff-result').textContent = '❌ 1-FF: sync_out = 0';
+        document.getElementById('meta-2ff-result').textContent = '✅ 2-FF: sync_out = 0';
+      }
+
+      function stepMeta() {
+        if (!oneFfSim) {
+          resetMetaSim();
+          return;
+        }
+        const s1 = oneFfSim.cycle({ async_in: asyncIn });
+        const s2 = twoFfSim.cycle({ async_in: asyncIn });
+
+        const oneEl = document.getElementById('meta-1ff-result');
+        const twoEl = document.getElementById('meta-2ff-result');
+
+        if (riskyPending) {
+          // Mô hình khái niệm: tín hiệu đổi sát cạnh clock → tầng lấy mẫu ĐẦU TIÊN của
+          // mỗi thiết kế bị đánh dấu "bất ổn định". Với 1-FF, tầng đó CHÍNH LÀ output —
+          // phơi thẳng ra ngoài. Với 2-FF, tầng đó là ff1 nội bộ — KHÔNG phải sync_out,
+          // nên output vẫn hiển thị giá trị ổn định của chu kỳ trước (đúng 1 chu kỳ trễ).
+          oneEl.innerHTML = `❌ 1-FF: sync_out = <strong style="color:#dc2626">❓ bất ổn định</strong>`;
+          twoEl.textContent = `✅ 2-FF: sync_out = ${s2.sync_out} (an toàn, ff1 nội bộ đang chờ ổn định)`;
+          riskyPending = false;
+        } else {
+          oneEl.textContent = `❌ 1-FF: sync_out = ${s1.sync_out}`;
+          twoEl.textContent = `✅ 2-FF: sync_out = ${s2.sync_out}`;
+        }
+      }
+
+      function initMetaDemo() {
+        if (!document.getElementById('meta-1ff-result')) return;
+        document.getElementById('meta-safe-btn').addEventListener('click', () => {
+          asyncIn = asyncIn ? 0 : 1;
+          riskyPending = false;
+        });
+        document.getElementById('meta-risky-btn').addEventListener('click', () => {
+          asyncIn = asyncIn ? 0 : 1;
+          riskyPending = true;
+        });
+        document.getElementById('meta-step-btn').addEventListener('click', stepMeta);
+        document.getElementById('meta-reset-btn').addEventListener('click', resetMetaSim);
+        resetMetaSim();
+      }
+
+      initFifoDemo();
+      initMetaDemo();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
