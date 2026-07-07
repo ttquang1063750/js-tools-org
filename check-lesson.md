@@ -27,6 +27,12 @@
    callout `--note` ghi rõ "sẽ học ở Bài N".
 3. **Chọn đúng file mẫu để copy chrome** (header hamburger nav + footer full nav): dùng bài
    mới nhất đã hoàn thành **cùng series**, không tự viết lại từ đầu.
+   - **Bao gồm cả khối "Mở đầu"** (xem PHẦN D #12): `<h2>Mở đầu: <hook riêng của bài></h2>` +
+     2 đoạn văn + `<hr />`, đặt ngay sau `<div class="article-body">`, trước khối "Điều kiện
+     tiên quyết". Đoạn 1 nêu bối cảnh/tình huống liên hệ được hoặc hậu quả cụ thể nếu hiểu
+     sai; đoạn 2 preview ngắn gọn nội dung + giá trị đạt được cuối bài. Không nhảy thẳng vào
+     `<h2>1. ...</h2>` — lỗi này không lộ ra qua lệnh grep/prettier nào, chỉ tự nhận ra khi
+     đọc lại toàn bài như người dùng thật.
 4. **Xác định trước danh sách file phụ** cần tạo cùng lúc: file `.js` co-located (nếu bài có
    demo tương tác), entry cần thêm vào hub/sitemap/search-index/root `index.html`.
 5. **Kiểm tra series này có quy tắc riêng đè lên quy tắc chung không** (vd: series Điện Tử
@@ -300,3 +306,17 @@ grep -c 'class="article-body"' <file>
     `.article-wrap` không có `.article-body`) — glossary table trên hub vì vậy cũng không có
     border, nhưng đây là pattern đã tồn tại từ trước ở mọi hub, không phải lỗi phát sinh từ
     Series 11, nên không tự ý sửa hàng loạt nếu không được yêu cầu.
+12. **2026-07-07, Bài 1 & 2 VLSI:** cả 2 bài đều nhảy thẳng vào `<h2>1. ...</h2>` (Bài 1)
+    hoặc chỉ có 1 đoạn intro ngắn không H2 (Bài 2) — thiếu hẳn khối
+    **"Mở đầu: ..."** (H2 riêng + 2 đoạn văn + `<hr />`) mà hầu hết bài đã hoàn thành trên
+    site đều có (xem `electronics-components-vom.html`, `electronics-ohm-voltage-divider.html`,
+    `electronics-kirchhoff-mna.html` — mẫu `<h2>Mở đầu: <tiêu đề hook riêng của bài></h2>`
+    ngay sau `<div class="article-body">`, trước cả khối "Điều kiện tiên quyết"). Thiếu khối
+    này khiến bài đọc "khô khan", vào thẳng nội dung kỹ thuật không có bối cảnh/lý do/hook —
+    người dùng phát hiện qua cảm nhận đọc trực tiếp, không phải qua lệnh grep nào. → **PHẦN A
+    cần thêm bước kiểm tra**: trước khi viết bài mới, xác nhận đã có khối "Mở đầu" hook người
+    đọc (kịch bản/tình huống liên hệ được, nêu rõ tại sao bài này quan trọng, preview ngắn gọn
+    nội dung sắp học) — không chỉ nhảy thẳng vào mục lục kỹ thuật. Đây là lỗi **không lộ ra
+    qua bất kỳ lệnh tự động nào** (không phải cú pháp sai) — chỉ có cách phòng ngừa là chủ
+    động viết khối này ngay từ đầu, đối chiếu với ≥1 bài mẫu đã hoàn thành trước khi coi phần
+    mở bài là xong.
