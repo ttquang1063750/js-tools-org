@@ -234,6 +234,37 @@ Mọi bài tuân thủ rubric PHẦN IV (quality contract) + `check-lesson.md`, 
 3. Demo train không khoá main thread quá ~50ms/khung; luôn có nút dừng; seed cố định.
 4. Snippet PyTorch/sklearn là bản 1-1 với JS của bài, không phải code sưu tầm.
 
+### 5. Checklist thi công & tích hợp (Implementation & Integration)
+
+> Bám khung chung PHẦN II + `check-lesson.md`. Callout/`.article-refs`/glossary/KaTeX/giscus/`.code-tabs` **đã có sẵn** từ 11 series trước — tái dùng, không tạo mới. Dưới đây là phần ĐẶC THÙ Series 12 + thứ tự thi công. Vẫn theo nhịp "một việc nhỏ mỗi lượt, checkpoint, hỏi duyệt"; chrome (header/footer) copy nguyên khối từ bài mới nhất cùng series, không gõ tay.
+
+**Hạ tầng riêng (làm MỘT lần, trước bài đầu):**
+
+- [ ] **Prism `python`**: bổ sung grammar python local vào `blog/prism.js` (tiền lệ `verilog` Series 11); test highlight 1 snippet PyTorch mẫu.
+- [ ] **Tag & accent**: thêm `.blog-card__tag--ai`, `.article-hero__tag--ai`, `.article-hero--ai` (accent `#ef4444`) vào `blog/blog.css`.
+- [ ] **Dữ liệu vendored**: script Node tạo `blog/ai/mnist-subset.bin` (~2.000 mẫu, kèm ghi chú cách tạo trong comment) + `blog/ai/corpus-kieu.txt` (trích đoạn public domain); commit sẵn, không fetch ngoài.
+
+**Engine dùng chung (xây DẦN theo bài — khác VeriLite làm 1 lần):**
+
+- [ ] `blog/ai/ai-neuro.js` khởi sinh ở Bài 5 (tensor) → mở rộng ở Bài 7 (autograd), 9 (optimizer), 11 (Conv2D), 14 (attention). MỖI lần mở rộng: self-test Node + gradient checking chạy sạch trước, regression test các bài trước còn đúng (bài học VeriLite D#14–17).
+- [ ] `blog/ai/ai-viz.js` (nếu cần) — helper vẽ chung: loss curve, decision boundary, heatmap; quyết định tách file hay inline khi làm Bài 6 (đừng trừu tượng hoá sớm).
+
+**Visualizer cốt lõi (nặng nhất — sau Bài 7, trước khi viết Bài 6 phiên bản cuối):**
+
+- [ ] `ai-neural-playground.html` — trang riêng: dataset 2D + kiến trúc tuỳ chỉnh + boundary live + loss curve (đặc tả §2). Bài 6 nhúng cấu hình thu gọn.
+
+**Dedicated demo theo bài (inline trong trang bài, theo tiền lệ Series 11 — không tách file HTML riêng trừ playground):** Bài 2 loss landscape · Bài 4 k-means/PCA · Bài 7 computation graph SVG · Bài 9 đua optimizer · Bài 10 vẽ số MNIST · Bài 11 conv kernel · Bài 12 embedding 2D · Bài 13 attention heatmap · Bài 14 transformer từng bước · Bài 15 diffusion 2D · Bài 16 BPE live · Bài 17 gridworld Q-learning · Bài 18 sampling slider · Bài 19 GPT-mini hoàn chỉnh.
+
+**Thứ tự thi công đề xuất:** hạ tầng (Prism python, tag CSS, dữ liệu) → hub (`ai-programming-series.html`, 19 entry khoá + glossary EN–VI §4) → Bài 1 → duyệt văn phong → Bài 2–5 (mỗi lượt 1 bài, Bài 5 khởi sinh NeuroJS + self-test) → Bài 6 + 7 → Neural Playground → Bài 8–19 tuần tự (mỗi bài kèm tích hợp toàn cục riêng: unlock hub + badge "Mới", link prev/next, sitemap, search-index, plan.md X/19).
+
+**Tích hợp toàn cục (khi có bài đầu tiên):**
+
+- [ ] `blog/index.html`: thêm `a.blog-card` tag `--ai`; **ROOT `index.html`**: thêm `a.learn-card` + cặp key i18n `learn.ai.title`/`learn.ai.desc` vào `i18n.js`; `grep -c` đối chiếu số learn-card = số blog-card series.
+- [ ] `sitemap.xml` (hub 0.8, bài + playground 0.7) · `blog/search-index.json` (headingsVi không dấu) · `README.md`/`AGENTS.md` (cây thư mục, số series/bài).
+- [ ] Mỗi file `.js` co-located tải về được ghi comment đầu file cách chạy self-test Node.
+
+**Hạng mục nặng nhất (ước lượng):** 1) NeuroJS autograd + gradient checking (Bài 5+7 — nền của mọi thứ sau); 2) Neural Playground; 3) Bài 10 MNIST (data pipeline + train UI không khoá thread); 4) Bài 19 GPT-mini (ghép toàn bộ + train live). Bài 15 diffusion và Bài 14 transformer ở mức trung bình nhờ demo giới hạn trên dữ liệu tí hon.
+
 ---
 
 # 🧱 PHẦN II — CÔNG VIỆC TRIỂN KHAI (Implementation Tasks)
