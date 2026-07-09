@@ -121,6 +121,52 @@
   (khác `blog/index.html`, dễ nhầm, đã sót 2 lần ở series cũ) — số lượng 2 bên phải khớp.
 - Thêm entry vào `sitemap.xml` và `blog/search-index.json` (heading H2 phải khớp thật với
   bài, không để sót heading cũ sau khi sửa cấu trúc bài).
+- **Open Graph + Twitter Card + JSON-LD (`BlogPosting`) BẮT BUỘC ngay sau `<link
+  rel="canonical">`** (xem PHẦN D #18 — retrofit 2026-07-09 cho 204/210 file cũ). Mọi trang
+  bài học MỚI phải có đủ khối này, lấy dữ liệu **trực tiếp từ chính trang đó** (không tự bịa
+  giá trị khác):
+
+  ```html
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="<canonical href, PHẢI gồm đủ /series/ — xem PHẦN D #18>" />
+  <meta property="og:title" content="<y hệt <title> kể cả \" — js-tools\">" />
+  <meta property="og:description" content="<y hệt meta description>" />
+  <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="<y hệt og:title>" />
+  <meta name="twitter:description" content="<y hệt og:description>" />
+  <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+  ```
+
+  Ngay trước `</head>`, thêm JSON-LD (chỉ cho trang BÀI HỌC thật — **KHÔNG** thêm cho trang
+  hub `*-programming-series.html` hay `blog/index.html`, 2 loại đó chỉ cần `og:type="website"`
+  ở trên, không cần JSON-LD):
+
+  ```html
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      "headline": "<text h1.article-hero__title, không kèm site suffix>",
+      "description": "<meta description, HTML-unescape &amp; → &>",
+      "url": "<canonical href>",
+      "inLanguage": "vi",
+      "image": "https://js-tools.org/assets/og-image.png",
+      "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+      "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+      "datePublished": "<YYYY-MM-DD nếu article-hero__meta có ngày parse được, không thì bỏ field này>"
+    }
+  </script>
+  ```
+
+  Kiểm tra nhanh sau khi thêm:
+
+  ```bash
+  # og:url PHẢI khớp y hệt canonical (bug từng gặp: thiếu /series/ ở giữa — xem PHẦN D #18)
+  diff <(grep -o 'canonical" href="[^"]*"' <file>) <(grep -o 'og:url" content="[^"]*"' <file> | sed 's/og:url/canonical/;s/content/href/')
+  # JSON-LD phải là JSON hợp lệ
+  node -e "const fs=require('fs');const m=fs.readFileSync('<file>','utf8').match(/application\/ld\+json\">([\s\S]*?)<\/script>/);JSON.parse(m[1]);console.log('OK')"
+  ```
 
 ---
 
@@ -394,3 +440,24 @@ grep -A 1 'article-related__link--next"' <file> | grep -o 'href="[^"]*"'
     tra qua browser xác nhận demo tương tác của `vlsi-fsm.html` (đèn giao thông + bộ phát
     hiện) tự động đúng theo fix — không cần sửa gì trong HTML/JS của bài đó, vì demo gọi
     `cycle()` đúng 1 lần mỗi lần bấm Step Clock, khớp hệt cách self-test gọi.
+18. **2026-07-09, toàn site (không riêng Series 11):** kiểm tra phát hiện chỉ **3/210** file
+    blog có Open Graph tags (thêm rải rác trước đây, không hệ thống) — nghĩa là 207 trang chia
+    sẻ lên Facebook/Zalo/Twitter sẽ hiện preview trống/generic thay vì đúng tiêu đề+mô tả
+    trang đó, và Google không có JSON-LD nào để hiểu đây là bài viết kỹ thuật. Ngoài ra, cả 3
+    file ĐÃ có OG tags đều mắc cùng 1 lỗi: `og:url` thiếu segment thư mục series (vd
+    `c-data-structures.html` có `canonical="https://js-tools.org/blog/c/c-data-structures"`
+    nhưng `og:url="https://js-tools.org/blog/c-data-structures"` — thiếu `/c/`, dẫn tới link
+    404 khi ai đó click qua từ preview mạng xã hội). → Viết script Node đọc trực tiếp
+    `<title>`/`<meta description>`/`<link canonical>` sẵn có của TỪNG trang (không tự bịa nội
+    dung) để sinh khối OG+Twitter+JSON-LD nhất quán, chạy `--dry-run` trước, review sample
+    diff + skip-list, rồi `--write` thật cho 204/210 file (6 file bị skip hợp lệ: các trang
+    "visualizer"/"playground" nhúng iframe thiếu `<title>`/description/canonical chuẩn —
+    không phải bài viết độc lập). Trang hub (`*-programming-series.html`) và `blog/index.html`
+    chỉ nhận `og:type="website"`, KHÔNG nhận JSON-LD `BlogPosting` (chúng là trang điều hướng,
+    không phải bài viết). `datePublished` trong JSON-LD chỉ điền khi parse được ngày từ
+    `.article-hero__meta` (định dạng "D tháng M, YYYY..." không đồng nhất 100% toàn site —
+    thiếu thì bỏ field, không đoán ngày). Regression: `prettier --check` sạch trên cả 204 file,
+    204/204 khối JSON-LD parse hợp lệ, spot-check nhiều series + hub + trang đã có OG cũ trong
+    browser xác nhận demo tương tác không bị ảnh hưởng (script chỉ sửa `<head>`, không đụng
+    `<body>`). → sinh ra yêu cầu OG+JSON-LD bắt buộc ở mục "Liên kết & tích hợp" phía trên cho
+    MỌI bài học mới từ giờ trở đi.
