@@ -1,0 +1,1300 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: Kiến trúc FPGA: LUT, CLB, BRAM, DSP — js-tools</title>
+    <meta
+      name="description"
+      content="FPGA hiện thực mọi mạch bằng LUT — bảng chân lý lưu trong SRAM; cấu trúc CLB với carry chain, vì sao adder trên FPGA nhanh vượt logic thường; BRAM và DSP slice cùng cạm bẫy inference; routing fabric chiếm phần lớn độ trễ; so sánh FPGA vs ASIC vs MCU — kèm LUT Explorer tương tác và lưới CLB 4×4."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/vlsi/vlsi-fpga-architecture" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--vlsi">
+        <div class="container">
+          <a href="vlsi-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--vlsi">Bài 9 · Thiết Kế Vi Mạch Số & FPGA</div>
+          <h1 class="article-hero__title">Kiến trúc FPGA: LUT, CLB, BRAM, DSP</h1>
+          <div class="article-hero__meta">9 tháng 7, 2026 · 28 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Con chip đúc xong từ 5 năm trước "biến hình" thành mạch bạn vừa nghĩ ra tối nay</h2>
+            <p>
+              Toàn bộ series đến giờ có một nghịch lý chưa được trả lời. <a href="vlsi-arithmetic">Bài 6</a> và
+              <a href="vlsi-timing-sta">Bài 8</a> đều nói về những cổng logic, chuỗi carry, đường timing — như thể chúng
+              là dây đồng và transistor được khắc cố định vào silicon. Nhưng bạn viết SystemVerilog, nhấn nút, và vài
+              phút sau mạch của bạn <em>chạy thật</em> trên một con FPGA — một con chip được sản xuất hàng loạt từ nhiều
+              năm trước, khi thiết kế của bạn còn chưa tồn tại. Không ai khắc lại silicon. Vậy bộ cộng
+              <code>rca4</code> của bạn "nằm" ở đâu trên con chip đó?
+            </p>
+            <p>
+              Câu trả lời là một trong những ý tưởng đẹp nhất của kỹ thuật số:
+              <strong>đừng chế tạo cổng logic — hãy chế tạo bộ nhớ chứa bảng chân lý của cổng logic</strong>. Bài này mổ
+              xẻ kiến trúc FPGA từ đơn vị nhỏ nhất: <abbr title="Look-Up Table">LUT</abbr> (bảng tra cứu trong SRAM),
+              khối <abbr title="Configurable Logic Block">CLB</abbr> với carry chain chuyên dụng (lý do adder FPGA nhanh
+              bất ngờ — nối thẳng vào Bài 6 và Bài 8), các khối "cứng hoá" <abbr title="Block RAM">BRAM</abbr>/DSP cùng
+              cạm bẫy inference khiến tool âm thầm phung phí tài nguyên, và mạng routing chiếm phần lớn diện tích lẫn độ
+              trễ của cả con chip. Cuối bài, LUT Explorer cho bạn tự tay nạp bảng chân lý vào một LUT-4 và map bộ cộng
+              4-bit lên lưới CLB có carry chain.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong>
+                <a href="vlsi-combinational-logic">Bài 2 (SystemVerilog tổ hợp)</a> — LUT chính là "vật chứa" của mọi
+                logic tổ hợp bạn đã viết; <a href="vlsi-arithmetic">Bài 6 (Số học phần cứng)</a> — bộ cộng
+                <code>rca4</code> được map lên lưới CLB trong demo cuối bài;
+                <a href="/blog/electronics/electronics-digital-logic"
+                  >Series Điện Tử Bài 12 (Cổng logic &amp; bảng chân lý)</a
+                >
+                — bài này giả định bạn đọc thạo bảng chân lý.
+                <br /><strong>Tài nguyên ngoài:</strong>
+                <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">HDLBits</a>,
+                <a href="https://www.chipverify.com" target="_blank" rel="noopener noreferrer">ChipVerify</a>,
+                <a href="https://www.edaplayground.com" target="_blank" rel="noopener noreferrer">EDA Playground</a>.
+              </div>
+            </div>
+
+            <h2>1. LUT: mọi hàm logic k đầu vào là một bảng chân lý — và bảng chân lý là bộ nhớ</h2>
+            <p>
+              Nhìn lại bất kỳ hàm logic nào của <a href="vlsi-combinational-logic">Bài 2</a>: dù viết bằng
+              <code>assign</code>, <code>always_comb</code> hay lồng bao nhiêu toán tử, một hàm <span>$k$</span> đầu vào
+              1 đầu ra rốt cuộc chỉ là một <strong>bảng chân lý</strong> với <span>$2^k$</span> hàng. Ý tưởng gốc của
+              FPGA: thay vì nối cổng AND/OR/XOR vật lý theo từng thiết kế, hãy đặt sẵn một khối SRAM tí hon
+              <span>$2^k$</span> bit — gọi là <strong>LUT-k</strong> (Look-Up Table) — và dùng <span>$k$</span> đầu vào
+              làm <strong>địa chỉ đọc</strong>:
+            </p>
+            <ul>
+              <li>Nạp cột "output" của bảng chân lý vào <span>$2^k$</span> ô SRAM (lúc cấu hình FPGA).</li>
+              <li>
+                Khi mạch chạy, tổ hợp đầu vào chọn đúng 1 ô — giá trị đọc ra <em>chính là</em> kết quả của hàm. Không có
+                cổng nào "tính toán" cả: chỉ là một lần tra bảng.
+              </li>
+            </ul>
+            <p>
+              Một LUT-4 chứa <span>$2^4 = 16$</span> bit, biểu diễn được <span>$2^{16} = 65\,536$</span> hàm khác nhau —
+              từ AND-4, XOR-4 cho tới bất kỳ hàm "quái dị" nào bạn nghĩ ra. Đổi hàm = ghi lại 16 bit SRAM,
+              <strong>không đổi một sợi dây vật lý nào</strong>. Đó là nghĩa đen của "phần cứng lập trình lại được". Hai
+              hàm quen thuộc nhất của series nhìn dưới dạng LUT:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">fa_lut_view.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">// Full adder của Bài 6, tách làm 2 hàm 3 đầu vào — mỗi hàm vừa khít 1 LUT.
+// Chạy được trên VeriLite. Sau khi synthesis cho FPGA, MỖI module dưới đây
+// biến thành đúng 1 LUT với 8 bit nội dung (nạp lên LUT-4 thì nửa trên
+// lặp lại nửa dưới vì đầu vào thứ 4 không dùng — xem demo Mục 6):
+module fa_sum (
+  input  logic a, b, cin,
+  output logic s
+);
+  assign s = a ^ b ^ cin;      // nội dung LUT: 0x96 (10010110)
+endmodule
+
+module fa_carry (
+  input  logic a, b, cin,
+  output logic co
+);
+  assign co = (a & b) | (cin & (a ^ b));   // nội dung LUT: 0xE8 (11101000)
+endmodule
+</code></pre>
+            </div>
+            <p>
+              Chú ý điều quan trọng: cả 2 module trên khi tổng hợp cho FPGA có <strong>cùng độ trễ</strong> — 1 lần tra
+              LUT — dù <code>fa_carry</code> "trông" phức tạp hơn (4 toán tử so với 2). Trên FPGA, độ phức tạp của biểu
+              thức <em>bên trong giới hạn k đầu vào</em> là miễn phí; thứ tốn kém là khi hàm cần
+              <strong>nhiều hơn k đầu vào</strong>, buộc tool phải ghép nhiều LUT nối tiếp — mỗi tầng LUT cộng thêm độ
+              trễ tra bảng và tệ hơn nữa, độ trễ dây nối giữa chúng (Mục 4).
+            </p>
+
+            <h2>2. CLB: LUT + Flip-flop + Carry chain — viên gạch của cả con chip</h2>
+            <p>
+              LUT một mình chỉ làm được logic tổ hợp. Ghép nó với 1 flip-flop (để chốt kết quả theo clock — chính là
+              <code>always_ff</code> của <a href="vlsi-sequential-flops">Bài 3</a>) và một ít logic phụ trợ, ta được đơn
+              vị lặp lại phủ kín con chip: <strong>CLB</strong> (Configurable Logic Block — Xilinx/AMD gọi phần con là
+              slice, Intel/Altera gọi là ALM; bài dùng thuật ngữ chung CLB):
+            </p>
+
+            <div class="mux-demo__netlist" style="margin: 20px 0">
+              <svg
+                viewBox="0 0 700 250"
+                width="100%"
+                height="250"
+                style="border: 1px solid #ddd; background: #fafafa; border-radius: 6px"
+              >
+                <defs>
+                  <marker id="clb-bd-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L6,3 z" fill="#475569" />
+                  </marker>
+                </defs>
+                <rect
+                  x="70"
+                  y="20"
+                  width="560"
+                  height="200"
+                  fill="none"
+                  stroke="#84cc16"
+                  stroke-width="1.5"
+                  stroke-dasharray="5,4"
+                  rx="8"
+                />
+                <text x="350" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#65a30d">
+                  1 CLB (đơn giản hoá)
+                </text>
+
+                <!-- carry in tu CLB duoi -->
+                <path d="M255,250 L255,215" stroke="#b45309" stroke-width="2" marker-end="url(#clb-bd-arrow)" />
+                <text x="255" y="243" text-anchor="start" font-size="10" fill="#b45309" dx="6">
+                  carry-in (từ CLB dưới)
+                </text>
+
+                <!-- inputs -->
+                <path d="M20,90 L110,90" stroke="#475569" stroke-width="1.5" marker-end="url(#clb-bd-arrow)" />
+                <text x="20" y="80" font-size="11" fill="#334155">4 đầu vào (từ routing)</text>
+
+                <!-- LUT -->
+                <rect
+                  x="110"
+                  y="60"
+                  width="120"
+                  height="60"
+                  fill="#ecfccb"
+                  stroke="#65a30d"
+                  stroke-width="1.5"
+                  rx="6"
+                />
+                <text x="170" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="#3f6212">LUT-4</text>
+                <text x="170" y="104" text-anchor="middle" font-size="10" fill="#4b5563">SRAM 16 bit</text>
+
+                <!-- CARRY -->
+                <rect
+                  x="205"
+                  y="150"
+                  width="100"
+                  height="50"
+                  fill="#fef3c7"
+                  stroke="#b45309"
+                  stroke-width="1.5"
+                  rx="6"
+                />
+                <text x="255" y="172" text-anchor="middle" font-size="12" font-weight="700" fill="#78350f">CARRY</text>
+                <text x="255" y="188" text-anchor="middle" font-size="9.5" fill="#78350f">chuyên dụng</text>
+                <path d="M255,150 L255,125" stroke="#b45309" stroke-width="2" marker-end="url(#clb-bd-arrow)" />
+                <text x="262" y="140" font-size="10" fill="#b45309">carry-out (lên CLB trên)</text>
+
+                <!-- duong LUT -> MUX -->
+                <path d="M230,90 L360,90" stroke="#475569" stroke-width="1.5" marker-end="url(#clb-bd-arrow)" />
+                <!-- MUX -->
+                <path d="M360,65 L360,115 L400,103 L400,77 z" fill="#fff" stroke="#334155" stroke-width="1.5" />
+                <text x="378" y="94" text-anchor="middle" font-size="10" fill="#111827">MUX</text>
+
+                <!-- FF -->
+                <rect x="440" y="65" width="90" height="55" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.5" rx="6" />
+                <text x="485" y="89" text-anchor="middle" font-size="12" font-weight="700" fill="#0c4a6e">D-FF</text>
+                <text x="485" y="106" text-anchor="middle" font-size="9.5" fill="#0c4a6e">always_ff (Bài 3)</text>
+                <path d="M400,90 L440,90" stroke="#475569" stroke-width="1.5" marker-end="url(#clb-bd-arrow)" />
+
+                <!-- outputs -->
+                <path d="M530,90 L620,90" stroke="#475569" stroke-width="1.5" marker-end="url(#clb-bd-arrow)" />
+                <text x="545" y="80" font-size="10" fill="#334155">ra routing (đã chốt clock)</text>
+                <path d="M420,90 L420,45 L620,45" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#clb-bd-arrow)" />
+                <text x="545" y="37" font-size="10" fill="#64748b">đường tắt tổ hợp (bỏ qua FF)</text>
+              </svg>
+            </div>
+            <p class="mux-demo__hint" style="margin-bottom: 20px">
+              Sơ đồ khối 1 CLB đơn giản hoá: LUT-4 tính logic tổ hợp, MUX chọn kết quả đi thẳng ra (mạch tổ hợp) hoặc
+              qua D-FF (mạch tuần tự). Khối CARRY màu cam có dây nối <strong>thẳng đứng riêng</strong> lên/xuống CLB kề
+              — không đi qua mạng routing chung.
+            </p>
+
+            <p>
+              Khối CARRY chính là câu trả lời cho một khúc mắc từ <a href="vlsi-arithmetic">Bài 6</a>: chuỗi carry của
+              ripple-carry adder tưởng chừng rất chậm (<span>$O(n)$</span> tầng), nhưng adder trên FPGA thực tế lại
+              nhanh đáng kinh ngạc. Lý do: các hãng FPGA biết trước rằng
+              <em>phép cộng xuất hiện trong hầu hết mọi thiết kế</em>, nên họ "cứng hoá" đường carry — mỗi CLB có sẵn
+              logic carry và <strong>dây nối trực tiếp</strong> tới CLB ngay trên nó, bỏ qua hoàn toàn mạng routing
+              chung vốn chậm (Mục 4). Theo mô hình arrival time của <a href="vlsi-timing-sta">Bài 8</a>: một nấc carry
+              chain chỉ tốn cỡ 0,1 ns, trong khi đi vòng qua routing chung tốn cỡ 0,8 ns cho mỗi bước nhảy — demo Mục 6
+              cho bạn bật tắt giữa 2 chế độ này và xem chênh lệch 6 lần trên cùng một bộ cộng.
+            </p>
+            <p>Muốn "kích hoạt" carry chain, bạn không cần viết gì đặc biệt — chỉ cần dùng toán tử <code>+</code>:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">adder4_plus.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">// Chạy được trên VeriLite. Với tool FPGA (Yosys, Vivado...), đúng 1 dòng
+// cộng này được map thẳng vào carry chain chuyên dụng — KHÔNG phải chuỗi
+// LUT nối qua routing. So sánh với rca4 viết tay từng cổng ở Bài 6:
+// chức năng giống hệt, nhưng dạng "+" cho tool toàn quyền chọn tài nguyên
+// tốt nhất — thêm 1 lý do để viết RTL mô tả Ý ĐỊNH thay vì cấu trúc.
+module adder4_plus (
+  input  logic [3:0] a, b,
+  input  logic cin,
+  output logic [4:0] sum5   // bit 4 là carry-out
+);
+  assign sum5 = a + b + cin;
+endmodule
+</code></pre>
+            </div>
+
+            <h2>3. BRAM & DSP slice: tài nguyên "cứng hoá" sẵn — và cạm bẫy khiến tool từ chối dùng chúng</h2>
+            <p>
+              Cùng logic đó — "thứ gì ai cũng cần thì cứng hoá sẵn" — FPGA hiện đại rải khắp chip hai loại khối chuyên
+              dụng:
+            </p>
+            <ul>
+              <li>
+                <strong><abbr title="Block RAM">BRAM</abbr></strong
+                >: các khối SRAM lớn (18–36 Kbit mỗi khối) — chính là nơi module <code>ram_infer</code> của
+                <a href="vlsi-fifo-cdc">Bài 7</a> được map vào. Xây RAM 256×8 bằng LUT + FF rời rạc sẽ nuốt hàng trăm
+                CLB; một góc BRAM làm xong việc đó "miễn phí".
+              </li>
+              <li>
+                <strong>DSP slice</strong>: khối nhân–cộng cứng (multiply-accumulate). Bộ nhân
+                <code>mult4_array</code> của <a href="vlsi-arithmetic">Bài 6</a> (<code>assign product = a * b;</code>)
+                trên FPGA thật không sinh ra lưới cổng AND + cây cộng nào cả — tool ném thẳng phép nhân vào 1 DSP slice,
+                nhanh hơn và tiết kiệm hơn bất kỳ cách ghép LUT nào.
+              </li>
+            </ul>
+            <p>
+              Điểm mấu chốt của cả hai: bạn <strong>không gọi tên</strong> BRAM hay DSP trong code. Tool
+              <em>suy luận</em> (inference) từ khuôn mẫu RTL — đúng như Bài 7 đã dạy với RAM. Và vì là suy luận theo
+              khuôn mẫu, chỉ cần code lệch khỏi khuôn một chút, tool sẽ <strong>lặng lẽ</strong> quay về ghép LUT + FF
+              rời rạc, phung phí tài nguyên gấp trăm lần mà không hề báo lỗi:
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: Thêm reset cho RAM — BRAM "bốc hơi" thành biển flip-flop</div>
+              <div class="callout__content">
+                <p>
+                  BRAM vật lý <strong>không có chân reset cho từng ô nhớ</strong> — nó là khối SRAM đúc sẵn. Nếu RTL của
+                  bạn mô tả một mảng bộ nhớ mà toàn bộ nội dung bị reset đồng loạt, tool không thể dùng BRAM (vì phần
+                  cứng đó không tồn tại) và buộc phải xây mảng bằng flip-flop rời — thứ DUY NHẤT reset được đồng loạt:
+                </p>
+                <div class="code-window" style="margin-top: 12px">
+                  <div class="code-header">
+                    <span class="code-filename">ram_reset_pitfall.sv</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">// ⚠️ Ngoài subset VeriLite (mảng bộ nhớ) — chạy thật trên Verilator/Yosys.
+
+// ❌ SAI: reset quét sạch cả mảng → tool KHÔNG map được vào BRAM,
+// sinh ra 256×8 = 2048 flip-flop + rừng LUT giải mã địa chỉ.
+module ram_bad (
+  input  logic clk, rst, we,
+  input  logic [7:0] addr, din,
+  output logic [7:0] dout
+);
+  logic [7:0] mem [0:255];
+  integer i;
+  always_ff @(posedge clk) begin
+    if (rst)
+      for (i = 0; i < 256; i = i + 1) mem[i] <= 0;   // ← thủ phạm
+    else if (we)
+      mem[addr] <= din;
+    dout <= mem[addr];
+  end
+endmodule
+
+// ✅ ĐÚNG: không reset nội dung mảng — khớp khuôn mẫu BRAM (Bài 7).
+// Cần giá trị khởi tạo? Dùng initial/$readmemh — BRAM hỗ trợ nạp nội
+// dung lúc cấu hình FPGA, chỉ không hỗ trợ reset lúc chạy.
+module ram_good (
+  input  logic clk, we,
+  input  logic [7:0] addr, din,
+  output logic [7:0] dout
+);
+  logic [7:0] mem [0:255];
+  always_ff @(posedge clk) begin
+    if (we) mem[addr] <= din;
+    dout <= mem[addr];
+  end
+endmodule
+</code></pre>
+                </div>
+                <p style="margin-top: 12px">
+                  Cách tự kiểm tra: sau synthesis, <strong>đọc báo cáo sử dụng tài nguyên</strong> (utilization report).
+                  RAM 256×8 mà thấy 0 BRAM + hàng nghìn FF là dính bẫy này. Cùng họ với bài học Bài 7 (đọc đồng bộ để
+                  map BRAM) — inference là hợp đồng khuôn mẫu giữa bạn và tool, không phải phép màu.
+                </p>
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">dsp_mult.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">// Chạy được trên VeriLite (chức năng). Trên FPGA thật: 1 phép nhân dạng
+// "*" được map vào DSP slice cứng — kiểm tra utilization report sẽ thấy
+// "DSP: 1" thay vì vài chục CLB. Phép nhân rộng hơn DSP (vd 64×64 trên
+// DSP 18×25) được tool tự ghép từ NHIỀU DSP + carry chain.
+module dsp_mult (
+  input  logic [3:0] a, b,
+  output logic [7:0] product
+);
+  assign product = a * b;
+endmodule
+</code></pre>
+            </div>
+
+            <h2>4. Routing fabric: phần vô hình chiếm phần lớn con chip</h2>
+            <p>
+              Nhìn ảnh die của một FPGA, trực giác bảo rằng LUT và BRAM chiếm chỗ nhiều nhất. Thực tế ngược lại:
+              <strong>mạng dây nối khả trình (routing fabric) chiếm phần lớn diện tích silicon</strong> — thường được
+              trích dẫn ở mức 50–80% tuỳ kiến trúc. Mỗi CLB được bao quanh bởi các kênh dây ngang/dọc, giao nhau tại
+              <strong>switch matrix</strong> — ma trận công tắc bằng transistor cho phép "hàn mềm" bất kỳ ngõ ra CLB nào
+              tới bất kỳ ngõ vào CLB nào khác. Chính các công tắc này (cùng SRAM cấu hình điều khiển chúng) là cái giá
+              phải trả cho tính khả trình.
+            </p>
+            <p>
+              Hệ quả quan trọng cho timing: tín hiệu đi qua routing <strong>chậm hơn nhiều</strong> so với đi trong CLB
+              — mỗi lần băng qua vài switch matrix có thể tốn nhiều hơn cả một lần tra LUT. Nối lại với
+              <a href="vlsi-timing-sta">Bài 8</a>: trong <span>$t_{comb}$</span> của một đường timing thật trên FPGA,
+              <strong>độ trễ dây thường lớn hơn độ trễ logic</strong> — đó là lý do khung "Đào sâu" của Bài 8 nhấn mạnh
+              STA thật phải cộng thêm độ trễ routing sau place &amp; route, và là lý do carry chain (né hoàn toàn
+              routing) tạo khác biệt 6 lần trong demo Mục 6. Riêng tín hiệu clock — thứ phải đến
+              <em>hàng chục nghìn</em> flip-flop cùng lúc với độ lệch (skew) tối thiểu — được cấp hẳn một mạng dây
+              riêng: <strong>clock tree</strong> với các global buffer, tách biệt hoàn toàn khỏi routing dữ liệu. Bao
+              quanh rìa chip là các <strong>IO block</strong> khả trình (chuẩn điện áp, tốc độ, pull-up... đều cấu hình
+              được) — cây cầu giữa fabric và thế giới bên ngoài.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: FPGA thật phức tạp hơn mô hình LUT-4 của bài này bao nhiêu?</div>
+              <div class="callout__content">
+                Bài dùng LUT-4 vì dễ hiểu và dễ vẽ, nhưng FPGA hiện đại (Xilinx 7-series trở lên, Intel Stratix/Agilex)
+                dùng <strong>LUT-6 "fracturable"</strong> — một LUT 64 bit có thể tách thành 2 LUT-5 dùng chung đầu vào;
+                nghiên cứu kiến trúc cho thấy k=4–6 là điểm cân bằng tốt nhất giữa diện tích và tốc độ. Mỗi slice thật
+                còn chứa MUX ghép LUT (F7/F8), logic carry 8 bit, flip-flop có thể cấu hình thành latch, và LUT có thể
+                "đổi nghề" thành RAM phân tán (distributed RAM) 64 bit hay thanh ghi dịch 32 bit (SRL). Con số minh hoạ
+                0,1 ns/0,8 ns trong demo Mục 6 là <strong>tỉ lệ điển hình</strong> giữa carry chain và general routing,
+                không phải datasheet của một dòng chip cụ thể — tra số thật trong tài liệu timing của từng hãng.
+              </div>
+            </div>
+
+            <h2>5. FPGA vs ASIC vs MCU: khi nào chọn gì?</h2>
+            <p>
+              Đặt FPGA cạnh 2 lựa chọn còn lại khi cần "một con chip làm việc X" — thuê đúc
+              <abbr title="Application-Specific Integrated Circuit">ASIC</abbr> riêng, hay dùng vi điều khiển (<a
+                href="/blog/electronics/electronics-mcu-gpio"
+                >Series Điện Tử Bài 15</a
+              >) chạy phần mềm:
+            </p>
+            <div style="overflow-x: auto">
+              <table class="glossary-table">
+                <thead>
+                  <tr>
+                    <th>Tiêu chí</th>
+                    <th>MCU (phần mềm)</th>
+                    <th>FPGA</th>
+                    <th>ASIC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Chi phí khởi đầu (<abbr title="Non-Recurring Engineering">NRE</abbr>)</td>
+                    <td>~0 (mua chip, viết code)</td>
+                    <td>Thấp (mua board, tool miễn phí có)</td>
+                    <td>Rất cao (mask set: hàng trăm nghìn → hàng triệu USD)</td>
+                  </tr>
+                  <tr>
+                    <td>Giá mỗi đơn vị khi sản xuất lớn</td>
+                    <td>Rẻ</td>
+                    <td>Đắt nhất trong 3 (trả tiền cho tính khả trình)</td>
+                    <td>Rẻ nhất khi số lượng đủ lớn</td>
+                  </tr>
+                  <tr>
+                    <td>Hiệu năng / mức song song</td>
+                    <td>Tuần tự, giới hạn bởi CPU</td>
+                    <td>Song song thật, <span>$f_{max}$</span> hàng trăm MHz</td>
+                    <td>Cao nhất (GHz), tối ưu từng transistor</td>
+                  </tr>
+                  <tr>
+                    <td>Công suất cho cùng tác vụ</td>
+                    <td>Trung bình</td>
+                    <td>Cao hơn ASIC (overhead routing + SRAM cấu hình)</td>
+                    <td>Thấp nhất</td>
+                  </tr>
+                  <tr>
+                    <td>Sửa thiết kế sau khi "xuất xưởng"</td>
+                    <td>Nạp firmware mới</td>
+                    <td>Nạp bitstream mới — sửa cả "phần cứng"</td>
+                    <td>Không thể — respin tốn NRE lần nữa</td>
+                  </tr>
+                  <tr>
+                    <td>Hợp nhất</td>
+                    <td>Sản phẩm logic đơn giản, tốc độ thấp, cần rẻ + nhanh ra thị trường</td>
+                    <td>Số lượng nhỏ–vừa, cần song song/độ trễ thấp, giao thức tuỳ biến, prototype ASIC</td>
+                    <td>Số lượng rất lớn hoặc cần hiệu năng/công suất tuyệt đối</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              Quy tắc ngón tay cái:
+              <strong
+                >MCU trước, FPGA khi phần mềm không kịp thở, ASIC khi bài toán nhân với số lượng đủ lớn để NRE tự trả
+                nợ</strong
+              >. FPGA còn giữ một vai đặc biệt trong chính flow ASIC: gần như mọi chip lớn đều được
+              <em>prototype trên FPGA</em> trước khi tape-out — cùng RTL bạn viết ở series này, chỉ đổi target. Bài 10
+              sẽ đi tiếp con đường FPGA: từ RTL qua synthesis, place &amp; route đến bitstream.
+            </p>
+
+            <h2>6. Thực hành: LUT Explorer & lưới CLB với carry chain</h2>
+            <p>
+              Demo đầu: một LUT-4 "sống". Bấm từng ô để lật bit SRAM (tự chế hàm của bạn), hoặc nạp preset; bật tắt 4
+              đầu vào để thấy chúng <strong>chọn địa chỉ</strong> — ô được chọn viền đậm, giá trị của nó chính là ngõ
+              ra. Thử preset "FA sum (3 vào)" rồi nhìn kỹ: nửa trên bảng lặp y hệt nửa dưới, vì đầu vào i3 không được
+              dùng — 8 bit "thật" nhân đôi để lấp đầy LUT-4.
+            </p>
+
+            <div class="code-tabs" id="lut-tour">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🔎 LUT-4 Explorer — bảng chân lý trong SRAM</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__controls">
+                    <div class="mux-demo__inputs" id="lut-presets">
+                      <button class="mux-input-btn" type="button" data-preset="and4">AND-4</button>
+                      <button class="mux-input-btn" type="button" data-preset="or4">OR-4</button>
+                      <button class="mux-input-btn" type="button" data-preset="xor4">XOR-4</button>
+                      <button class="mux-input-btn" type="button" data-preset="mux">MUX 2:1</button>
+                      <button class="mux-input-btn" type="button" data-preset="fasum">FA sum (3 vào)</button>
+                      <button class="mux-input-btn" type="button" data-preset="facarry">FA carry (3 vào)</button>
+                      <button class="mux-input-btn" type="button" data-preset="clear">Xoá về 0</button>
+                    </div>
+                    <div class="mux-demo__inputs" id="lut-inputs" style="margin-top: 8px">
+                      <button class="mux-input-btn" type="button" id="lut-in-3">i3 = 0</button>
+                      <button class="mux-input-btn" type="button" id="lut-in-2">i2 = 0</button>
+                      <button class="mux-input-btn" type="button" id="lut-in-1">i1 = 0</button>
+                      <button class="mux-input-btn" type="button" id="lut-in-0">i0 = 0</button>
+                    </div>
+                  </div>
+                  <div
+                    id="lut-bits"
+                    style="
+                      display: grid;
+                      grid-template-columns: repeat(8, minmax(34px, 1fr));
+                      gap: 4px;
+                      margin-top: 14px;
+                      max-width: 480px;
+                    "
+                  ></div>
+                  <div class="mux-demo__output" id="lut-readout" style="margin-top: 12px"></div>
+                  <p class="mux-demo__hint">
+                    Mỗi ô = 1 bit SRAM; nhãn nhỏ là địa chỉ (i3 i2 i1 i0). Đầu vào là ĐỊA CHỈ ĐỌC — không có cổng logic
+                    nào tính toán cả. Đổi hàm = bấm lật vài bit, không đổi dây.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">lut-core.js — toàn bộ "phần cứng" của 1 LUT (trích)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">// 1 LUT-k = 1 mảng 2^k bit + 1 phép đọc theo địa chỉ. Chỉ vậy thôi.
+const sram = new Array(16).fill(0);        // nội dung LUT-4 (nạp lúc cấu hình)
+function lutRead(i3, i2, i1, i0) {
+  const addr = (i3 << 3) | (i2 << 2) | (i1 << 1) | i0;  // đầu vào = địa chỉ
+  return sram[addr];                        // đầu ra = bit được trỏ tới
+}
+// "Tổng hợp" 1 hàm bất kỳ vào LUT = điền bảng chân lý vào sram:
+for (let addr = 0; addr < 16; addr++) {
+  const [i0, i1, i2, i3] = [addr & 1, (addr >> 1) & 1, (addr >> 2) & 1, (addr >> 3) & 1];
+  sram[addr] = i0 ^ i1 ^ i2 ^ i3;          // ví dụ: XOR-4 → 0x6996
+}
+</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <p>
+              Demo thứ hai map đúng bộ cộng <code>rca4</code> của Bài 6 lên một cột CLB (mỗi full adder 1 CLB) trong
+              lưới 4×4. Nút chuyển chế độ cho carry đi qua <strong>carry chain chuyên dụng</strong> (dây cam thẳng đứng)
+              hoặc đi vòng qua <strong>routing chung</strong> (dây xám gấp khúc qua switch matrix) — cùng mạch, cùng kết
+              quả cộng, nhưng độ trễ ước lượng chênh nhau 6 lần theo mô hình arrival time của Bài 8.
+            </p>
+
+            <div class="code-tabs" id="clb-tour">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🧱 rca4 trên lưới CLB — carry chain vs routing thường</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="sv">SystemVerilog</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__controls">
+                    <div class="mux-demo__inputs" id="clb-a-btns">
+                      <button class="mux-input-btn" type="button" data-bit="3">a3=0</button>
+                      <button class="mux-input-btn" type="button" data-bit="2">a2=0</button>
+                      <button class="mux-input-btn" type="button" data-bit="1">a1=0</button>
+                      <button class="mux-input-btn" type="button" data-bit="0">a0=0</button>
+                    </div>
+                    <div class="mux-demo__inputs" id="clb-b-btns" style="margin-top: 6px">
+                      <button class="mux-input-btn" type="button" data-bit="3">b3=0</button>
+                      <button class="mux-input-btn" type="button" data-bit="2">b2=0</button>
+                      <button class="mux-input-btn" type="button" data-bit="1">b1=0</button>
+                      <button class="mux-input-btn" type="button" data-bit="0">b0=0</button>
+                    </div>
+                    <div class="mux-demo__inputs" style="margin-top: 6px">
+                      <button class="mux-input-btn" type="button" id="clb-cin">cin=0</button>
+                      <button class="mux-input-btn" type="button" id="clb-mode-btn">
+                        🔀 Chuyển sang routing thường
+                      </button>
+                    </div>
+                  </div>
+                  <div id="clb-svg" style="margin-top: 14px"></div>
+                  <div class="mux-demo__output" id="clb-result" style="margin-top: 10px"></div>
+                  <p class="mux-demo__hint">
+                    Cột trái: 4 CLB đảm nhận FA0→FA3 (dưới lên trên, đúng chiều carry chain vật lý). 12 CLB còn lại để
+                    trống — sẵn sàng cho phần thiết kế khác của bạn. Độ trễ dùng mô hình minh hoạ: LUT 0,4 ns · nấc
+                    carry chain 0,1 ns · bước nhảy routing 0,8 ns.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="sv">
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">rca4.sv</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">// Xem module rca4 đầy đủ ở Bài 6, hoặc dạng adder4_plus ở Mục 2 —
+// demo này tính toán bằng đúng logic full adder đó, chỉ khác cách
+// "đặt" nó lên tài nguyên vật lý của FPGA.</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <p>Con chip "biến hình" hoá ra là một hệ tài nguyên xếp lớp, mỗi lớp một vai:</p>
+            <ul>
+              <li>
+                ✅ <strong>LUT-k</strong> = bảng chân lý <span>$2^k$</span> bit trong SRAM, đầu vào là địa chỉ đọc — mọi
+                hàm logic cùng 1 độ trễ tra bảng, đổi hàm không đổi dây.
+              </li>
+              <li>
+                ✅ <strong>CLB</strong> = LUT + D-FF + carry chain; carry chain là dây chuyên dụng né routing, biến
+                adder <span>$O(n)$</span> "trên giấy" thành nhanh nhất fabric.
+              </li>
+              <li>
+                ✅ <strong>BRAM/DSP</strong> = tài nguyên cứng hoá, kích hoạt bằng inference theo khuôn mẫu — lệch khuôn
+                (RAM có reset toàn mảng) là tool lặng lẽ phung phí gấp trăm lần.
+              </li>
+              <li>
+                ✅ <strong>Routing fabric</strong> chiếm phần lớn diện tích và thường cả độ trễ; clock có mạng cây riêng
+                để giữ skew thấp.
+              </li>
+              <li>
+                ✅ <strong>MCU / FPGA / ASIC</strong>: chọn theo NRE ↔ giá đơn vị ↔ hiệu năng ↔ tính linh hoạt; FPGA còn
+                là bệ prototype cho chính ASIC.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao trên FPGA, hàm <code>(a &amp; b) | (cin &amp; (a ^ b))</code> (4 toán tử) và hàm
+                <code>a ^ b ^ cin</code> (2 toán tử) lại có cùng độ trễ?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Cả 2 hàm đều chỉ có 3 đầu vào — vừa trong 1 LUT. Độ trễ = 1 lần tra bảng SRAM, hoàn toàn không phụ thuộc biểu thức bên trong phức tạp cỡ nào. Chi phí chỉ tăng khi hàm cần NHIỀU HƠN k đầu vào, buộc ghép nhiều LUT nối tiếp qua routing.'
+                    )
+                  "
+                >
+                  A. Vì cả 2 đều nằm gọn trong 1 LUT — độ trễ là 1 lần tra bảng, không phụ thuộc độ phức tạp biểu thức
+                  bên trong
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tool có tối ưu Boolean, nhưng đó không phải lý do — kể cả khi không rút gọn được gì, mọi hàm ≤ k đầu vào vẫn cùng độ trễ vì đều chỉ là 1 lần đọc SRAM theo địa chỉ.'
+                    )
+                  "
+                >
+                  B. Vì tool tổng hợp đã rút gọn 2 biểu thức về cùng một dạng tối giản
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'FPGA không chứa sẵn cổng logic rời để &quot;chạy nhanh chậm theo số toán tử&quot; — logic tổ hợp được hiện thực bằng LUT, và chính điều đó khiến số toán tử trong biểu thức không còn ý nghĩa với độ trễ.'
+                    )
+                  "
+                >
+                  C. Vì cổng XOR trên FPGA chậm hơn AND/OR nên 2 đường bù trừ lẫn nhau
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">Vì sao carry chain làm bộ cộng trên FPGA nhanh hơn hẳn đi qua logic thường?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Carry chain không đổi thuật toán — bộ cộng vẫn là ripple-carry O(n) nấc. Thứ thay đổi là TỐC ĐỘ MỖI NẤC: dây chuyên dụng nối thẳng CLB kề nhau, né hoàn toàn routing chung chậm chạp.'
+                    )
+                  "
+                >
+                  A. Vì carry chain tự động đổi thuật toán từ ripple-carry sang carry-lookahead
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Mỗi nấc carry đi trên dây ĐÚC SẴN nối thẳng CLB kề (cỡ 0,1 ns) thay vì băng qua switch matrix của routing chung (cỡ 0,8 ns/bước). Thuật toán vẫn là ripple-carry — chỉ là mỗi &quot;gợn sóng&quot; giờ chạy trên cao tốc riêng.'
+                    )
+                  "
+                >
+                  B. Vì carry đi trên dây chuyên dụng nối thẳng giữa các CLB kề nhau, không phải băng qua mạng routing
+                  chung vốn chậm hơn nhiều lần
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'BRAM là khối nhớ, không tham gia tính carry — carry chain là logic + dây chuyên dụng nằm ngay trong/giữa các CLB.'
+                    )
+                  "
+                >
+                  C. Vì carry được tính sẵn và lưu trong BRAM để tra cứu
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Bạn thêm <code>if (rst) for (...) mem[i] &lt;= 0;</code> vào module RAM 256×8. Sau synthesis,
+                utilization report cho thấy 0 BRAM và ~2048 flip-flop. Chuyện gì đã xảy ra?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tool không hết BRAM và cũng không báo lỗi — nó LẶNG LẼ đổi cách hiện thực vì khuôn mẫu code không còn khớp với phần cứng BRAM (vốn không có reset từng ô). Đây chính là điểm nguy hiểm: sai mà không có cảnh báo.'
+                    )
+                  "
+                >
+                  A. FPGA đã hết BRAM nên tool báo lỗi và tự chuyển sang flip-flop
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! BRAM vật lý không có chân reset cho từng ô nhớ. Code yêu cầu reset đồng loạt cả mảng nên tool buộc phải dùng thứ duy nhất làm được điều đó: flip-flop rời — 256×8 = 2048 FF cộng rừng LUT giải mã, phung phí tài nguyên gấp trăm lần mà không một dòng cảnh báo.'
+                    )
+                  "
+                >
+                  B. Reset toàn mảng không tồn tại trong phần cứng BRAM, nên tool lặng lẽ xây RAM bằng 2048 flip-flop
+                  rời — khớp chức năng nhưng phung phí tài nguyên
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Kết quả mô phỏng RTL của 2 phiên bản giống hệt nhau — vấn đề không nằm ở chức năng mà ở TÀI NGUYÊN vật lý được chọn. Chỉ utilization report mới lộ ra khác biệt.'
+                    )
+                  "
+                >
+                  C. Code bị sai chức năng nên tool loại bỏ BRAM khỏi thiết kế
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Một startup cần 500 thiết bị xử lý video độ trễ thấp cho năm đầu, chưa chắc chắn về thuật toán (sẽ còn
+                chỉnh). Lựa chọn hợp lý nhất theo bảng so sánh của bài?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'ASIC đòi NRE hàng trăm nghìn USD trở lên và KHÔNG SỬA ĐƯỢC sau khi đúc — với 500 đơn vị và thuật toán còn thay đổi, đây là lựa chọn rủi ro và đắt nhất có thể.'
+                    )
+                  "
+                >
+                  A. Thuê đúc ASIC ngay để có hiệu năng và giá đơn vị tốt nhất
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Xử lý video độ trễ thấp cần mức song song mà CPU tuần tự của MCU khó theo kịp — đây chính là vùng &quot;phần mềm không kịp thở&quot; mà bài nhắc tới.'
+                    )
+                  "
+                >
+                  B. Dùng MCU mạnh nhất có thể để tiết kiệm chi phí
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Số lượng nhỏ (NRE của ASIC không thể tự trả nợ), cần song song/độ trễ thấp (loại MCU), và thuật toán còn chỉnh (cần nạp lại &quot;phần cứng&quot; bằng bitstream mới) — cả 3 yếu tố đều trỏ vào FPGA. Nếu sau này bán hàng triệu đơn vị, thiết kế FPGA này trở thành prototype cho ASIC.'
+                    )
+                  "
+                >
+                  C. FPGA — số lượng nhỏ, cần song song thật, và còn phải cập nhật thiết kế sau khi xuất xưởng
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File SystemVerilog gồm full adder tách dạng LUT (<code>fa_sum</code>/<code>fa_carry</code>), bộ cộng
+                dạng <code>+</code> map vào carry chain, phép nhân map vào DSP, cặp RAM ❌/✅ minh hoạ cạm bẫy BRAM
+                inference, kèm testbench đối chiếu:
+              </p>
+              <a
+                href="fpga_lut_mapping.sv"
+                download
+                class="btn-facebook"
+                style="background: #65a30d; text-decoration: none"
+              >
+                Tải về fpga_lut_mapping.sv
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Field-programmable_gate_array"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Field-programmable gate array
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Lookup_table" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Lookup table (hardware LUT)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://docs.amd.com/v/u/en-US/ug474_7Series_CLB" target="_blank" rel="noopener noreferrer">
+                    AMD/Xilinx UG474 — 7 Series FPGAs CLB User Guide (LUT-6, carry chain thật)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Application-specific_integrated_circuit"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Application-specific integrated circuit
+                  </a>
+                </li>
+                <li>
+                  <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">
+                    HDLBits — bài tập viết RTL map lên FPGA
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.chipverify.com/" target="_blank" rel="noopener noreferrer">
+                    ChipVerify — SystemVerilog &amp; inference reference
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="vlsi-timing-sta" class="article-related__link article-related__link--prev">
+                  Bài 8: Timing &amp; Phân tích thời gian tĩnh (STA)
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 10: FPGA Flow: Synthesis, Place &amp; Route, Bitstream — sắp ra mắt
+                </span>
+                <a href="vlsi-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Thiết Kế Vi Mạch Số &amp; FPGA
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      // ==== Demo 1: LUT-4 Explorer ====
+      // 1 LUT = 16 bit SRAM + phép đọc theo địa chỉ. Không import engine nào:
+      // toàn bộ "phần cứng" nằm gọn trong mảng 16 phần tử này.
+      const sram = new Array(16).fill(0);
+      const lutIn = [0, 0, 0, 0]; // i0..i3
+
+      const PRESETS = {
+        and4: (i0, i1, i2, i3) => i0 & i1 & i2 & i3,
+        or4: (i0, i1, i2, i3) => i0 | i1 | i2 | i3,
+        xor4: (i0, i1, i2, i3) => i0 ^ i1 ^ i2 ^ i3,
+        mux: (i0, i1, i2) => (i2 ? i1 : i0), // i2 = select, i3 không dùng
+        fasum: (i0, i1, i2) => i0 ^ i1 ^ i2, // a b cin, i3 không dùng
+        facarry: (i0, i1, i2) => (i0 & i1) | (i2 & (i0 ^ i1)),
+        clear: () => 0,
+      };
+
+      function lutAddr() {
+        return (lutIn[3] << 3) | (lutIn[2] << 2) | (lutIn[1] << 1) | lutIn[0];
+      }
+
+      function lutHex() {
+        // bit 15 là MSB theo quy ước INIT của Xilinx/Yosys
+        let v = 0;
+        for (let a = 0; a < 16; a++) v |= sram[a] << a;
+        return '0x' + v.toString(16).toUpperCase().padStart(4, '0');
+      }
+
+      function renderLut() {
+        const sel = lutAddr();
+        const grid = document.getElementById('lut-bits');
+        let html = '';
+        for (let a = 0; a < 16; a++) {
+          const hot = a === sel;
+          const bits = a.toString(2).padStart(4, '0');
+          html += `<button type="button" data-addr="${a}" style="
+            padding:6px 2px;border-radius:6px;cursor:pointer;font-family:monospace;
+            border:${hot ? '2.5px solid #dc2626' : '1px solid #94a3b8'};
+            background:${sram[a] ? '#ecfccb' : '#fff'};color:#111827;">
+            <span style="font-size:9px;color:#64748b">${bits}</span><br/>
+            <strong style="font-size:15px">${sram[a]}</strong>
+          </button>`;
+        }
+        grid.innerHTML = html;
+        grid.querySelectorAll('button').forEach((b) =>
+          b.addEventListener('click', () => {
+            const a = parseInt(b.dataset.addr, 10);
+            sram[a] = sram[a] ? 0 : 1;
+            renderLut();
+          })
+        );
+        for (let k = 0; k < 4; k++) {
+          document.getElementById('lut-in-' + k).textContent = `i${k} = ${lutIn[k]}`;
+        }
+        document.getElementById('lut-readout').innerHTML =
+          `Địa chỉ đang chọn: <strong>${sel.toString(2).padStart(4, '0')}</strong> (i3 i2 i1 i0)` +
+          ` → ngõ ra <strong style="color:#dc2626">out = ${sram[sel]}</strong>` +
+          ` · nội dung SRAM: <strong>${lutHex()}</strong>`;
+      }
+
+      function initLut() {
+        if (!document.getElementById('lut-bits')) return;
+        document.querySelectorAll('#lut-presets [data-preset]').forEach((btn) =>
+          btn.addEventListener('click', () => {
+            const fn = PRESETS[btn.dataset.preset];
+            for (let a = 0; a < 16; a++) {
+              sram[a] = fn(a & 1, (a >> 1) & 1, (a >> 2) & 1, (a >> 3) & 1) ? 1 : 0;
+            }
+            renderLut();
+          })
+        );
+        for (let k = 0; k < 4; k++) {
+          document.getElementById('lut-in-' + k).addEventListener('click', () => {
+            lutIn[k] = lutIn[k] ? 0 : 1;
+            renderLut();
+          });
+        }
+        // khởi động với XOR-4 — pattern 0x6996 kinh điển
+        for (let a = 0; a < 16; a++) sram[a] = (a & 1) ^ ((a >> 1) & 1) ^ ((a >> 2) & 1) ^ ((a >> 3) & 1);
+        renderLut();
+      }
+
+      // ==== Demo 2: rca4 trên lưới CLB 4×4, carry chain vs routing ====
+      const T_LUT = 0.4,
+        T_CARRY = 0.1,
+        T_ROUTE = 0.8;
+      let useChain = true;
+      let aVal = [0, 0, 0, 0],
+        bVal = [0, 0, 0, 0],
+        cinVal = 0;
+
+      function fullAdd() {
+        // đúng logic rca4 của Bài 6
+        let c = cinVal;
+        const s = [];
+        for (let i = 0; i < 4; i++) {
+          s.push(aVal[i] ^ bVal[i] ^ c);
+          c = (aVal[i] & bVal[i]) | (c & (aVal[i] ^ bVal[i]));
+        }
+        return { s, cout: c };
+      }
+
+      function clbDelays() {
+        // mô hình minh hoạ (cùng họ arrival time Bài 8):
+        // carry chain: LUT tính p/g (1 lần) + 4 nấc chain; sum cuối thêm 1 nấc XORCY
+        const chainWorst = T_LUT + 4 * T_CARRY;
+        // routing thường: mỗi nấc carry = 1 LUT + 1 bước nhảy routing
+        const routeWorst = 4 * (T_LUT + T_ROUTE);
+        return { chainWorst, routeWorst, ratio: routeWorst / chainWorst };
+      }
+
+      function renderClb() {
+        const { s, cout } = fullAdd();
+        const d = clbDelays();
+        const CELL = 62,
+          GAP = 14,
+          X0 = 70,
+          Y0 = 30;
+        const LIME = '#65a30d',
+          AMBER = '#b45309',
+          SLATE = '#94a3b8',
+          RED = '#dc2626';
+        let svg = '';
+        for (let col = 0; col < 4; col++) {
+          for (let row = 0; row < 4; row++) {
+            const x = X0 + col * (CELL + GAP);
+            const y = Y0 + row * (CELL + GAP);
+            const isFa = col === 0;
+            const faIdx = 3 - row; // FA0 ở dưới cùng — đúng chiều carry chain vật lý
+            svg += `<rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" rx="7"
+              fill="${isFa ? '#ecfccb' : '#fff'}" stroke="${isFa ? LIME : SLATE}" stroke-width="${isFa ? 2 : 1}"/>`;
+            if (isFa) {
+              svg += `<text x="${x + CELL / 2}" y="${y + 24}" text-anchor="middle" font-size="12" font-weight="700" fill="#3f6212">FA${faIdx}</text>
+                <text x="${x + CELL / 2}" y="${y + 42}" text-anchor="middle" font-size="10" fill="#4b5563">s${faIdx}=${s[faIdx]}</text>`;
+            } else {
+              svg += `<text x="${x + CELL / 2}" y="${y + CELL / 2 + 4}" text-anchor="middle" font-size="9" fill="#cbd5e1">CLB</text>`;
+            }
+          }
+        }
+        // đường carry: từ FA0 (row 3) lên FA3 (row 0)
+        const cx = X0 + CELL / 2;
+        for (let i = 0; i < 3; i++) {
+          const yFrom = Y0 + (3 - i) * (CELL + GAP);
+          const yTo = yFrom - GAP;
+          if (useChain) {
+            svg += `<path d="M${cx},${yFrom} L${cx},${yTo}" stroke="${AMBER}" stroke-width="3.5" marker-end="url(#clb-arr)"/>`;
+          } else {
+            // vòng qua switch matrix bên phải
+            const sx = X0 + CELL + GAP / 2;
+            svg += `<path d="M${X0 + CELL},${yFrom - CELL / 2 + CELL / 2} L${sx + 14},${yFrom - CELL / 2 + CELL / 2} L${sx + 14},${yTo - CELL / 2} L${X0 + CELL},${yTo - CELL / 2}"
+              stroke="${RED}" stroke-width="2" fill="none" stroke-dasharray="6,3" marker-end="url(#clb-arr)"/>
+              <rect x="${sx + 6}" y="${(yFrom + yTo) / 2 - CELL / 2 - 8}" width="16" height="16" fill="#fee2e2" stroke="${RED}" rx="3"/>
+              <text x="${sx + 14}" y="${(yFrom + yTo) / 2 - CELL / 2 + 4}" text-anchor="middle" font-size="8" fill="${RED}">SW</text>`;
+          }
+        }
+        // cin vào FA0, cout ra khỏi FA3
+        const yBot = Y0 + 3 * (CELL + GAP) + CELL;
+        svg += `<path d="M${cx},${yBot + 22} L${cx},${yBot}" stroke="${AMBER}" stroke-width="2.5" marker-end="url(#clb-arr)"/>
+          <text x="${cx + 8}" y="${yBot + 18}" font-size="10" fill="${AMBER}">cin=${cinVal}</text>
+          <path d="M${cx},${Y0} L${cx},${Y0 - 18}" stroke="${AMBER}" stroke-width="2.5" marker-end="url(#clb-arr)"/>
+          <text x="${cx + 8}" y="${Y0 - 6}" font-size="10" fill="${AMBER}">cout=${cout}</text>`;
+        const worst = useChain ? d.chainWorst : d.routeWorst;
+        document.getElementById('clb-svg').innerHTML = `
+          <svg viewBox="0 0 420 ${Y0 + 4 * (CELL + GAP) + 30}" width="100%" style="max-width:440px;border:1px solid #ddd;background:#fafafa;border-radius:6px">
+            <defs><marker id="clb-arr" markerWidth="7" markerHeight="7" refX="5" refY="2.5" orient="auto">
+              <path d="M0,0 L0,5 L5,2.5 z" fill="${useChain ? AMBER : RED}"/></marker></defs>
+            ${svg}
+            <text x="${X0 + 2 * (CELL + GAP) + 40}" y="${Y0 + 2 * (CELL + GAP)}" font-size="11" fill="#334155">
+              ${useChain ? 'Carry chain chuyên dụng' : 'Carry vòng qua routing (SW = switch matrix)'}
+            </text>
+          </svg>`;
+        const aNum = aVal[3] * 8 + aVal[2] * 4 + aVal[1] * 2 + aVal[0];
+        const bNum = bVal[3] * 8 + bVal[2] * 4 + bVal[1] * 2 + bVal[0];
+        const sNum = s[3] * 8 + s[2] * 4 + s[1] * 2 + s[0];
+        document.getElementById('clb-result').innerHTML =
+          `${aNum} + ${bNum} + ${cinVal} = <strong>${cout * 16 + sNum}</strong> (cout=${cout}, s=${sNum})` +
+          ` · độ trễ carry ước lượng: <strong style="color:${useChain ? '#65a30d' : '#dc2626'}">${worst.toFixed(1)} ns</strong>` +
+          (useChain
+            ? ` (routing thường sẽ là ${d.routeWorst.toFixed(1)} ns — chậm hơn ${d.ratio.toFixed(0)}×)`
+            : ` (carry chain chỉ ${d.chainWorst.toFixed(1)} ns — nhanh hơn ${d.ratio.toFixed(0)}×)`);
+      }
+
+      function initClb() {
+        if (!document.getElementById('clb-svg')) return;
+        document.querySelectorAll('#clb-a-btns [data-bit]').forEach((btn) =>
+          btn.addEventListener('click', () => {
+            const i = parseInt(btn.dataset.bit, 10);
+            aVal[i] = aVal[i] ? 0 : 1;
+            btn.textContent = `a${i}=${aVal[i]}`;
+            renderClb();
+          })
+        );
+        document.querySelectorAll('#clb-b-btns [data-bit]').forEach((btn) =>
+          btn.addEventListener('click', () => {
+            const i = parseInt(btn.dataset.bit, 10);
+            bVal[i] = bVal[i] ? 0 : 1;
+            btn.textContent = `b${i}=${bVal[i]}`;
+            renderClb();
+          })
+        );
+        document.getElementById('clb-cin').addEventListener('click', (e) => {
+          cinVal = cinVal ? 0 : 1;
+          e.currentTarget.textContent = `cin=${cinVal}`;
+          renderClb();
+        });
+        document.getElementById('clb-mode-btn').addEventListener('click', (e) => {
+          useChain = !useChain;
+          e.currentTarget.textContent = useChain ? '🔀 Chuyển sang routing thường' : '⚡ Chuyển về carry chain';
+          renderClb();
+        });
+        renderClb();
+      }
+
+      initLut();
+      initClb();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
