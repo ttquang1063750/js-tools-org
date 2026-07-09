@@ -24,6 +24,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 9: Git**             | **Mô Hình & Quy Trình Làm Việc**        | **13/13**      | **13**   | **100%** ✅ |
 | 🎉 **Series 10: Điện Tử**        | **Điện Tử & Mô Phỏng Vi Mạch**          | **16/16**      | **16**   | **100%** ✅ |
 | 🎉 **Series 11: VLSI**           | **Thiết Kế Vi Mạch Số & FPGA (VLSI)**   | **14/14**      | **14**   | **100%** ✅ |
+| Series 12                        | Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM     | 0/19           | 19       | 0%          |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
@@ -134,6 +135,93 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 6   | **Scope Chain & Closures**       | Liên kết môi trường tĩnh (Lexical Environment), cơ chế giữ lại biến môi trường cha của hàm con (Closure). | Thực thi thành công cơ chế Closure và in ra giá trị biến được đóng gói.     |
 | 7   | **Call Stack & Heap Visualizer** | Trực quan hóa cấu trúc dữ liệu Stack (ngăn xếp) và Heap (bộ nhớ phân bổ tự do) của JS Runtime.            | Trình gỡ lỗi (Debugger) chạy từng bước dòng code và vẽ bộ nhớ động.         |
 | 8   | **Dự án: Garbage Collector**     | Thuật toán Mark-and-Sweep: tìm kiếm các tham chiếu chết từ Global root và thu hồi ô nhớ Heap.             | Trình vẽ bộ nhớ Heap hiển thị cơ chế dọn rác dọn dẹp các ô nhớ rác tự động. |
+
+---
+
+## 🧠 Series 12: Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM (AI from Zero to Master)
+
+> Lộ trình "zero → master" theo trục TỰ XÂY, không gọi API: hồi quy tuyến tính → gradient descent → tensor engine + autograd tự viết → MLP/CNN → Transformer → GPT-mini tiếng Việt train ngay trong browser. Nội dung bài viết **chỉ tiếng Việt** (quy tắc series mới). Mỗi khái niệm kèm snippet **"đối chiếu PyTorch tương đương"** (khối code phụ, đánh dấu rõ "chạy ngoài browser") để nối với công cụ công nghiệp — người học xong series đọc được source micrograd/nanoGPT.
+
+### 0. Danh tính series (đã chốt 2026-07-09)
+
+| Trường       | Giá trị                                                                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tên series   | Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM (EN metadata: AI from Zero to Master: Neural Networks to LLMs)                                                       |
+| Thư mục      | `blog/ai/`                                                                                                                                               |
+| File hub     | `ai-programming-series.html`                                                                                                                             |
+| Slug bài học | `ai-<topic>.html` (vd `ai-gradient-descent.html`)                                                                                                        |
+| Tag class    | `--ai` (thêm `.blog-card__tag--ai`, `.article-hero__tag--ai`, `.article-hero--ai` vào `blog.css`)                                                        |
+| Màu accent   | `#ef4444` (đỏ red-500 — chưa series nào dùng; gần nhất là canvas rose `#e11d48`, đã đối chiếu phân biệt được)                                            |
+| Ngôn ngữ dạy | **Vanilla JavaScript** — mọi model tự xây, train và chạy 100% trong browser; snippet PyTorch đối chiếu ở mỗi bài                                         |
+| Prism        | `js` sẵn có; ⚠️ **`python` chưa có trong `blog/prism.js`, phải bổ sung grammar local** (tiền lệ: Series 11 bổ sung `verilog`); KaTeX local cho công thức |
+
+### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
+
+- **Engine dùng chung toàn series: "NeuroJS"** (`blog/ai/ai-neuro.js`) — thư viện mini vanilla JS viết MỘT lần, các bài sau import (tiền lệ VeriLite của Series 11): tensor (broadcasting, matmul), autograd (computation graph, backward), layer (Linear/Conv2D/Embedding/LayerNorm/Attention), optimizer (SGD/Momentum/Adam), loss (MSE/cross-entropy). Xây DẦN theo bài: Bài 5 tạo tensor, Bài 7 thêm autograd, Bài 9 thêm optimizer, Bài 11 thêm conv, Bài 14 thêm attention — mỗi lần mở rộng PHẢI kèm self-test Node (`node --input-type=module -e "..."`) đối chiếu số liệu với công thức giải tích, không đoán bằng mắt (bài học D#10/#14-17 của check-lesson.md).
+- **Dữ liệu vendored tĩnh** (không fetch ngoài): subset MNIST ~2.000 mẫu nén base64/binary (~vài trăm KB, tạo 1 lần bằng script Node, commit sẵn), dataset 2D sinh bằng code (XOR, vòng tròn, xoắn ốc), corpus tiếng Việt nhỏ public-domain cho GPT-mini (vd trích Truyện Kiều).
+- **Hiển thị:** Canvas 2D (loss landscape, decision boundary, feature map, loss curve), SVG (computation graph, sơ đồ kiến trúc mạng, attention heatmap), KaTeX local cho mọi công thức (mỗi công thức 1 câu giải nghĩa tiếng Việt; trong `\text{}` chỉ ASCII).
+- **Lưu ý hiệu năng:** train trong browser giới hạn ở model tí hon (MLP vài nghìn tham số, GPT-mini ~50-200k tham số) — mỗi demo train phải có nút ⏸ dừng + giới hạn epoch, không được khoá main thread quá ~50ms/khung (chia nhỏ theo `requestAnimationFrame`).
+
+### 2. Thiết kế Demo tương tác cốt lõi (Core Visualizer Demo)
+
+- **Tên: "Neural Playground — xem mạng neural uốn không gian"** (`ai-neural-playground.html`, nhúng lại cấu hình thu gọn ở Bài 6)
+- **Mô tả giao diện (layout 3 khung):**
+  - **Trái — Dữ liệu & kiến trúc:** chọn dataset 2D (XOR / vòng tròn / xoắn ốc / gauss), thêm bớt hidden layer và neuron từng layer, chọn activation (ReLU/tanh/sigmoid), learning rate, ▶ Train / ⏸ Dừng / ⏹ Reset.
+  - **Giữa — Decision boundary:** canvas tô màu vùng quyết định của mạng, cập nhật LIVE theo từng bước train; điểm dữ liệu vẽ đè lên.
+  - **Phải — Loss curve + trọng số:** đồ thị loss theo epoch; độ dày/màu cạnh nối neuron thể hiện trọng số đang đổi.
+- **Insight cốt lõi:** mạng neural không phải hộp đen ma thuật — nó là chuỗi phép uốn/gập không gian đầu vào cho tới khi 2 lớp điểm tách được bằng 1 đường thẳng. Người học NHÌN THẤY boundary cong dần theo từng epoch, thấy mạng nông thất bại với xoắn ốc còn mạng sâu thì không — trực giác mà không cuốn sách tĩnh nào truyền được.
+- ⚠️ **Hạng mục xây nặng nhất series** (ngang RTL Playground của Series 11) — phụ thuộc NeuroJS đủ tensor + autograd + optimizer, tức chỉ dựng được sau Bài 7; Bài 6 dùng bản "chưa autograd" (backward viết tay cho MLP 2 layer) rồi Bài 7 thay ruột.
+
+### 3. Đề cương chi tiết từng bài học (Detailed Syllabus — 19 bài, 4 chặng)
+
+**Chặng 1 — Nền tảng học máy (Bài 1–5):**
+
+| Bài | Tên bài học                                   | Nội dung chuyên sâu                                                                                                     | Dự án/Demo đi kèm                                                              |
+| --- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 1   | **Học máy là gì? Hồi quy tuyến tính từ số 0** | Quy tắc viết tay vs học từ dữ liệu; bộ ba model–loss–data; MSE; nghiệm giải tích vs phương pháp lặp.                    | Kéo thả điểm dữ liệu trên canvas, đường thẳng tự fit, loss hiện live.          |
+| 2   | **Gradient Descent & đạo hàm**                | Đạo hàm/chain rule trực giác hình học; learning rate; hội tụ/phân kỳ/zigzag; batch vs mini-batch vs SGD.                | Loss landscape 2D/3D tương tác — kéo learning rate xem "hòn bi" lăn hoặc văng. |
+| 3   | **Phân loại & hồi quy logistic**              | Sigmoid, cross-entropy (vì sao không dùng MSE cho phân loại), decision boundary; confusion matrix, precision/recall/F1. | Bộ phân loại 2D — kéo điểm dữ liệu xem boundary và metrics đổi tức thì.        |
+| 4   | **Học không giám sát: K-means & PCA**         | 3 nhánh học máy; k-means từng bước và bẫy khởi tạo; phương sai & phép chiếu, power iteration ở mức trực giác.           | K-means animation từng vòng lặp + PCA chiếu dữ liệu 3D→2D tương tác.           |
+| 5   | **Tensor engine mini**                        | Xây tensor JS: shape/stride, broadcasting, matmul; vì sao vectorization nhanh (cache, không boxing); khởi đầu NeuroJS.  | Benchmark loop-thuần vs vectorized ngay trên trang (cross-link Series WebGPU). |
+
+**Chặng 2 — Neural network cốt lõi (Bài 6–10):**
+
+| Bài | Tên bài học                         | Nội dung chuyên sâu                                                                                             | Dự án/Demo đi kèm                                                          |
+| --- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 6   | **Neuron & mạng MLP**               | Perceptron → MLP; activation (sigmoid/tanh/ReLU) và vì sao cần phi tuyến; trực giác universal approximation.    | **Neural Playground** (visualizer cốt lõi) — cấu hình đầy đủ.              |
+| 7   | **Backpropagation & autograd**      | Chain rule trên computation graph; xây autograd engine kiểu micrograd; gradient checking bằng sai phân hữu hạn. | Computation graph SVG — bấm backward xem gradient chảy ngược từng nút.     |
+| 8   | **Huấn luyện thực tế: Overfitting** | Train/val/test; bias–variance; L2, dropout, early stopping, data augmentation concept.                          | Kéo slider độ phức tạp model xem boundary overfit "ôm" từng điểm nhiễu.    |
+| 9   | **Tối ưu hoá nâng cao**             | Momentum, RMSProp, Adam (viết đủ công thức); LR schedule/warmup; khởi tạo Xavier/He; batch norm concept.        | Đua 4 optimizer trên cùng loss landscape — 4 vệt màu xuất phát cùng điểm.  |
+| 10  | **Dự án 1: Nhận dạng chữ số MNIST** | Data pipeline (chuẩn hoá, shuffle, mini-batch), vòng lặp train/eval, ma trận nhầm lẫn trên tập test thật.       | Vẽ chữ số bằng chuột → mạng TỰ TRAIN trong browser đoán live kèm xác suất. |
+
+**Chặng 3 — Kiến trúc chuyên biệt (Bài 11–15):**
+
+| Bài | Tên bài học                   | Nội dung chuyên sâu                                                                                                            | Dự án/Demo đi kèm                                                               |
+| --- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| 11  | **CNN — mạng tích chập**      | Kernel/stride/padding/pooling; chia sẻ trọng số & bất biến tịnh tiến; feature map theo chiều sâu; đếm tham số CNN vs MLP.      | Kéo kernel trượt trên ảnh xem feature map; so tham số CNN vs MLP cùng bài toán. |
+| 12  | **Embedding & word2vec**      | Biểu diễn phân tán vs one-hot; skip-gram/negative sampling ở mức cơ chế; cosine similarity; vua − đàn ông + đàn bà = nữ hoàng. | Không gian embedding 2D tương tác — gõ từ, xem hàng xóm gần nhất.               |
+| 13  | **Chuỗi: RNN → Attention**    | RNN unroll theo thời gian; vanishing gradient (nối Bài 7); LSTM cổng ở mức concept; attention là lời giải truy cập trực tiếp.  | Heatmap attention trên câu thật — rê chuột từng từ xem nó "nhìn" từ nào.        |
+| 14  | **Transformer**               | Self-attention Q/K/V từng phép nhân ma trận; multi-head; positional encoding; residual + layernorm; đếm tham số 1 block.       | Transformer block chạy từng bước trên chuỗi ngắn — xem ma trận attention thật.  |
+| 15  | **Sinh ảnh: GAN & Diffusion** | Minimax game G vs D, mode collapse; diffusion: quá trình nhiễu tiến/lùi, denoise từng bước; vì sao diffusion soán ngôi GAN.    | Diffusion trên phân bố điểm 2D — xem hình dạng "mọc" ra từ nhiễu thuần.         |
+
+**Chặng 4 — LLM & master (Bài 16–19):**
+
+| Bài | Tên bài học                                     | Nội dung chuyên sâu                                                                                                         | Dự án/Demo đi kèm                                                            |
+| --- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 16  | **Tokenizer & pretraining LLM**                 | BPE tự xây từng bước merge; next-token prediction = cross-entropy trên vocab; context window; scaling law ở mức khái niệm.  | BPE tokenizer live — gõ tiếng Việt xem token tách, so vocab 100 vs 1.000.    |
+| 17  | **Học tăng cường: Q-learning**                  | Agent/environment/reward; phương trình Bellman; bảng Q; exploration vs exploitation (ε-greedy); nền móng cho RLHF.          | Gridworld — agent tự học đường đi tối ưu, xem bảng Q cập nhật live.          |
+| 18  | **Sinh văn bản, Sampling & Alignment**          | Temperature/top-k/top-p từ phân bố xác suất thật; greedy vs beam; RLHF từ cơ chế (nối Bài 17); prompt nhìn từ xác suất.     | Chỉnh temperature/top-p xem phân bố token và văn bản sinh ra đổi tức thì.    |
+| 19  | **Capstone: GPT-mini tiếng Việt trong browser** | Ghép tokenizer + Transformer + sampling; train corpus nhỏ NGAY TRÊN TRANG; giới hạn thật của model tí hon; bản đồ học tiếp. | GPT tí hon (~100k tham số) train live trên trích đoạn Truyện Kiều, sinh chữ. |
+
+**Kiểm tra phụ thuộc (dependency chain):** 1→2 (loss từ Bài 1) → 3 (GD từ 2) → 4 (chỉ cần khoảng cách Euclid, độc lập GD) → 5 → 6 (dùng tensor) → 7 (autograd thay backward tay của 6) → 8, 9 (dùng vòng train của 7) → 10 (tổng hợp 5–9) → 11 (conv trên NeuroJS) → 12 (train embedding bằng 7) → 13 (cần 7 vanishing gradient, 12 embedding) → 14 (cần 12, 13) → 15 (cần 6–9, độc lập 12–14) → 16 (cần 14) → 17 (độc lập, chỉ cần 2) → 18 (cần 16 + 17) → 19 (capstone: 14, 16, 18). Không có tham chiếu xuôi nào ngoài kế hoạch.
+
+### 4. Tiêu chuẩn chất lượng & liên kết chéo
+
+Mọi bài tuân thủ rubric PHẦN IV (quality contract) + `check-lesson.md`, cộng đặc thù:
+
+- **Snippet "đối chiếu PyTorch"** ở mỗi bài có code train/model: khối `.code-window` ngôn ngữ `python`, ghi rõ "chạy ngoài browser — cài PyTorch theo pytorch.org"; KHÔNG phải code trang trí, phải là bản 1-1 với code JS của bài.
+- **Số liệu phải kiểm chứng bằng self-test Node trước khi viết prose** (gradient checking, loss sau N epoch với seed cố định...) — model train có yếu tố ngẫu nhiên thì demo phải cố định seed để tái lập được.
+- **Cross-link:** Bài 5 ↔ Series WebGPU (matmul trên GPU); Bài 2, 7 ↔ Series DSA (đồ thị, độ phức tạp); mọi visualizer ↔ Series Canvas; Bài 19 ↔ Series Toy JS Engine (cùng triết lý "tự xây để hiểu").
 
 ---
 
