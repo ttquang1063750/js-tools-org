@@ -462,9 +462,7 @@ class VeriSimulator {
     // toán tử NGOÀI CÙNG trước). Chú ý: << và >> PHẢI kiểm tra trước <=/>=/</> — nếu
     // không, sẽ khớp nhầm "<" vào giữa "a << 1". Dùng findTopLevelOp (quét theo độ sâu
     // ngoặc) thay vì regex.match ngây thơ — xem PHẦN D #14.
-    const ops = [
-      '||', '&&', '|', '^', '&', '==', '!=', '<<', '>>', '<=', '>=', '<', '>', '+', '-', '*', '/', '%',
-    ];
+    const ops = ['||', '&&', '|', '^', '&', '==', '!=', '<<', '>>', '<=', '>=', '<', '>', '+', '-', '*', '/', '%'];
 
     for (const op of ops) {
       const idx = this.findTopLevelOp(expr, op);

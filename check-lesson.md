@@ -122,7 +122,7 @@
 - Thêm entry vào `sitemap.xml` và `blog/search-index.json` (heading H2 phải khớp thật với
   bài, không để sót heading cũ sau khi sửa cấu trúc bài).
 - **Open Graph + Twitter Card + JSON-LD (`BlogPosting`) BẮT BUỘC ngay sau `<link
-  rel="canonical">`** (xem PHẦN D #18 — retrofit 2026-07-09 cho 204/210 file cũ). Mọi trang
+rel="canonical">`** (xem PHẦN D #18 — retrofit 2026-07-09 cho 204/210 file cũ). Mọi trang
   bài học MỚI phải có đủ khối này, lấy dữ liệu **trực tiếp từ chính trang đó** (không tự bịa
   giá trị khác):
 

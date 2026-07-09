@@ -1,0 +1,1081 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 10: FPGA Flow — Synthesis, Place & Route, Bitstream — js-tools</title>
+    <meta
+      name="description"
+      content="Synthesis RTL sang lưới LUT, ràng buộc timing SDC (create_clock) và vì sao thiếu nó khiến báo cáo timing vô nghĩa, placement & routing NP-hard, đọc WNS/TNS, toolchain mã nguồn mở Yosys → nextpnr → bitstream — kèm Sa bàn Place & Route tương tác."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/vlsi/vlsi-fpga-flow" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/vlsi/vlsi-fpga-flow" />
+    <meta property="og:title" content="Bài 10: FPGA Flow — Synthesis, Place & Route, Bitstream — js-tools" />
+    <meta
+      property="og:description"
+      content="Synthesis RTL sang lưới LUT, ràng buộc timing SDC (create_clock) và vì sao thiếu nó khiến báo cáo timing vô nghĩa, placement & routing NP-hard, đọc WNS/TNS, toolchain mã nguồn mở Yosys → nextpnr → bitstream — kèm Sa bàn Place & Route tương tác."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 10: FPGA Flow — Synthesis, Place & Route, Bitstream — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Synthesis RTL sang lưới LUT, ràng buộc timing SDC (create_clock) và vì sao thiếu nó khiến báo cáo timing vô nghĩa, placement & routing NP-hard, đọc WNS/TNS, toolchain mã nguồn mở Yosys → nextpnr → bitstream — kèm Sa bàn Place & Route tương tác."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "FPGA Flow: Synthesis, Place & Route, Bitstream",
+        "description": "Synthesis RTL sang lưới LUT, ràng buộc timing SDC (create_clock) và vì sao thiếu nó khiến báo cáo timing vô nghĩa, placement & routing NP-hard, đọc WNS/TNS, toolchain mã nguồn mở Yosys → nextpnr → bitstream — kèm Sa bàn Place & Route tương tác.",
+        "url": "https://js-tools.org/blog/vlsi/vlsi-fpga-flow",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-09"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--vlsi">
+        <div class="container">
+          <a href="vlsi-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--vlsi">Bài 10 · Thiết Kế Vi Mạch Số & FPGA</div>
+          <h1 class="article-hero__title">FPGA Flow: Synthesis, Place & Route, Bitstream</h1>
+          <div class="article-hero__meta">9 tháng 7, 2026 · 27 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Cùng 1 dòng code, bấm nút 2 lần, ra 2 con chip khác nhau</h2>
+            <p>
+              Lập trình viên phần mềm quen với một niềm tin ngầm định: build lại cùng 1 source code phải luôn ra cùng 1
+              kết quả (bỏ qua các yếu tố ngoại lai như phiên bản compiler). Nhưng chạy toàn bộ flow FPGA — từ
+              SystemVerilog tới bitstream nạp vào chip — <strong>2 lần liên tiếp, không đổi 1 ký tự nào</strong> — hoàn
+              toàn có thể cho ra 2 file bitstream khác nhau, với <span>$f_{max}$</span> đo được khác nhau vài phần trăm.
+              Đây không phải bug của tool. Đây là hệ quả tất yếu của một sự thật: bài toán
+              <strong>đặt khối logic vào đúng vị trí trên chip</strong> (placement) và
+              <strong>nối dây giữa chúng</strong> (routing) thuộc lớp bài toán
+              <abbr title="Nondeterministic Polynomial-time hard">NP-hard</abbr> — không có thuật toán nào tìm ra lời
+              giải tối ưu tuyệt đối trong thời gian hợp lý, nên mọi tool thực tế đều dùng heuristic có yếu tố ngẫu
+              nhiên.
+            </p>
+            <p>
+              Bài này đi hết chặng đường từ RTL bạn viết tới bitstream nạp vào chip thật: synthesis (RTL → lưới LUT),
+              ràng buộc timing SDC — và cạm bẫy kinh điển khi thiếu nó, placement/routing và lý do kết quả không tất
+              định, cách đọc timing report thật (WNS/TNS) để biết sửa RTL hay sửa ràng buộc, và toolchain mã nguồn mở
+              Yosys → nextpnr → bitstream đủ để nạp vào board FPGA giá rẻ thật. Cuối bài, bạn tự tay đặt khối lên
+              <strong>Sa bàn Place & Route</strong> và so với thuật toán tự động — xem chính mắt vì sao "chạy lại vẫn ra
+              số khác".
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong>
+                <a href="vlsi-timing-sta">Bài 8 (Timing & STA)</a> — bài này giả định bạn đã hiểu
+                <span>$t_{setup}$</span>/slack/critical path;
+                <a href="vlsi-fpga-architecture">Bài 9 (Kiến trúc FPGA)</a> — placement đặt các khối
+                <strong>CLB</strong> đã học ở đó lên lưới thật;
+                <a href="/blog/electronics/electronics-digital-logic">Series Điện Tử Bài 12 (Cổng logic & Karnaugh)</a>
+                — synthesis thực chất là tối giản Boolean tự động, cùng ý tưởng với bìa Karnaugh bạn làm tay.
+                <br /><strong>Tài nguyên ngoài:</strong>
+                <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">HDLBits</a>,
+                <a href="https://www.chipverify.com" target="_blank" rel="noopener noreferrer">ChipVerify</a>,
+                <a href="https://www.edaplayground.com" target="_blank" rel="noopener noreferrer">EDA Playground</a>.
+              </div>
+            </div>
+
+            <h2>1. Synthesis: Từ RTL tới lưới LUT</h2>
+            <p>
+              <strong>Synthesis</strong> (tổng hợp logic) là bước dịch SystemVerilog thành một lưới (netlist) các LUT —
+              đúng khái niệm <abbr title="Look-Up Table">LUT</abbr> đã học ở <a href="vlsi-fpga-architecture">Bài 9</a>.
+              Ba việc tool tự động làm:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Bước</th>
+                  <th>Việc tool làm</th>
+                  <th>Tương đương thủ công bạn đã học</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Elaboration</strong></td>
+                  <td>Đọc SystemVerilog, dựng cây cú pháp/netlist "generic" (chưa gắn công nghệ cụ thể)</td>
+                  <td>Giống bước <code>VeriLiteParser.parse()</code> của engine trang này, nhưng đầy đủ chuẩn IEEE</td>
+                </tr>
+                <tr>
+                  <td><strong>Tối giản logic</strong></td>
+                  <td>Constant propagation, loại bỏ logic thừa, gộp biểu thức Boolean tương đương</td>
+                  <td>Chính là bìa Karnaugh bạn làm tay ở Series Điện Tử — chỉ khác quy mô hàng nghìn biến</td>
+                </tr>
+                <tr>
+                  <td><strong>Technology mapping</strong></td>
+                  <td>Gói từng cụm logic tối giản vào đúng LUT-<var>k</var> của FPGA đích (vd LUT-4, LUT-6)</td>
+                  <td>Đúng bước "nạp bảng chân lý vào LUT Explorer" ở Bài 9, làm tự động cho toàn bộ thiết kế</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Kết quả sau synthesis là 1 file netlist (thường dạng JSON hoặc EDIF) liệt kê hàng trăm-hàng nghìn LUT và
+              dây nối giữa chúng — nhưng <strong>chưa biết LUT nào nằm ở đâu trên chip</strong>. Đó là việc của
+              placement (Mục 3).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">yosys_synth_log.txt (minh hoạ định dạng thật)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">$ yosys -p "read_verilog -sv rca4.sv; synth_ice40 -top rca4 -json rca4.json"
+
+2.1. Executing Verilog-2005 frontend: rca4.sv
+2.25. Executing SYNTH_ICE40 pass.
+   Executing OPT_EXPR pass (perform const folding).
+   Executing OPT_CLEAN pass (remove unused cells and wires).
+   Executing ABC pass (technology mapping using ABC).
+     ABC RESULTS:   $lut cells:       8
+   Number of cells:      8 $lut
+</code></pre>
+            </div>
+            <p>
+              Định dạng log trên đúng thật với Yosys — số lượng LUT cụ thể tuỳ phiên bản tool và cách ABC tối giản,
+              nhưng dễ nhẩm bằng tay: mỗi full adder trong <code>rca4</code> (Bài 6) cần 2 hàm tổ hợp độc lập (<code
+                >sum</code
+              >
+              3 đầu vào và <code>carry</code> 3 đầu vào) — mỗi hàm gói vừa 1 LUT-4, nên 4 full adder tối thiểu cần
+              <strong>8 LUT</strong>, không phải 1 LUT cho mỗi cổng AND/XOR bạn gõ tay trong code.
+            </p>
+
+            <h2>2. Ràng buộc timing SDC: Vì sao "không lỗi" chưa chắc là "đúng"</h2>
+            <p>
+              <abbr title="Synopsys Design Constraints">SDC</abbr> là file ràng buộc timing bạn viết tay, khai báo cho
+              tool biết <strong>mục tiêu tốc độ</strong> của thiết kế — không tool nào tự đoán được bạn muốn chạy ở
+              50MHz hay 500MHz. Không có SDC, câu hỏi "mạch có đủ nhanh không" hoàn toàn vô nghĩa vì
+              <strong>không có mốc nào để so sánh</strong>.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: Thiếu ràng buộc SDC — "Timing MET" giả</div>
+              <div class="callout__content">
+                <p>
+                  Nếu quên khai báo <code>create_clock</code>, STA không có chu kỳ mục tiêu nào để tính slack — nhiều
+                  tool trong tình huống này báo cáo "không có vi phạm" chỉ vì
+                  <strong>không có gì được kiểm tra cả</strong>, không phải vì thiết kế đủ nhanh. Đây là cạm bẫy nguy
+                  hiểm nhất của người mới: đọc báo cáo "PASS" rồi yên tâm nạp bitstream lên board thật, để rồi mạch chạy
+                  sai vì thực chất chưa từng được xác minh timing.
+                </p>
+                <div class="code-window" style="margin-top: 12px">
+                  <div class="code-header">
+                    <span class="code-filename">rca4.sdc</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">// ❌ SAI: không có create_clock nào — STA không biết "đủ nhanh" nghĩa là
+// gì, báo cáo "no timing violations" ở đây là VÔ NGHĨA, không phải bằng
+// chứng mạch chạy đúng tần số bạn định dùng.
+// (file .sdc trống, hoặc chỉ có set_input_delay/set_output_delay lẻ tẻ)
+
+// ✅ ĐÚNG: khai báo rõ mục tiêu 100 MHz + trễ tín hiệu vào/ra thực tế
+create_clock -name clk -period 10.0 [get_ports clk]     ;# 10ns = 100 MHz
+set_input_delay  2.0 -clock clk [get_ports {a0 a1 a2 a3 b0 b1 b2 b3 cin}]
+set_output_delay 2.0 -clock clk [get_ports {s0 s1 s2 s3 cout}]
+</code></pre>
+                </div>
+                <p style="margin-top: 12px">
+                  Với bản ✅, nếu <code>rca4</code> (chưa pipeline, xem <a href="vlsi-timing-sta">Bài 8</a>) không kịp
+                  chạy ở 100MHz, STA sẽ báo <strong>slack âm</strong> — đúng lúc bạn cần biết, trước khi tốn thời gian
+                  nạp lên board thật.
+                </p>
+              </div>
+            </div>
+
+            <h2>3. Placement & Routing: bài toán NP-hard, và vì sao chạy lại ra số khác</h2>
+            <p>
+              <strong>Placement</strong> quyết định mỗi LUT/CLB trong netlist nằm ở toạ độ nào trên lưới vật lý của
+              chip; <strong>routing</strong> tìm đường dây thực tế nối các CLB đó qua mạng routing (đã học ở
+              <a href="vlsi-fpga-architecture">Bài 9 Mục 4</a>). Số cách sắp xếp <var>N</var> khối lên <var>M</var> vị
+              trí tăng theo giai thừa — với vài nghìn CLB, không gian tìm kiếm lớn hơn số nguyên tử trong vũ trụ quan
+              sát được. Không tool nào duyệt hết; tất cả dùng <strong>heuristic</strong> (annealing giả lập, thuật toán
+              tham lam, phân vùng đệ quy...) khởi tạo từ 1 điểm ngẫu nhiên rồi cải thiện dần.
+            </p>
+            <p>
+              Đây chính là lý do nêu ở đầu bài:
+              <strong
+                >seed ngẫu nhiên khác nhau → kết quả placement khác nhau → tổng chiều dài dây khác nhau → độ trễ routing
+                khác nhau → <span>$f_{max}$</span> đo được khác nhau</strong
+              >
+              — dù netlist đầu vào giống hệt. Placement tốt (các khối có liên kết chặt được đặt gần nhau) giảm chiều dài
+              dây, giảm độ trễ routing, tăng <span>$f_{max}$</span>; placement tệ (khối liên kết chặt bị đặt xa nhau)
+              làm ngược lại — <strong>congestion</strong> (tắc nghẽn routing) xảy ra khi quá nhiều dây phải chen qua
+              cùng 1 vùng kênh routing hẹp, buộc router phải đi đường vòng dài hơn.
+            </p>
+
+            <h2>4. Đọc timing report thật: WNS, TNS và cách lần theo failing path</h2>
+            <p>
+              Sau P&R, tool xuất báo cáo timing liệt kê slack của <strong>mọi đường tín hiệu</strong> (path) trong thiết
+              kế. Hai con số tóm tắt quan trọng nhất:
+            </p>
+            <p>$$WNS = \min_i(\text{slack}_i) \qquad TNS = \sum_{i:\ \text{slack}_i < 0} \text{slack}_i$$</p>
+            <p>
+              <strong>WNS</strong> (Worst Negative Slack) — slack xấu nhất trong toàn thiết kế, chỉ đúng
+              <strong>1 con số</strong> cho biết "chỗ tệ nhất tệ tới đâu". <strong>TNS</strong> (Total Negative Slack) —
+              tổng tất cả slack âm cộng lại, cho biết "có bao nhiêu đường đang vi phạm, tổng thiệt hại lớn cỡ nào" (1
+              đường vi phạm nặng và 100 đường vi phạm nhẹ có thể cho cùng WNS nhưng TNS rất khác nhau).
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Slack (ns)</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>reg_a → reg_sum</td>
+                  <td>+0.8</td>
+                  <td>Đạt (positive slack)</td>
+                </tr>
+                <tr>
+                  <td>reg_b → reg_cout</td>
+                  <td>−1.2</td>
+                  <td>Vi phạm — đây là <strong>WNS</strong> (âm nhất)</td>
+                </tr>
+                <tr>
+                  <td>reg_c → reg_s2</td>
+                  <td>−0.3</td>
+                  <td>Vi phạm nhẹ hơn</td>
+                </tr>
+                <tr>
+                  <td>reg_d → reg_s3</td>
+                  <td>+0.1</td>
+                  <td>Đạt, nhưng sát ngưỡng</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Với bảng trên: <span>$WNS = -1.2\text{ns}$</span>, <span>$TNS = -1.2 + (-0.3) = -1.5\text{ns}$</span>. Quy
+              trình debug chuẩn: mở path có WNS trước tiên — nếu độ trễ dồn phần lớn vào 1 khối logic tổ hợp quá sâu
+              (nhiều tầng cổng nối tiếp), sửa RTL (thêm tầng pipeline, giống <a href="vlsi-timing-sta">Bài 8</a>); nếu
+              độ trễ dồn phần lớn vào routing (dây dài bất thường dù logic đơn giản), khả năng cao là placement tệ — thử
+              chạy lại P&R với seed khác, hoặc ràng buộc vị trí (floorplan) thủ công cho đúng cụm đó.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">timing_report.txt (minh hoạ định dạng thật)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">Startpoint: reg_b (posedge clk)
+Endpoint:   reg_cout (posedge clk)
+Path Group: clk
+Path Type:  max
+
+  Delay type    Incr    Path
+  ----------  ------  ------
+  clock clk     0.00    0.00
+  reg_b/CLK     0.00    0.00 r
+  reg_b/Q       0.45    0.45 f  <- t_clk->q
+  logic        10.25   10.70    <- 4 tang LUT noi tiep (routing + comb)
+  reg_cout/D    0.00   10.70
+  ----------------------------
+  data arrival time           10.70
+
+  clock clk (rise)            10.00   10.00
+  clock uncertainty           -0.20    9.80
+  reg_cout/setup              -0.30    9.50
+  ----------------------------
+  data required time           9.50
+
+  slack (VIOLATED)            -1.20   <- required 9.50 - arrival 10.70, day chinh la WNS o bang tren
+</code></pre>
+            </div>
+            <p>
+              Báo cáo timing thật (định dạng trên phổ biến ở cả tool thương mại lẫn nextpnr) luôn tách 2 nhánh:
+              <strong>data arrival time</strong> (tín hiệu thực sự mất bao lâu để tới đích) và
+              <strong>data required time</strong> (deadline suy ra từ chu kỳ clock trừ setup/uncertainty) — slack chính
+              là hiệu số giữa 2 nhánh, và dòng <code>logic</code> ở giữa cho biết ngay độ trễ đó đến từ đâu (bao nhiêu
+              tầng LUT, có kèm routing hay không) để quyết định sửa RTL hay sửa constraint như trên.
+            </p>
+
+            <h2>5. Toolchain mã nguồn mở: Yosys → nextpnr → bitstream thật</h2>
+            <p>
+              Không cần license thương mại đắt đỏ để đi hết flow này — hệ sinh thái mã nguồn mở đã đủ trưởng thành cho
+              nhiều dòng FPGA giá rẻ (Lattice iCE40, ECP5):
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">flow_opensource.sh</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># 1. Synthesis: SystemVerilog -> netlist JSON (LUT cho iCE40)
+yosys -p "read_verilog -sv rca4.sv; synth_ice40 -top rca4 -json rca4.json"
+
+# 2. Place & Route: gán vị trí thật + đọc ràng buộc SDC + chân board (PCF)
+nextpnr-ice40 --hx8k --json rca4.json --pcf rca4.pcf --sdc rca4.sdc --asc rca4.asc
+
+# 3. Sinh bitstream nhị phân nạp được vào chip
+icepack rca4.asc rca4.bin
+
+# 4. Nạp vào board FPGA thật qua cổng USB
+openFPGALoader -b ice40_generic rca4.bin</code></pre>
+            </div>
+            <p>
+              4 dòng lệnh này chính là bản mã nguồn mở của quy trình thương mại (Vivado/Quartus) — cùng khái niệm
+              synthesis → P&R → bitstream, chỉ khác công cụ. <code>nextpnr</code> in ra đúng loại báo cáo WNS/TNS ở Mục
+              4 sau bước 2; nếu không có board FPGA thật, bạn vẫn chạy được bước 1-3 để tự đọc báo cáo timing.
+            </p>
+
+            <h2>6. Demo tương tác: Sa bàn Place & Route</h2>
+            <p>
+              6 khối logic (A-F) cần đặt lên lưới 5×4, với các liên kết cố định giữa chúng (mô phỏng 1 cụm netlist nhỏ).
+              Kéo-thả (bấm chọn khối rồi bấm ô trống) để tự đặt thủ công, hoặc bấm
+              <strong>"Auto-place"</strong> nhiều lần để thấy thuật toán tự động — có yếu tố ngẫu nhiên trong thứ tự xử
+              lý — cho ra tổng chiều dài dây (và <span>$f_{max}$</span> ước lượng) khác nhau mỗi lần chạy, đúng hiện
+              tượng mô tả ở Mục 3.
+            </p>
+
+            <div class="code-tabs" id="pnr-tour">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🧩 Sa bàn Place & Route</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__controls">
+                    <div class="mux-demo__inputs" id="pnr-palette"></div>
+                    <div class="mux-demo__inputs">
+                      <button class="mux-input-btn" type="button" id="pnr-auto-btn">▶ Auto-place</button>
+                      <button class="mux-input-btn" type="button" id="pnr-reset-btn">⏹ Reset thủ công</button>
+                    </div>
+                  </div>
+                  <div id="pnr-grid" style="margin-top: 14px"></div>
+                  <div class="mux-demo__output" id="pnr-result" style="margin-top: 14px">
+                    Tổng chiều dài dây: — · Độ trễ ước lượng: — · f_max ước lượng: —
+                  </div>
+                  <p class="mux-demo__hint">
+                    Bấm 1 khối ở hàng trên rồi bấm 1 ô lưới để đặt (hoặc đổi chỗ khối đã đặt). Bấm
+                    <strong>Auto-place</strong> nhiều lần liên tiếp — chú ý con số tổng chiều dài dây/f_max
+                    <strong>đổi mỗi lần</strong> dù cùng 1 thuật toán, đúng lý do STA mini ở Mục 3.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: f_max ước lượng trong demo tính thế nào?</div>
+              <div class="callout__content">
+                Demo dùng mô hình cực đơn giản hoá — giống tinh thần "STA mini" ở
+                <a href="vlsi-arithmetic">Bài 6</a>: độ trễ = tổng chiều dài dây (khoảng cách Manhattan giữa các khối có
+                liên kết) × 0,15ns/ô, rồi <span>$f_{max} = 1000 / \text{độ trễ (ns)}$</span> (đơn vị MHz). Đây KHÔNG
+                phải mô hình routing/congestion thật (nextpnr tính từ switch matrix thật, xem
+                <a href="vlsi-fpga-architecture">Bài 9 Mục 4</a>) — chỉ đủ để thấy đúng <strong>chiều hướng</strong>:
+                dây càng dài, càng chậm, càng ngẫu nhiên giữa các lần chạy.
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <p>Bài này khép lại chặng đường từ RTL tới silicon thật:</p>
+            <ul>
+              <li>
+                ✅ <strong>Synthesis</strong>: RTL → lưới LUT, gồm elaboration, tối giản Boolean (Karnaugh tự động),
+                technology mapping.
+              </li>
+              <li>
+                ✅ <strong>SDC</strong>: bắt buộc khai báo <code>create_clock</code> — thiếu nó, "timing MET" là báo cáo
+                vô nghĩa, không phải bằng chứng mạch đủ nhanh.
+              </li>
+              <li>
+                ✅ <strong>Placement & Routing</strong>: bài toán NP-hard, giải bằng heuristic có seed ngẫu nhiên — cùng
+                netlist, 2 lần chạy có thể cho 2 kết quả <span>$f_{max}$</span> khác nhau.
+              </li>
+              <li>
+                ✅ <strong>WNS/TNS</strong>: WNS = slack xấu nhất (1 con số), TNS = tổng mọi slack âm (mức độ nghiêm
+                trọng tổng thể) — lần theo path WNS trước để quyết định sửa RTL hay sửa constraint.
+              </li>
+              <li>
+                ✅ <strong>Toolchain mã nguồn mở</strong>: Yosys (synthesis) → nextpnr (P&R) → icepack (bitstream) →
+                openFPGALoader (nạp board thật) — không cần license thương mại để đi hết flow.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao chạy lại đúng 1 netlist qua P&R 2 lần có thể cho 2 kết quả f_max khác nhau?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tool P&R không sửa hay tối ưu lại RTL/logic — nó chỉ quyết định vị trí vật lý và đường dây cho netlist ĐÃ CÓ SẴN từ synthesis, không đổi ý nghĩa mạch.'
+                    )
+                  "
+                >
+                  A. Vì tool tự động thay đổi logic thiết kế mỗi lần chạy để thử tối ưu
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Placement/routing là bài toán NP-hard — không có thuật toán duyệt hết mọi khả năng trong thời gian hợp lý, nên tool dùng heuristic khởi tạo từ 1 điểm ngẫu nhiên, cho kết quả (và độ trễ dây dẫn) khác nhau mỗi lần chạy dù netlist giống hệt.'
+                    )
+                  "
+                >
+                  B. Vì placement/routing là bài toán NP-hard, tool dùng heuristic có yếu tố ngẫu nhiên để tìm lời giải
+                  đủ tốt trong thời gian hợp lý
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Nhiệt độ phòng có thể ảnh hưởng nhỏ tới tốc độ transistor thật, nhưng đây không phải nguyên nhân khiến 2 lần CHẠY TOOL (không phải 2 lần đo trên silicon thật) cho ra 2 file bitstream khác nhau.'
+                    )
+                  "
+                >
+                  C. Vì nhiệt độ phòng lúc chạy tool ảnh hưởng tới kết quả
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Nếu quên khai báo <code>create_clock</code> trong file SDC, hậu quả gì xảy ra?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ngược lại — thiếu create_clock thường khiến STA báo cáo &quot;không có vi phạm&quot; (trông như tốt), chứ không phải báo lỗi rõ ràng dễ nhận ra.'
+                    )
+                  "
+                >
+                  A. Tool sẽ báo lỗi biên dịch rõ ràng ngay lập tức, không cho tiếp tục
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Không có mục tiêu tần số nào để so sánh, STA không thể tính slack có ý nghĩa — báo cáo &quot;không vi phạm&quot; trong tình huống này chỉ vì không có gì được kiểm tra, không phải bằng chứng mạch đủ nhanh cho tần số bạn định dùng.'
+                    )
+                  "
+                >
+                  B. STA không có mục tiêu để so sánh, có thể báo cáo "không vi phạm" dù thực tế chưa hề được kiểm tra
+                  timing
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'SDC chỉ ảnh hưởng bước STA/P&R, không tác động tới kết quả LOGIC (chức năng) của mạch — mạch vẫn tính đúng chức năng, chỉ là không ai xác minh nó có ĐỦ NHANH hay không.'
+                    )
+                  "
+                >
+                  C. Mạch sẽ tính sai kết quả logic ngay cả khi mô phỏng chức năng
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                WNS (Worst Negative Slack) và TNS (Total Negative Slack) khác nhau ở điểm nào?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! WNS chỉ cho biết điểm tệ nhất tệ tới đâu (1 con số), còn TNS cộng dồn MỌI slack âm — 2 thiết kế có thể có cùng WNS nhưng TNS khác xa nhau nếu 1 thiết kế chỉ vi phạm 1 path còn thiết kế kia vi phạm hàng trăm path.'
+                    )
+                  "
+                >
+                  A. WNS là slack âm nhất (1 con số duy nhất), TNS là tổng TẤT CẢ slack âm cộng lại — cho biết mức độ
+                  nghiêm trọng tổng thể
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cả 2 chỉ số đều được TÍNH TOÁN từ báo cáo timing — không phải WNS đo trước P&R còn TNS đo sau. Khác biệt nằm ở CÁCH TỔNG HỢP dữ liệu (min vs sum), không phải thời điểm đo.'
+                    )
+                  "
+                >
+                  B. WNS đo trước khi chạy P&R, TNS đo sau khi chạy P&R
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cả WNS và TNS đều là chỉ số THỜI GIAN (đơn vị ns), không liên quan gì đến diện tích chip.'
+                    )
+                  "
+                >
+                  C. WNS đo bằng nano-giây, TNS đo bằng diện tích chip
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Trong toolchain mã nguồn mở Yosys → nextpnr → icepack, bước nào chịu trách nhiệm placement & routing?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Yosys làm SYNTHESIS (RTL -> lưới LUT generic) — nó chưa biết LUT nào nằm ở đâu trên chip, đó là việc của bước sau.'
+                    )
+                  "
+                >
+                  A. Yosys
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! nextpnr nhận netlist JSON từ Yosys, đọc ràng buộc SDC + PCF (gán chân board), rồi thực hiện placement (đặt LUT/CLB vào vị trí thật) và routing (nối dây thật qua mạng routing) — xuất ra file .asc mô tả cấu hình chip.'
+                    )
+                  "
+                >
+                  B. nextpnr
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'icepack chỉ ĐÓNG GÓI file .asc (đã có đầy đủ placement/routing từ nextpnr) thành file bitstream nhị phân .bin để nạp vào chip — không tự làm placement/routing.'
+                    )
+                  "
+                >
+                  C. icepack
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File SystemVerilog gồm <code>rca4</code> (bộ cộng dùng xuyên suốt Bài 6/8/9) kèm testbench, cộng ví dụ
+                file SDC ❌ thiếu constraint vs ✅ đủ constraint dạng comment tham khảo, và toàn bộ 4 lệnh flow mã nguồn
+                mở để tự chạy thật:
+              </p>
+              <a
+                href="fpga_flow_example.sv"
+                download
+                class="btn-facebook"
+                style="background: #65a30d; text-decoration: none"
+              >
+                Tải về fpga_flow_example.sv
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Logic_synthesis" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Logic synthesis
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Place_and_route" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Place and route
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Static_timing_analysis"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Static timing analysis (WNS/TNS)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://github.com/YosysHQ/yosys" target="_blank" rel="noopener noreferrer">
+                    GitHub — YosysHQ/yosys (synthesis mã nguồn mở)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://github.com/YosysHQ/nextpnr" target="_blank" rel="noopener noreferrer">
+                    GitHub — YosysHQ/nextpnr (place & route mã nguồn mở)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://github.com/trabucayre/openFPGALoader" target="_blank" rel="noopener noreferrer">
+                    GitHub — openFPGALoader (nạp bitstream vào board thật)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="vlsi-fpga-architecture" class="article-related__link article-related__link--prev">
+                  Bài 9: Kiến trúc FPGA: LUT, CLB, BRAM, DSP
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 11: SystemC & Mô hình hoá mức hệ thống (TLM) — sắp ra mắt
+                </span>
+                <a href="vlsi-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Thiết Kế Vi Mạch Số & FPGA
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      // ---- Demo: Sa bàn Place & Route ----
+      const NODES = ['A', 'B', 'C', 'D', 'E', 'F'];
+      const EDGES = [
+        ['A', 'C'],
+        ['B', 'C'],
+        ['C', 'D'],
+        ['C', 'E'],
+        ['D', 'F'],
+        ['E', 'F'],
+      ];
+      const COLS = 5;
+      const ROWS = 4;
+      const NS_PER_CELL = 0.15;
+
+      let pos = {}; // { 'A': {c,r}, ... }
+      let selectedNode = null;
+
+      function manhattan(p1, p2) {
+        return Math.abs(p1.c - p2.c) + Math.abs(p1.r - p2.r);
+      }
+
+      function wireLength() {
+        let total = 0;
+        for (const [a, b] of EDGES) {
+          if (pos[a] && pos[b]) total += manhattan(pos[a], pos[b]);
+        }
+        return total;
+      }
+
+      function neighborsOf(n) {
+        const s = new Set();
+        for (const [a, b] of EDGES) {
+          if (a === n) s.add(b);
+          if (b === n) s.add(a);
+        }
+        return [...s];
+      }
+
+      function shuffle(arr) {
+        const a = arr.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+      }
+
+      function allCells() {
+        const cells = [];
+        for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) cells.push({ c, r });
+        return cells;
+      }
+
+      function occupiedKeys() {
+        return new Set(Object.values(pos).map((p) => p.c + ',' + p.r));
+      }
+
+      function autoPlace() {
+        const order = shuffle(NODES);
+        const newPos = {};
+        const occ = new Set();
+        for (const n of order) {
+          const placedNb = neighborsOf(n).filter((nb) => newPos[nb]);
+          let best = null;
+          let bestScore = Infinity;
+          for (const cell of allCells()) {
+            const key = cell.c + ',' + cell.r;
+            if (occ.has(key)) continue;
+            let score;
+            if (placedNb.length > 0) {
+              score = placedNb.reduce((s, nb) => s + manhattan(cell, newPos[nb]), 0);
+            } else {
+              score = manhattan(cell, { c: (COLS - 1) / 2, r: (ROWS - 1) / 2 });
+            }
+            if (score < bestScore) {
+              bestScore = score;
+              best = cell;
+            }
+          }
+          newPos[n] = best;
+          occ.add(best.c + ',' + best.r);
+        }
+        pos = newPos;
+      }
+
+      function resetManual() {
+        pos = {};
+        selectedNode = null;
+        render();
+      }
+
+      function updateResult() {
+        const wl = wireLength();
+        const complete = NODES.every((n) => pos[n]);
+        const resultEl = document.getElementById('pnr-result');
+        if (!complete) {
+          resultEl.textContent = `Đã đặt ${Object.keys(pos).length}/6 khối — đặt đủ để xem kết quả.`;
+          return;
+        }
+        const delay = wl * NS_PER_CELL;
+        const fmax = delay > 0 ? (1000 / delay).toFixed(0) : '∞';
+        resultEl.innerHTML = `Tổng chiều dài dây: <strong>${wl}</strong> ô · Độ trễ ước lượng: <strong>${delay.toFixed(2)}ns</strong> · f_max ước lượng: <strong>${fmax} MHz</strong>`;
+      }
+
+      function renderPalette() {
+        const el = document.getElementById('pnr-palette');
+        el.innerHTML = NODES.map((n) => {
+          const placed = !!pos[n];
+          const active = selectedNode === n ? 'is-active' : '';
+          return `<button class="mux-style-btn ${active}" type="button" data-node="${n}" style="opacity:${placed ? 0.5 : 1}">${n}${placed ? ' ✓' : ''}</button>`;
+        }).join('');
+        el.querySelectorAll('[data-node]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            selectedNode = btn.getAttribute('data-node');
+            render();
+          });
+        });
+      }
+
+      function renderGrid() {
+        const el = document.getElementById('pnr-grid');
+        const CELL = 56;
+        const W = COLS * CELL;
+        const H = ROWS * CELL;
+        let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="border:1px solid #ddd;background:#fafafa;border-radius:6px;">`;
+
+        // Dây nối (vẽ trước để nằm dưới khối)
+        for (const [a, b] of EDGES) {
+          if (pos[a] && pos[b]) {
+            const x1 = pos[a].c * CELL + CELL / 2;
+            const y1 = pos[a].r * CELL + CELL / 2;
+            const x2 = pos[b].c * CELL + CELL / 2;
+            const y2 = pos[b].r * CELL + CELL / 2;
+            svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#94a3b8" stroke-width="2" />`;
+          }
+        }
+
+        // Lưới ô
+        const occ = occupiedKeys();
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const x = c * CELL;
+            const y = r * CELL;
+            const key = c + ',' + r;
+            const empty = !occ.has(key);
+            svg += `<rect data-cell="${key}" x="${x + 3}" y="${y + 3}" width="${CELL - 6}" height="${CELL - 6}" rx="6" fill="${empty ? '#fff' : 'none'}" stroke="#cbd5e1" stroke-width="1" style="cursor:${empty ? 'pointer' : 'default'}" />`;
+          }
+        }
+
+        // Khối đã đặt
+        for (const n of NODES) {
+          if (!pos[n]) continue;
+          const x = pos[n].c * CELL + CELL / 2;
+          const y = pos[n].r * CELL + CELL / 2;
+          const isSel = selectedNode === n;
+          svg += `<circle data-node-chip="${n}" cx="${x}" cy="${y}" r="18" fill="${isSel ? '#65a30d' : '#84cc16'}" stroke="#4d7c0f" stroke-width="2" style="cursor:pointer" />`;
+          svg += `<text x="${x}" y="${y + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" style="pointer-events:none">${n}</text>`;
+        }
+
+        svg += '</svg>';
+        el.innerHTML = svg;
+
+        el.querySelectorAll('[data-cell]').forEach((rectEl) => {
+          rectEl.addEventListener('click', () => {
+            if (!selectedNode) return;
+            const [c, r] = rectEl.getAttribute('data-cell').split(',').map(Number);
+            pos[selectedNode] = { c, r };
+            selectedNode = null;
+            render();
+          });
+        });
+        el.querySelectorAll('[data-node-chip]').forEach((chipEl) => {
+          chipEl.addEventListener('click', () => {
+            selectedNode = chipEl.getAttribute('data-node-chip');
+            render();
+          });
+        });
+      }
+
+      function render() {
+        renderPalette();
+        renderGrid();
+        updateResult();
+      }
+
+      function initPnrDemo() {
+        if (!document.getElementById('pnr-grid')) return;
+        document.getElementById('pnr-auto-btn').addEventListener('click', () => {
+          autoPlace();
+          selectedNode = null;
+          render();
+        });
+        document.getElementById('pnr-reset-btn').addEventListener('click', resetManual);
+        render();
+      }
+
+      initPnrDemo();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
