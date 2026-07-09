@@ -1,0 +1,1248 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 8: Timing & Phân tích thời gian tĩnh (STA) — js-tools</title>
+    <meta
+      name="description"
+      content="Bốn tham số timing của đường dữ liệu giữa 2 flip-flop (clock-to-Q, delay tổ hợp, setup, hold), công thức f_max, critical path và slack, vì sao giảm tần số không cứu được hold violation, pipeline cắt critical path — kèm STA Workbench tương tác với slider độ trễ từng cổng."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/vlsi/vlsi-timing-sta" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--vlsi">
+        <div class="container">
+          <a href="vlsi-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--vlsi">Bài 8 · Thiết Kế Vi Mạch Số & FPGA</div>
+          <h1 class="article-hero__title">Timing & Phân tích thời gian tĩnh (STA)</h1>
+          <div class="article-hero__meta">8 tháng 7, 2026 · 28 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Con chip sai ở 200 MHz — và vẫn sai kể cả khi hạ xuống 20 MHz</h2>
+            <p>
+              Mọi kỹ sư đều hiểu chuyện này: đẩy tần số clock lên quá cao, dữ liệu không kịp chạy hết đường logic tổ hợp
+              trước cạnh clock kế tiếp, mạch tính sai — hạ tần số xuống là hết. Nhưng có một họ lỗi timing thứ hai
+              <strong>ngược đời hơn nhiều</strong>: mạch sai ở 200 MHz, bạn hạ xuống 100 MHz — vẫn sai. Hạ tiếp xuống 20
+              MHz — <em>vẫn sai y nguyên</em>. Đổi board, đổi nhiệt độ, lỗi lúc có lúc không. Nếu chưa học bài này, phản
+              xạ "giảm tần số cho an toàn" sẽ khiến bạn mắc kẹt hàng tuần với một con bug mà về mặt toán học
+              <strong>không phụ thuộc gì vào tần số</strong>.
+            </p>
+            <p>
+              Bài này trang bị bộ công cụ suy luận đứng sau mọi con số "chip chạy tối đa X MHz" trên datasheet: 4 tham
+              số timing của một đường dữ liệu giữa 2 flip-flop, công thức tính chu kỳ clock tối thiểu, khái niệm
+              <strong>critical path</strong> và <strong>slack</strong> mà công cụ
+              <abbr title="Static Timing Analysis">STA</abbr> báo cáo, vì sao lỗi hold "miễn nhiễm" với tần số, và
+              <strong>pipeline</strong> — kỹ thuật cắt đôi critical path để tăng tần số, trả giá bằng độ trễ. Cuối bài
+              là STA Workbench: kéo slider độ trễ từng loại cổng trên chính bộ cộng ripple-carry của
+              <a href="vlsi-arithmetic">Bài 6</a> và xem critical path đổi màu đỏ theo thời gian thực.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong>
+                <a href="vlsi-arithmetic">Bài 6 (Số học phần cứng)</a> — bài này phân tích timing trên chính bộ cộng
+                <code>rca4</code> đã xây ở đó, và mô hình "số tầng cổng" của Bài 6 chính là phiên bản đơn giản hoá của
+                STA; <a href="vlsi-sequential-flops">Bài 3 (SystemVerilog tuần tự)</a> — mọi đường timing đều bắt đầu và
+                kết thúc ở flip-flop <code>always_ff</code>;
+                <a href="/blog/electronics/electronics-sequential-storage"
+                  >Series Điện Tử Bài 13 (Mạch tuần tự &amp; setup/hold)</a
+                >
+                — bài này giả định bạn đã biết setup/hold time là gì ở mức vật lý.
+                <br /><strong>Tài nguyên ngoài:</strong>
+                <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">HDLBits</a>,
+                <a href="https://www.chipverify.com" target="_blank" rel="noopener noreferrer">ChipVerify</a>,
+                <a href="https://www.edaplayground.com" target="_blank" rel="noopener noreferrer">EDA Playground</a>.
+              </div>
+            </div>
+
+            <h2>1. Bốn tham số timing của một đường dữ liệu</h2>
+            <p>
+              Trong mạch đồng bộ, mọi đường dữ liệu (timing path) đều có cùng một cấu trúc: xuất phát từ một flip-flop
+              nguồn, chạy qua một đám mây logic tổ hợp, và kết thúc ở chân D của một flip-flop đích. Toàn bộ phân tích
+              timing xoay quanh 4 con số trên đường đi đó:
+            </p>
+            <ul>
+              <li>
+                <span>$t_{clk \to q}$</span> (<strong>clock-to-Q</strong>): thời gian từ cạnh clock đến khi ngõ ra Q của
+                flip-flop nguồn thực sự đổi giá trị — flip-flop không phản ứng tức thời.
+              </li>
+              <li>
+                <span>$t_{comb}$</span> (<strong>propagation delay tổ hợp</strong>): thời gian tín hiệu lan truyền qua
+                đám mây cổng logic giữa 2 flip-flop — mỗi cổng XOR/AND/OR góp thêm một phần trễ.
+              </li>
+              <li>
+                <span>$t_{setup}$</span>: dữ liệu phải <strong>ổn định TRƯỚC</strong> cạnh clock của flip-flop đích ít
+                nhất khoảng này, nếu không flip-flop có thể lấy mẫu sai (đã học vì sao ở
+                <a href="/blog/electronics/electronics-sequential-storage">Series Điện Tử Bài 13</a>).
+              </li>
+              <li>
+                <span>$t_{hold}$</span>: dữ liệu phải <strong>giữ nguyên SAU</strong> cạnh clock thêm ít nhất khoảng này
+                — cạnh clock không "chụp ảnh" trong 0 giây, nó cần dữ liệu đứng yên quanh thời điểm lấy mẫu.
+              </li>
+            </ul>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">two_ff_path.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">// Đường timing tối giản: FF nguồn → 2 cổng logic → FF đích.
+// Chạy được trên VeriLite (demo Bài 3) — nhưng lưu ý: VeriLite mô phỏng
+// CHỨC NĂNG (0/1 đúng hay sai), hoàn toàn không mô phỏng ĐỘ TRỄ thật.
+// Timing là chuyện của STA, không phải của RTL simulator — đó là lý do
+// bài này cần một workbench riêng thay vì tái dùng waveform viewer.
+module two_ff_path (
+  input  logic clk,
+  input  logic d_in,
+  output logic q_out
+);
+  logic q1;              // ngõ ra FF nguồn
+  logic comb;            // ngõ ra đám mây tổ hợp
+
+  assign comb = ~q1 ^ d_in;   // 2 tầng cổng: NOT rồi XOR
+
+  always_ff @(posedge clk) begin
+    q1    <= d_in;   // FF nguồn
+    q_out <= comb;   // FF đích — chân D phải thoả setup/hold quanh cạnh clock
+  end
+endmodule
+</code></pre>
+            </div>
+
+            <p>
+              Biểu đồ timing dưới đây đặt cả 4 tham số lên cùng một trục thời gian, giữa 2 cạnh clock liên tiếp — đọc từ
+              trái sang phải chính là hành trình của 1 bit dữ liệu:
+            </p>
+
+            <div class="mux-demo__netlist" style="margin: 20px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                height="300"
+                style="border: 1px solid #ddd; background: #fafafa; border-radius: 6px"
+              >
+                <defs>
+                  <marker id="sta-tdarrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L6,3 z" fill="#475569" />
+                  </marker>
+                </defs>
+                <!-- truc CLK -->
+                <text x="14" y="52" font-size="12" font-weight="700" fill="#111827">CLK</text>
+                <path
+                  d="M60,70 L60,34 L200,34 L200,70 L480,70 L480,34 L620,34 L620,70 L700,70"
+                  stroke="#334155"
+                  stroke-width="2"
+                  fill="none"
+                />
+                <text x="60" y="88" text-anchor="middle" font-size="11" fill="#475569">cạnh 1</text>
+                <text x="480" y="88" text-anchor="middle" font-size="11" fill="#475569">cạnh 2</text>
+
+                <!-- Q cua FF nguon -->
+                <text x="14" y="132" font-size="12" font-weight="700" fill="#65a30d">Q (FF nguồn)</text>
+                <path d="M60,150 L110,150 L118,114 L700,114" stroke="#65a30d" stroke-width="2" fill="none" />
+                <path d="M60,166 L110,166 L60,166" stroke="none" fill="none" />
+                <path d="M62,150 L110,150" stroke="#65a30d" stroke-width="2" fill="none" />
+                <line x1="60" y1="100" x2="60" y2="180" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3" />
+                <path d="M60,172 L110,172" stroke="#475569" stroke-width="1.2" marker-end="url(#sta-tdarrow)" />
+                <text x="85" y="192" text-anchor="middle" font-size="11" fill="#334155">t_clk→q</text>
+
+                <!-- D cua FF dich -->
+                <text x="14" y="218" font-size="12" font-weight="700" fill="#0284c7">D (FF đích)</text>
+                <path d="M60,236 L300,236 L308,202 L700,202" stroke="#0284c7" stroke-width="2" fill="none" />
+                <path d="M110,244 L304,244" stroke="#475569" stroke-width="1.2" marker-end="url(#sta-tdarrow)" />
+                <text x="207" y="262" text-anchor="middle" font-size="11" fill="#334155">t_comb</text>
+
+                <!-- cua so setup/hold quanh canh 2 -->
+                <line x1="480" y1="100" x2="480" y2="280" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3" />
+                <rect x="420" y="196" width="60" height="14" fill="#fef3c7" stroke="#b45309" stroke-width="1" />
+                <rect x="480" y="196" width="42" height="14" fill="#fee2e2" stroke="#dc2626" stroke-width="1" />
+                <text x="450" y="228" text-anchor="middle" font-size="11" fill="#b45309">t_setup</text>
+                <text x="501" y="228" text-anchor="middle" font-size="11" fill="#dc2626">t_hold</text>
+                <text x="360" y="285" font-size="11" fill="#64748b">
+                  D phải ổn định suốt vùng vàng (trước cạnh) + vùng đỏ (sau cạnh)
+                </text>
+              </svg>
+            </div>
+            <p class="mux-demo__hint" style="margin-bottom: 20px">
+              Cạnh clock 1 "bắn" dữ liệu ra khỏi FF nguồn (mất <span>$t_{clk \to q}$</span>), dữ liệu chạy qua logic tổ
+              hợp (mất <span>$t_{comb}$</span>) rồi phải đến chân D của FF đích <strong>sớm hơn</strong> cạnh clock 2 ít
+              nhất <span>$t_{setup}$</span> — và đứng yên thêm <span>$t_{hold}$</span> sau cạnh đó.
+            </p>
+
+            <h2>2. Chu kỳ tối thiểu và <span>$f_{max}$</span>: một bất đẳng thức quyết định tất cả</h2>
+            <p>
+              Ghép hành trình trên thành điều kiện toán học: dữ liệu xuất phát tại cạnh 1, đi hết
+              <span>$t_{clk \to q} + t_{comb}$</span>, và phải cán đích trước thời điểm
+              <span>$T_{clk} - t_{setup}$</span> (cạnh 2 trừ đi khoảng setup). Đường <strong>chậm nhất</strong> trong
+              toàn mạch (ký hiệu <span>$t_{comb,max}$</span>) quyết định chu kỳ clock ngắn nhất mà mạch còn chạy đúng:
+            </p>
+            <p>$$T_{min} = t_{clk \to q} + t_{comb,max} + t_{setup}$$</p>
+            <p>
+              Nghĩa là: chu kỳ clock không được ngắn hơn tổng "thời gian FF nguồn phản ứng + thời gian đường logic chậm
+              nhất + khoảng an toàn setup của FF đích". Từ đó suy ra tần số tối đa:
+            </p>
+            <p>$$f_{max} = \frac{1}{T_{min}} = \frac{1}{t_{clk \to q} + t_{comb,max} + t_{setup}}$$</p>
+            <p>
+              Con số <span>$f_{max}$</span> trên datasheet của mọi con chip chính là nghịch đảo của tổng 3 độ trễ này
+              trên đường chậm nhất. Thử với số cụ thể: <span>$t_{clk \to q} = 0{,}6$</span> ns, đường tổ hợp chậm nhất
+              <span>$t_{comb,max} = 3{,}0$</span> ns, <span>$t_{setup} = 0{,}4$</span> ns:
+            </p>
+            <p>$$T_{min} = 0{,}6 + 3{,}0 + 0{,}4 = 4{,}0 \text{ ns}$$</p>
+            <p>$$f_{max} = \frac{1}{4{,}0 \text{ ns}} = 250 \text{ MHz}$$</p>
+            <p>
+              Tức là mạch này chạy đúng ở mọi tần số từ 0 đến 250 MHz — đẩy lên 260 MHz, chu kỳ chỉ còn ~3,85 ns, dữ
+              liệu trên đường chậm nhất đến trễ 0,15 ns so với hạn chót setup, và flip-flop đích bắt đầu lấy mẫu giá trị
+              rác.
+            </p>
+
+            <h2>3. Critical path & slack: STA quét mọi đường mà không cần mô phỏng</h2>
+            <p>
+              <strong>Critical path</strong> (đường tới hạn) là đường có tổng độ trễ lớn nhất trong mạch — chính là
+              <span>$t_{comb,max}$</span> trong công thức trên. Điều thú vị:
+              <abbr title="Static Timing Analysis">STA</abbr> tìm ra nó mà
+              <strong>không chạy mô phỏng nào cả</strong> ("tĩnh" nghĩa là vậy). Công cụ STA xem mạch như một đồ thị có
+              hướng: mỗi cổng là một nút mang trọng số độ trễ, và bài toán trở thành
+              <strong>tìm đường đi dài nhất</strong> giữa 2 flip-flop — cùng họ với các bài toán đường đi trên đồ thị ở
+              <a href="/blog/algo/algo-pathfinding-dijkstra-astar">Series DSA (Dijkstra/A*)</a>, chỉ khác là tìm max
+              thay vì min. Nhờ vậy STA phủ được <strong>100% mọi đường</strong> — kể cả những đường mà cả nghìn tỉ
+              vector mô phỏng chưa chắc kích hoạt tới.
+            </p>
+            <p>
+              Áp dụng lên bộ cộng <code>rca4</code> quen thuộc của <a href="vlsi-arithmetic">Bài 6</a> — giờ không đếm
+              "số tầng cổng" trừu tượng nữa mà gán độ trễ nanô-giây thật cho từng loại cổng, đúng như STA đọc từ thư
+              viện standard cell (liberty timing) mà Bài 6 đã hứa hẹn:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">rca4.sv — chuỗi carry là ứng viên critical path</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">// Trích từ Bài 6 — mỗi dòng carry phải CHỜ dòng trước nó:
+assign c1 = (a0 & b0) | (cin & (a0 ^ b0));   // chờ cin
+assign c2 = (a1 & b1) | (c1 & (a1 ^ b1));    // chờ c1
+assign c3 = (a2 & b2) | (c2 & (a2 ^ b2));    // chờ c2
+assign cout = (a3 & b3) | (c3 & (a3 ^ b3));  // chờ c3 — cuối chuỗi gợn sóng
+assign s3 = a3 ^ b3 ^ c3;                     // sum bit cuối cũng chờ c3
+</code></pre>
+            </div>
+
+            <p>
+              Với bộ độ trễ mẫu (XOR 0,9 ns · AND 0,5 ns · OR 0,5 ns · <span>$t_{clk \to q}$</span> 0,6 ns), thời điểm
+              tín hiệu <em>đến nơi</em> (arrival time, tính từ cạnh clock) của từng ngõ ra như sau — các con số này do
+              đúng mô hình trong STA Workbench ở Mục 6 tính ra, bạn có thể tự kiểm chứng:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Ngõ ra</th>
+                  <th>Đường đi</th>
+                  <th>Arrival (ns)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>s0</code></td>
+                  <td>reg → XOR → XOR</td>
+                  <td>2,4</td>
+                </tr>
+                <tr>
+                  <td><code>s1</code></td>
+                  <td>reg → (chuỗi carry c1) → XOR</td>
+                  <td>3,4</td>
+                </tr>
+                <tr>
+                  <td><code>s2</code></td>
+                  <td>reg → (c1 → c2) → XOR</td>
+                  <td>4,4</td>
+                </tr>
+                <tr>
+                  <td><code>s3</code></td>
+                  <td>reg → (c1 → c2 → c3) → XOR</td>
+                  <td>5,4</td>
+                </tr>
+                <tr>
+                  <td><code>cout</code> ← <strong>critical path</strong></td>
+                  <td>reg → c1 → c2 → c3 → c4 (trọn chuỗi gợn sóng)</td>
+                  <td><strong>5,5</strong></td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              <strong>Slack</strong> của một đường là khoảng "dư dả" so với hạn chót: chu kỳ clock trừ đi tổng thời gian
+              đường đó cần.
+            </p>
+            <p>$$slack = T_{clk} - \left( t_{arrival} + t_{setup} \right)$$</p>
+            <p>
+              Slack <strong>dương</strong> = đường đó về đích sớm, còn dư thời gian; slack <strong>âm</strong> = vi phạm
+              timing, mạch sẽ tính sai ở tần số này. Ví dụ với <span>$T_{clk} = 6{,}5$</span> ns: đường
+              <code>cout</code> có slack <span>$= 6{,}5 - (5{,}5 + 0{,}4) = +0{,}6$</span> ns — đạt. Siết xuống
+              <span>$T_{clk} = 5{,}0$</span> ns: slack <span>$= 5{,}0 - 5{,}9 = -0{,}9$</span> ns — vi phạm, và báo cáo
+              STA sẽ in đúng dòng đường <code>cout</code> này kèm con số âm đó để bạn biết phải sửa ở đâu. Toàn mạch đạt
+              timing khi và chỉ khi <strong>đường xấu nhất (worst slack) không âm</strong>.
+            </p>
+
+            <h2>4. Hold violation: vì sao giảm tần số không cứu được</h2>
+            <p>
+              Điều kiện setup ở Mục 2 so dữ liệu với <strong>cạnh clock kế tiếp</strong> — nên nới
+              <span>$T_{clk}$</span> ra là thoát. Điều kiện hold hoàn toàn khác: nó so dữ liệu <em>mới</em> (vừa được
+              cạnh clock hiện tại bắn ra từ FF nguồn) với <strong>chính cạnh clock đó</strong> tại FF đích. Dữ liệu mới
+              chạy qua đường <strong>ngắn nhất</strong> không được đến đích quá sớm, nếu không nó "đè" lên giá trị cũ
+              ngay trong lúc FF đích còn đang lấy mẫu:
+            </p>
+            <p>$$t_{clk \to q} + t_{comb,min} \ge t_{hold}$$</p>
+            <p>
+              Hãy nhìn kỹ bất đẳng thức này: <strong>không có <span>$T_{clk}$</span> ở bất kỳ đâu</strong>. Cả 3 đại
+              lượng đều là hằng số vật lý của mạch — giảm tần số, tăng tần số, chờ chip nguội đi... đều không đổi được
+              vế nào. Đây chính là lời giải cho bí ẩn ở phần Mở đầu.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: "Mạch lỗi timing thì cứ giảm tần số là xong"</div>
+              <div class="callout__content">
+                <p>
+                  Phản xạ này chỉ đúng với lỗi <strong>setup</strong>. Ví dụ một đường bypass gần như nối thẳng 2
+                  flip-flop: <span>$t_{clk \to q, min} = 0{,}25$</span> ns, <span>$t_{comb,min} \approx 0$</span>, trong
+                  khi <span>$t_{hold} = 0{,}30$</span> ns. Kiểm tra: <span>$0{,}25 + 0 = 0{,}25 &lt; 0{,}30$</span> — vi
+                  phạm hold, thiếu 0,05 ns, <strong>ở mọi tần số từ 1 Hz đến 1 GHz</strong>.
+                </p>
+                <div class="code-window" style="margin-top: 12px">
+                  <div class="code-header">
+                    <span class="code-filename">hold_fix.txt — việc của công cụ P&amp;R, không phải của code RTL</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-verilog">// ❌ SAI: hạ tần số clock từ 200 MHz xuống 20 MHz
+//    T_clk tăng 10 lần nhưng KHÔNG xuất hiện trong bất đẳng thức hold
+//    → 0,25 ns vẫn < 0,30 ns → vẫn vi phạm y nguyên.
+//
+// ✅ ĐÚNG: chèn thêm độ trễ vào đường NGẮN đó (công cụ Place & Route
+//    tự làm khi được báo vi phạm hold — chỉ minh hoạ khái niệm, đây
+//    không phải cú pháp SystemVerilog và ngoài subset VeriLite):
+//
+//    FF1.Q ──▶ BUF(0,15 ns) ──▶ BUF(0,15 ns) ──▶ FF2.D
+//
+//    t_clk→q + t_comb,min = 0,25 + 0,30 = 0,55 ns ≥ 0,30 ns → đạt.
+//    Chuỗi buffer làm đường ngắn CHẬM ĐI — vô hại với setup miễn là
+//    đường đó còn cách xa critical path.
+</code></pre>
+                </div>
+                <p style="margin-top: 12px">
+                  Ghi nhớ thực chiến: lỗi setup — sửa được bằng hạ tần số (tạm thời) hoặc rút ngắn đường dài (pipeline,
+                  Mục 5); lỗi hold — <strong>bắt buộc sửa mạch</strong> (chèn delay/buffer vào đường ngắn), và phải sửa
+                  <em>trước khi</em> tape-out vì sau khi sản xuất thì không còn cách nào cứu.
+                </p>
+              </div>
+            </div>
+
+            <h2>5. Pipeline: cắt critical path, đổi độ trễ lấy tần số</h2>
+            <p>
+              Quay lại bộ cộng <code>rca4</code>: critical path 5,5 ns giới hạn <span>$f_{max}$</span> ở
+              <span>$1/(5{,}5 + 0{,}4) \approx 169{,}5$</span> MHz. Muốn nhanh hơn mà vẫn giữ kiến trúc ripple-carry?
+              <strong>Chặt đôi chuỗi carry</strong>: đặt một dàn thanh ghi ngay sau FA1 — nửa đầu (FA0, FA1) tính ở chu
+              kỳ 1, kết quả dở dang (<code>s0</code>, <code>s1</code>, <code>c2</code> và các bit cao chưa dùng) được
+              chốt lại, nửa sau (FA2, FA3) tính ở chu kỳ 2:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">rca4_pipe2.sv</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-verilog">// Bộ cộng 4-bit pipeline 2 tầng — chạy được trên VeriLite.
+// Đã kiểm chứng đủ 512 tổ hợp a/b/cin + luồng dữ liệu mới mỗi chu kỳ:
+// độ trễ đúng 2 cạnh clock, thông lượng 1 kết quả/chu kỳ.
+module rca4_pipe2 (
+  input  logic clk,
+  input  logic a0, a1, a2, a3,
+  input  logic b0, b1, b2, b3,
+  input  logic cin,
+  output logic s0, s1, s2, s3,
+  output logic cout
+);
+  // ---- Giai đoạn 1 (tổ hợp): FA0 + FA1 — nửa đầu chuỗi carry ----
+  logic s0_c, s1_c, c1, c2_c;
+  assign s0_c = a0 ^ b0 ^ cin;
+  assign c1   = (a0 & b0) | (cin & (a0 ^ b0));
+  assign s1_c = a1 ^ b1 ^ c1;
+  assign c2_c = (a1 & b1) | (c1 & (a1 ^ b1));
+
+  // ---- Dàn thanh ghi pipeline: chốt kết quả dở dang + input nửa sau ----
+  logic s0_r, s1_r, c2_r, a2_r, b2_r, a3_r, b3_r;
+  always_ff @(posedge clk) begin
+    s0_r <= s0_c;
+    s1_r <= s1_c;
+    c2_r <= c2_c;
+    a2_r <= a2;   // bit cao phải "đi cùng chuyến" để không lệch nhịp
+    b2_r <= b2;
+    a3_r <= a3;
+    b3_r <= b3;
+  end
+
+  // ---- Giai đoạn 2 (tổ hợp): FA2 + FA3 — nửa sau chuỗi carry ----
+  logic c3, s2_c, s3_c, cout_c;
+  assign s2_c   = a2_r ^ b2_r ^ c2_r;
+  assign c3     = (a2_r & b2_r) | (c2_r & (a2_r ^ b2_r));
+  assign s3_c   = a3_r ^ b3_r ^ c3;
+  assign cout_c = (a3_r & b3_r) | (c3 & (a3_r ^ b3_r));
+
+  // ---- Thanh ghi kết quả ----
+  always_ff @(posedge clk) begin
+    s0   <= s0_r;   // nửa thấp đã xong từ giai đoạn 1, chỉ "chờ cùng chuyến"
+    s1   <= s1_r;
+    s2   <= s2_c;
+    s3   <= s3_c;
+    cout <= cout_c;
+  end
+endmodule
+</code></pre>
+            </div>
+
+            <p>
+              Giờ mỗi giai đoạn chỉ còn <strong>nửa chuỗi carry</strong>: đường xấu nhất mỗi tầng là 3,5 ns (thay vì 5,5
+              ns), nên <span>$T_{min} = 3{,}5 + 0{,}4 = 3{,}9$</span> ns. So sánh trước–sau với cùng bộ độ trễ:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>rca4 (1 tầng)</th>
+                  <th>rca4_pipe2 (2 tầng)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Đường xấu nhất (arrival)</td>
+                  <td>5,5 ns</td>
+                  <td>3,5 ns / tầng</td>
+                </tr>
+                <tr>
+                  <td><span>$f_{max}$</span></td>
+                  <td>169,5 MHz</td>
+                  <td><strong>256,4 MHz (+51%)</strong></td>
+                </tr>
+                <tr>
+                  <td>Latency (1 phép cộng đơn lẻ)</td>
+                  <td>1 chu kỳ = 5,9 ns</td>
+                  <td>2 chu kỳ = 7,8 ns (<strong>chậm hơn!</strong>)</td>
+                </tr>
+                <tr>
+                  <td>Throughput (luồng dữ liệu liên tục)</td>
+                  <td>1 kết quả / 5,9 ns</td>
+                  <td><strong>1 kết quả / 3,9 ns</strong></td>
+                </tr>
+                <tr>
+                  <td>Chi phí</td>
+                  <td>—</td>
+                  <td>+7 flip-flop (diện tích, công suất)</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Bảng này gói trọn triết lý pipeline: <strong>một phép cộng đơn lẻ thực ra CHẬM ĐI</strong> (7,8 ns so với
+              5,9 ns — thêm một lần <span>$t_{clk \to q}$</span> + setup ở giữa), nhưng khi dữ liệu chảy liên tục, cả 2
+              tầng làm việc <strong>song song trên 2 phép cộng khác nhau</strong>, cho ra 1 kết quả mỗi 3,9 ns. Đây
+              chính là lý do CPU hiện đại có pipeline 14–20 tầng: đổi latency lấy tần số và thông lượng — và cũng là nội
+              dung phần mở rộng của dự án CPU RISC-V ở Bài 13–14 sắp tới.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: STA Workbench bên dưới khác gì STA công nghiệp?</div>
+              <div class="callout__content">
+                Workbench của bài dùng một mô hình độ trễ cố định cho mỗi <em>loại</em> cổng (mọi XOR bằng nhau) và chỉ
+                phân tích 1 netlist nhỏ. STA công nghiệp (PrimeTime, OpenSTA) đọc độ trễ
+                <strong>từng cell riêng lẻ</strong> phụ thuộc tải đầu ra và độ dốc tín hiệu vào (bảng tra 2 chiều trong
+                file liberty), cộng thêm độ trễ dây dẫn sau place &amp; route, phân tích đồng thời nhiều góc PVT
+                (process–voltage–temperature: chip nhanh nhất phải thoả hold, chip chậm nhất phải thoả setup), và xử lý
+                cả clock skew — độ lệch thời điểm cạnh clock đến từng flip-flop. Nguyên lý arrival time + slack thì
+                giống hệt; khối lượng chi tiết là thứ khiến STA thật cần cả một môn học riêng.
+              </div>
+            </div>
+
+            <h2>6. Thực hành: STA Workbench</h2>
+            <p>
+              Toàn bộ con số ở Mục 3 và 5 đều "sống" trong workbench này. Kéo slider độ trễ từng loại cổng — bảng
+              arrival/slack và <span>$f_{max}$</span> cập nhật tức thì, critical path tô đỏ tự động trên sơ đồ. Hai thí
+              nghiệm nên thử: <strong>(1)</strong> kéo <span>$T_{clk}$</span> nhỏ dần và quan sát slack chuyển âm từng
+              đường một — nhưng dòng "kiểm tra hold" bên dưới đứng yên tuyệt đối, đúng như Mục 4;
+              <strong>(2)</strong> kéo độ trễ XOR lên cao nhất, AND/OR xuống thấp nhất — critical path
+              <strong>nhảy từ <code>cout</code> sang <code>s3</code></strong> (chuỗi carry rẻ đi, cổng XOR cuối của sum
+              đắt lên), minh hoạ vì sao STA phải quét mọi đường thay vì tin vào trực giác "chuỗi carry luôn chậm nhất".
+            </p>
+
+            <div class="code-tabs" id="sta-tour">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">⏱ STA Workbench — rca4 giữa 2 dàn thanh ghi</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__controls">
+                    <div
+                      class="mux-demo__inputs"
+                      style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px"
+                    >
+                      <label style="font-size: 12px"
+                        >XOR: <strong id="sta-txor-val">0.9</strong> ns
+                        <input
+                          type="range"
+                          id="sta-txor"
+                          min="0.3"
+                          max="1.5"
+                          step="0.1"
+                          value="0.9"
+                          style="width: 100%"
+                      /></label>
+                      <label style="font-size: 12px"
+                        >AND: <strong id="sta-tand-val">0.5</strong> ns
+                        <input
+                          type="range"
+                          id="sta-tand"
+                          min="0.2"
+                          max="1.0"
+                          step="0.1"
+                          value="0.5"
+                          style="width: 100%"
+                      /></label>
+                      <label style="font-size: 12px"
+                        >OR: <strong id="sta-tor-val">0.5</strong> ns
+                        <input type="range" id="sta-tor" min="0.2" max="1.0" step="0.1" value="0.5" style="width: 100%"
+                      /></label>
+                      <label style="font-size: 12px"
+                        >t_clk→q: <strong id="sta-tcq-val">0.6</strong> ns
+                        <input type="range" id="sta-tcq" min="0.2" max="1.0" step="0.1" value="0.6" style="width: 100%"
+                      /></label>
+                      <label style="font-size: 12px"
+                        >t_setup: <strong id="sta-tsu-val">0.4</strong> ns
+                        <input type="range" id="sta-tsu" min="0.2" max="0.8" step="0.1" value="0.4" style="width: 100%"
+                      /></label>
+                      <label style="font-size: 12px"
+                        >T_clk: <strong id="sta-tclk-val">6.5</strong> ns
+                        <input
+                          type="range"
+                          id="sta-tclk"
+                          min="2.0"
+                          max="10.0"
+                          step="0.1"
+                          value="6.5"
+                          style="width: 100%"
+                      /></label>
+                    </div>
+                    <div class="mux-demo__inputs" style="margin-top: 10px">
+                      <button class="mux-input-btn" type="button" id="sta-pipe-btn">
+                        ➕ Thêm tầng pipeline (cắt sau FA1)
+                      </button>
+                      <button class="mux-input-btn" type="button" id="sta-reset-btn">⏹ Reset độ trễ mặc định</button>
+                    </div>
+                  </div>
+                  <div id="sta-svg" style="margin-top: 14px"></div>
+                  <div class="mux-demo__output" id="sta-fmax" style="margin-top: 10px"></div>
+                  <div id="sta-table" style="margin-top: 10px; overflow-x: auto"></div>
+                  <div class="mux-demo__output" id="sta-hold" style="margin-top: 10px; font-size: 13px"></div>
+                  <p class="mux-demo__hint" id="sta-hint">
+                    Đường đỏ trên sơ đồ = critical path hiện tại. Ô slack đỏ = đường vi phạm timing ở
+                    <span>$T_{clk}$</span> đang chọn. Dòng kiểm tra hold không bao giờ đổi khi bạn kéo
+                    <span>$T_{clk}$</span> — đó chính là bài học của Mục 4.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window">
+                  <div class="code-header">
+                    <span class="code-filename">sta-core.js — mô hình arrival time (trích)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">// Quy tắc STA duy nhất cần nhớ: arrival của 1 cổng =
+//   max(arrival mọi đầu vào) + độ trễ của chính cổng đó.
+// Với chuỗi carry của rca4 (c_next = g | (p & c)):
+let A = tcq;                        // carry-in xuất phát từ thanh ghi
+for (let i = 0; i < 4; i++) {
+  const p = tcq + txor;             // p_i = a^b — tính song song mọi bit
+  const g = tcq + tand;             // g_i = a&b
+  arrival['s' + i] = Math.max(p, A) + txor;            // sum: thêm 1 XOR
+  A = Math.max(g, Math.max(p, A) + tand) + tor;         // carry kế tiếp
+}
+arrival.cout = A;
+// T_min = max(mọi arrival) + t_setup;  f_max = 1 / T_min
+// slack(đường) = T_clk − (arrival + t_setup)  → âm là vi phạm
+</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <p>Bài này biến trực giác "mạch nhanh hay chậm" thành các bất đẳng thức kiểm chứng được:</p>
+            <ul>
+              <li>
+                ✅ Mọi đường dữ liệu đồng bộ được mô tả bởi 4 tham số: <span>$t_{clk \to q}$</span>,
+                <span>$t_{comb}$</span>, <span>$t_{setup}$</span>, <span>$t_{hold}$</span>.
+              </li>
+              <li>
+                ✅ <span>$f_{max} = 1/(t_{clk \to q} + t_{comb,max} + t_{setup})$</span> — đường chậm nhất (critical
+                path) quyết định tần số cả chip.
+              </li>
+              <li>
+                ✅ <abbr title="Static Timing Analysis">STA</abbr> tìm critical path bằng phân tích đồ thị (đường đi dài
+                nhất), phủ 100% mọi đường không cần mô phỏng; slack âm = vi phạm.
+              </li>
+              <li>
+                ✅ Hold violation <strong>không phụ thuộc chu kỳ clock</strong> — giảm tần số vô dụng, phải chèn delay
+                vào đường ngắn.
+              </li>
+              <li>
+                ✅ Pipeline cắt critical path: <span>$f_{max}$</span> và throughput tăng, đổi lấy latency và thêm
+                flip-flop.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao <span>$t_{hold}$</span> không xuất hiện trong công thức
+                <span>$f_{max} = 1/(t_{clk \to q} + t_{comb,max} + t_{setup})$</span>?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Điều kiện hold so dữ liệu mới (qua đường NGẮN nhất) với chính cạnh clock vừa phát nó — không liên quan tới cạnh clock kế tiếp, nên không chứa T_clk. Hold là ràng buộc riêng, kiểm tra độc lập với tần số.'
+                    )
+                  "
+                >
+                  A. Vì hold là ràng buộc giữa đường ngắn nhất và chính cạnh clock hiện tại — không liên quan đến chu kỳ
+                  clock, nên không ảnh hưởng tần số tối đa
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Hold không hề được cộng sẵn vào t_setup — chúng là 2 cửa sổ khác nhau (trước và sau cạnh clock) với 2 bất đẳng thức kiểm tra hoàn toàn riêng biệt.'
+                    )
+                  "
+                >
+                  B. Vì t_hold đã được tính gộp vào trong t_setup rồi
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Hold rất quan trọng trong mọi công nghệ hiện đại — thậm chí ngày càng khó thoả hơn vì t_clk→q của cell nhanh giảm dần. Nó vắng mặt trong công thức f_max vì bản chất toán học, không phải vì không đáng kể.'
+                    )
+                  "
+                >
+                  C. Vì t_hold quá nhỏ so với các tham số khác nên được bỏ qua
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Báo cáo STA cho biết đường xấu nhất có slack = −0,9 ns tại <span>$T_{clk}$</span> = 5,0 ns. Điều đó
+                nghĩa là gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Slack âm không có nghĩa là mạch chạy nhanh hơn kỳ vọng — ngược lại hoàn toàn: dữ liệu đến ĐÍCH TRỄ 0,9 ns so với hạn chót setup, mạch sẽ lấy mẫu sai ở tần số này.'
+                    )
+                  "
+                >
+                  A. Mạch chạy nhanh hơn yêu cầu 0,9 ns — có thể tăng tần số thêm
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Slack âm = dữ liệu trên đường đó về đích TRỄ 0,9 ns so với hạn chót (T_clk − t_setup). Muốn đạt timing phải nới T_clk thêm ít nhất 0,9 ns (tức T_min = 5,9 ns), hoặc rút ngắn đường logic (pipeline, đổi kiến trúc adder...).'
+                    )
+                  "
+                >
+                  B. Dữ liệu trên đường đó đến trễ 0,9 ns so với hạn chót — phải nới chu kỳ lên ít nhất 5,9 ns hoặc rút
+                  ngắn đường logic
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Slack âm ở đây là vi phạm SETUP (so với cạnh clock kế tiếp) — vi phạm hold là một kiểm tra khác, không phụ thuộc T_clk, và có báo cáo riêng.'
+                    )
+                  "
+                >
+                  C. Mạch bị vi phạm hold, cần chèn buffer vào đường đó
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Một mạch bị vi phạm hold (đường ngắn nhất: <span>$t_{clk \to q} + t_{comb,min} = 0{,}25$</span> ns &lt;
+                <span>$t_{hold} = 0{,}30$</span> ns). Cách sửa nào có tác dụng?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Không có tác dụng gì — T_clk không xuất hiện trong bất đẳng thức hold. 0,25 ns vẫn nhỏ hơn 0,30 ns dù chu kỳ là 5 ns hay 50.000 ns. Đây chính là cạm bẫy trung tâm của bài.'
+                    )
+                  "
+                >
+                  A. Giảm tần số clock xuống 10 lần
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Pipeline nhắm vào đường DÀI nhất (setup/critical path). Chèn thanh ghi không làm đường ngắn chậm đi — thậm chí có thể tạo thêm đường ngắn mới giữa 2 dàn thanh ghi kề nhau.'
+                    )
+                  "
+                >
+                  B. Thêm tầng pipeline để cắt critical path
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Chèn buffer/delay vào đường ngắn nâng t_comb,min lên (vd +0,30 ns → tổng 0,55 ns ≥ 0,30 ns). Đây là cách duy nhất trong 3 phương án thực sự thay đổi một vế của bất đẳng thức hold — và là việc công cụ P&R tự làm khi được yêu cầu sửa hold.'
+                    )
+                  "
+                >
+                  C. Chèn buffer vào đường ngắn để tăng <span>$t_{comb,min}$</span>
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Pipeline hoá bộ cộng rca4 thành 2 tầng (như <code>rca4_pipe2</code>) làm thay đổi các chỉ số thế nào?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Vế đầu đúng (f_max tăng vì mỗi tầng chỉ còn nửa chuỗi carry) nhưng vế sau sai: latency của MỘT phép cộng đơn lẻ TĂNG từ 5,9 ns lên 7,8 ns — phải trả thêm 1 lần t_clk→q + t_setup ở dàn thanh ghi giữa.'
+                    )
+                  "
+                >
+                  A. f_max tăng và latency của một phép cộng đơn lẻ cũng giảm theo
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Critical path mỗi tầng ngắn đi → f_max tăng (169,5 → 256,4 MHz) và throughput luồng liên tục tăng theo (1 kết quả mỗi 3,9 ns thay vì 5,9 ns); nhưng 1 phép cộng đơn lẻ giờ mất 2 chu kỳ = 7,8 ns, và tốn thêm 7 flip-flop.'
+                    )
+                  "
+                >
+                  B. f_max và throughput tăng; latency một phép cộng đơn lẻ tăng; tốn thêm flip-flop
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Pipeline không thay đổi CHỨC NĂNG (kết quả cộng vẫn y hệt, đã kiểm chứng đủ 512 tổ hợp) — nó chỉ thay đổi các chỉ số THỜI GIAN: tần số, độ trễ, thông lượng, cộng thêm chi phí thanh ghi.'
+                    )
+                  "
+                >
+                  C. Kết quả phép cộng thay đổi vì dữ liệu bị chốt lại giữa chừng
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File SystemVerilog gồm đường timing 2-FF tối giản, bộ cộng <code>rca4</code> (từ Bài 6) và bản pipeline
+                2 tầng <code>rca4_pipe2</code>, kèm testbench đối chiếu kết quả 2 phiên bản trên cùng luồng dữ liệu và
+                kiểm chứng độ trễ 2 chu kỳ:
+              </p>
+              <a
+                href="timing_and_pipeline.sv"
+                download
+                class="btn-facebook"
+                style="background: #65a30d; text-decoration: none"
+              >
+                Tải về timing_and_pipeline.sv
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Static_timing_analysis"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Static timing analysis
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Flip-flop_(electronics)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Flip-flop (electronics): setup, hold, clock-to-Q
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Clock_skew" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Clock skew
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Pipeline_(computing)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Pipeline (computing)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://hdlbits.readthedocs.io" target="_blank" rel="noopener noreferrer">
+                    HDLBits — Sequential logic exercises
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.chipverify.com/" target="_blank" rel="noopener noreferrer">
+                    ChipVerify — Timing &amp; SystemVerilog reference
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="vlsi-fifo-cdc" class="article-related__link article-related__link--prev">
+                  Bài 7: Bộ nhớ, FIFO &amp; Clock Domain Crossing
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 9: Kiến trúc FPGA: LUT, CLB, BRAM, DSP — sắp ra mắt
+                </span>
+                <a href="vlsi-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Thiết Kế Vi Mạch Số &amp; FPGA
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      // ---- STA Workbench: mô hình arrival time cho rca4 giữa 2 dàn thanh ghi ----
+      // Không dùng VeriLite: STA là phân tích TĨNH trên đồ thị độ trễ, không phải
+      // mô phỏng chức năng (xem khung "Đào sâu" trong bài).
+      const DEFAULTS = { txor: 0.9, tand: 0.5, tor: 0.5, tcq: 0.6, tsu: 0.4, tclk: 6.5 };
+      const SLIDERS = ['txor', 'tand', 'tor', 'tcq', 'tsu', 'tclk'];
+      let pipelined = false;
+
+      function readParams() {
+        const p = {};
+        SLIDERS.forEach((k) => (p[k] = parseFloat(document.getElementById('sta-' + k).value)));
+        return p;
+      }
+
+      // Arrival time của các ngõ ra 1 dải full-adder [nStart..nEnd], carry vào có
+      // arrival = carryIn0. Trả về map { s_i / c_(nEnd+1) : thời điểm sẵn sàng }.
+      function faChainArrivals(p, carryIn0, nStart, nEnd) {
+        let A = carryIn0;
+        const out = {};
+        for (let i = nStart; i <= nEnd; i++) {
+          const pArr = p.tcq + p.txor; // p_i = a^b, tính song song từ ngõ ra thanh ghi
+          const gArr = p.tcq + p.tand; // g_i = a&b
+          out['s' + i] = Math.max(pArr, A) + p.txor;
+          A = Math.max(gArr, Math.max(pArr, A) + p.tand) + p.tor;
+        }
+        out['c' + (nEnd + 1)] = A;
+        return out;
+      }
+
+      function analyze(p) {
+        if (!pipelined) {
+          const arr = faChainArrivals(p, p.tcq, 0, 3);
+          const paths = { s0: arr.s0, s1: arr.s1, s2: arr.s2, s3: arr.s3, cout: arr.c4 };
+          const worstName = Object.keys(paths).reduce((a, b) => (paths[a] >= paths[b] ? a : b));
+          return { stages: [{ label: 'Toàn mạch', paths }], worst: paths[worstName], worstName, latency: 1 };
+        }
+        const st1 = faChainArrivals(p, p.tcq, 0, 1);
+        const p1 = { s0: st1.s0, s1: st1.s1, c2: st1.c2 };
+        const st2 = faChainArrivals(p, p.tcq, 2, 3);
+        const p2 = { s2: st2.s2, s3: st2.s3, cout: st2.c4 };
+        const w1 = Object.keys(p1).reduce((a, b) => (p1[a] >= p1[b] ? a : b));
+        const w2 = Object.keys(p2).reduce((a, b) => (p2[a] >= p2[b] ? a : b));
+        const worst = Math.max(p1[w1], p2[w2]);
+        return {
+          stages: [
+            { label: 'Tầng 1 (FA0–FA1)', paths: p1 },
+            { label: 'Tầng 2 (FA2–FA3)', paths: p2 },
+          ],
+          worst,
+          worstName: p1[w1] >= p2[w2] ? w1 : w2,
+          worstStage: p1[w1] >= p2[w2] ? 0 : 1,
+          latency: 2,
+        };
+      }
+
+      function renderSvg(res) {
+        // Sơ đồ khối: REG | FA0..FA3 | REG, chuỗi carry chạy ngang.
+        // Critical path (các FA dẫn tới đường xấu nhất + mũi tên carry) tô đỏ.
+        const RED = '#dc2626';
+        const SLATE = '#475569';
+        const LIME = '#65a30d';
+        // FA nào nằm trên critical path? Đường s_i / c_(i+1) đi qua FA0..FA_i.
+        const idx = res.worstName === 'cout' ? 3 : parseInt(res.worstName.slice(1), 10);
+        const onPath = (i) => i <= idx;
+        let fa = '';
+        for (let i = 0; i < 4; i++) {
+          const x = 120 + i * 130;
+          const hot = onPath(i);
+          fa += `<rect x="${x}" y="80" width="90" height="70" rx="8" fill="${hot ? '#fee2e2' : '#fff'}" stroke="${hot ? RED : SLATE}" stroke-width="${hot ? 2.5 : 1.5}"/>
+            <text x="${x + 45}" y="112" text-anchor="middle" font-size="14" font-weight="700" fill="${hot ? RED : '#111827'}">FA${i}</text>
+            <text x="${x + 45}" y="132" text-anchor="middle" font-size="10" fill="#64748b">a${i} b${i}</text>`;
+          if (i < 3) {
+            const hotC = onPath(i + 1);
+            fa += `<path d="M${x + 90},115 L${x + 130},115" stroke="${hotC ? RED : SLATE}" stroke-width="${hotC ? 3 : 1.5}" marker-end="url(#sta-arr)"/>
+              <text x="${x + 110}" y="106" text-anchor="middle" font-size="10" fill="${hotC ? RED : '#64748b'}">c${i + 1}</text>`;
+          }
+        }
+        const coutHot = res.worstName === 'cout';
+        const pipeBar = pipelined
+          ? `<rect x="368" y="60" width="14" height="120" rx="4" fill="#ecfccb" stroke="${LIME}" stroke-width="2"/>
+             <text x="375" y="200" text-anchor="middle" font-size="10.5" fill="${LIME}" font-weight="700">REG pipeline</text>`
+          : '';
+        document.getElementById('sta-svg').innerHTML = `
+          <svg viewBox="0 0 720 215" width="100%" style="border:1px solid #ddd;background:#fafafa;border-radius:6px">
+            <defs><marker id="sta-arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="${SLATE}"/></marker></defs>
+            <rect x="15" y="60" width="70" height="110" rx="8" fill="#ecfccb" stroke="${LIME}" stroke-width="1.5"/>
+            <text x="50" y="112" text-anchor="middle" font-size="11" font-weight="700" fill="${LIME}">REG</text>
+            <text x="50" y="127" text-anchor="middle" font-size="10" fill="#64748b">nguồn</text>
+            <path d="M85,115 L120,115" stroke="${onPath(0) ? RED : SLATE}" stroke-width="${onPath(0) ? 3 : 1.5}" marker-end="url(#sta-arr)"/>
+            <text x="100" y="106" text-anchor="middle" font-size="10" fill="${onPath(0) ? RED : '#64748b'}">cin</text>
+            ${fa}
+            <path d="M640,115 L665,115" stroke="${coutHot ? RED : SLATE}" stroke-width="${coutHot ? 3 : 1.5}" marker-end="url(#sta-arr)"/>
+            <text x="650" y="106" text-anchor="middle" font-size="10" fill="${coutHot ? RED : '#64748b'}">cout</text>
+            <rect x="665" y="60" width="45" height="110" rx="8" fill="#ecfccb" stroke="${LIME}" stroke-width="1.5"/>
+            <text x="687" y="112" text-anchor="middle" font-size="11" font-weight="700" fill="${LIME}">REG</text>
+            <text x="687" y="127" text-anchor="middle" font-size="10" fill="#64748b">đích</text>
+            ${pipeBar}
+            <text x="360" y="35" text-anchor="middle" font-size="12" fill="#334155">
+              Critical path hiện tại: <tspan font-weight="700" fill="${RED}">${res.worstName}</tspan>
+              (arrival ${res.worst.toFixed(1)} ns)
+            </text>
+          </svg>`;
+      }
+
+      function renderTable(res, p) {
+        let html = '';
+        res.stages.forEach((st) => {
+          html += `<table class="glossary-table" style="margin:6px 0"><thead><tr>
+            <th>${st.label}</th><th>Arrival (ns)</th><th>Slack @ T_clk = ${p.tclk.toFixed(1)} ns</th></tr></thead><tbody>`;
+          Object.keys(st.paths).forEach((name) => {
+            const arr = st.paths[name];
+            const slack = p.tclk - (arr + p.tsu);
+            const bad = slack < -1e-9;
+            html += `<tr>
+              <td><code>${name}</code>${name === res.worstName ? ' ★' : ''}</td>
+              <td>${arr.toFixed(1)}</td>
+              <td style="color:${bad ? '#dc2626' : '#65a30d'};font-weight:700">${slack >= 0 ? '+' : ''}${slack.toFixed(1)} ns ${bad ? '✗ vi phạm' : '✓'}</td>
+            </tr>`;
+          });
+          html += '</tbody></table>';
+        });
+        document.getElementById('sta-table').innerHTML = html;
+      }
+
+      function update() {
+        const p = readParams();
+        SLIDERS.forEach((k) => (document.getElementById('sta-' + k + '-val').textContent = p[k].toFixed(1)));
+        const res = analyze(p);
+        renderSvg(res);
+        renderTable(res, p);
+        const Tmin = res.worst + p.tsu;
+        const fmax = 1000 / Tmin;
+        const latencyNs = res.latency * Tmin;
+        document.getElementById('sta-fmax').innerHTML =
+          `T<sub>min</sub> = ${res.worst.toFixed(1)} + ${p.tsu.toFixed(1)} = <strong>${Tmin.toFixed(1)} ns</strong>` +
+          ` → f<sub>max</sub> = <strong>${fmax.toFixed(1)} MHz</strong>` +
+          ` · latency ${res.latency} chu kỳ (${latencyNs.toFixed(1)} ns @ T_min)` +
+          (pipelined ? ' · throughput 1 kết quả/chu kỳ sau khi đầy ống' : '');
+        // Hold: đường ngắn nhất của mạch (s0 = reg → XOR → XOR), t_hold minh hoạ 0.3 ns cố định
+        const minArr = p.tcq + 2 * p.txor;
+        const THOLD = 0.3;
+        document.getElementById('sta-hold').innerHTML =
+          `Kiểm tra hold (đường ngắn nhất s0): arrival min = ${minArr.toFixed(1)} ns ≥ t_hold = ${THOLD.toFixed(1)} ns ` +
+          `<strong style="color:#65a30d">✓ đạt</strong> — con số này <strong>không đổi</strong> khi bạn kéo T_clk.`;
+      }
+
+      function initSta() {
+        if (!document.getElementById('sta-svg')) return;
+        SLIDERS.forEach((k) => document.getElementById('sta-' + k).addEventListener('input', update));
+        document.getElementById('sta-pipe-btn').addEventListener('click', () => {
+          pipelined = !pipelined;
+          document.getElementById('sta-pipe-btn').textContent = pipelined
+            ? '➖ Bỏ tầng pipeline (về 1 tầng)'
+            : '➕ Thêm tầng pipeline (cắt sau FA1)';
+          update();
+        });
+        document.getElementById('sta-reset-btn').addEventListener('click', () => {
+          SLIDERS.forEach((k) => (document.getElementById('sta-' + k).value = DEFAULTS[k]));
+          update();
+        });
+        update();
+      }
+
+      initSta();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
