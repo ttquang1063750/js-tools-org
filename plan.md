@@ -221,7 +221,18 @@ Mọi bài tuân thủ rubric PHẦN IV (quality contract) + `check-lesson.md`, 
 
 - **Snippet "đối chiếu PyTorch"** ở mỗi bài có code train/model: khối `.code-window` ngôn ngữ `python`, ghi rõ "chạy ngoài browser — cài PyTorch theo pytorch.org"; KHÔNG phải code trang trí, phải là bản 1-1 với code JS của bài.
 - **Số liệu phải kiểm chứng bằng self-test Node trước khi viết prose** (gradient checking, loss sau N epoch với seed cố định...) — model train có yếu tố ngẫu nhiên thì demo phải cố định seed để tái lập được.
-- **Cross-link:** Bài 5 ↔ Series WebGPU (matmul trên GPU); Bài 2, 7 ↔ Series DSA (đồ thị, độ phức tạp); mọi visualizer ↔ Series Canvas; Bài 19 ↔ Series Toy JS Engine (cùng triết lý "tự xây để hiểu").
+- **Scaffold toán "cụ thể trước, tổng quát sau"** (quy tắc §5 quality contract, series này nặng toán nhất site): mỗi công thức tổng quát phải có 1 phiên bản TÍ HON giải tay trước — GD trên 1 tham số trước dạng vector (Bài 2), backward trên graph 3 nút tính tay trước autograd tổng quát (Bài 7), attention trên ma trận 3×3 trước công thức Q/K/V (Bài 14). Không mở màn bằng ma trận.
+- **Demo train phải giải thích "trạng thái nhàm chán"** ngay trên UI: loss đứng im/NaN kèm gợi ý nguyên nhân (LR quá lớn — nối Bài 2), model đoán sai chữ người dùng vẽ (domain shift — Bài 10), GPT-mini sinh chữ vô nghĩa ở scale nhỏ (Bài 19) — mọi trạng thái "trông như hỏng" đều có chú thích đó là hành vi đúng.
+- **Cross-link** (đã nối vào bản đồ chung PHẦN IV §4): Bài 5 ↔ WebGPU (matmul GPU) & WASM (SIMD); Bài 7 ↔ DSA (topo sort) & Toy JS Engine (duyệt cây); Bài 10–11 ↔ Canvas (ImageData); Bài 12 ↔ SQL FTS5 (tìm kiếm ngữ nghĩa vs từ khoá); Bài 19 ↔ Toy JS Engine (triết lý "tự xây để hiểu").
+- **Glossary hub (EN–VI)** tối thiểu: model, loss, gradient, learning rate, epoch, batch, overfitting, regularization, activation, backpropagation, embedding, attention, transformer, token, temperature, reward, policy, alignment.
+- **`js-playground` khuyến khích** cho demo thuần logic không cần vòng train (tokenizer BPE Bài 16, sampling Bài 18) — người đọc sửa code chạy ngay; demo có vòng train dùng nút ▶/⏸/⏹ + seed cố định thay vì playground tự do.
+
+**Điều kiện chặn bổ sung cho Series 12** (cộng với `check-lesson.md`):
+
+1. Mỗi công thức KaTeX có đúng 1 câu giải nghĩa mọi ký hiệu; trong `\text{}` chỉ ASCII.
+2. Mọi mở rộng NeuroJS (`ai-neuro.js`) kèm self-test Node chạy sạch TRƯỚC khi bài dùng nó được viết; gradient mọi op mới phải qua gradient checking (Bài 7 §7.4).
+3. Demo train không khoá main thread quá ~50ms/khung; luôn có nút dừng; seed cố định.
+4. Snippet PyTorch/sklearn là bản 1-1 với JS của bài, không phải code sưu tầm.
 
 ---
 
@@ -471,6 +482,10 @@ Mỗi mục H2 KHÔNG chỉ mô tả "cái gì". Phải bao trùm:
 | Git · Object Model      | C · Pointers; DSA · Huffman                     | DAG, content-address, nén                       |
 | Điện tử · Logic/MCU     | VLSI · RTL/FPGA; C · Pointers                   | Cổng logic mức vật lý vs RTL, memory-mapped I/O |
 | VLSI · VeriLite engine  | DSA · Graph                                     | Event scheduler, critical path                  |
+| AI · Tensor engine      | WebGPU · Compute Shader; WASM · SIMD            | Matmul, vectorization, GPU                      |
+| AI · Backprop/autograd  | DSA · Graph (topo sort); Toy JS Engine · AST    | Computation graph, duyệt đồ thị                 |
+| AI · MNIST/CNN          | Canvas · Pixel & ImageData                      | Đọc/vẽ pixel, tiền xử lý ảnh                    |
+| AI · Embedding/PCA      | DSA · Độ phức tạp; SQL · FTS5 (BM25)            | Vector hoá, đo tương đồng, tìm kiếm ngữ nghĩa   |
 
 **Ngoài (nâng cấp mới):** khối `.article-refs` cuối bài, **≥ 3** nguồn uy tín (MDN, WHATWG/W3C spec, caniuse, paper gốc như SPH/Huffman). Bắt buộc `target="_blank" rel="noopener noreferrer"`; ghi rõ tên nguồn, không dán URL trần.
 
