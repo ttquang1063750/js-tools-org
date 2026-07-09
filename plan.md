@@ -240,9 +240,9 @@ Mọi bài tuân thủ rubric PHẦN IV (quality contract) + `check-lesson.md`, 
 
 **Hạ tầng riêng (làm MỘT lần, trước bài đầu):**
 
-- [ ] **Prism `python`**: bổ sung grammar python local vào `blog/prism.js` (tiền lệ `verilog` Series 11); test highlight 1 snippet PyTorch mẫu.
-- [ ] **Tag & accent**: thêm `.blog-card__tag--ai`, `.article-hero__tag--ai`, `.article-hero--ai` (accent `#ef4444`) vào `blog/blog.css`.
-- [ ] **Dữ liệu vendored**: script Node tạo `blog/ai/mnist-subset.bin` (~2.000 mẫu, kèm ghi chú cách tạo trong comment) + `blog/ai/corpus-kieu.txt` (trích đoạn public domain); commit sẵn, không fetch ngoài.
+- [x] **Prism `python`**: bổ sung grammar python local vào `blog/prism.js` (tiền lệ `verilog` Series 11); test highlight 1 snippet PyTorch mẫu.
+- [x] **Tag & accent**: thêm `.blog-card__tag--ai`, `.article-hero__tag--ai`, `.article-hero--ai` (accent `#ef4444`) vào `blog/blog.css`.
+- [x] **Dữ liệu vendored**: `blog/ai/mnist-subset.bin` (2.000 mẫu cân bằng 200/chữ số, format MNS1, seed mulberry32(42), script `make-mnist-subset.js`) + `blog/ai/corpus-kieu.txt` (toàn văn 3254 câu, nguồn Wikisource public domain, script `make-corpus-kieu.js` tái tạo byte-giống-hệt); commit sẵn, không fetch ngoài.
 
 **Engine dùng chung (xây DẦN theo bài — khác VeriLite làm 1 lần):**
 
