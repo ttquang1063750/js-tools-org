@@ -1,16 +1,16 @@
 // ai-neuro.js — "NeuroJS": tensor engine mini dùng chung cho Series 12
 // Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD; Bài 9 thêm OPTIMIZER; Bài
 // 10 thêm SOFTMAX+CROSS-ENTROPY; Bài 11 thêm CONV2D/MAXPOOL2D/FLATTEN; Bài 12
-// thêm EMBEDDING LOOKUP + SIGMOID CROSS-ENTROPY (mục này); mở rộng tiếp ở
-// Bài 14 (attention). Import trực tiếp từ các bài sau, KHÔNG copy-paste lại
-// logic (tiền lệ vlsi-verilite.js Series 11).
+// thêm EMBEDDING LOOKUP + SIGMOID CROSS-ENTROPY; Bài 13 thêm TANH + SOFTMAX
+// thuần (mục này, dùng cho RNN cell + attention); mở rộng tiếp ở Bài 14
+// (multi-head attention đầy đủ). Import trực tiếp từ các bài sau, KHÔNG
+// copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11).
 //
 // Cách chạy self-test (không cần cài gì ngoài Node.js):
 //   node ai-neuro.js
-// Kỳ vọng in ra: "SELF-TEST PASS (84 checks)" — 76 check regression của Bài
-// 5+7+9+10+11 (KHÔNG được đổi hành vi) cộng tính tay + gradient checking cho
-// embeddingLookup/sigmoidCrossEntropy — xem Bài 12 bài viết cho chi tiết
-// từng con số.
+// Kỳ vọng in ra: "SELF-TEST PASS (94 checks)" — 84 check regression của Bài
+// 5+7+9+10+11+12 (KHÔNG được đổi hành vi) cộng tính tay + gradient checking
+// cho tanh/softmax — xem Bài 13 bài viết cho chi tiết từng con số.
 
 // ---------------------------------------------------------------------------
 // Tensor: dữ liệu phẳng (Float32Array) + shape + strides (row-major).
@@ -682,6 +682,59 @@ function sigmoidCrossEntropy(logits, labels) {
   return out;
 }
 
+// tanh (Bài 13): activation chuẩn của RNN cell (Mục 2 bài viết) — nén về
+// (-1,1), có gốc toạ độ đối xứng (khác sigmoid nén về (0,1)). Đạo hàm rút
+// gọn đẹp y hệt sigmoid: d(tanh)/dx = 1 - tanh(x)^2.
+function tanh(a) {
+  const out = Tensor.zeros(a.shape);
+  for (let i = 0; i < a.size; i++) out.data[i] = Math.tanh(a.data[i]);
+  out._prev = [a];
+  out._backward = () => {
+    a._ensureGrad();
+    for (let i = 0; i < a.size; i++) {
+      const t = out.data[i];
+      a.grad[i] += (1 - t * t) * out.grad[i];
+    }
+  };
+  return out;
+}
+
+// softmax THUẦN (Bài 13): khác softmaxCrossEntropy Bài 10 — trả về XÁC
+// SUẤT (không gộp loss), dùng làm trọng số attention (Mục 4 bài viết: score
+// -> softmax -> nhân trọng số với value). Hàng cuối cùng của input (N,C)
+// được chuẩn hoá RIÊNG từng hàng. Backward dùng công thức Jacobian rút gọn
+// chuẩn: dz = softmax * (dOut - sum(dOut * softmax)) — khác sigmoidCE/
+// softmaxCrossEntropy vì đây KHÔNG phải bước cuối cùng của loss, softmax có
+// thể nằm GIỮA graph (vd trước khi nhân với value trong attention).
+function softmax(logits) {
+  const [N, C] = logits.shape;
+  const out = new Float32Array(N * C);
+  for (let i = 0; i < N; i++) {
+    let m = -Infinity;
+    for (let c = 0; c < C; c++) m = Math.max(m, logits.data[i * C + c]);
+    let sumExp = 0;
+    for (let c = 0; c < C; c++) {
+      out[i * C + c] = Math.exp(logits.data[i * C + c] - m);
+      sumExp += out[i * C + c];
+    }
+    for (let c = 0; c < C; c++) out[i * C + c] /= sumExp;
+  }
+  const outT = new Tensor(out, [N, C]);
+  outT._prev = [logits];
+  outT._backward = () => {
+    logits._ensureGrad();
+    for (let i = 0; i < N; i++) {
+      let dotSum = 0;
+      for (let c = 0; c < C; c++) dotSum += outT.grad[i * C + c] * out[i * C + c];
+      for (let c = 0; c < C; c++) {
+        const s = out[i * C + c];
+        logits.grad[i * C + c] += s * (outT.grad[i * C + c] - dotSum);
+      }
+    }
+  };
+  return outT;
+}
+
 export {
   Tensor,
   broadcastShapes,
@@ -700,6 +753,8 @@ export {
   flatten,
   embeddingLookup,
   sigmoidCrossEntropy,
+  tanh,
+  softmax,
 };
 
 // ---------------------------------------------------------------------------
@@ -1352,6 +1407,83 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       maxDiff = Math.max(maxDiff, Math.abs(fd - table.grad[idx]));
     }
     checkTrue('skip-gram end-to-end gradient checking (embeddingLookup+dot+sigmoidCE)', maxDiff < 1e-2);
+  }
+
+  // ===========================================================================
+  // BÀI 13 — TANH + SOFTMAX THUẦN: tính tay + gradient checking.
+  // ===========================================================================
+
+  // --- tanh: tinh tay 3 diem + gradient checking ---
+  {
+    const x = Tensor.fromNested([0, 1, -1]);
+    const out = tanh(x);
+    check('tanh(0) = 0', out.data[0], 0);
+    check('tanh(1) = 0.7616', out.data[1], 0.761594, 1e-4);
+    check('tanh(-1) = -0.7616', out.data[2], -0.761594, 1e-4);
+    const L = sum(mul(out, out)); // L = sum(tanh(x)^2)
+    L.backward();
+    const eps = 1e-4;
+    function tanhDoubleSum(vals) {
+      return vals.reduce((s, v) => s + Math.tanh(v) ** 2, 0);
+    }
+    for (let idx = 0; idx < 3; idx++) {
+      const xData = [0, 1, -1];
+      const p = xData.slice(),
+        m = xData.slice();
+      p[idx] += eps;
+      m[idx] -= eps;
+      const fd = (tanhDoubleSum(p) - tanhDoubleSum(m)) / (2 * eps);
+      check('tanh gradient checking idx=' + idx, x.grad[idx], fd, 1e-3);
+    }
+  }
+
+  // --- softmax thuan: tinh tay batch (2,3), verify tong moi hang = 1 +
+  // gradient checking qua 1 ham loss ngau nhien (khong phai cross-entropy) ---
+  {
+    const logits = Tensor.fromNested([
+      [1, 2, 3],
+      [0, 0, 0],
+    ]);
+    const probs = softmax(logits);
+    const expExp = [Math.exp(-2), Math.exp(-1), Math.exp(0)];
+    const sumExp = expExp[0] + expExp[1] + expExp[2];
+    check('softmax hang 1: p[2] (logit lon nhat)', probs.data[2], expExp[2] / sumExp, 1e-5);
+    checkTrue('softmax hang 1: tong xac suat = 1', Math.abs(probs.data[0] + probs.data[1] + probs.data[2] - 1) < 1e-5);
+    checkTrue('softmax hang 2 (logits deu = 0): deu = 1/3', Math.abs(probs.data[3] - 1 / 3) < 1e-5);
+
+    // Gradient checking: L = sum(probs * weights) voi weights CO DINH ngau
+    // nhien (mo phong dung cach attention nhan trong so voi value Muc 4)
+    const eps = 1e-4;
+    const weights = [0.5, -1.2, 2, 0.3, -0.7, 1.1];
+    const weightedOut = mul(probs, new Tensor(weights, [2, 3]));
+    const L = sum(weightedOut);
+    L.backward();
+    function softmaxDoubleSum(vals) {
+      let total = 0;
+      for (let row = 0; row < 2; row++) {
+        let m = -Infinity;
+        for (let c = 0; c < 3; c++) m = Math.max(m, vals[row * 3 + c]);
+        let se = 0;
+        const p = [];
+        for (let c = 0; c < 3; c++) {
+          p[c] = Math.exp(vals[row * 3 + c] - m);
+          se += p[c];
+        }
+        for (let c = 0; c < 3; c++) total += (p[c] / se) * weights[row * 3 + c];
+      }
+      return total;
+    }
+    const logitsFlat = [1, 2, 3, 0, 0, 0];
+    let maxDiff = 0;
+    for (let idx = 0; idx < 6; idx++) {
+      const p = logitsFlat.slice(),
+        m = logitsFlat.slice();
+      p[idx] += eps;
+      m[idx] -= eps;
+      const fd = (softmaxDoubleSum(p) - softmaxDoubleSum(m)) / (2 * eps);
+      maxDiff = Math.max(maxDiff, Math.abs(fd - logits.grad[idx]));
+    }
+    checkTrue('softmax gradient checking (weighted-sum loss, nhu attention)', maxDiff < 1e-2);
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
