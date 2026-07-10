@@ -1,0 +1,1118 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 14: Transformer — js-tools</title>
+    <meta
+      name="description"
+      content="Bỏ hẳn recurrence: self-attention Q/K/V tính tay trên ma trận 3×3 trước khi tổng quát hoá; vì sao cần scale 1/√d_k — verified phương sai QK^T tăng đúng theo d_k, không scale làm gradient softmax chết hẳn (từ 1,33×10⁻³ xuống 6,84×10⁻¹⁴ khi d_k tăng 8→128) trong khi có scale giữ nguyên; multi-head và công thức đếm tham số (verified: 1 block dModel=32/4 đầu/dff=64 có đúng 8.416 tham số, attention luôn = 4×dModel² bất kể số đầu); verified không có positional encoding thì self-attention permutation-equivariant (đổi vị trí 2 token, output y hệt); verified residual một mình vẫn có thể bùng nổ gradient (10¹²) — chỉ Add&Norm mới thực sự ổn định qua 80 lớp — kèm demo transformer block chạy từng bước trên câu thật."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/ai/ai-transformer" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/ai/ai-transformer" />
+    <meta property="og:title" content="Bài 14: Transformer — js-tools" />
+    <meta
+      property="og:description"
+      content="Bỏ hẳn recurrence: self-attention Q/K/V tính tay trên ma trận 3×3 trước khi tổng quát hoá; vì sao cần scale 1/√d_k — verified phương sai QK^T tăng đúng theo d_k, không scale làm gradient softmax chết hẳn trong khi có scale giữ nguyên; multi-head và công thức đếm tham số (verified: 1 block có đúng 8.416 tham số); verified không có positional encoding thì self-attention permutation-equivariant; verified residual một mình vẫn có thể bùng nổ gradient — chỉ Add&Norm mới thực sự ổn định qua 80 lớp — kèm demo transformer block chạy từng bước trên câu thật."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 14: Transformer — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Bỏ hẳn recurrence: self-attention Q/K/V tính tay trên ma trận 3×3 trước khi tổng quát hoá; vì sao cần scale 1/√d_k — verified phương sai QK^T tăng đúng theo d_k, không scale làm gradient softmax chết hẳn trong khi có scale giữ nguyên; multi-head và công thức đếm tham số (verified: 1 block có đúng 8.416 tham số); verified không có positional encoding thì self-attention permutation-equivariant; verified residual một mình vẫn có thể bùng nổ gradient — chỉ Add&Norm mới thực sự ổn định qua 80 lớp — kèm demo transformer block chạy từng bước trên câu thật."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Transformer",
+        "description": "Bỏ hẳn recurrence: self-attention Q/K/V tính tay trên ma trận 3×3 trước khi tổng quát hoá; vì sao cần scale 1/√d_k — verified phương sai QK^T tăng đúng theo d_k, không scale làm gradient softmax chết hẳn; multi-head và công thức đếm tham số (verified: 1 block có đúng 8.416 tham số); verified không có positional encoding thì self-attention permutation-equivariant; verified residual một mình vẫn có thể bùng nổ gradient — chỉ Add&Norm mới thực sự ổn định qua 80 lớp — kèm demo transformer block chạy từng bước trên câu thật.",
+        "url": "https://js-tools.org/blog/ai/ai-transformer",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-11"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--ai">
+        <div class="container">
+          <a href="ai-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--ai">Bài 14 · Trí Tuệ Nhân Tạo</div>
+          <h1 class="article-hero__title">Transformer</h1>
+          <div class="article-hero__meta">11 tháng 7, 2026 · 30 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: bỏ hẳn recurrence — kiến trúc đứng sau mọi LLM hiện nay</h2>
+            <p>
+              <a href="ai-rnn-attention">Bài 13</a> đã verify: attention không "quên" theo khoảng cách như RNN (chuỗi
+              $80$ bước, RNN sập về $\approx50\%$, attention vẫn $100\%$). Bài báo "Attention Is All You Need" (Vaswani
+              et al. 2017) đẩy ý tưởng đó tới tận cùng: <strong>bỏ hẳn</strong> phần hồi quy (recurrence) — không còn
+              $h_t$ phụ thuộc $h_{t-1}$ nào cả, TOÀN BỘ mô hình chỉ xây từ attention + vài phép biến đổi đơn giản. Đây
+              là kiến trúc nền của GPT, BERT, và gần như mọi LLM hiện nay.
+            </p>
+            <p>
+              Bài này ghép <code>transposeGrad()</code> + <code>layerNorm()</code> (2 op mới) với
+              <code>matmul/add/mul/softmax</code> đã có thành $1$ <strong>transformer block</strong> hoàn chỉnh, verify
+              từng mảnh bằng số thật: vì sao phải scale attention score, vì sao thiếu positional encoding thì model "mù
+              vị trí", và vì sao residual connection một mình KHÔNG đủ ổn định — phải đi cùng layer norm.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="ai-embeddings-word2vec">Bài 12</a> (embedding),
+                <a href="ai-rnn-attention">Bài 13</a> (attention cơ bản, softmax thuần).
+                <strong>Tài nguyên ngoài:</strong>
+                <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener noreferrer"
+                  >Vaswani et al. 2017 — Attention Is All You Need</a
+                >,
+                <a
+                  href="https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >PyTorch — nn.MultiheadAttention</a
+                >.
+              </div>
+            </div>
+
+            <h2>1. "Attention Is All You Need": vì sao bỏ hẳn recurrence</h2>
+            <p>Bỏ RNN, chỉ dùng attention — $2$ lý do cụ thể, cả $2$ đã có bằng chứng số từ các bài trước:</p>
+            <p>
+              <strong>1. Song song hoá toàn chuỗi trên GPU.</strong> RNN (<a href="ai-rnn-attention">Bài 13</a>) buộc
+              phải tính $h_1$ xong mới tính $h_2$ — phụ thuộc tuần tự, không chia việc ra được. Attention tính điểm số
+              cho MỌI cặp vị trí ĐỘC LẬP nhau — GPU xử lý hàng nghìn phép tính song song cùng lúc, tận dụng triệt để
+              phần cứng hiện đại.
+            </p>
+            <p>
+              <strong>2. Đường gradient ngắn, không xuyên thời gian.</strong> Verify ở Bài 13: RNN sập về đoán bừa ở
+              chuỗi $80$ bước vì gradient phải xuyên qua $80$ phép nhân liên tiếp; attention giữ nguyên $100\%$ vì
+              gradient từ bất kỳ vị trí nào chỉ đi qua đúng $1$ bước (softmax + nhân trọng số).
+            </p>
+            <p>
+              Kiến trúc gốc (Vaswani 2017) có $2$ nửa: <strong>encoder</strong> (đọc toàn bộ input, dùng cho dịch máy —
+              nhìn được cả 2 chiều) và <strong>decoder</strong> (sinh output từng token, chỉ nhìn được QUÁ KHỨ của chính
+              nó). Series này tập trung $100\%$ vào <strong>decoder-only</strong> (kiểu GPT) — vì đích cuối (<a href="#"
+                >Bài 16</a
+              >–<a href="#">Bài 19</a>) là sinh văn bản, đúng việc decoder làm.
+            </p>
+
+            <h2>2. Self-attention Q/K/V: tính tay trước, tổng quát sau</h2>
+            <p>
+              Mỗi vị trí trong chuỗi tạo ra $3$ vector qua $3$ phép chiếu tuyến tính học được:
+              <strong>Query</strong> ($Q$ — "tôi đang tìm gì"), <strong>Key</strong> ($K$ — "tôi có gì để được tìm
+              thấy"), <strong>Value</strong> ($V$ — "nội dung thực sự mang đi"). Ví dụ TÍ HON verify tay trước: $Q=K=$
+              ma trận đơn vị $3\times3$ (mỗi token chỉ "khớp" với chính nó),
+              $V=\begin{bmatrix}1&2&3\\4&5&6\\7&8&9\end{bmatrix}$:
+            </p>
+            <p>$$QK^T = I$$</p>
+            <p>(ma trận đơn vị — mỗi hàng chỉ có $1$ số $=1$, còn lại đều $=0$)</p>
+            <p>
+              Softmax hàng $0$ ($[1,0,0]$): $\frac{e^1}{e^1+e^0+e^0} = 0{,}5761$ cho vị trí $0$, $\frac{e^0}{e^1+2} =
+              0{,}2119$ cho $2$ vị trí còn lại. Context hàng $0$ = tổng có trọng số của $V$: $0{,}5761\times1 +
+              0{,}2119\times4 + 0{,}2119\times7 = 2{,}907$ — thiên hẳn về hàng $0$ của $V$ (đúng trực giác: token $0$
+              "khớp" mạnh nhất với chính nó nên context của nó chủ yếu lấy từ $V$ hàng $0$).
+            </p>
+            <p>Tổng quát hoá ($T$ vị trí, $d_k$ chiều mỗi đầu):</p>
+            <p>$$\text{Attention}(Q,K,V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$</p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Vì sao PHẢI scale $1/\sqrt{d_k}$ — không phải tuỳ chọn</div>
+              <div class="callout__content">
+                <p>
+                  Nếu $Q, K$ có các thành phần độc lập, phương sai $1$ (thường đúng sau khởi tạo He/Xavier — Bài 9),
+                  tích vô hướng $Q\cdot K$ của $2$ vector $d_k$ chiều có phương sai $= d_k$ (mỗi số hạng đóng góp phương
+                  sai $1$, cộng $d_k$ số hạng độc lập). Verify bằng số thật (đo trên $20.000$ mẫu ngẫu nhiên):
+                </p>
+                <table class="glossary-table">
+                  <thead>
+                    <tr>
+                      <th>$d_k$</th>
+                      <th>Phương sai $Q\cdot K$ đo được</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>$8$</td>
+                      <td>$8{,}09$</td>
+                    </tr>
+                    <tr>
+                      <td>$16$</td>
+                      <td>$15{,}91$</td>
+                    </tr>
+                    <tr>
+                      <td>$32$</td>
+                      <td>$31{,}74$</td>
+                    </tr>
+                    <tr>
+                      <td>$64$</td>
+                      <td>$63{,}41$</td>
+                    </tr>
+                    <tr>
+                      <td>$128$</td>
+                      <td>$128{,}54$</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Phương sai tăng ĐÚNG theo $d_k$ — độ lớn điểm số ($\sqrt{d_k}$ độ lệch chuẩn) làm softmax
+                  <strong>bão hoà</strong> (gần như toàn bộ xác suất dồn vào $1$ vị trí), và gradient qua softmax bão
+                  hoà gần như bằng $0$ (giống hệt cạm bẫy sigmoid bão hoà đã học ở
+                  <a href="ai-backprop-autograd">Bài 7</a>). Verify trực tiếp ($T=5$ vị trí, $d_k=64$):
+                </p>
+                <table class="glossary-table">
+                  <thead>
+                    <tr>
+                      <th>Cách tính score</th>
+                      <th>Xác suất lớn nhất (softmax)</th>
+                      <th>Chuẩn gradient qua softmax</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>KHÔNG scale</td>
+                      <td>$1{,}0000$ (bão hoà hoàn toàn)</td>
+                      <td>$5{,}14\times10^{-10}$ (gần như chết)</td>
+                    </tr>
+                    <tr>
+                      <td>CÓ scale $1/\sqrt{d_k}$</td>
+                      <td>$0{,}8282$ (mềm, hợp lý)</td>
+                      <td>$0{,}161$ (khoẻ mạnh)</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Chênh nhau $8$ bậc độ lớn ($10^{-10}$ so với $0{,}16$) — không scale, model KHÔNG học được gì ở $d_k$
+                  lớn (mọi mô hình thật đều dùng $d_k\ge64$) vì gradient chết trước khi kịp cập nhật $Q,K$.
+                </p>
+              </div>
+            </div>
+            <p>
+              <strong>Causal mask</strong> — decoder không được "nhìn tương lai": trước softmax, cộng thêm $1$ ma trận
+              tam giác toàn $-\infty$ (thực tế dùng $-10^9$, đủ lớn để softmax cho ra $0$ tuyệt đối) vào các vị trí
+              $j>i$ (cột tương lai so với hàng đang xét):
+            </p>
+            <p>$$\text{mask}_{ij} = \begin{cases} 0 & j\le i \\ -10^9 & j>i \end{cases}$$</p>
+
+            <h2>3. Multi-head: nhiều "góc nhìn" song song</h2>
+            <p>
+              Thay vì $1$ phép attention trên toàn bộ $d_{model}$ chiều, chia thành $h$ "đầu" (head) song song, mỗi đầu
+              attention trên $1$ không gian con nhỏ hơn ($d_k = d_{model}/h$) — mỗi đầu có thể học "chú ý" theo $1$ khía
+              cạnh khác nhau (đầu này theo dõi quan hệ ngữ pháp, đầu kia theo dõi quan hệ ngữ nghĩa, v.v.). Cách ghép
+              chuẩn: tính context của mỗi đầu riêng, GHÉP (concat) lại, rồi qua $1$ phép chiếu $W_O$ chung. NeuroJS ghép
+              theo cách tương đương về đại số nhưng đơn giản hơn: mỗi đầu có $W_O$ RIÊNG, CỘNG tổng các đầu ra đã chiếu
+              — tương đương chính xác "ghép rồi nhân $W_O$ chung" (phép nhân ma trận phân phối qua phép ghép cột), nhưng
+              không cần thêm op "ghép cột" mới vào engine.
+            </p>
+            <p>Đếm tham số ĐẦY ĐỦ $1$ block (ví dụ $d_{model}=32$, $4$ đầu, $d_{ff}=64$ — dùng trong demo Mục 5):</p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thành phần</th>
+                  <th>Công thức</th>
+                  <th>Số tham số</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Attention ($4$ đầu)</td>
+                  <td>$4h\times(d_{model}\times d_k) = 4\times d_{model}^2$</td>
+                  <td>$4.096$</td>
+                </tr>
+                <tr>
+                  <td>Layer norm ($\times2$)</td>
+                  <td>$2\times(2\times d_{model})$</td>
+                  <td>$128$</td>
+                </tr>
+                <tr>
+                  <td>FFN</td>
+                  <td>$2\times d_{model}\times d_{ff} + d_{ff} + d_{model}$</td>
+                  <td>$4.192$</td>
+                </tr>
+                <tr>
+                  <td><strong>Tổng 1 block</strong></td>
+                  <td></td>
+                  <td><strong>$8.416$</strong></td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Điểm thú vị verify được từ công thức: tham số attention LUÔN bằng $4\times d_{model}^2$, KHÔNG PHỤ THUỘC
+              số đầu $h$ — chia càng nhiều đầu thì $d_k$ càng nhỏ, nhưng tổng tham số không đổi (mỗi đầu nhỏ hơn nhưng
+              nhiều đầu hơn, triệt tiêu nhau đúng bằng đại số). Dùng công thức trên với số của GPT-2 nhỏ
+              ($d_{model}=768$, $d_{ff}=3.072$, $12$ đầu, $12$ block): mỗi block $\approx7$ triệu tham số, nhân $12$
+              cộng embedding — tự tính ra sẽ thấy con số quen thuộc $\approx124$ triệu.
+            </p>
+
+            <h2>4. Phần còn lại của block: positional encoding, residual, layer norm, FFN</h2>
+            <p>
+              <strong>Positional encoding</strong> — self-attention THUẦN (không tiêm vị trí) có tính chất toán học
+              nghiêm ngặt: <strong>permutation-equivariant</strong> (đổi thứ tự input, output đổi thứ tự Y HỆT theo, giá
+              trị mỗi output không đổi). Verify trực tiếp: đổi chỗ $2$ token đầu trong chuỗi $3$ token, output của token
+              đó (dù giờ đứng ở vị trí khác) không đổi MỘT CHỮ SỐ nào (sai lệch đo được $\approx10^{-8}$, thuần là sai
+              số làm tròn float32):
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">permutation_check.js (đúng thực nghiệm Mục 3 trong file tải về)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">const outOriginal = selfAttnNoPE([x1, x2, x3]);  // thu tu goc
+const outSwapped  = selfAttnNoPE([x2, x1, x3]);  // doi cho x1,x2
+// outOriginal[0] (output cua x1 o vi tri 0) va outSwapped[1] (output
+// cua x1 o vi tri 1 sau khi doi cho) - VERIFIED giong het nhau (~1e-8)
+// => model KHONG the phan biet "x1 dung truoc" hay "x1 dung sau" neu
+// khong co positional encoding</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Quên PE, model xem câu như túi từ</div>
+              <div class="callout__content">
+                <p>
+                  Đây chính là cạm bẫy "chó cắn người" ≠ "người cắn chó" đã nêu ở
+                  <a href="ai-rnn-attention">Bài 13 Mục 1</a> — nhưng lần này với bằng chứng số học nghiêm ngặt: nếu
+                  quên tiêm vị trí, self-attention xử lý CHÍNH XÁC như túi từ (bag of words), không hề biết từ nào đứng
+                  trước từ nào. Cách chữa (kiểu GPT — series này dùng): <strong>positional embedding học được</strong> —
+                  $1$ bảng tra $T_{max}\times d_{model}$ y hệt <code>embeddingLookup()</code> Bài 12, tra theo VỊ TRÍ
+                  ($0,1,2,\ldots$) thay vì theo từ, CỘNG vào embedding từ trước khi vào block đầu tiên.
+                </p>
+              </div>
+            </div>
+            <p>
+              <strong>Residual connection</strong> ($x + \text{sublayer}(x)$) thường được gọi là "đường cao tốc
+              gradient" — nhưng verify kỹ hơn cho thấy sự thật tinh tế hơn khẩu hiệu đó:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cách xếp $N$ lớp</th>
+                  <th>Chuẩn gradient tại input, $N=40$</th>
+                  <th>Kết luận</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>KHÔNG residual</td>
+                  <td>$1{,}48\times10^{-16}$</td>
+                  <td>Tiêu biến gần như hoàn toàn</td>
+                </tr>
+                <tr>
+                  <td>Residual MỘT MÌNH (không layer norm)</td>
+                  <td>$1{,}27\times10^{12}$</td>
+                  <td>VẪN bùng nổ — không hề ổn định</td>
+                </tr>
+                <tr>
+                  <td>Residual + Layer Norm ("Add &amp; Norm", đúng Transformer thật)</td>
+                  <td>$9{,}34\times10^{-5}$ (và $1{,}07\times10^{-3}$ ở $N=80$)</td>
+                  <td>Ổn định qua MỌI độ sâu đã thử ($1$–$80$ lớp)</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Bài học verify được: residual một mình KHÔNG đủ — chuẩn gradient vẫn có thể bùng nổ theo cấp số nhân nếu
+              không có gì "ghìm" độ lớn activation lại. <strong>Layer norm</strong> (chuẩn hoá TỪNG VỊ TRÍ về
+              mean=$0$/var=$1$ rồi co giãn bằng $\gamma,\beta$ học được — khác BatchNorm chuẩn hoá theo batch, đã nhắc ở
+              <a href="ai-optimizers">Bài 9</a>) chính là mảnh ghép giữ activation không phình to qua từng lớp, làm cho
+              "đường cao tốc gradient" của residual thực sự chạy êm — cặp đôi <strong>Add &amp; Norm</strong> luôn đi
+              cùng nhau trong mọi Transformer thật, không phải ngẫu nhiên.
+            </p>
+            <p>
+              <strong>FFN</strong> (feed-forward network) áp dụng ĐỘC LẬP cho từng vị trí (không trộn thông tin giữa các
+              vị trí — việc đó là nhiệm vụ của attention): $2$ lớp tuyến tính với ReLU ở giữa, $d_{model}\to d_{ff}\to
+              d_{model}$ ($d_{ff}$ thường gấp $4$ lần $d_{model}$ trong kiến trúc thật, demo Mục 5 dùng tỉ lệ $2$ lần để
+              nhẹ hơn).
+            </p>
+
+            <h2>5. Thực hành: transformer block chạy từng bước</h2>
+            <p>
+              Xem $1$ block hoàn chỉnh chạy từng giai đoạn trên câu thơ ngắn thật — ma trận $QK^T$, mask, softmax,
+              context, và output cuối cùng sau Add&amp;Norm + FFN:
+            </p>
+
+            <div class="code-tabs" id="transformer-step-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🔬 Demo — Transformer block chạy từng bước</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__inputs" style="margin-bottom: 10px">
+                    <button class="mux-input-btn" type="button" id="step-reset-btn">↺ Câu mới</button>
+                    <button class="mux-input-btn" type="button" id="step-next-btn">▶ Bước tiếp</button>
+                  </div>
+                  <div id="step-label" class="mux-demo__output" style="margin-bottom: 10px">
+                    Bấm "Bước tiếp" để bắt đầu.
+                  </div>
+                  <div id="step-content" style="overflow-x: auto"></div>
+                </div>
+              </div>
+            </div>
+
+            <p>Đếm tham số của chính bạn — thử số của GPT-2 nhỏ ($d_{model}=768$, $12$ đầu, $d_{ff}=3.072$):</p>
+            <div class="code-tabs" id="param-calc-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🧮 Demo — Máy tính tham số 1 transformer block</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__inputs" style="flex-wrap: wrap; gap: 12px">
+                    <label style="font-size: 13px">
+                      $d_{model}$: <input type="number" id="pc-dmodel" value="32" style="width: 70px" />
+                    </label>
+                    <label style="font-size: 13px">
+                      Số đầu: <input type="number" id="pc-heads" value="4" style="width: 50px" />
+                    </label>
+                    <label style="font-size: 13px">
+                      $d_{ff}$: <input type="number" id="pc-dff" value="64" style="width: 70px" />
+                    </label>
+                  </div>
+                  <div id="pc-output" class="mux-demo__output" style="margin-top: 10px"></div>
+                </div>
+              </div>
+            </div>
+
+            <p>
+              Đối chiếu công nghiệp: PyTorch <code>nn.MultiheadAttention</code> đóng gói toàn bộ Mục 2-3 — nhưng thực tế
+              phần lớn code base LLM (nanoGPT, llama.cpp...) tự viết attention thủ công như bài này, vì cần kiểm soát
+              chi tiết (KV cache, custom mask) mà module đóng gói không cho phép:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">transformer_block.py (chạy ngoài browser — cần cài PyTorch)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-python"># Doi chieu 1-1 voi Muc 2-4 - cai dat: pytorch.org/get-started/locally
+import torch.nn as nn
+
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model, n_heads, d_ff):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)  # Muc 2-3
+        self.ln1 = nn.LayerNorm(d_model)   # Muc 4
+        self.ffn = nn.Sequential(nn.Linear(d_model, d_ff), nn.ReLU(), nn.Linear(d_ff, d_model))
+        self.ln2 = nn.LayerNorm(d_model)
+
+    def forward(self, x, causal_mask):
+        attn_out, _ = self.attn(x, x, x, attn_mask=causal_mask)
+        x = self.ln1(x + attn_out)     # Add & Norm - Muc 4
+        x = self.ln2(x + self.ffn(x))  # Add & Norm lan 2
+        return x
+# Thuc te: nanoGPT/llama.cpp tu viet Q/K/V/softmax thu cong (nhu Muc 2-3
+# bai nay) de kiem soat KV-cache va custom mask - khong dung nn.MultiheadAttention</code></pre>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ <strong>Bỏ hẳn recurrence</strong>: song song hoá được (không phụ thuộc tuần tự như RNN), gradient
+                không xuyên thời gian — cả 2 verify từ Bài 13.
+              </li>
+              <li>
+                ✅ <strong>Self-attention Q/K/V</strong> tính tay trên ma trận $3\times3$ trước khi tổng quát; scale
+                $1/\sqrt{d_k}$ KHÔNG phải tuỳ chọn — verified: không scale làm gradient softmax chết
+                ($5{,}14\times10^{-10}$) so với có scale khoẻ mạnh ($0{,}161$), do phương sai $QK^T$ tăng đúng theo
+                $d_k$.
+              </li>
+              <li>
+                ✅ <strong>Multi-head</strong> = nhiều góc nhìn song song trong không gian con nhỏ hơn; tổng tham số
+                attention LUÔN $=4d_{model}^2$ bất kể số đầu — verified $1$ block $8.416$ tham số.
+              </li>
+              <li>
+                ✅ <strong>Positional encoding</strong> bắt buộc: verified không có PE thì self-attention
+                permutation-equivariant (đổi vị trí, output không đổi). <strong>Residual một mình chưa đủ</strong> —
+                verified vẫn bùng nổ ($10^{12}$); chỉ <strong>Add &amp; Norm</strong> (residual + layer norm) mới ổn
+                định thật sự qua $80$ lớp.
+              </li>
+              <li>
+                ✅ Ghép đủ $1$ transformer block decoder-only: self-attention (có mask) → Add&amp;Norm → FFN →
+                Add&amp;Norm — nền tảng của mọi LLM hiện đại.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Transformer bỏ hẳn recurrence (RNN) và chỉ dùng attention. Dựa trên những gì đã verify ở Bài 13, đâu là
+                2 lý do CHÍNH đáng cho quyết định kiến trúc này?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Bai 13 verify: RNN phai tinh h1 xong moi tinh h2 (khong the song song hoa), va gradient phai xuyen qua tung buoc thoi gian (vanishing khi chuoi dai, T=40-80 sap ve doan bua). Attention tinh diem so moi cap vi tri DOC LAP (song song duoc) va gradient tu bat ky vi tri nao chi qua 1 buoc (khong xuyen thoi gian).'
+                    )
+                  "
+                >
+                  A. RNN phụ thuộc tuần tự nên không song song hoá được; gradient RNN phải xuyên qua từng bước thời gian
+                  nên suy biến ở chuỗi dài — cả 2 vấn đề này attention không gặp phải
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca RNN (Bai 13) lan Transformer (bai nay) deu co the dung Adam - day khong phai ly do phan biet 2 kien truc, va cung khong duoc neu trong bai nhu 1 ly do bo recurrence.'
+                    )
+                  "
+                >
+                  B. Vì RNN không tương thích với optimizer Adam, còn attention thì có
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca 2 kien truc trong Bai 13 deu dung dung sigmoidCrossEntropy() cho bai toan nhi phan - khong co su khac biet ve ham loss duoc dung lam ly do bo recurrence.'
+                    )
+                  "
+                >
+                  C. Vì RNN chỉ hoạt động với hàm loss cross-entropy, không tương thích với các loss khác
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Không scale $1/\sqrt{d_k}$, ở $d_k=64$: xác suất lớn nhất softmax là $1{,}0000$, chuẩn gradient qua
+                softmax chỉ $5{,}14\times10^{-10}$. Đây là hệ quả của điều gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cong thuc softmax() da duoc gradient checking (Bai 13) va dung tinh toan CHINH XAC theo dung dinh nghia - no khong sai, no dang phan anh DUNG hanh vi toan hoc khi input qua lon (bao hoa).'
+                    )
+                  "
+                >
+                  A. Công thức softmax bị lỗi khi áp dụng cho $d_k$ lớn, cần sửa lại cách tính
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Voi Q,K co phuong sai 1, tich vo huong Q.K co phuong sai = d_k (verified: do duoc ~8,09 o d_k=8 den ~128,54 o d_k=128, tang DUNG theo d_k). d_k=64 cang lon thi do lech chuan diem so (~8) cang lon, khien mot vi tri co diem so vuot troi han han cac vi tri con lai - softmax bao hoa gan tuyet doi (xac suat ~1,0), va dao ham cua ham bao hoa gan phang do gan nhu bang 0.'
+                    )
+                  "
+                >
+                  B. Phương sai của tích vô hướng $Q\cdot K$ tăng theo $d_k$ (không scale) — điểm số lớn khiến softmax
+                  bão hoà gần như tuyệt đối, và đạo hàm của một hàm gần bão hoà gần như bằng 0
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Thi nghiem nay chi kiem tra 1 buoc forward+backward qua softmax voi tham so Q,K CO DINH (khong train) - khong co optimizer nao duoc goi toi trong phep do nay.'
+                    )
+                  "
+                >
+                  C. Vì optimizer chưa đủ epoch để hội tụ ở kích thước $d_k$ lớn
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Đổi chỗ 2 token đầu trong 1 chuỗi rồi chạy qua self-attention KHÔNG có positional encoding — output của
+                token đó (dù giờ đứng vị trí khác) không đổi (sai lệch chỉ $\approx10^{-8}$, thuần làm tròn số). Điều
+                này chứng minh gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Neu la loi cai dat, ket qua se KHONG on dinh/khong the giai thich - o day ket qua HOAN TOAN nhat quan voi tinh chat toan hoc da biet cua self-attention (permutation-equivariance), khong phai 1 bug.'
+                    )
+                  "
+                >
+                  A. Đây là lỗi cài đặt trong hàm self-attention, cần sửa lại code
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Day la chung minh CU THE cho tinh chat permutation-equivariant cua self-attention thuan: no tinh toan dua tren NOI DUNG (Q,K,V la ham cua gia tri token), khong dua tren VI TRI token nam o dau trong chuoi. Doi vi tri 2 token, moi token mang theo dung gia tri cua no toi vi tri moi - day chinh la ly do BAT BUOC phai tiem positional encoding truoc khi vao block dau tien.'
+                    )
+                  "
+                >
+                  B. Self-attention thuần chỉ tính toán dựa trên NỘI DUNG token, hoàn toàn không biết token đó đang ở vị
+                  trí nào trong chuỗi — đây là lý do bắt buộc phải tiêm positional encoding
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Thi nghiem nay dung CUNG 1 kien truc single-head attention cho ca 2 truong hop (thu tu goc va da doi cho) - khong co su khac biet nao ve so luong dau attention duoc su dung.'
+                    )
+                  "
+                >
+                  C. Vì số lượng đầu attention (head) trong thí nghiệm quá ít để phân biệt được vị trí
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Verified: KHÔNG residual, gradient tiêu biến ($10^{-16}$); residual MỘT MÌNH (không layer norm), vẫn
+                bùng nổ ($10^{12}$); residual + layer norm ("Add &amp; Norm"), ổn định qua mọi độ sâu đã thử. Kết luận
+                đúng nhất là gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ket qua thi nghiem cho thay residual MOT MINH (khong layer norm) van bung no toi 10^12 o N=40 - day la bang chung RO RANG residual mot minh KHONG du de on dinh gradient qua nhieu lop.'
+                    )
+                  "
+                >
+                  A. Residual connection một mình đã đủ giải quyết hoàn toàn vấn đề gradient qua mọi độ sâu
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! 3 con so noi len cau chuyen day du: khong residual thi tieu bien (mat thong tin gradient hoan toan); residual mot minh giu duong cao toc cho gradient di qua nhung KHONG kiem soat DO LON cua no nen van co the bung no; chi khi THEM layer norm (ghim activation ve mean=0/var=1 moi lop) thi duong cao toc do moi thuc su on dinh - dung cap doi Add&Norm ma moi Transformer that deu dung, khong phai ngau nhien.'
+                    )
+                  "
+                >
+                  B. Residual một mình chỉ đảm bảo gradient CÓ đường để đi qua (không tiêu biến về 0), nhưng không kiểm
+                  soát được ĐỘ LỚN của nó — chỉ khi kết hợp thêm layer norm (ghìm activation mỗi lớp) thì gradient mới
+                  thực sự ổn định qua nhiều lớp
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca 3 cau hinh trong thi nghiem deu dung CUNG kien truc goc (Linear+ReLU moi lop) va CUNG seed khoi tao - khac biet DUY NHAT la co residual/layer norm hay khong, khong phai do kien truc goc qua don gian.'
+                    )
+                  "
+                >
+                  C. Cả 3 cấu hình đều có vấn đề như nhau, chỉ là do kiến trúc thử nghiệm quá đơn giản
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript ghép multi-head self-attention + Add&amp;Norm + FFN thành transformer block hoàn chỉnh,
+                verify scale/positional-encoding/residual bằng số đo được (chạy
+                <code>node transformer_demo.js</code>, mất dưới $1$ giây):
+              </p>
+              <a
+                href="transformer_demo.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về transformer_demo.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener noreferrer">
+                    Vaswani et al. 2017 — Attention Is All You Need
+                  </a>
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/1607.06450" target="_blank" rel="noopener noreferrer">
+                    Ba, Kiros &amp; Hinton 2016 — Layer Normalization
+                  </a>
+                </li>
+                <li>
+                  <a href="https://github.com/karpathy/nanoGPT" target="_blank" rel="noopener noreferrer">
+                    Karpathy — nanoGPT (tự viết attention thủ công, không dùng nn.MultiheadAttention)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PyTorch — nn.MultiheadAttention
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="ai-rnn-attention" class="article-related__link article-related__link--prev">
+                  Bài 13: Chuỗi: RNN → Attention
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 15: Sinh ảnh: GAN &amp; Diffusion — sắp ra mắt
+                </span>
+                <a href="ai-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Trí Tuệ Nhân Tạo
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { Tensor, add, mul, matmul, relu, softmax, transposeGrad, layerNorm } from './ai-neuro.js';
+
+      function mulberry32(seed) {
+        let a = seed >>> 0;
+        return function () {
+          a |= 0;
+          a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      function gaussian(rng) {
+        const u1 = rng(),
+          u2 = rng();
+        return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      }
+
+      // ================= Demo 1: transformer block tung buoc =================
+      const SENTENCES = [
+        ['trăm', 'năm', 'trong', 'cõi', 'người', 'ta'],
+        ['hoa', 'cười', 'ngọc', 'thốt', 'đoan', 'trang'],
+        ['một', 'hai', 'ba', 'bốn', 'năm'],
+      ];
+      let sentenceIdx = 0;
+      const dModel = 8;
+      let stepState = null;
+
+      function fmtMat(mat, rowLabels, colLabels, highlight) {
+        let html = '<table class="glossary-table" style="font-size:12px"><thead><tr><th></th>';
+        colLabels.forEach((c) => (html += '<th>' + c + '</th>'));
+        html += '</tr></thead><tbody>';
+        mat.forEach((row, i) => {
+          html += '<tr><td><strong>' + rowLabels[i] + '</strong></td>';
+          row.forEach((v, j) => {
+            const bg = highlight ? highlight(i, j, v) : '';
+            const label = v <= -1e8 ? '−∞' : v.toFixed(2);
+            html += '<td style="background:' + bg + '">' + label + '</td>';
+          });
+          html += '</tr>';
+        });
+        return html + '</tbody></table>';
+      }
+      function tensorRows(t) {
+        const [N, D] = t.shape;
+        const rows = [];
+        for (let i = 0; i < N; i++) rows.push(Array.from(t.data.slice(i * D, i * D + D)));
+        return rows;
+      }
+
+      function initStep(words) {
+        const rng = mulberry32(7);
+        const T = words.length;
+        const X = new Tensor(
+          Array.from({ length: T * dModel }, () => gaussian(rng) * 0.5),
+          [T, dModel]
+        );
+        const Wq = new Tensor(
+          Array.from({ length: dModel * dModel }, () => gaussian(rng) * Math.sqrt(1 / dModel)),
+          [dModel, dModel]
+        );
+        const Wk = new Tensor(
+          Array.from({ length: dModel * dModel }, () => gaussian(rng) * Math.sqrt(1 / dModel)),
+          [dModel, dModel]
+        );
+        const Wv = new Tensor(
+          Array.from({ length: dModel * dModel }, () => gaussian(rng) * Math.sqrt(1 / dModel)),
+          [dModel, dModel]
+        );
+        return { words, T, X, Wq, Wk, Wv, stage: 0 };
+      }
+
+      const STAGES = [
+        'Embedding X (mỗi hàng 1 token, giá trị ngẫu nhiên minh hoạ)',
+        'Q, K, V = X·Wq, X·Wk, X·Wv',
+        'Điểm số thô QK^T',
+        'Điểm số đã scale ÷√d_k',
+        'Sau causal mask (ô xám = −∞, chặn nhìn tương lai)',
+        'Trọng số softmax (mỗi hàng cộng lại = 1)',
+        'Context = trọng số · V',
+      ];
+
+      function renderStage() {
+        const s = stepState;
+        const container = document.getElementById('step-content');
+        const words = s.words;
+        let html = '';
+        if (s.stage === 0) {
+          html = fmtMat(
+            tensorRows(s.X),
+            words,
+            Array.from({ length: dModel }, (_, i) => 'd' + i)
+          );
+        } else {
+          const Q = matmul(s.X, s.Wq),
+            K = matmul(s.X, s.Wk),
+            V = matmul(s.X, s.Wv);
+          if (s.stage === 1) {
+            html =
+              '<strong>Q</strong>' +
+              fmtMat(
+                tensorRows(Q),
+                words,
+                Array.from({ length: dModel }, (_, i) => 'd' + i)
+              ) +
+              '<strong>K</strong>' +
+              fmtMat(
+                tensorRows(K),
+                words,
+                Array.from({ length: dModel }, (_, i) => 'd' + i)
+              ) +
+              '<strong>V</strong>' +
+              fmtMat(
+                tensorRows(V),
+                words,
+                Array.from({ length: dModel }, (_, i) => 'd' + i)
+              );
+          } else {
+            const rawScores = matmul(Q, transposeGrad(K));
+            if (s.stage === 2) {
+              html = fmtMat(tensorRows(rawScores), words, words);
+            } else {
+              const scaleFactor = 1 / Math.sqrt(dModel);
+              const scaled = mul(rawScores, new Tensor(new Array(rawScores.size).fill(scaleFactor), rawScores.shape));
+              if (s.stage === 3) {
+                html = fmtMat(tensorRows(scaled), words, words);
+              } else {
+                const T = s.T;
+                const maskData = new Float32Array(T * T);
+                for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) maskData[i * T + j] = j > i ? -1e9 : 0;
+                const mask = new Tensor(maskData, [T, T]);
+                const masked = add(scaled, mask);
+                if (s.stage === 4) {
+                  html = fmtMat(tensorRows(masked), words, words, (i, j, v) => (j > i ? 'rgba(100,100,100,0.3)' : ''));
+                } else {
+                  const weights = softmax(masked);
+                  if (s.stage === 5) {
+                    html = fmtMat(
+                      tensorRows(weights),
+                      words,
+                      words,
+                      (i, j, v) => 'rgba(37,99,235,' + v.toFixed(2) + ')'
+                    );
+                  } else {
+                    const context = matmul(weights, V);
+                    html = fmtMat(
+                      tensorRows(context),
+                      words,
+                      Array.from({ length: dModel }, (_, i) => 'd' + i)
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+        document.getElementById('step-label').innerHTML =
+          '<strong>Bước ' + (s.stage + 1) + '/' + STAGES.length + ':</strong> ' + STAGES[s.stage];
+        container.innerHTML = html;
+      }
+      document.getElementById('step-next-btn').addEventListener('click', () => {
+        if (!stepState) {
+          stepState = initStep(SENTENCES[sentenceIdx]);
+        } else if (stepState.stage < STAGES.length - 1) {
+          stepState.stage++;
+        } else {
+          stepState = initStep(SENTENCES[sentenceIdx]);
+        }
+        renderStage();
+      });
+      document.getElementById('step-reset-btn').addEventListener('click', () => {
+        sentenceIdx = (sentenceIdx + 1) % SENTENCES.length;
+        stepState = initStep(SENTENCES[sentenceIdx]);
+        renderStage();
+      });
+
+      // ================= Demo 2: may tinh tham so =================
+      function updateParamCalc() {
+        const dm = parseInt(document.getElementById('pc-dmodel').value, 10) || 0;
+        const heads = parseInt(document.getElementById('pc-heads').value, 10) || 1;
+        const dff = parseInt(document.getElementById('pc-dff').value, 10) || 0;
+        const attn = 4 * dm * dm;
+        const ln = 4 * dm;
+        const ffn = 2 * dm * dff + dff + dm;
+        const total = attn + ln + ffn;
+        document.getElementById('pc-output').innerHTML =
+          'Attention: <strong>' +
+          attn.toLocaleString('vi-VN') +
+          '</strong> · LayerNorm: <strong>' +
+          ln.toLocaleString('vi-VN') +
+          '</strong> · FFN: <strong>' +
+          ffn.toLocaleString('vi-VN') +
+          '</strong> · <strong>Tổng 1 block: ' +
+          total.toLocaleString('vi-VN') +
+          '</strong>' +
+          (heads > 0 && dm % heads !== 0 ? ' ⚠️ d_model nên chia hết cho số đầu' : '');
+      }
+      ['pc-dmodel', 'pc-heads', 'pc-dff'].forEach((id) =>
+        document.getElementById(id).addEventListener('input', updateParamCalc)
+      );
+      updateParamCalc();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

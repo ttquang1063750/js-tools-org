@@ -2,15 +2,17 @@
 // Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD; Bài 9 thêm OPTIMIZER; Bài
 // 10 thêm SOFTMAX+CROSS-ENTROPY; Bài 11 thêm CONV2D/MAXPOOL2D/FLATTEN; Bài 12
 // thêm EMBEDDING LOOKUP + SIGMOID CROSS-ENTROPY; Bài 13 thêm TANH + SOFTMAX
-// thuần (mục này, dùng cho RNN cell + attention); mở rộng tiếp ở Bài 14
-// (multi-head attention đầy đủ). Import trực tiếp từ các bài sau, KHÔNG
-// copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11).
+// thuần; Bài 14 thêm TRANSPOSE (autograd) + LAYER NORM (mục này, đủ để ghép
+// multi-head self-attention hoàn chỉnh — xem cách ghép trong Bài 14 bài
+// viết). Import trực tiếp từ các bài sau, KHÔNG copy-paste lại logic (tiền
+// lệ vlsi-verilite.js Series 11).
 //
 // Cách chạy self-test (không cần cài gì ngoài Node.js):
 //   node ai-neuro.js
-// Kỳ vọng in ra: "SELF-TEST PASS (94 checks)" — 84 check regression của Bài
-// 5+7+9+10+11+12 (KHÔNG được đổi hành vi) cộng tính tay + gradient checking
-// cho tanh/softmax — xem Bài 13 bài viết cho chi tiết từng con số.
+// Kỳ vọng in ra: "SELF-TEST PASS (103 checks)" — 94 check regression của
+// Bài 5+7+9+10+11+12+13 (KHÔNG được đổi hành vi) cộng tính tay + gradient
+// checking cho transpose/layerNorm — xem Bài 14 bài viết cho chi tiết
+// từng con số.
 
 // ---------------------------------------------------------------------------
 // Tensor: dữ liệu phẳng (Float32Array) + shape + strides (row-major).
@@ -735,6 +737,86 @@ function softmax(logits) {
   return outT;
 }
 
+// transposeGrad (Bài 14): chuyển vị (M,N) -> (N,M) CÓ autograd — khác
+// Tensor.transpose() của Bài 5 (view O(1), KHÔNG có _prev/_backward, chỉ
+// dùng khi không cần lan truyền ngược qua nó). Attention cần $QK^T$
+// (Mục 2 bài viết) — K phải transpose trước khi nhân, và gradient PHẢI
+// chảy ngược được về K, nên cần bản autograd riêng này (vật liệu vật lý
+// sao chép hẳn dữ liệu, không phải view).
+function transposeGrad(t) {
+  const [M, N] = t.shape;
+  const out = new Float32Array(M * N);
+  for (let i = 0; i < M; i++) for (let j = 0; j < N; j++) out[j * M + i] = t.data[i * N + j];
+  const outT = new Tensor(out, [N, M]);
+  outT._prev = [t];
+  outT._backward = () => {
+    t._ensureGrad();
+    for (let i = 0; i < M; i++) for (let j = 0; j < N; j++) t.grad[i * N + j] += outT.grad[j * M + i];
+  };
+  return outT;
+}
+
+// layerNorm (Bài 14): chuẩn hoá TỪNG HÀNG (mỗi vị trí trong chuỗi) về mean=0
+// var=1, rồi co giãn/dịch bằng gamma/beta HỌC ĐƯỢC (Mục 4 bài viết). Khác
+// BatchNorm (chuẩn hoá theo CỘT/batch — chỉ nhắc ở Bài 9, không cài): layer
+// norm chuẩn hoá theo HÀNG nên không phụ thuộc batch size, phù hợp chuỗi
+// độ dài thay đổi của Transformer.
+function layerNorm(x, gamma, beta, eps = 1e-5) {
+  const [N, D] = x.shape;
+  const out = new Float32Array(N * D);
+  const meanArr = new Float32Array(N);
+  const stdArr = new Float32Array(N);
+  const xhat = new Float32Array(N * D);
+  for (let i = 0; i < N; i++) {
+    let mean = 0;
+    for (let d = 0; d < D; d++) mean += x.data[i * D + d];
+    mean /= D;
+    let variance = 0;
+    for (let d = 0; d < D; d++) variance += (x.data[i * D + d] - mean) ** 2;
+    variance /= D;
+    const std = Math.sqrt(variance + eps);
+    meanArr[i] = mean;
+    stdArr[i] = std;
+    for (let d = 0; d < D; d++) {
+      xhat[i * D + d] = (x.data[i * D + d] - mean) / std;
+      out[i * D + d] = xhat[i * D + d] * gamma.data[d] + beta.data[d];
+    }
+  }
+  const outT = new Tensor(out, [N, D]);
+  outT._prev = [x, gamma, beta];
+  outT._backward = () => {
+    x._ensureGrad();
+    gamma._ensureGrad();
+    beta._ensureGrad();
+    for (let d = 0; d < D; d++) {
+      let dg = 0,
+        db = 0;
+      for (let i = 0; i < N; i++) {
+        dg += outT.grad[i * D + d] * xhat[i * D + d];
+        db += outT.grad[i * D + d];
+      }
+      gamma.grad[d] += dg;
+      beta.grad[d] += db;
+    }
+    // dx tu cong thuc chuan layer norm: voi dxhat = dout*gamma,
+    // dx = (1/(D*std)) * (D*dxhat - sum(dxhat) - xhat*sum(dxhat*xhat))
+    for (let i = 0; i < N; i++) {
+      let sumDxhat = 0,
+        sumDxhatXhat = 0;
+      const dxhatRow = new Float32Array(D);
+      for (let d = 0; d < D; d++) {
+        dxhatRow[d] = outT.grad[i * D + d] * gamma.data[d];
+        sumDxhat += dxhatRow[d];
+        sumDxhatXhat += dxhatRow[d] * xhat[i * D + d];
+      }
+      for (let d = 0; d < D; d++) {
+        x.grad[i * D + d] += (D * dxhatRow[d] - sumDxhat - xhat[i * D + d] * sumDxhatXhat) / (D * stdArr[i]);
+      }
+    }
+  };
+  return outT;
+}
+
 export {
   Tensor,
   broadcastShapes,
@@ -755,6 +837,8 @@ export {
   sigmoidCrossEntropy,
   tanh,
   softmax,
+  transposeGrad,
+  layerNorm,
 };
 
 // ---------------------------------------------------------------------------
@@ -1484,6 +1568,122 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       maxDiff = Math.max(maxDiff, Math.abs(fd - logits.grad[idx]));
     }
     checkTrue('softmax gradient checking (weighted-sum loss, nhu attention)', maxDiff < 1e-2);
+  }
+
+  // ===========================================================================
+  // BÀI 14 — TRANSPOSE (autograd) + LAYER NORM: tính tay + gradient checking.
+  // ===========================================================================
+
+  // --- transposeGrad: tinh tay 2x3 -> 3x2 + gradient checking ---
+  {
+    const t = Tensor.fromNested([
+      [1, 2, 3],
+      [4, 5, 6],
+    ]);
+    const tT = transposeGrad(t);
+    checkDeepEqual('transposeGrad shape (2,3) -> (3,2)', tT.shape, [3, 2]);
+    checkDeepEqual('transposeGrad gia tri dung', tT.toNested(), [
+      [1, 4],
+      [2, 5],
+      [3, 6],
+    ]);
+    const weights = [0.5, -1, 2, 0.3, -0.7, 1.1];
+    const L = sum(mul(tT, new Tensor(weights, [3, 2])));
+    L.backward();
+    const eps = 1e-4;
+    function tDoubleSum(vals) {
+      // vals la t (2,3) phang; tinh sum(transpose(t) .* weights) bang tay
+      let total = 0;
+      for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) total += vals[i * 3 + j] * weights[j * 2 + i];
+      return total;
+    }
+    const tFlat = [1, 2, 3, 4, 5, 6];
+    let maxDiff = 0;
+    for (let idx = 0; idx < 6; idx++) {
+      const p = tFlat.slice(),
+        m = tFlat.slice();
+      p[idx] += eps;
+      m[idx] -= eps;
+      const fd = (tDoubleSum(p) - tDoubleSum(m)) / (2 * eps);
+      maxDiff = Math.max(maxDiff, Math.abs(fd - t.grad[idx]));
+    }
+    checkTrue('transposeGrad gradient checking', maxDiff < 1e-3);
+  }
+
+  // --- layerNorm: tinh tay hang [1,2,3] (mean=2,var=2/3) voi gamma=1,beta=0 ---
+  {
+    const x = Tensor.fromNested([[1, 2, 3]]);
+    const gamma = Tensor.fromNested([1, 1, 1]);
+    const beta = Tensor.fromNested([0, 0, 0]);
+    const out = layerNorm(x, gamma, beta);
+    const std = Math.sqrt(2 / 3 + 1e-5);
+    check('layerNorm tinh tay: phan tu 0 (=(1-2)/std)', out.data[0], -1 / std, 1e-3);
+    check('layerNorm tinh tay: phan tu 1 (=(2-2)/std=0)', out.data[1], 0, 1e-3);
+    check('layerNorm tinh tay: phan tu 2 (=(3-2)/std)', out.data[2], 1 / std, 1e-3);
+
+    // Gradient checking day du: x (2,4) ngau nhien, gamma/beta ngau nhien,
+    // loss = sum(layerNorm(x,gamma,beta) * weights) (mo phong dung cach
+    // layer norm nam GIUA graph, giong vi tri that trong transformer block).
+    const N = 2,
+      D = 4;
+    const xData = Array.from({ length: N * D }, (_, i) => Math.sin(i * 0.8) * 2);
+    const gData = Array.from({ length: D }, (_, i) => 1 + Math.cos(i) * 0.3);
+    const bData = Array.from({ length: D }, (_, i) => Math.sin(i) * 0.2);
+    const wData = Array.from({ length: N * D }, (_, i) => Math.cos(i * 1.3));
+    const xT = new Tensor(xData.slice(), [N, D]);
+    const gT = new Tensor(gData.slice(), [D]);
+    const bT = new Tensor(bData.slice(), [D]);
+    const outT = layerNorm(xT, gT, bT);
+    const L2 = sum(mul(outT, new Tensor(wData.slice(), [N, D])));
+    L2.backward();
+    function lnDoubleSum(xArr, gArr, bArr) {
+      let total = 0;
+      for (let i = 0; i < N; i++) {
+        let mean = 0;
+        for (let d = 0; d < D; d++) mean += xArr[i * D + d];
+        mean /= D;
+        let variance = 0;
+        for (let d = 0; d < D; d++) variance += (xArr[i * D + d] - mean) ** 2;
+        variance /= D;
+        const std2 = Math.sqrt(variance + 1e-5);
+        for (let d = 0; d < D; d++) {
+          const xhat = (xArr[i * D + d] - mean) / std2;
+          total += (xhat * gArr[d] + bArr[d]) * wData[i * D + d];
+        }
+      }
+      return total;
+    }
+    const eps2 = 1e-4;
+    let maxDiffX = 0;
+    for (let idx = 0; idx < N * D; idx++) {
+      const p = xData.slice(),
+        m = xData.slice();
+      p[idx] += eps2;
+      m[idx] -= eps2;
+      const fd = (lnDoubleSum(p, gData, bData) - lnDoubleSum(m, gData, bData)) / (2 * eps2);
+      maxDiffX = Math.max(maxDiffX, Math.abs(fd - xT.grad[idx]));
+    }
+    checkTrue('layerNorm gradient checking (dx)', maxDiffX < 1e-2);
+    let maxDiffG = 0;
+    for (let idx = 0; idx < D; idx++) {
+      const p = gData.slice(),
+        m = gData.slice();
+      p[idx] += eps2;
+      m[idx] -= eps2;
+      const fd = (lnDoubleSum(xData, p, bData) - lnDoubleSum(xData, m, bData)) / (2 * eps2);
+      maxDiffG = Math.max(maxDiffG, Math.abs(fd - gT.grad[idx]));
+    }
+    checkTrue('layerNorm gradient checking (dgamma)', maxDiffG < 1e-2);
+    let maxDiffB = 0;
+    for (let idx = 0; idx < D; idx++) {
+      const p = bData.slice(),
+        m = bData.slice();
+      p[idx] += eps2;
+      m[idx] -= eps2;
+      const fd = (lnDoubleSum(xData, gData, p) - lnDoubleSum(xData, gData, m)) / (2 * eps2);
+      maxDiffB = Math.max(maxDiffB, Math.abs(fd - bT.grad[idx]));
+    }
+    checkTrue('layerNorm gradient checking (dbeta)', maxDiffB < 1e-2);
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
