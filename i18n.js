@@ -236,6 +236,12 @@ const TRANSLATIONS = {
     'learn.electronics.title': 'Circuit Simulation',
     'learn.electronics.desc':
       'Learn electronics, analog filters, antennas, logic gates, sequential memory cells, and MCU register programming — completely in-browser.',
+    'learn.vlsi.title': 'VLSI & Digital IC Design',
+    'learn.vlsi.desc':
+      'Master SystemVerilog RTL: 4-level abstraction, synthesis, simulation, place & route, STA — with interactive RTL Playground visualizer.',
+    'learn.ai.title': 'AI from Zero to Master',
+    'learn.ai.desc':
+      'Build AI from scratch in vanilla JS — no API calls: gradient descent, your own autograd, MLP/CNN, Transformer, and a GPT-mini trained live in the browser.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -475,6 +481,12 @@ const TRANSLATIONS = {
     'learn.electronics.title': 'Điện Tử & Mô Phỏng Vi Mạch',
     'learn.electronics.desc':
       'Học điện tử, mạch lọc analog, ăng-ten, cổng logic, ô nhớ tuần tự và lập trình thanh ghi vi điều khiển — hoàn toàn trên trình duyệt.',
+    'learn.vlsi.title': 'Thiết Kế Vi Mạch Số & FPGA',
+    'learn.vlsi.desc':
+      'Làm chủ RTL với SystemVerilog: 4 mức trừu tượng, synthesis, mô phỏng, place & route, STA — kèm visualizer RTL Playground tương tác.',
+    'learn.ai.title': 'Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM',
+    'learn.ai.desc':
+      'Tự xây AI từ số 0 bằng vanilla JS — không gọi API: gradient descent, tự viết autograd, MLP/CNN, Transformer, và GPT-mini train ngay trong trình duyệt.',
   },
 };
 
