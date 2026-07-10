@@ -1,0 +1,1155 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 7: Backpropagation &amp; autograd — js-tools</title>
+    <meta
+      name="description"
+      content="Vì sao sai phân hữu hạn chết với mạng triệu tham số (mỗi tham số 1 lần forward riêng) trong khi backprop chỉ cần đúng 1 lượt ngược; computation graph và công thức lõi gradient=local×upstream (ví dụ 3 nút tính tay, verified); xây autograd thật vào NeuroJS (.grad, ._backward, topo sort) cho +, *, matmul, ReLU, sigmoid; cạm bẫy gradient CỘNG DỒN (verified: quên zero_grad làm nhiễm 174 thay vì 150); gradient checking và vùng vàng epsilon 10⁻⁴–10⁻⁶; nếm trước vanishing/exploding — kèm demo computation graph SVG bấm Backward xem gradient chảy ngược từng nút."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/ai/ai-backprop-autograd" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/ai/ai-backprop-autograd" />
+    <meta property="og:title" content="Bài 7: Backpropagation &amp; autograd — js-tools" />
+    <meta
+      property="og:description"
+      content="Vì sao sai phân hữu hạn chết với mạng triệu tham số (mỗi tham số 1 lần forward riêng) trong khi backprop chỉ cần đúng 1 lượt ngược; computation graph và công thức lõi gradient=local×upstream (ví dụ 3 nút tính tay, verified); xây autograd thật vào NeuroJS (.grad, ._backward, topo sort) cho +, *, matmul, ReLU, sigmoid; cạm bẫy gradient CỘNG DỒN (verified: quên zero_grad làm nhiễm 174 thay vì 150); gradient checking và vùng vàng epsilon 10⁻⁴–10⁻⁶; nếm trước vanishing/exploding — kèm demo computation graph SVG bấm Backward xem gradient chảy ngược từng nút."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 7: Backpropagation &amp; autograd — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Vì sao sai phân hữu hạn chết với mạng triệu tham số (mỗi tham số 1 lần forward riêng) trong khi backprop chỉ cần đúng 1 lượt ngược; computation graph và công thức lõi gradient=local×upstream (ví dụ 3 nút tính tay, verified); xây autograd thật vào NeuroJS (.grad, ._backward, topo sort) cho +, *, matmul, ReLU, sigmoid; cạm bẫy gradient CỘNG DỒN (verified: quên zero_grad làm nhiễm 174 thay vì 150); gradient checking và vùng vàng epsilon 10⁻⁴–10⁻⁶; nếm trước vanishing/exploding — kèm demo computation graph SVG bấm Backward xem gradient chảy ngược từng nút."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Backpropagation & autograd",
+        "description": "Vì sao sai phân hữu hạn chết với mạng triệu tham số (mỗi tham số 1 lần forward riêng) trong khi backprop chỉ cần đúng 1 lượt ngược; computation graph và công thức lõi gradient=local×upstream (ví dụ 3 nút tính tay, verified); xây autograd thật vào NeuroJS (.grad, ._backward, topo sort) cho +, *, matmul, ReLU, sigmoid; cạm bẫy gradient CỘNG DỒN (verified: quên zero_grad làm nhiễm 174 thay vì 150); gradient checking và vùng vàng epsilon 10⁻⁴–10⁻⁶; nếm trước vanishing/exploding — kèm demo computation graph SVG bấm Backward xem gradient chảy ngược từng nút.",
+        "url": "https://js-tools.org/blog/ai/ai-backprop-autograd",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-11"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--ai">
+        <div class="container">
+          <a href="ai-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--ai">Bài 7 · Trí Tuệ Nhân Tạo</div>
+          <h1 class="article-hero__title">Backpropagation &amp; autograd</h1>
+          <div class="article-hero__meta">11 tháng 7, 2026 · 26 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: thuật toán khiến deep learning khả thi</h2>
+            <p>
+              <a href="ai-mlp-neural-network">Bài 6</a> kết thúc bằng một lời hứa: "đây là lần cuối bạn phải tự tay đạo
+              hàm". Lời hứa đó không phải nói cho vui — nó dựa trên một thuật toán cụ thể,
+              <strong>backpropagation</strong>, thứ biến deep learning từ một ý tưởng lý thuyết đẹp đẽ nhưng vô dụng
+              thành thứ chạy được trên phần cứng thật. Không có nó, huấn luyện một mạng vài triệu tham số sẽ tốn thời
+              gian tính bằng <strong>năm</strong> thay vì mili giây mỗi bước — bạn sẽ thấy con số đó cụ thể ngay Mục 1.
+            </p>
+            <p>
+              Bài này xây <strong>autograd</strong> — cỗ máy tự động tính đạo hàm — thẳng vào NeuroJS. Sau bài này, mọi
+              phép toán (<code>+</code>, <code>*</code>, <code>matmul</code>, <code>relu</code>, <code>sigmoid</code>)
+              tự nhớ cách lan truyền gradient ngược qua chính nó; bạn không còn phải viết backward tay như
+              <a href="ai-mlp-neural-network">Bài 6</a> nữa, dù kiến trúc mạng có phức tạp tới đâu. Đây là bước nhảy
+              quan trọng nhất biến NeuroJS từ "thư viện tensor" thành "thư viện học sâu" thật sự — mọi bài từ Bài 9 trở
+              đi (optimizer, CNN, attention) đều đứng trên vai autograd của bài này.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="ai-gradient-descent">Bài 2</a> (chain rule),
+                <a href="ai-tensor-engine">Bài 5</a> (Tensor, broadcasting, matmul — autograd xây trực tiếp trên đó),
+                <a href="ai-mlp-neural-network">Bài 6</a> (đã tự tay viết backward 1 lần — bài này tổng quát hoá nó).
+                <strong>Tài nguyên ngoài:</strong>
+                <a href="https://github.com/karpathy/micrograd" target="_blank" rel="noopener noreferrer">micrograd</a>
+                (Andrej Karpathy — autograd engine ~100 dòng, cảm hứng trực tiếp của Mục 3),
+                <a href="https://pytorch.org/docs/stable/notes/autograd.html" target="_blank" rel="noopener noreferrer"
+                  >PyTorch — Autograd mechanics</a
+                >.
+              </div>
+            </div>
+
+            <h2>1. Bài toán: vì sao không thể tính đạo hàm bằng tay ở quy mô thật</h2>
+            <p>
+              Mạng XOR của <a href="ai-mlp-neural-network">Bài 6</a> có $9$ tham số — đủ nhỏ để tự đạo hàm tay một lần.
+              Nhưng thử tưởng tượng cách "ngây thơ" để tính gradient mà không cần biết công thức đạo hàm nào cả:
+              <strong>sai phân hữu hạn</strong> (finite difference) — nhích từng tham số lên một chút, chạy lại forward,
+              xem loss đổi bao nhiêu:
+            </p>
+            <p>$$\frac{\partial L}{\partial w_i} \approx \frac{L(w_i+\epsilon) - L(w_i-\epsilon)}{2\epsilon}$$</p>
+            <p>
+              Cách này ĐÚNG về mặt toán học (Mục 4 dùng chính nó để kiểm tra autograd), nhưng để tính gradient cho MỘT
+              tham số cần <strong>2 lần forward pass</strong> (một lần $+\epsilon$, một lần $-\epsilon$). Muốn gradient
+              cho TẤT CẢ tham số, phải lặp lại cho từng cái một:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Số tham số</th>
+                  <th>Số forward pass cần (sai phân hữu hạn)</th>
+                  <th>Số forward+backward cần (backprop)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>$9$ (mạng XOR Bài 6)</td>
+                  <td>$18$ lần</td>
+                  <td>$1$ forward + $1$ backward</td>
+                </tr>
+                <tr>
+                  <td>$1{,}000{,}000$ (mạng nhỏ thực tế)</td>
+                  <td>$2{,}000{,}000$ lần</td>
+                  <td>$1$ forward + $1$ backward</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Giả sử một lần forward mất khoảng $1$ mili giây (hợp lý cho mạng cỡ vừa) — mạng $9$ tham số vẫn ổn ($18$
+              ms), nhưng mạng $1$ triệu tham số cần $2$ triệu lần forward <strong>CHO MỖI BƯỚC cập nhật</strong> — xấp
+              xỉ $33$ phút, trong khi một bước huấn luyện thật cần hàng nghìn tới hàng triệu bước. Hoàn toàn bất khả
+              thi. Trong khi đó, backprop tính gradient cho <strong>TẤT CẢ</strong> tham số cùng lúc, chỉ với đúng $1$
+              lượt forward và $1$ lượt ngược — chi phí gần như không đổi dù mạng có $9$ hay $1$ triệu tham số. Đây là lý
+              do backprop tồn tại: <strong>chain rule được tổ chức lại</strong> để không phải lặp lại công việc cho từng
+              tham số riêng lẻ.
+            </p>
+
+            <h2>2. Computation graph: mỗi phép toán là 1 nút</h2>
+            <p>
+              Backprop hoạt động trên một cấu trúc gọi là <strong>computation graph</strong>: mỗi phép toán (cộng, nhân,
+              matmul...) là một nút, các nút nối với nhau theo đúng thứ tự phép toán được thực hiện ở forward pass. Hai
+              bước:
+            </p>
+            <ol>
+              <li>
+                <strong>Forward:</strong> chạy phép tính như bình thường, nhưng LƯU lại giá trị trung gian ở mỗi nút.
+              </li>
+              <li>
+                <strong>Backward:</strong> đi ngược đúng thứ tự đã tạo ra các nút (thứ tự topo), tại mỗi nút áp dụng
+                công thức lõi:
+              </li>
+            </ol>
+            <p>
+              $$\text{gradient tại nút} = \text{local gradient (đạo hàm phép toán đó)} \times \text{upstream gradient}$$
+            </p>
+            <p>
+              "Upstream gradient" là gradient đã tích luỹ từ MỌI nút phía sau dùng tới nút này. Tính tay ví dụ nhỏ nhất
+              có thể còn minh hoạ được điểm quan trọng nhất (một biến dùng lại ở 2 nhánh): $a=2$, $b=3$, $c=a \cdot b$,
+              $d = c + a$ (dùng lại $a$!), $L = d^2$:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Bước ngược</th>
+                  <th>Công thức</th>
+                  <th>Giá trị</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>$\partial L/\partial L$ (seed)</td>
+                  <td>—</td>
+                  <td>$1$</td>
+                </tr>
+                <tr>
+                  <td>$\partial L/\partial d$</td>
+                  <td>$2d \times 1$</td>
+                  <td>$2 \times 8 = 16$</td>
+                </tr>
+                <tr>
+                  <td>$\partial L/\partial c$</td>
+                  <td>$1 \times \partial L/\partial d$ ($d=c+a$ nên $\partial d/\partial c=1$)</td>
+                  <td>$16$</td>
+                </tr>
+                <tr>
+                  <td>$\partial L/\partial a$ (nhánh qua $d$)</td>
+                  <td>$1 \times \partial L/\partial d$</td>
+                  <td>$16$</td>
+                </tr>
+                <tr>
+                  <td>$\partial L/\partial a$ (nhánh qua $c$)</td>
+                  <td>$b \times \partial L/\partial c$ ($c=ab$ nên $\partial c/\partial a=b$)</td>
+                  <td>$3 \times 16 = 48$</td>
+                </tr>
+                <tr>
+                  <td>$\partial L/\partial a$ (TỔNG 2 nhánh)</td>
+                  <td>$48+16$</td>
+                  <td><strong>$64$</strong></td>
+                </tr>
+                <tr>
+                  <td>$\partial L/\partial b$</td>
+                  <td>$a \times \partial L/\partial c$</td>
+                  <td>$2 \times 16 = 32$</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Vì $a$ được dùng ở CẢ 2 nhánh ($c=ab$ và $d=c+a$), gradient của nó là <strong>tổng</strong> đóng góp từ cả
+              hai nhánh ($48+16=64$), không phải chỉ một trong hai. Đây chính là điểm sẽ trở thành cạm bẫy lớn nhất Mục
+              3. Demo Mục 5 cho bạn bấm từng bước ngược này trên đúng sơ đồ SVG, xem giá trị hiện ra tại mỗi nút.
+            </p>
+
+            <h2>3. Xây autograd thật vào NeuroJS</h2>
+            <p>
+              Theo đúng kiểu
+              <a href="https://github.com/karpathy/micrograd" target="_blank" rel="noopener noreferrer">micrograd</a>
+              của Andrej Karpathy: mỗi <code>Tensor</code> giờ mang thêm $3$ trường — <code>.grad</code> (gradient tích
+              luỹ), <code>._backward</code> (closure "1 bước lùi" riêng của phép toán tạo ra nó), và
+              <code>._prev</code> (các tensor input, để dò thứ tự topo bằng
+              <abbr title="Depth-First Search">DFS</abbr>):
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">autograd_core.js (đúng thêm vào Tensor trong ai-neuro.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Moi Tensor gio mang: .grad (Float32Array), ._backward (closure), ._prev (mang input)
+function mul(a, b) {
+  const out = /* ...tinh gia tri forward nhu Bai 5... */;
+  out._prev = [a, b];
+  out._backward = () => {
+    a._ensureGrad(); b._ensureGrad();
+    a.grad += out.grad * b.data;   // local gradient cua phep nhan: d(ab)/da = b
+    b.grad += out.grad * a.data;   // d(ab)/db = a
+  };
+  return out;
+}
+
+// backward(): duyet TOPO (DFS) roi lui NGUOC dung thu tu do
+Tensor.prototype.backward = function () {
+  const topo = [], visited = new Set();
+  const build = (t) => { if (visited.has(t)) return; visited.add(t);
+    for (const p of t._prev) build(p); topo.push(t); };
+  build(this);
+  this.grad = 1;                                  // seed: chi goi tren scalar (loss)
+  for (let i = topo.length - 1; i >= 0; i--) topo[i]._backward();
+};</code></pre>
+            </div>
+            <p>
+              Cài đủ $5$ phép NeuroJS cần cho <a href="ai-mlp-neural-network">Bài 6</a> trở đi: <code>add</code>,
+              <code>mul</code> (cả hai đã hỗ trợ broadcasting từ <a href="ai-tensor-engine">Bài 5</a> — backward phải
+              "un-broadcast" đúng ngược lại, cộng dồn theo đúng chiều đã bị nhân bản ở forward),
+              <code>matmul</code> (backward chuẩn: $dA = d_{out} \cdot B^T$, $dB = A^T \cdot d_{out}$),
+              <code>relu</code>, <code>sigmoid</code> (dùng đúng công thức đạo hàm
+              <a href="ai-mlp-neural-network">Bài 6</a> đã lập bảng, giờ chạy tự động).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >unbroadcast.js (backward của add/mul khi có broadcasting — Bài 5 Mục 3)</span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// batch (4,3) + bias (3,) -> out (4,3): forward NHAN BAN bias ra 4 dong (Bai 5).
+// Backward phai lam NGUOC LAI: CONG DON gradient cua 4 dong do ve lai dung 1
+// dong (3,) cua bias - khong lam vay, shape gradient se khong khop input.
+function unbroadcast(gradOut, outShape, targetShape) {
+  const result = new Float32Array(targetShape.reduce((a, b) => a * b, 1));
+  // ... duyet outShape, cong don tung phan tu ve dung vi tri da bi "nhan ban" ...
+  return result;
+}
+// vd: dOut shape (4,3) -> unbroadcast ve bias shape (3,) = CONG 4 dong lai voi nhau</code></pre>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Cạm bẫy số 1 của người mới học autograd: gradient CỘNG DỒN, không tự reset
+              </div>
+              <div class="callout__content">
+                <p>
+                  Vì Mục 2 vừa chứng minh một node dùng ở 2 nhánh phải CỘNG gradient từ cả hai —
+                  <code>_backward</code> của mọi phép toán đều dùng <code>+=</code>, không phải <code>=</code>. Hệ quả
+                  tất yếu: nếu bạn gọi <code>backward()</code> ở vòng lặp huấn luyện MỚI mà quên xoá gradient của vòng
+                  CŨ, gradient mới sẽ cộng dồn lên gradient cũ — sai hoàn toàn. Kiểm chứng bằng số cụ thể: tham số
+                  $w=3$, vòng $1$ dùng dữ liệu $x=2$ ($L=(wx)^2$, $\partial L/\partial w = 2wx^2 = 24$), vòng $2$ dùng
+                  $x=5$ ($\partial L/\partial w$ riêng lẻ $=2wx^2=150$):
+                </p>
+                <table class="glossary-table">
+                  <thead>
+                    <tr>
+                      <th>Cách làm</th>
+                      <th>$w.grad$ sau vòng 2</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>QUÊN gọi <code>zeroGrad()</code> trước vòng 2</td>
+                      <td>$174$ ($=24+150$) — <strong>SAI</strong>, nhiễm gradient vòng cũ</td>
+                    </tr>
+                    <tr>
+                      <td>CÓ gọi <code>zeroGrad()</code> trước vòng 2</td>
+                      <td>$150$ — <strong>đúng</strong>, chỉ phản ánh dữ liệu vòng 2</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>
+                  Không có lỗi nào được ném ra — chương trình chạy trơn tru, loss vẫn là một con số hợp lệ, model vẫn
+                  "học" được thứ gì đó, chỉ là học SAI (giống hệt tinh thần cạm bẫy broadcasting của
+                  <a href="ai-tensor-engine">Bài 5</a>: sai âm thầm, không sai ồn ào). Đây chính xác là lý do mọi vòng
+                  lặp huấn luyện PyTorch đều bắt đầu bằng <code>optimizer.zero_grad()</code> — không phải nghi thức thừa
+                  thãi, mà là bước bắt buộc để tránh đúng lỗi này.
+                </p>
+              </div>
+            </div>
+
+            <h2>4. Gradient checking: tự kiểm tra autograd bằng chính công thức Mục 1</h2>
+            <p>
+              Câu hỏi tự nhiên: làm sao biết autograd viết ở Mục 3 tính ĐÚNG? Trả lời bằng đúng công cụ tưởng đã "quá
+              chậm để dùng" ở Mục 1 — sai phân hữu hạn — nhưng giờ dùng để KIỂM TRA (chỉ vài tham số, không phải để huấn
+              luyện thật) thay vì để tính gradient sản xuất. Chọn $\epsilon$ sai thì phép kiểm tra vô nghĩa: quá lớn thì
+              công thức xấp xỉ (bỏ qua đạo hàm bậc cao) sai; quá nhỏ thì phép trừ 2 số gần bằng nhau bị lỗi làm tròn dấu
+              phẩy động nuốt mất tín hiệu thật. Quét $\epsilon$ trên một hàm có độ cong thật ($L=\sigma(ab+a)^3$):
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">gradient_check.js (đúng hàm self-test dùng để quét bảng dưới)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Sai phan huu han TRUNG TAM (central difference) - chinh xac hon 1 phia
+function centralDiff(f, x, eps) {
+  return (f(x + eps) - f(x - eps)) / (2 * eps);
+}
+// L(a) = sigmoid(a*b + a)^3 voi b=-1.3 co dinh - ham co DO CONG that (khac
+// vi du 3-phep-toan Muc 2, chi la da thuc bac thap nen khong lo ro 2 phia sai so)
+function L(a) { const c = a * (-1.3) + a; const s = 1/(1+Math.exp(-c)); return s*s*s; }
+centralDiff(L, 0.7, 1e-5);  // ~sai so 8e-13 so voi dao ham giai tich - xem bang duoi</code></pre>
+            </div>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>$\epsilon$</th>
+                  <th>Sai số so với đạo hàm giải tích</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>$1$ (quá lớn)</td>
+                  <td>$3{,}06 \times 10^{-4}$</td>
+                </tr>
+                <tr>
+                  <td>$0{,}01$</td>
+                  <td>$3{,}17 \times 10^{-8}$</td>
+                </tr>
+                <tr>
+                  <td>$10^{-4}$</td>
+                  <td>$3{,}15 \times 10^{-12}$</td>
+                </tr>
+                <tr>
+                  <td>$10^{-5}$ (tốt nhất)</td>
+                  <td>$8{,}08 \times 10^{-13}$</td>
+                </tr>
+                <tr>
+                  <td>$10^{-8}$</td>
+                  <td>$9{,}54 \times 10^{-10}$</td>
+                </tr>
+                <tr>
+                  <td>$10^{-10}$ (quá nhỏ)</td>
+                  <td>$7{,}19 \times 10^{-8}$</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Sai số giảm dần khi $\epsilon$ nhỏ lại, chạm đáy quanh $10^{-5}$, rồi <strong>tăng trở lại</strong> khi
+              $\epsilon$ tiếp tục nhỏ hơn nữa — một hình chữ U rõ ràng. Vùng đáy $10^{-4}$–$10^{-6}$ là "vùng vàng": đủ
+              nhỏ để công thức xấp xỉ chính xác, đủ lớn để không bị lỗi làm tròn nuốt mất.
+            </p>
+            <div class="callout callout--deep">
+              <div class="callout__title">
+                🔬 Đào sâu: vì sao self-test KHÔNG nhiễu trực tiếp lên Float32Array của Tensor
+              </div>
+              <div class="callout__content">
+                NeuroJS lưu dữ liệu bằng <code>Float32Array</code> (32-bit) để khớp hành vi thư viện thật (<a
+                  href="ai-tensor-engine"
+                  >Bài 5</a
+                >). Nếu nhiễu $\epsilon$ trực tiếp lên giá trị đã lưu ở đó, "vùng vàng" bị lệch hẳn: đo thực tế trên
+                chính engine này, $\epsilon=10^{-5}$ (vùng vàng lý thuyết) cho sai số tới $8{,}7 \times 10^{-2}$ — hoàn
+                toàn vô dụng, vì độ chính xác 32-bit (~7 chữ số có nghĩa) không đủ phân biệt nổi một nhiễu nhỏ cỡ đó
+                cộng vào giá trị đang lưu. Vì vậy file tải về tính vế "sai phân hữu hạn tham chiếu" bằng một hàm
+                JavaScript thuần túy ở double precision (64-bit, không đụng <code>Float32Array</code>), rồi mới so với
+                gradient autograd (chạy trên Tensor 32-bit thật) — đúng cách <code>torch.autograd.gradcheck</code> của
+                PyTorch làm (ép kiểu <code>double</code> trước khi kiểm tra), không phải mẹo riêng của bài này.
+              </div>
+            </div>
+
+            <h2>5. Nếm trước: vanishing &amp; exploding gradient</h2>
+            <p>
+              Backprop nhân liên tiếp nhiều "local gradient" qua từng lớp (công thức Mục 2). Chuyện gì xảy ra khi xếp
+              rất nhiều lớp? Tính bằng autograd thật, không đoán: xích $N$ lớp sigmoid liên tiếp (đạo hàm sigmoid tối đa
+              chỉ $0{,}25$, tại $z=0$), và xích $N$ lần nhân với hằng số $2$:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Số lớp $N$</th>
+                  <th>Gradient qua $N$ lớp sigmoid (tiêu biến)</th>
+                  <th>Gradient qua $N$ lần nhân $2$ (bùng nổ)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>$1$</td>
+                  <td>$0{,}25$</td>
+                  <td>$2$</td>
+                </tr>
+                <tr>
+                  <td>$10$</td>
+                  <td>$3{,}9 \times 10^{-7}$</td>
+                  <td>$1{,}024 \times 10^3$</td>
+                </tr>
+                <tr>
+                  <td>$20$</td>
+                  <td>$1{,}3 \times 10^{-13}$</td>
+                  <td>$1{,}049 \times 10^6$</td>
+                </tr>
+                <tr>
+                  <td>$50$</td>
+                  <td>$4{,}5 \times 10^{-33}$ (thực tế $=0$ do giới hạn số dấu phẩy động)</td>
+                  <td>(tăng tiếp theo luỹ thừa $2$)</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Chỉ $20$ lớp sigmoid đã đủ làm gradient tiêu biến về $10^{-13}$ — với mạng sâu thật ($50$–$100$ lớp),
+              gradient ở những lớp đầu tiên thực chất bằng $0$, model không học được gì ở đó nữa. Ngược lại, nếu mỗi lớp
+              khuếch đại tín hiệu lên (như nhân hằng số $>1$), gradient bùng nổ theo cấp số nhân, làm bước cập nhật GD
+              trở nên vô nghĩa (quá lớn, số học tràn). Đây là hai vấn đề cốt lõi ngăn cản mạng thật sự sâu trước khi có
+              các kỹ thuật khắc phục — chi tiết đầy đủ và lời giải (LSTM, residual connection, chuẩn hoá gradient) dành
+              cho <a href="ai-programming-series">Bài 13</a> khi cần xử lý chuỗi dài thật.
+            </p>
+
+            <h2>6. Thực hành: computation graph — bấm Backward xem gradient chảy ngược</h2>
+            <p>
+              Đúng ví dụ 3 phép toán của Mục 2 ($a=2, b=3, c=ab, d=c+a, L=d^2$), chạy bằng autograd thật của
+              <code>ai-neuro.js</code>. Bấm <strong>Bước ngược</strong> liên tiếp để tô sáng từng nút theo ĐÚNG thứ tự
+              <code>backward()</code> thật sự xử lý, xem giá trị gradient hiện ra:
+            </p>
+
+            <div class="code-tabs" id="graph-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🕸️ Demo — Computation graph: chain rule chảy ngược từng nút một</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__inputs" style="margin-bottom: 10px; flex-wrap: wrap; align-items: center">
+                    <button class="mux-input-btn" type="button" id="graph-step-btn">▶ Bước ngược</button>
+                    <button class="mux-input-btn" type="button" id="graph-reset-btn">⏹ Reset</button>
+                  </div>
+                  <svg
+                    id="graph-svg"
+                    viewBox="0 0 640 300"
+                    style="
+                      width: 100%;
+                      max-width: 640px;
+                      border: 1px solid #cbd5e1;
+                      border-radius: 6px;
+                      background: #fff;
+                    "
+                  ></svg>
+                  <div class="mux-demo__output" id="graph-status" style="margin-top: 10px">Đang tải…</div>
+                  <p class="mux-demo__hint">
+                    Để ý nút <strong>a</strong>: nó nhận gradient ở <em>2 bước khác nhau</em> (qua nhánh $d$ rồi qua
+                    nhánh $c$) và CỘNG DỒN thành $64$ — đúng cạm bẫy Mục 3, nhìn thấy tận mắt trên sơ đồ.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p>Đối chiếu công nghiệp: 3 dòng "thần chú" PyTorch mà giờ bạn đã hiểu rõ cơ chế bên trong:</p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">autograd.py (chạy ngoài browser — cần cài PyTorch)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-python"># Doi chieu 1-1 voi vi du 3 phep toan Muc 2 - cai dat: pytorch.org/get-started/locally
+import torch
+
+a = torch.tensor(2.0, requires_grad=True)   # requires_grad=True: bao PyTorch GHI LAI computation graph
+b = torch.tensor(3.0, requires_grad=True)
+
+c = a * b        # moi phep toan tu dong them 1 nut vao graph (giong ._prev cua Muc 3)
+d = c + a        # a duoc DUNG LAI o day - PyTorch tu biet phai cong don gradient
+L = d ** 2
+
+L.backward()     # DUNG 1 lan goi: tu dong duyet topo NGUOC, chay het moi ._backward()
+print(a.grad)     # 64.0 - khop chinh xac tay tinh Muc 2
+print(b.grad)     # 32.0
+
+# optimizer.zero_grad() trong vong lap that: xoa .grad truoc MOI buoc moi,
+# tranh dung cam bay Muc 3 (cong don gradient tu vong lap truoc)</code></pre>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ <strong>Sai phân hữu hạn chết ở quy mô thật</strong>: $O(N)$ lần forward cho $N$ tham số — mạng $1$
+                triệu tham số cần $2$ triệu lần forward MỖI bước, ~$33$ phút so với vài mili giây của backprop.
+              </li>
+              <li>
+                ✅ <strong>Computation graph + công thức lõi</strong>: gradient tại nút = local gradient × upstream
+                gradient, đi ngược đúng thứ tự topo — verified tay trên ví dụ $3$ phép toán ($a.grad=64=48+16$).
+              </li>
+              <li>
+                ✅ <strong>Autograd thật đã có trong NeuroJS</strong>: mỗi Tensor mang <code>.grad</code>,
+                <code>._backward</code>, <code>._prev</code>; cài đủ <code>add/mul/matmul/relu/sigmoid</code> — không
+                cần viết backward tay nữa từ đây trở đi.
+              </li>
+              <li>
+                ✅ <strong>Gradient CỘNG DỒN là bắt buộc</strong> (một node dùng ở 2 nhánh) nhưng cũng là cạm bẫy số 1:
+                quên <code>zeroGrad()</code> làm gradient nhiễm vòng lặp cũ (verified: $174$ thay vì $150$).
+              </li>
+              <li>
+                ✅ <strong>Gradient checking</strong> dùng chính sai phân hữu hạn để KIỂM TRA (không phải để huấn luyện)
+                — vùng vàng $\epsilon \in [10^{-4}, 10^{-6}]$, và phải tính ở double precision, không phải trên buffer
+                float32 của Tensor.
+              </li>
+              <li>
+                ✅ <strong>Vanishing/exploding</strong>: $20$ lớp sigmoid đủ làm gradient tiêu biến về $10^{-13}$; nhân
+                hằng số $>1$ liên tiếp làm gradient bùng nổ theo cấp số nhân — chi tiết + lời giải ở
+                <a href="ai-programming-series">Bài 13</a>.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Mạng có $1$ triệu tham số. Vì sao tính gradient bằng sai phân hữu hạn (finite difference) cho toàn bộ
+                tham số lại bất khả thi trong khi backprop thì không?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca 2 cach deu tinh RA DUNG gradient (sai phan huu han cung dung ve mat toan hoc, backprop khong chinh xac hon) - khac biet la o CHI PHI TINH TOAN, khong phai do chinh xac.'
+                    )
+                  "
+                >
+                  A. Vì sai phân hữu hạn cho kết quả kém chính xác hơn nhiều so với backprop
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Sai phan huu han can 2 lan forward RIENG cho MOI tham so (O(N) voi N tham so) - voi 1 trieu tham so la 2 trieu forward MOI BUOC cap nhat. Backprop tinh gradient cho TAT CA tham so cung luc chi voi 1 forward + 1 backward, chi phi gan nhu khong doi du N lon hay nho.'
+                    )
+                  "
+                >
+                  B. Sai phân hữu hạn cần $O(N)$ lần forward pass cho $N$ tham số, còn backprop chỉ cần đúng $1$ forward
+                  + $1$ backward bất kể $N$ lớn cỡ nào
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai phan huu han khong lien quan gi toi bo nho GPU/CPU - van de thuan tuy la SO LAN phai chay forward pass, khong phai dung luong bo nho can luu.'
+                    )
+                  "
+                >
+                  C. Vì sai phân hữu hạn cần lưu toàn bộ computation graph trong bộ nhớ, backprop thì không
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Trong ví dụ $a=2, b=3, c=ab, d=c+a, L=d^2$, biến $a$ nhận gradient từ $2$ nhánh khác nhau (qua $c$ và
+                qua $d$). Autograd xử lý việc này bằng cách nào?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Neu chi giu nhanh tinh SAU (qua d, cho gia tri 16) thi ket qua se sai - dung phai la 64 (48 qua nhanh c CONG 16 qua nhanh d). Autograd khong bo qua nhanh nao ca.'
+                    )
+                  "
+                >
+                  A. Chỉ giữ lại gradient từ nhánh được tính SAU cùng, ghi đè lên nhánh trước
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Moi _backward() dung += (khong phai =) de cong don vao .grad - vi vay ca 2 nhanh (48 qua c, 16 qua d) deu duoc giu lai va cong lai thanh 64. Day chinh la ly do PHAI zeroGrad() truoc moi vong lap moi (Muc 3) - neu khong, gradient vong cu se cong don sai vao vong moi.'
+                    )
+                  "
+                >
+                  B. Mỗi <code>_backward()</code> dùng phép cộng dồn (<code>+=</code>) vào <code>.grad</code>, nên cả 2
+                  nhánh đều được giữ lại và tổng thành $64$
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Trung binh cong (48+16)/2=32 khong khop ket qua dung (64, da verify bang ca cong thuc giai tich lan finite-difference). Gradient phai CONG lai, khong phai lay trung binh.'
+                    )
+                  "
+                >
+                  C. Lấy trung bình cộng của 2 nhánh, vì mỗi nhánh đóng góp một phần bằng nhau
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Vì sao self-test của bài này tính "sai phân hữu hạn tham chiếu" bằng một hàm JavaScript thuần (double
+                precision), thay vì nhiễu $\epsilon$ trực tiếp lên giá trị đã lưu trong <code>Float32Array</code> của
+                Tensor?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tensor cua NeuroJS hoan toan doc/ghi duoc gia tri (data la Float32Array cong khai) - khong co gioi han ky thuat nao ngan can viec nhieu truc tiep len do. Van de la CHAT LUONG ket qua khi lam vay, khong phai kha nang ky thuat.'
+                    )
+                  "
+                >
+                  A. Vì Tensor không cho phép đọc/ghi trực tiếp giá trị đã lưu, phải dùng hàm riêng
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Do thuc te tren chinh engine nay: nhieu epsilon=1e-5 (vung vang ly thuyet) truc tiep len Float32Array cho sai so toi 8,7x10^-2 - vo dung, vi do chinh xac 32-bit khong du phan biet nhieu nho co do. Day dung cach torch.autograd.gradcheck lam: ep kieu double truoc khi kiem tra, khong phai meo rieng cua bai nay.'
+                    )
+                  "
+                >
+                  B. Vì lưu trữ float32 làm lệch hẳn "vùng vàng" epsilon — nhiễu nhỏ có thể bị làm tròn mất hoàn toàn,
+                  giống hệt cách <code>torch.autograd.gradcheck</code> của PyTorch phải ép kiểu double trước khi kiểm
+                  tra
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Toc do khong phai ly do o day - ca 2 cach deu chay du nhanh cho vai tham so kiem tra. Van de thuan tuy la DO CHINH XAC cua phep nhieu epsilon, khong phai hieu nang.'
+                    )
+                  "
+                >
+                  C. Vì tính bằng JavaScript thuần nhanh hơn đáng kể so với qua lớp Tensor
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Một mạng có $20$ lớp sigmoid liên tiếp. Gradient ở lớp đầu tiên tính ra chỉ còn $\approx 10^{-13}$ so
+                với gradient ở lớp cuối. Đây là hiện tượng gì, và vì sao xảy ra?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Day KHONG phai loi code - la ket qua toan hoc TAT YEU cua viec nhan lien tiep nhieu so <1 (dao ham sigmoid toi da chi 0,25). Sua code khong lam bien mat hien tuong nay, can ky thuat khac (residual connection, LSTM...).'
+                    )
+                  "
+                >
+                  A. Đây là lỗi code trong autograd — cần sửa lại công thức backward của sigmoid
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Day la vanishing gradient. Dao ham sigmoid toi da chi 0,25 (tai z=0) - nhan lien tiep 20 lan so <=0,25 cho ra tich cuc nho (~10^-13), gan nhu bang 0. Lop dau tien cua mang gan nhu khong nhan duoc tin hieu hoc nao ca. Chi tiet + loi giai (LSTM, residual connection) o Bai 13.'
+                    )
+                  "
+                >
+                  B. Vanishing gradient — nhân liên tiếp nhiều đạo hàm sigmoid (tối đa $0{,}25$ mỗi lớp) cho ra tích cực
+                  nhỏ, gần như bằng $0$ ở các lớp đầu
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Day la hien tuong TIEU BIEN (gradient qua NHO, ~10^-13), khong phai bung no (gradient qua LON). Bung no xay ra khi nhan lien tiep cac so >1 (vi du chuoi nhan hang so 2 trong Muc 5), nguoc lai voi tinh huong nay.'
+                    )
+                  "
+                >
+                  C. Exploding gradient — gradient tăng theo cấp số nhân qua từng lớp
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                <code>ai-neuro.js</code> — NeuroJS giờ đã có autograd đầy đủ (Tensor mang
+                <code>.grad</code>/<code>._backward</code>/<code>._prev</code>,
+                <code>add/mul/matmul/relu/sigmoid</code>, gradient checking). Self-test gồm $43$ check: $22$ regression
+                từ <a href="ai-tensor-engine">Bài 5</a> (không đổi hành vi) cộng $21$ check mới của bài này (chạy
+                <code>node ai-neuro.js</code>):
+              </p>
+              <a
+                href="ai-neuro.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về ai-neuro.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://github.com/karpathy/micrograd" target="_blank" rel="noopener noreferrer">
+                    Andrej Karpathy — micrograd (autograd engine ~100 dòng)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.youtube.com/watch?v=VMj-3S1tku0" target="_blank" rel="noopener noreferrer">
+                    Andrej Karpathy — The spelled-out intro to neural networks and backpropagation
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://pytorch.org/docs/stable/notes/autograd.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PyTorch — Autograd mechanics
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Vanishing_gradient_problem"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Vanishing gradient problem
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="ai-mlp-neural-network" class="article-related__link article-related__link--prev">
+                  Bài 6: Neuron &amp; mạng MLP
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 8: Huấn luyện thực tế: Overfitting — sắp ra mắt
+                </span>
+                <a href="ai-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Trí Tuệ Nhân Tạo
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { Tensor, mul, add } from './ai-neuro.js';
+
+      // ==== Demo: computation graph 3 phep toan (a=2,b=3,c=ab,d=c+a,L=d^2) ====
+      // Dung DUNG engine that (import tu ai-neuro.js) - khong mo phong rieng.
+
+      function buildGraph() {
+        const a = Tensor.fromNested([2]);
+        const b = Tensor.fromNested([3]);
+        const c = mul(a, b);
+        const d = add(c, a);
+        const L = mul(d, d);
+        return { a, b, c, d, L };
+      }
+
+      let graph = buildGraph();
+      let topo = [];
+      let stepIndex = -1; // -1 = chua bat dau; sau moi buoc tang len
+
+      function computeTopo(root) {
+        const order = [];
+        const visited = new Set();
+        const build = (t) => {
+          if (visited.has(t)) return;
+          visited.add(t);
+          for (const p of t._prev) build(p);
+          order.push(t);
+        };
+        build(root);
+        return order.reverse(); // thu tu XU LY nguoc: [L, d, c, b, a] hoac tuong tu
+      }
+
+      const NODE_INFO = [
+        { key: 'a', label: 'a = 2', x: 60, y: 220 },
+        { key: 'b', label: 'b = 3', x: 60, y: 60 },
+        { key: 'c', label: 'c = a·b = 6', x: 280, y: 140 },
+        { key: 'd', label: 'd = c+a = 8', x: 440, y: 140 },
+        { key: 'L', label: 'L = d² = 64', x: 580, y: 140 },
+      ];
+      const EDGES = [
+        ['a', 'c'],
+        ['b', 'c'],
+        ['c', 'd'],
+        ['a', 'd'],
+        ['d', 'L'],
+      ];
+
+      function nodeByKey(key) {
+        return graph[key];
+      }
+
+      function svgNS(tag) {
+        return document.createElementNS('http://www.w3.org/2000/svg', tag);
+      }
+
+      function render() {
+        const svg = document.getElementById('graph-svg');
+        svg.innerHTML = '';
+        // ve canh truoc (de nam duoi node)
+        for (const [from, to] of EDGES) {
+          const nf = NODE_INFO.find((n) => n.key === from);
+          const nt = NODE_INFO.find((n) => n.key === to);
+          const line = svgNS('line');
+          line.setAttribute('x1', nf.x + 30);
+          line.setAttribute('y1', nf.y);
+          line.setAttribute('x2', nt.x - 30);
+          line.setAttribute('y2', nt.y);
+          line.setAttribute('stroke', '#94a3b8');
+          line.setAttribute('stroke-width', '2');
+          line.setAttribute('marker-end', 'url(#arrow)');
+          svg.appendChild(line);
+        }
+        const defs = svgNS('defs');
+        defs.innerHTML =
+          '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#94a3b8"></path></marker>';
+        svg.appendChild(defs);
+
+        const currentNode = stepIndex >= 0 && stepIndex < topo.length ? topo[stepIndex] : null;
+        for (const info of NODE_INFO) {
+          const t = nodeByKey(info.key);
+          const isCurrent = currentNode === t;
+          const hasGrad = t.grad !== null;
+          const circle = svgNS('circle');
+          circle.setAttribute('cx', info.x);
+          circle.setAttribute('cy', info.y);
+          circle.setAttribute('r', 34);
+          circle.setAttribute('fill', isCurrent ? '#fef08a' : hasGrad ? '#dcfce7' : '#f1f5f9');
+          circle.setAttribute('stroke', isCurrent ? '#ca8a04' : hasGrad ? '#16a34a' : '#94a3b8');
+          circle.setAttribute('stroke-width', isCurrent ? '3' : '2');
+          svg.appendChild(circle);
+
+          const text1 = svgNS('text');
+          text1.setAttribute('x', info.x);
+          text1.setAttribute('y', info.y - 4);
+          text1.setAttribute('text-anchor', 'middle');
+          text1.setAttribute('font-size', '13');
+          text1.setAttribute('font-family', 'Menlo, Monaco, monospace');
+          text1.setAttribute('fill', '#1e293b');
+          text1.textContent = info.label;
+          svg.appendChild(text1);
+
+          const text2 = svgNS('text');
+          text2.setAttribute('x', info.x);
+          text2.setAttribute('y', info.y + 14);
+          text2.setAttribute('text-anchor', 'middle');
+          text2.setAttribute('font-size', '12');
+          text2.setAttribute('font-family', 'Menlo, Monaco, monospace');
+          text2.setAttribute('fill', '#ca8a04');
+          text2.setAttribute('font-weight', 'bold');
+          text2.textContent = hasGrad ? 'grad=' + t.grad[0] : 'grad=–';
+          svg.appendChild(text2);
+        }
+
+        const statusEl = document.getElementById('graph-status');
+        if (stepIndex < 0) {
+          statusEl.innerHTML = 'Bấm <strong>Bước ngược</strong> để bắt đầu backward() thật từ L.';
+        } else if (stepIndex < topo.length) {
+          const key = NODE_INFO.find((n) => nodeByKey(n.key) === topo[stepIndex]).key;
+          statusEl.innerHTML =
+            'Bước ' + (stepIndex + 1) + '/' + topo.length + ': đang xử lý <strong>' + key + '</strong>._backward()';
+        } else {
+          statusEl.innerHTML =
+            '<strong style="color:#16a34a">Hoàn tất.</strong> a.grad = 64 (48 qua nhánh c + 16 qua nhánh d), b.grad = 32.';
+        }
+      }
+
+      function step() {
+        if (stepIndex === -1) {
+          topo = computeTopo(graph.L);
+          graph.L._ensureGrad();
+          graph.L.grad.fill(1); // seed = 1, dung y het backward() that lam
+        }
+        stepIndex++;
+        if (stepIndex < topo.length) {
+          topo[stepIndex]._backward();
+        }
+        render();
+      }
+
+      document.getElementById('graph-step-btn').addEventListener('click', step);
+      document.getElementById('graph-reset-btn').addEventListener('click', () => {
+        graph = buildGraph();
+        stepIndex = -1;
+        topo = [];
+        render();
+      });
+
+      render();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© 2026 js-tools — Built with ❤️ and open web standards.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/optimizer.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.7"
+            />
+            <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+          </a>
+          <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/rmbg.svg"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.rmbg">Remove BG</span>
+          </a>
+          <a href="https://qr.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <span aria-hidden="true" style="opacity: 0.7">▦</span>
+            <span data-i18n="nav.qr">QR Generator</span>
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+            <img
+              src="../../assets/coloraquarium.png"
+              alt=""
+              width="18"
+              height="18"
+              aria-hidden="true"
+              style="flex-shrink: 0; border-radius: 3px"
+            />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="/about" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+            <span data-i18n="nav.about">About</span>
+          </a>
+          <a href="/contact" class="footer-link">
+            <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+            <span data-i18n="nav.contact">Contact</span>
+          </a>
+          <a href="/privacy" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span data-i18n="nav.privacy">Privacy Policy</span>
+          </a>
+          <a href="/terms" class="footer-link">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style="flex-shrink: 0; opacity: 0.6"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span data-i18n="nav.terms">Terms of Service</span>
+          </a>
+          <a href="/donate" class="footer-link">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

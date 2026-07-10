@@ -1,12 +1,14 @@
 // ai-neuro.js — "NeuroJS": tensor engine mini dùng chung cho Series 12
-// Khởi sinh ở Bài 5 (tensor); mở rộng dần: Bài 7 (autograd), Bài 9 (optimizer),
-// Bài 11 (Conv2D), Bài 14 (attention). Import trực tiếp từ các bài sau,
-// KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js của Series 11).
+// Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD (mục này); mở rộng tiếp ở
+// Bài 9 (optimizer), Bài 11 (Conv2D), Bài 14 (attention). Import trực tiếp từ
+// các bài sau, KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11).
 //
 // Cách chạy self-test (không cần cài gì ngoài Node.js):
 //   node ai-neuro.js
-// Kỳ vọng in ra: "SELF-TEST PASS (22 checks)" — đối chiếu tính tay + so khớp
-// 2 cách hiện thực matmul (self-test KHÔNG chỉ tin 1 công thức, xem Mục 4 bài viết).
+// Kỳ vọng in ra: "SELF-TEST PASS (43 checks)" — 22 check regression của Bài 5
+// (KHÔNG được đổi hành vi) cộng gradient checking bằng sai phân hữu hạn cho
+// mọi phép mới (+, *, matmul, relu, sigmoid, sum), cạm bẫy cộng dồn gradient,
+// và ví dụ vanishing/exploding — xem Bài 7 bài viết cho chi tiết từng con số.
 
 // ---------------------------------------------------------------------------
 // Tensor: dữ liệu phẳng (Float32Array) + shape + strides (row-major).
@@ -19,6 +21,39 @@ class Tensor {
     this.shape = shape.slice();
     this.strides = strides ? strides.slice() : Tensor.computeStrides(shape);
     this.offset = offset || 0;
+    // --- Autograd (Bài 7): mọi tensor mang sẵn 3 trường này, nhưng KHÔNG
+    // đụng gì tới forward-value — mọi hành vi Bài 5 (shape/stride/broadcast/
+    // matmul) giữ nguyên 100%, đây thuần là bổ sung cộng thêm.
+    this.grad = null; // Float32Array cùng kích thước, cấp phát lazily
+    this._backward = () => {}; // closure "1 bước lùi": dùng out.grad để cộng dồn vào grad của input
+    this._prev = []; // các tensor input đã tạo ra tensor này (để dò thứ tự topo)
+  }
+
+  _ensureGrad() {
+    if (!this.grad) this.grad = new Float32Array(this.size);
+  }
+  // PHẢI gọi trước mỗi vòng lặp huấn luyện mới — xem cạm bẫy Mục 3 bài viết:
+  // gradient CỘNG DỒN qua các lần backward(), không tự động reset về 0.
+  zeroGrad() {
+    this.grad = new Float32Array(this.size);
+  }
+
+  // Duyệt topo (DFS) rồi lùi ngược đúng thứ tự đó — công thức lõi backprop:
+  // gradient tại 1 nút = local gradient (đạo hàm phép toán tạo ra nó) NHÂN
+  // upstream gradient (đã tích luỹ từ mọi nút dùng nó ở phía sau).
+  backward() {
+    const topo = [];
+    const visited = new Set();
+    const build = (t) => {
+      if (visited.has(t)) return;
+      visited.add(t);
+      for (const p of t._prev) build(p);
+      topo.push(t);
+    };
+    build(this);
+    this._ensureGrad();
+    this.grad.fill(1); // chỉ gọi backward() trên tensor VÔ HƯỚNG (loss) — seed = 1
+    for (let i = topo.length - 1; i >= 0; i--) topo[i]._backward();
   }
 
   // Stride row-major: stride[cuối] = 1, stride[i] = stride[i+1] * shape[i+1].
@@ -189,11 +224,110 @@ function _elementwise(a, b, fn) {
   }
   return out;
 }
+
+// Backward của broadcasting: gradient đi NGƯỢC broadcast bằng cách CỘNG DỒN
+// (sum) đúng những chiều đã bị "nhân bản" ở forward — nếu không cộng dồn, số
+// chiều gradient không khớp lại được shape gốc của input (Bài 5 Mục 3).
+function _unbroadcast(gradFlat, outShape, targetShape) {
+  const result = new Float32Array(targetShape.reduce((a, b) => a * b, 1));
+  const targetStrides = Tensor.computeStrides(targetShape);
+  const idx = new Array(outShape.length).fill(0);
+  const total = outShape.reduce((a, b) => a * b, 1);
+  for (let n = 0; n < total; n++) {
+    const tIdx = _broadcastIndex(idx, outShape, targetShape);
+    let f = 0;
+    for (let i = 0; i < tIdx.length; i++) f += tIdx[i] * targetStrides[i];
+    result[f] += gradFlat[n];
+    for (let d = outShape.length - 1; d >= 0; d--) {
+      idx[d]++;
+      if (idx[d] < outShape[d]) break;
+      idx[d] = 0;
+    }
+  }
+  return result;
+}
+
 function add(a, b) {
-  return _elementwise(a, b, (x, y) => x + y);
+  const out = _elementwise(a, b, (x, y) => x + y);
+  out._prev = [a, b];
+  out._backward = () => {
+    a._ensureGrad();
+    b._ensureGrad();
+    const da = _unbroadcast(out.grad, out.shape, a.shape);
+    const db = _unbroadcast(out.grad, out.shape, b.shape);
+    for (let i = 0; i < a.grad.length; i++) a.grad[i] += da[i];
+    for (let i = 0; i < b.grad.length; i++) b.grad[i] += db[i];
+  };
+  return out;
 }
 function mul(a, b) {
-  return _elementwise(a, b, (x, y) => x * y);
+  const out = _elementwise(a, b, (x, y) => x * y);
+  out._prev = [a, b];
+  out._backward = () => {
+    a._ensureGrad();
+    b._ensureGrad();
+    // Local gradient cua phep nhan: d(a*b)/da = b, d(a*b)/db = a — nhan voi
+    // upstream (out.grad) TRUOC khi unbroadcast ve dung shape a/b.
+    const outShape = out.shape;
+    const gradWrtA = new Float32Array(out.size);
+    const gradWrtB = new Float32Array(out.size);
+    const idx = new Array(outShape.length).fill(0);
+    for (let n = 0; n < out.size; n++) {
+      const ia = _broadcastIndex(idx, outShape, a.shape);
+      const ib = _broadcastIndex(idx, outShape, b.shape);
+      gradWrtA[n] = out.grad[n] * b.get(...ib);
+      gradWrtB[n] = out.grad[n] * a.get(...ia);
+      for (let d = outShape.length - 1; d >= 0; d--) {
+        idx[d]++;
+        if (idx[d] < outShape[d]) break;
+        idx[d] = 0;
+      }
+    }
+    const da = _unbroadcast(gradWrtA, outShape, a.shape);
+    const db = _unbroadcast(gradWrtB, outShape, b.shape);
+    for (let i = 0; i < a.grad.length; i++) a.grad[i] += da[i];
+    for (let i = 0; i < b.grad.length; i++) b.grad[i] += db[i];
+  };
+  return out;
+}
+
+// relu/sigmoid: activation phi tuyến (Bài 6) nay có backward THẬT — không
+// cần tự tay lan truyền ngược qua chúng như Bài 6 làm nữa.
+function relu(a) {
+  const out = Tensor.zeros(a.shape);
+  for (let i = 0; i < a.size; i++) out.data[i] = Math.max(0, a.data[i]);
+  out._prev = [a];
+  out._backward = () => {
+    a._ensureGrad();
+    for (let i = 0; i < a.size; i++) a.grad[i] += (a.data[i] > 0 ? 1 : 0) * out.grad[i];
+  };
+  return out;
+}
+function sigmoid(a) {
+  const out = Tensor.zeros(a.shape);
+  for (let i = 0; i < a.size; i++) out.data[i] = 1 / (1 + Math.exp(-a.data[i]));
+  out._prev = [a];
+  out._backward = () => {
+    a._ensureGrad();
+    for (let i = 0; i < a.size; i++) {
+      const s = out.data[i];
+      a.grad[i] += s * (1 - s) * out.grad[i];
+    }
+  };
+  return out;
+}
+// sum: gộp MỌI phần tử thành 1 vô hướng — cần để loss có shape (1,), điều
+// kiện bắt buộc để gọi backward() (seed gradient = 1 chỉ có nghĩa trên scalar).
+function sum(a) {
+  let s = 0;
+  for (let i = 0; i < a.size; i++) s += a.data[i];
+  const out = new Tensor([s], [1]);
+  out._prev = [a];
+  out._backward = () => {
+    a._ensureGrad();
+    for (let i = 0; i < a.size; i++) a.grad[i] += out.grad[0];
+  };
+  return out;
 }
 
 // matmul — CHỈ nhận tensor 2D contiguous (đủ dùng cho Bài 5-10; batch matmul
@@ -218,10 +352,32 @@ function matmul(a, b) {
       for (let j = 0; j < n; j++) C[cBase + j] += aVal * B[bBase + j];
     }
   }
-  return new Tensor(C, [m, n]);
+  const out = new Tensor(C, [m, n]);
+  out._prev = [ca, cb];
+  out._backward = () => {
+    // dA = dOut @ B^T ; dB = A^T @ dOut (cong thuc backward chuan cua matmul,
+    // suy truc tiep tu quy tac chain rule tren tung phan tu C_ij = sum_p A_ip B_pj).
+    ca._ensureGrad();
+    cb._ensureGrad();
+    for (let i = 0; i < m; i++) {
+      for (let p = 0; p < k; p++) {
+        let s = 0;
+        for (let j = 0; j < n; j++) s += out.grad[i * n + j] * B[p * n + j];
+        ca.grad[i * k + p] += s;
+      }
+    }
+    for (let p = 0; p < k; p++) {
+      for (let j = 0; j < n; j++) {
+        let s = 0;
+        for (let i = 0; i < m; i++) s += A[i * k + p] * out.grad[i * n + j];
+        cb.grad[p * n + j] += s;
+      }
+    }
+  };
+  return out;
 }
 
-export { Tensor, broadcastShapes, add, mul, matmul };
+export { Tensor, broadcastShapes, add, mul, matmul, relu, sigmoid, sum };
 
 // ---------------------------------------------------------------------------
 // Self-test — chỉ chạy khi gọi TRỰC TIẾP `node ai-neuro.js`, không chạy khi
@@ -376,6 +532,133 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     [26, 30],
     [38, 44],
   ]);
+
+  // ===========================================================================
+  // BÀI 7 — AUTOGRAD: gradient checking (đối chiếu autograd với sai phân hữu
+  // hạn tính ở DOUBLE precision — KHÔNG dùng lại buffer Float32Array của
+  // Tensor để nhiễu số ε, vì lưu trữ float32 làm sai lệch epsilon "vùng vàng"
+  // rất nhiều (xem callout Mục 4 bài viết) — đúng cách thư viện thật làm
+  // (torch.autograd.gradcheck bắt buộc ép kiểu double trước khi kiểm tra).
+  // ===========================================================================
+
+  // --- Ví dụ 3 phép toán tính tay: a=2,b=3; c=a*b; d=c+a (dùng lại a); L=d² ---
+  function buildGraph3(aVal, bVal) {
+    const a = Tensor.fromNested([aVal]);
+    const b = Tensor.fromNested([bVal]);
+    const c = mul(a, b);
+    const d = add(c, a);
+    const L = mul(d, d);
+    return { a, b, c, d, L };
+  }
+  const g3 = buildGraph3(2, 3);
+  g3.L.backward();
+  check('3-node: L', g3.L.data[0], 64);
+  check('3-node: a.grad (cong don qua 2 nhanh: 48+16)', g3.a.grad[0], 64);
+  check('3-node: b.grad', g3.b.grad[0], 32);
+  // Đối chiếu bằng hàm THUẦN double precision độc lập (không qua Tensor) — quét
+  // epsilon để xác nhận "vùng vàng" 1e-4..1e-6 (Mục 4 bài viết).
+  function L3(aVal, bVal) {
+    const c = aVal * bVal;
+    const d = c + aVal;
+    return d * d;
+  }
+  for (const eps of [1e-4, 1e-5, 1e-6]) {
+    const fd = (L3(2 + eps, 3) - L3(2 - eps, 3)) / (2 * eps);
+    check('3-node: finite-diff eps=' + eps + ' khop autograd', fd, 64, 1e-3);
+  }
+
+  // --- Gradient checking cho relu/sigmoid qua 1 mini pipeline z->relu->sigmoid->sum ---
+  function buildPipeline(xVal) {
+    const x = Tensor.fromNested([xVal]);
+    const r = relu(x);
+    const s = sigmoid(r);
+    const L = sum(s);
+    return { x, L };
+  }
+  function pipelineDouble(xVal) {
+    const r = Math.max(0, xVal);
+    const s = 1 / (1 + Math.exp(-r));
+    return s;
+  }
+  for (const xVal of [-2, -0.5, 0.5, 2]) {
+    const p = buildPipeline(xVal);
+    p.L.backward();
+    const eps = 1e-5;
+    const fd = (pipelineDouble(xVal + eps) - pipelineDouble(xVal - eps)) / (2 * eps);
+    check('relu+sigmoid grad tai x=' + xVal, p.x.grad[0], fd, 1e-3);
+  }
+
+  // --- Gradient checking cho matmul: L = sum((X @ W)) trên ma trận nhỏ ---
+  function matmulDoubleSum(Xnested, Wnested) {
+    const X = Tensor.fromNested(Xnested),
+      W = Tensor.fromNested(Wnested);
+    let s = 0;
+    const out = matmulReference(X, W);
+    for (let i = 0; i < out.size; i++) s += out.data[i];
+    return s;
+  }
+  const Xg = Tensor.fromNested([
+    [1, 2],
+    [3, 4],
+  ]);
+  const Wg = Tensor.fromNested([
+    [0.5, -1],
+    [2, 0.3],
+  ]);
+  const Zg = matmul(Xg, Wg);
+  const Lg = sum(Zg);
+  Lg.backward();
+  const epsM = 1e-3;
+  for (let i = 0; i < 2; i++) {
+    for (let j = 0; j < 2; j++) {
+      const Xp = Xg.toNested(),
+        Xm = Xg.toNested();
+      Xp[i][j] += epsM;
+      Xm[i][j] -= epsM;
+      const fd = (matmulDoubleSum(Xp, Wg.toNested()) - matmulDoubleSum(Xm, Wg.toNested())) / (2 * epsM);
+      check('matmul grad X[' + i + ',' + j + ']', Xg.grad[i * 2 + j], fd, 1e-2);
+    }
+  }
+
+  // --- Cạm bẫy: gradient CỘNG DỒN — quên zero_grad làm nhiễm gradient vòng cũ ---
+  function forwardLoss(w, xVal) {
+    const x = Tensor.fromNested([xVal]);
+    const z = mul(w, x); // z = w*x
+    return mul(z, z); // L = (w*x)² ; dL/dw = 2*w*x²
+  }
+  const wBad = Tensor.fromNested([3]);
+  forwardLoss(wBad, 2).backward(); // vòng 1: dL/dw = 2*3*4 = 24
+  check('cong don: sau vong 1', wBad.grad[0], 24);
+  forwardLoss(wBad, 5).backward(); // vòng 2 QUÊN zero_grad: dL/dw rieng = 2*3*25=150
+  check('cong don: QUEN zero_grad -> nhiem gradient vong cu (24+150)', wBad.grad[0], 174);
+  const wGood = Tensor.fromNested([3]);
+  forwardLoss(wGood, 2).backward();
+  wGood.zeroGrad();
+  forwardLoss(wGood, 5).backward();
+  check('cong don: CO zero_grad -> dung 150', wGood.grad[0], 150);
+
+  // --- Nếm trước vanishing/exploding (chi tiết + lời giải ở Bài 13) ---
+  function chainSigmoid(N) {
+    let x = Tensor.fromNested([0]);
+    const first = x;
+    for (let i = 0; i < N; i++) x = sigmoid(x);
+    sum(x).backward();
+    return first.grad[0];
+  }
+  checkTrue(
+    'vanishing: N=10 sigmoid, grad cung bac 0.25^10~9.5e-7',
+    chainSigmoid(10) < 1e-5 && chainSigmoid(10) > 1e-8
+  );
+  checkTrue('vanishing: N=50 sigmoid, grad gan nhu bang 0', chainSigmoid(50) < 1e-25);
+  function chainMulConst(N, c) {
+    let x = Tensor.fromNested([1]);
+    const first = x;
+    for (let i = 0; i < N; i++) x = mul(x, Tensor.fromNested([c]));
+    sum(x).backward();
+    return first.grad[0];
+  }
+  check('exploding: N=10 nhan hang so 2, grad = 2^10', chainMulConst(10, 2), 1024, 1);
+  check('exploding: N=20 nhan hang so 2, grad = 2^20', chainMulConst(20, 2), 1048576, 2000);
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
 }
