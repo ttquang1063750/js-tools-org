@@ -1,14 +1,14 @@
 // ai-neuro.js — "NeuroJS": tensor engine mini dùng chung cho Series 12
 // Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD; Bài 9 thêm OPTIMIZER; Bài
-// 10 thêm SOFTMAX+CROSS-ENTROPY (mục này); mở rộng tiếp ở Bài 11 (Conv2D),
-// Bài 14 (attention). Import trực tiếp từ các bài sau, KHÔNG copy-paste lại
-// logic (tiền lệ vlsi-verilite.js Series 11).
+// 10 thêm SOFTMAX+CROSS-ENTROPY; Bài 11 thêm CONV2D/MAXPOOL2D/FLATTEN (mục
+// này); mở rộng tiếp ở Bài 14 (attention). Import trực tiếp từ các bài sau,
+// KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11).
 //
 // Cách chạy self-test (không cần cài gì ngoài Node.js):
 //   node ai-neuro.js
-// Kỳ vọng in ra: "SELF-TEST PASS (61 checks)" — 56 check regression của Bài
-// 5+7+9 (KHÔNG được đổi hành vi) cộng gradient checking cho softmax+cross-
-// entropy — xem Bài 10 bài viết cho chi tiết từng con số.
+// Kỳ vọng in ra: "SELF-TEST PASS (76 checks)" — 61 check regression của Bài
+// 5+7+9+10 (KHÔNG được đổi hành vi) cộng tính tay + gradient checking cho
+// conv2d/maxPool2d/flatten — xem Bài 11 bài viết cho chi tiết từng con số.
 
 // ---------------------------------------------------------------------------
 // Tensor: dữ liệu phẳng (Float32Array) + shape + strides (row-major).
@@ -496,7 +496,149 @@ function softmaxCrossEntropy(logits, yOneHot) {
   return out;
 }
 
-export { Tensor, broadcastShapes, add, mul, matmul, relu, sigmoid, sum, SGD, RMSProp, Adam, softmaxCrossEntropy };
+// ---------------------------------------------------------------------------
+// conv2d (Bài 11): tích chập 2D cho MỘT ảnh (không có chiều batch — xếp
+// batch bằng cách gọi lại nhiều lần, xem lý do hiệu năng + đơn giản trong
+// Bài 11 bài viết Mục 5). input shape (Cin,H,W); kernel shape (Cout,Cin,KH,
+// KW); bias shape (Cout,) hoặc null. Cùng công thức output-size học ở Mục 2:
+// OH = floor((H + 2·padding − KH) / stride) + 1 (tương tự OW).
+// Cài đọc/ghi TRỰC TIẾP trên Float32Array (không qua get()/set()) — lý do
+// hiệu năng giống hệt matmul() Bài 5.
+// ---------------------------------------------------------------------------
+function conv2d(input, kernel, bias, stride = 1, padding = 0) {
+  const [Cin, H, W] = input.shape;
+  const [Cout, Cin2, KH, KW] = kernel.shape;
+  if (Cin !== Cin2) throw new Error(`conv2d: so kenh input (${Cin}) khac kenh kernel (${Cin2})`);
+  const OH = Math.floor((H + 2 * padding - KH) / stride) + 1;
+  const OW = Math.floor((W + 2 * padding - KW) / stride) + 1;
+  const inData = input.data,
+    kData = kernel.data,
+    bData = bias ? bias.data : null;
+  const out = new Float32Array(Cout * OH * OW);
+  for (let co = 0; co < Cout; co++) {
+    for (let oh = 0; oh < OH; oh++) {
+      for (let ow = 0; ow < OW; ow++) {
+        let s = bData ? bData[co] : 0;
+        for (let ci = 0; ci < Cin; ci++) {
+          for (let kh = 0; kh < KH; kh++) {
+            const ih = oh * stride + kh - padding;
+            if (ih < 0 || ih >= H) continue;
+            for (let kw = 0; kw < KW; kw++) {
+              const iw = ow * stride + kw - padding;
+              if (iw < 0 || iw >= W) continue;
+              s += inData[(ci * H + ih) * W + iw] * kData[((co * Cin + ci) * KH + kh) * KW + kw];
+            }
+          }
+        }
+        out[(co * OH + oh) * OW + ow] = s;
+      }
+    }
+  }
+  const outT = new Tensor(out, [Cout, OH, OW]);
+  outT._prev = bias ? [input, kernel, bias] : [input, kernel];
+  outT._backward = () => {
+    input._ensureGrad();
+    kernel._ensureGrad();
+    if (bias) bias._ensureGrad();
+    for (let co = 0; co < Cout; co++) {
+      for (let oh = 0; oh < OH; oh++) {
+        for (let ow = 0; ow < OW; ow++) {
+          const g = outT.grad[(co * OH + oh) * OW + ow];
+          if (bias) bias.grad[co] += g;
+          for (let ci = 0; ci < Cin; ci++) {
+            for (let kh = 0; kh < KH; kh++) {
+              const ih = oh * stride + kh - padding;
+              if (ih < 0 || ih >= H) continue;
+              for (let kw = 0; kw < KW; kw++) {
+                const iw = ow * stride + kw - padding;
+                if (iw < 0 || iw >= W) continue;
+                const inIdx = (ci * H + ih) * W + iw;
+                const kIdx = ((co * Cin + ci) * KH + kh) * KW + kw;
+                input.grad[inIdx] += kData[kIdx] * g;
+                kernel.grad[kIdx] += inData[inIdx] * g;
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+  return outT;
+}
+
+// maxPool2d: giảm chiều KHÔNG học tham số — chỉ giữ giá trị LỚN NHẤT mỗi ô
+// pool, backward định tuyến gradient CHỈ về đúng vị trí đã "thắng" (argmax),
+// mọi vị trí thua trong ô nhận gradient = 0 (Mục 4 bài viết).
+function maxPool2d(input, poolSize, stride) {
+  stride = stride || poolSize;
+  const [C, H, W] = input.shape;
+  const OH = Math.floor((H - poolSize) / stride) + 1;
+  const OW = Math.floor((W - poolSize) / stride) + 1;
+  const inData = input.data;
+  const out = new Float32Array(C * OH * OW);
+  const argmax = new Int32Array(C * OH * OW);
+  for (let c = 0; c < C; c++) {
+    for (let oh = 0; oh < OH; oh++) {
+      for (let ow = 0; ow < OW; ow++) {
+        let best = -Infinity,
+          bestIdx = -1;
+        for (let ph = 0; ph < poolSize; ph++) {
+          const ih = oh * stride + ph;
+          for (let pw = 0; pw < poolSize; pw++) {
+            const iw = ow * stride + pw;
+            const idx = (c * H + ih) * W + iw;
+            if (inData[idx] > best) {
+              best = inData[idx];
+              bestIdx = idx;
+            }
+          }
+        }
+        const outIdx = (c * OH + oh) * OW + ow;
+        out[outIdx] = best;
+        argmax[outIdx] = bestIdx;
+      }
+    }
+  }
+  const outT = new Tensor(out, [C, OH, OW]);
+  outT._prev = [input];
+  outT._backward = () => {
+    input._ensureGrad();
+    for (let i = 0; i < out.length; i++) input.grad[argmax[i]] += outT.grad[i];
+  };
+  return outT;
+}
+
+// flatten: (C,H,W) -> (1, C*H*W). Dữ liệu conv2d/maxPool2d đã nằm phẳng
+// ĐÚNG thứ tự row-major nên chỉ cần đổi nhãn shape — nhưng vẫn phải là 1 OP
+// autograd riêng (copy + backward reshape ngược) để nối graph, không thể
+// dùng .reshape() thường của Bài 5 (không có _prev/_backward).
+function flatten(t) {
+  const out = new Tensor(t.data.slice(), [1, t.size]);
+  out._prev = [t];
+  out._backward = () => {
+    t._ensureGrad();
+    for (let i = 0; i < t.size; i++) t.grad[i] += out.grad[i];
+  };
+  return out;
+}
+
+export {
+  Tensor,
+  broadcastShapes,
+  add,
+  mul,
+  matmul,
+  relu,
+  sigmoid,
+  sum,
+  SGD,
+  RMSProp,
+  Adam,
+  softmaxCrossEntropy,
+  conv2d,
+  maxPool2d,
+  flatten,
+};
 
 // ---------------------------------------------------------------------------
 // Self-test — chỉ chạy khi gọi TRỰC TIẾP `node ai-neuro.js`, không chạy khi
@@ -948,6 +1090,133 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     }
     const L1 = softmaxCrossEntropy(logits, yOneHot).data[0];
     checkTrue('softmax+CE + Adam: loss giam manh sau 20 buoc tren bai toan de', L1 < L0 * 0.1);
+  }
+
+  // ===========================================================================
+  // BÀI 11 — CONV2D/MAXPOOL2D/FLATTEN: tính tay 1 ví dụ nhỏ + gradient checking.
+  // ===========================================================================
+
+  // --- Tinh tay: input 4x4 (1 kenh) la day so tang dan 1..16, kernel 3x3
+  // "hieu theo hang ngang" [[1,0,-1],[1,0,-1],[1,0,-1]], stride=1, khong pad.
+  // Vi input la ramp tuyen tinh, moi cua so 3x3 deu cho cung 1 gia tri -6.
+  {
+    const input = new Tensor(
+      Float32Array.from({ length: 16 }, (_, i) => i + 1),
+      [1, 4, 4]
+    );
+    const kernel = new Tensor(Float32Array.from([1, 0, -1, 1, 0, -1, 1, 0, -1]), [1, 1, 3, 3]);
+    const out = conv2d(input, kernel, null, 1, 0);
+    checkDeepEqual('conv2d tinh tay: output shape (1,2,2)', out.shape, [1, 2, 2]);
+    check('conv2d tinh tay: out[0,0]=-6', out.data[0], -6);
+    check('conv2d tinh tay: out[0,1]=-6', out.data[1], -6);
+    check('conv2d tinh tay: out[1,0]=-6', out.data[2], -6);
+    check('conv2d tinh tay: out[1,1]=-6', out.data[3], -6);
+  }
+
+  // --- Gradient checking conv2d: input (2,5,5) ngau nhien, kernel (3,2,3,3),
+  // bias (3,), stride=1, padding=1 (giu nguyen kich thuoc khong gian — Muc 2).
+  {
+    const Cin = 2,
+      H = 5,
+      W = 5,
+      Cout = 3,
+      KH = 3,
+      KW = 3;
+    const inData = Array.from({ length: Cin * H * W }, (_, i) => Math.sin(i * 0.7) * 2);
+    const kData = Array.from({ length: Cout * Cin * KH * KW }, (_, i) => Math.cos(i * 0.5) * 0.5);
+    const bData = [0.1, -0.2, 0.3];
+    function convDoubleSum(inArr, kArr, bArr, stride, padding) {
+      const OH = Math.floor((H + 2 * padding - KH) / stride) + 1;
+      const OW = Math.floor((W + 2 * padding - KW) / stride) + 1;
+      let total = 0;
+      for (let co = 0; co < Cout; co++)
+        for (let oh = 0; oh < OH; oh++)
+          for (let ow = 0; ow < OW; ow++) {
+            let s = bArr[co];
+            for (let ci = 0; ci < Cin; ci++)
+              for (let kh = 0; kh < KH; kh++) {
+                const ih = oh * stride + kh - padding;
+                if (ih < 0 || ih >= H) continue;
+                for (let kw = 0; kw < KW; kw++) {
+                  const iw = ow * stride + kw - padding;
+                  if (iw < 0 || iw >= W) continue;
+                  s += inArr[(ci * H + ih) * W + iw] * kArr[((co * Cin + ci) * KH + kh) * KW + kw];
+                }
+              }
+            total += s;
+          }
+      return total;
+    }
+    const inputT = new Tensor(inData.slice(), [Cin, H, W]);
+    const kernelT = new Tensor(kData.slice(), [Cout, Cin, KH, KW]);
+    const biasT = new Tensor(bData.slice(), [Cout]);
+    const outT = conv2d(inputT, kernelT, biasT, 1, 1);
+    const Lc = sum(outT);
+    Lc.backward();
+    const eps = 1e-3;
+    let maxDiffIn = 0;
+    for (let idx = 0; idx < inData.length; idx++) {
+      const p = inData.slice(),
+        m = inData.slice();
+      p[idx] += eps;
+      m[idx] -= eps;
+      const fd = (convDoubleSum(p, kData, bData, 1, 1) - convDoubleSum(m, kData, bData, 1, 1)) / (2 * eps);
+      maxDiffIn = Math.max(maxDiffIn, Math.abs(fd - inputT.grad[idx]));
+    }
+    checkTrue('conv2d gradient checking (dInput, padding=1)', maxDiffIn < 1e-2);
+    let maxDiffK = 0;
+    for (let idx = 0; idx < kData.length; idx++) {
+      const p = kData.slice(),
+        m = kData.slice();
+      p[idx] += eps;
+      m[idx] -= eps;
+      const fd = (convDoubleSum(inData, p, bData, 1, 1) - convDoubleSum(inData, m, bData, 1, 1)) / (2 * eps);
+      maxDiffK = Math.max(maxDiffK, Math.abs(fd - kernelT.grad[idx]));
+    }
+    checkTrue('conv2d gradient checking (dKernel, padding=1)', maxDiffK < 1e-2);
+    let maxDiffB = 0;
+    for (let idx = 0; idx < bData.length; idx++) {
+      const p = bData.slice(),
+        m = bData.slice();
+      p[idx] += eps;
+      m[idx] -= eps;
+      const fd = (convDoubleSum(inData, kData, p, 1, 1) - convDoubleSum(inData, kData, m, 1, 1)) / (2 * eps);
+      maxDiffB = Math.max(maxDiffB, Math.abs(fd - biasT.grad[idx]));
+    }
+    checkTrue('conv2d gradient checking (dBias, padding=1)', maxDiffB < 1e-2);
+    checkDeepEqual('conv2d padding=1 giu nguyen kich thuoc khong gian (5x5->5x5)', outT.shape, [3, 5, 5]);
+  }
+
+  // --- maxPool2d: tinh tay 4x4 -> 2x2 (pool 2x2 stride 2), verify argmax
+  // dinh tuyen DUNG vi tri, cac vi tri THUA nhan gradient = 0.
+  {
+    const input = new Tensor(Float32Array.from([1, 5, 2, 8, 3, 4, 9, 1, 6, 2, 1, 3, 7, 0, 2, 4]), [1, 4, 4]);
+    const out = maxPool2d(input, 2, 2);
+    checkDeepEqual('maxPool2d tinh tay: output shape (1,2,2)', out.shape, [1, 2, 2]);
+    checkDeepEqual('maxPool2d tinh tay: gia tri dung (max moi o 2x2)', Array.from(out.data), [5, 9, 7, 4]);
+    out._ensureGrad();
+    out.grad.set([1, 1, 1, 1]);
+    out._backward();
+    checkDeepEqual(
+      'maxPool2d backward: gradient CHI chay ve dung vi tri argmax (con lai = 0)',
+      Array.from(input.grad),
+      [0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1]
+    );
+  }
+
+  // --- flatten: (C,H,W) -> (1,C*H*W), backward truyen nguyen gradient ve dung shape ---
+  {
+    const t = new Tensor(Float32Array.from([1, 2, 3, 4, 5, 6, 7, 8]), [2, 2, 2]);
+    const f = flatten(t);
+    checkDeepEqual('flatten shape (2,2,2) -> (1,8)', f.shape, [1, 8]);
+    checkDeepEqual('flatten gia tri giu nguyen thu tu', Array.from(f.data), [1, 2, 3, 4, 5, 6, 7, 8]);
+    const L = sum(mul(f, f));
+    L.backward();
+    checkDeepEqual(
+      'flatten backward: dL/dt = 2*t dung shape goc (2,2,2)',
+      Array.from(t.grad),
+      [2, 4, 6, 8, 10, 12, 14, 16]
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
