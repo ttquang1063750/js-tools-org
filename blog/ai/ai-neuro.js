@@ -1,14 +1,14 @@
 // ai-neuro.js — "NeuroJS": tensor engine mini dùng chung cho Series 12
-// Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD; Bài 9 thêm OPTIMIZER (mục
-// này); mở rộng tiếp ở Bài 11 (Conv2D), Bài 14 (attention). Import trực tiếp
-// từ các bài sau, KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11).
+// Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD; Bài 9 thêm OPTIMIZER; Bài
+// 10 thêm SOFTMAX+CROSS-ENTROPY (mục này); mở rộng tiếp ở Bài 11 (Conv2D),
+// Bài 14 (attention). Import trực tiếp từ các bài sau, KHÔNG copy-paste lại
+// logic (tiền lệ vlsi-verilite.js Series 11).
 //
 // Cách chạy self-test (không cần cài gì ngoài Node.js):
 //   node ai-neuro.js
-// Kỳ vọng in ra: "SELF-TEST PASS (56 checks)" — 43 check regression của Bài
-// 5+7 (KHÔNG được đổi hành vi) cộng verify từng optimizer (SGD/Momentum/
-// RMSProp/Adam) bằng công thức tính tay từng bước — xem Bài 9 bài viết cho
-// chi tiết từng con số.
+// Kỳ vọng in ra: "SELF-TEST PASS (61 checks)" — 56 check regression của Bài
+// 5+7+9 (KHÔNG được đổi hành vi) cộng gradient checking cho softmax+cross-
+// entropy — xem Bài 10 bài viết cho chi tiết từng con số.
 
 // ---------------------------------------------------------------------------
 // Tensor: dữ liệu phẳng (Float32Array) + shape + strides (row-major).
@@ -463,7 +463,40 @@ class Adam {
   }
 }
 
-export { Tensor, broadcastShapes, add, mul, matmul, relu, sigmoid, sum, SGD, RMSProp, Adam };
+// ---------------------------------------------------------------------------
+// softmaxCrossEntropy (Bài 10): loss chuẩn cho phân loại NHIỀU lớp (MNIST
+// 10 lớp). Cài GỘP softmax+cross-entropy thành 1 op nguyên khối (giống hệt
+// torch.nn.functional.cross_entropy) thay vì ghép exp()/log() rời — 2 lý do:
+// (1) ổn định số học — trừ max trước exp() tránh tràn số khi logits lớn;
+// (2) gradient GỘP rút gọn tuyệt đẹp về đúng 1 dòng: d(loss)/d(logits) =
+// (softmax(logits) - target_one_hot) / batchSize — không cần lan truyền qua
+// từng phép exp/log/chia riêng lẻ.
+// logits: Tensor (N, C). yOneHot: Tensor (N, C) — 1 tại đúng lớp, còn lại 0.
+function softmaxCrossEntropy(logits, yOneHot) {
+  const [N, C] = logits.shape;
+  const probs = new Float32Array(N * C);
+  let lossSum = 0;
+  for (let i = 0; i < N; i++) {
+    let m = -Infinity;
+    for (let c = 0; c < C; c++) m = Math.max(m, logits.data[i * C + c]);
+    let sumExp = 0;
+    for (let c = 0; c < C; c++) sumExp += Math.exp(logits.data[i * C + c] - m);
+    const logSumExp = Math.log(sumExp) + m;
+    for (let c = 0; c < C; c++) probs[i * C + c] = Math.exp(logits.data[i * C + c] - logSumExp);
+    for (let c = 0; c < C; c++) {
+      if (yOneHot.data[i * C + c] > 0) lossSum += -(logits.data[i * C + c] - logSumExp) * yOneHot.data[i * C + c];
+    }
+  }
+  const out = new Tensor([lossSum / N], [1]);
+  out._prev = [logits];
+  out._backward = () => {
+    logits._ensureGrad();
+    for (let n = 0; n < N * C; n++) logits.grad[n] += ((probs[n] - yOneHot.data[n]) / N) * out.grad[0];
+  };
+  return out;
+}
+
+export { Tensor, broadcastShapes, add, mul, matmul, relu, sigmoid, sum, SGD, RMSProp, Adam, softmaxCrossEntropy };
 
 // ---------------------------------------------------------------------------
 // Self-test — chỉ chạy khi gọi TRỰC TIẾP `node ai-neuro.js`, không chạy khi
@@ -835,6 +868,87 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       ' Adam=' +
       stepsAdam
   );
+
+  // ===========================================================================
+  // BÀI 10 — SOFTMAX + CROSS-ENTROPY: tính tay 1 ví dụ nhỏ + gradient checking.
+  // ===========================================================================
+
+  // --- Tinh tay: 1 mau, 3 lop, logits=[1,2,3], dung la lop 2 (index tu 0) ---
+  {
+    const logits = Tensor.fromNested([[1, 2, 3]]);
+    const yOneHot = Tensor.fromNested([[0, 0, 1]]);
+    const L = softmaxCrossEntropy(logits, yOneHot);
+    // softmax([1,2,3]): exp(1-3)=0.1353, exp(2-3)=0.3679, exp(3-3)=1 -> sum=1.5032
+    // prob = [0.0900, 0.2447, 0.6652] ; loss = -log(0.6652) = 0.4076
+    const expExp = [Math.exp(-2), Math.exp(-1), Math.exp(0)];
+    const sumExp = expExp[0] + expExp[1] + expExp[2];
+    const probLop2 = expExp[2] / sumExp;
+    check('softmax+CE tinh tay: loss = -log(prob dung lop)', L.data[0], -Math.log(probLop2), 1e-5);
+    L.backward();
+    logits._ensureGrad();
+    check('softmax+CE grad lop dung = prob-1 (am, keo logit dung LEN)', logits.grad[2], probLop2 - 1, 1e-5);
+    check('softmax+CE grad lop sai = prob (duong, keo logit sai XUONG)', logits.grad[0], expExp[0] / sumExp, 1e-5);
+  }
+
+  // --- Gradient checking: batch N=4, C=5, logits + one-hot NGAU NHIEN ---
+  {
+    const N = 4,
+      C = 5;
+    const logitsData = [];
+    for (let i = 0; i < N * C; i++) logitsData.push(Math.sin(i * 1.7) * 2);
+    const labels = [2, 0, 4, 1];
+    const yData = new Array(N * C).fill(0);
+    labels.forEach((lab, i) => (yData[i * C + lab] = 1));
+    function lossDouble(vals) {
+      let total = 0;
+      for (let i = 0; i < N; i++) {
+        let m = -Infinity;
+        for (let c = 0; c < C; c++) m = Math.max(m, vals[i * C + c]);
+        let sumExp = 0;
+        for (let c = 0; c < C; c++) sumExp += Math.exp(vals[i * C + c] - m);
+        const logSumExp = Math.log(sumExp) + m;
+        total += -(vals[i * C + labels[i]] - logSumExp);
+      }
+      return total / N;
+    }
+    const logitsT = Tensor.fromNested(logitsData.slice()).reshape([N, C]);
+    const yT = Tensor.fromNested(yData).reshape([N, C]);
+    const Lce = softmaxCrossEntropy(logitsT, yT);
+    Lce.backward();
+    const eps = 1e-4;
+    let maxDiff = 0;
+    for (let idx = 0; idx < N * C; idx++) {
+      const plus = logitsData.slice();
+      plus[idx] += eps;
+      const minus = logitsData.slice();
+      minus[idx] -= eps;
+      const fd = (lossDouble(plus) - lossDouble(minus)) / (2 * eps);
+      maxDiff = Math.max(maxDiff, Math.abs(fd - logitsT.grad[idx]));
+    }
+    checkTrue('softmax+CE gradient checking (N=4,C=5, sai lech toi da < 1e-3)', maxDiff < 1e-3);
+  }
+
+  // --- Sanity: 1 buoc Adam giam loss tren bai toan phan tach de (2 mau, 2 lop) ---
+  {
+    const logits = Tensor.fromNested([
+      [0, 0],
+      [0, 0],
+    ]);
+    const yOneHot = Tensor.fromNested([
+      [1, 0],
+      [0, 1],
+    ]);
+    const opt = new Adam([logits], 0.5);
+    const L0 = softmaxCrossEntropy(logits, yOneHot).data[0];
+    for (let step = 0; step < 20; step++) {
+      logits.zeroGrad();
+      const L = softmaxCrossEntropy(logits, yOneHot);
+      L.backward();
+      opt.step();
+    }
+    const L1 = softmaxCrossEntropy(logits, yOneHot).data[0];
+    checkTrue('softmax+CE + Adam: loss giam manh sau 20 buoc tren bai toan de', L1 < L0 * 0.1);
+  }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
 }
