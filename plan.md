@@ -24,7 +24,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 9: Git**             | **Mô Hình & Quy Trình Làm Việc**        | **13/13**      | **13**   | **100%** ✅ |
 | 🎉 **Series 10: Điện Tử**        | **Điện Tử & Mô Phỏng Vi Mạch**          | **16/16**      | **16**   | **100%** ✅ |
 | 🎉 **Series 11: VLSI**           | **Thiết Kế Vi Mạch Số & FPGA (VLSI)**   | **14/14**      | **14**   | **100%** ✅ |
-| Series 12                        | Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM     | 8/19           | 19       | 42%         |
+| Series 12                        | Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM     | 9/19           | 19       | 47%         |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
@@ -246,7 +246,7 @@ Mọi bài tuân thủ rubric PHẦN IV (quality contract) + `check-lesson.md`, 
 
 **Engine dùng chung (xây DẦN theo bài — khác VeriLite làm 1 lần):**
 
-- [x] `blog/ai/ai-neuro.js` khởi sinh ở Bài 5 (tensor: Tensor/shape/stride/transpose/contiguous/reshape, broadcasting, matmul — 22-check self-test); mở rộng ở Bài 7 (autograd: `.grad`/`._backward`/`._prev`, topo sort, backward cho add/mul/matmul/relu/sigmoid, gradient checking double-precision — 43-check self-test, 22 regression Bài 5 + 21 mới, mlp_xor.js Bài 6 regression-tested lại vẫn 22/22) → còn Bài 9 (optimizer), 11 (Conv2D), 14 (attention). MỖI lần mở rộng: self-test Node + gradient checking chạy sạch trước, regression test các bài trước còn đúng (bài học VeriLite D#14–17).
+- [x] `blog/ai/ai-neuro.js` khởi sinh ở Bài 5 (tensor: Tensor/shape/stride/transpose/contiguous/reshape, broadcasting, matmul — 22-check self-test); mở rộng ở Bài 7 (autograd: `.grad`/`._backward`/`._prev`, topo sort, backward cho add/mul/matmul/relu/sigmoid, gradient checking double-precision — 43-check self-test, 22 regression Bài 5 + 21 mới, mlp_xor.js Bài 6 regression-tested lại vẫn 22/22); mở rộng ở Bài 9 (optimizer: class SGD/Momentum/RMSProp/Adam, verify công thức tính tay + đua trên loss ravine — 56-check self-test, 43 regression Bài 5+7 + 13 mới) → còn 11 (Conv2D), 14 (attention). MỖI lần mở rộng: self-test Node + gradient checking chạy sạch trước, regression test các bài trước còn đúng (bài học VeriLite D#14–17).
 - [ ] `blog/ai/ai-viz.js` (nếu cần) — helper vẽ chung: loss curve, decision boundary, heatmap; quyết định tách file hay inline khi làm Bài 6 (đừng trừu tượng hoá sớm).
 
 **Visualizer cốt lõi (nặng nhất — sau Bài 7, trước khi viết Bài 6 phiên bản cuối):**

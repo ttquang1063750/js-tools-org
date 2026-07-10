@@ -1,14 +1,14 @@
 // ai-neuro.js — "NeuroJS": tensor engine mini dùng chung cho Series 12
-// Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD (mục này); mở rộng tiếp ở
-// Bài 9 (optimizer), Bài 11 (Conv2D), Bài 14 (attention). Import trực tiếp từ
-// các bài sau, KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11).
+// Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD; Bài 9 thêm OPTIMIZER (mục
+// này); mở rộng tiếp ở Bài 11 (Conv2D), Bài 14 (attention). Import trực tiếp
+// từ các bài sau, KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11).
 //
 // Cách chạy self-test (không cần cài gì ngoài Node.js):
 //   node ai-neuro.js
-// Kỳ vọng in ra: "SELF-TEST PASS (43 checks)" — 22 check regression của Bài 5
-// (KHÔNG được đổi hành vi) cộng gradient checking bằng sai phân hữu hạn cho
-// mọi phép mới (+, *, matmul, relu, sigmoid, sum), cạm bẫy cộng dồn gradient,
-// và ví dụ vanishing/exploding — xem Bài 7 bài viết cho chi tiết từng con số.
+// Kỳ vọng in ra: "SELF-TEST PASS (56 checks)" — 43 check regression của Bài
+// 5+7 (KHÔNG được đổi hành vi) cộng verify từng optimizer (SGD/Momentum/
+// RMSProp/Adam) bằng công thức tính tay từng bước — xem Bài 9 bài viết cho
+// chi tiết từng con số.
 
 // ---------------------------------------------------------------------------
 // Tensor: dữ liệu phẳng (Float32Array) + shape + strides (row-major).
@@ -377,7 +377,93 @@ function matmul(a, b) {
   return out;
 }
 
-export { Tensor, broadcastShapes, add, mul, matmul, relu, sigmoid, sum };
+// ---------------------------------------------------------------------------
+// Optimizer (Bài 9): nhận DANH SÁCH tensor tham số (không phải object như
+// demo Bài 8) — .step() đọc .grad đã có sẵn từ backward() và tự cập nhật
+// .data, tổng quát cho MỌI kiến trúc. Không đụng tới computation graph nên
+// KHÔNG cần gradient checking (không phải 1 op autograd) — verify bằng công
+// thức tính tay từng bước thay thế (xem self-test dưới + Bài 9 Mục 6).
+// ---------------------------------------------------------------------------
+
+// SGD thuần (momentum=0) hoặc SGD+Momentum (momentum>0): v <- momentum*v + g;
+// w -= lr*v. momentum=0 thì v luôn bằng g, tương đương SGD thuần từng bước.
+class SGD {
+  constructor(params, lr, momentum = 0, l2 = 0) {
+    this.params = params;
+    this.lr = lr;
+    this.momentum = momentum;
+    this.l2 = l2;
+    this.velocity = params.map((p) => new Float32Array(p.size));
+  }
+  step() {
+    this.params.forEach((p, idx) => {
+      const v = this.velocity[idx];
+      for (let i = 0; i < p.size; i++) {
+        const g = p.grad[i] + this.l2 * p.data[i];
+        v[i] = this.momentum * v[i] + g;
+        p.data[i] -= this.lr * v[i];
+      }
+    });
+  }
+}
+
+// RMSProp: chia learning rate cho căn trung bình động (EMA) của g² TỪNG THAM
+// SỐ — tham số có gradient dao động lớn (curvature lớn) tự động nhận bước
+// nhỏ hơn, tham số gradient nhỏ tự động nhận bước lớn hơn.
+class RMSProp {
+  constructor(params, lr, beta = 0.9, eps = 1e-8) {
+    this.params = params;
+    this.lr = lr;
+    this.beta = beta;
+    this.eps = eps;
+    this.cache = params.map((p) => new Float32Array(p.size));
+  }
+  step() {
+    this.params.forEach((p, idx) => {
+      const c = this.cache[idx];
+      for (let i = 0; i < p.size; i++) {
+        const g = p.grad[i];
+        c[i] = this.beta * c[i] + (1 - this.beta) * g * g;
+        p.data[i] -= (this.lr * g) / (Math.sqrt(c[i]) + this.eps);
+      }
+    });
+  }
+}
+
+// Adam = Momentum (m, EMA của g) + RMSProp (v, EMA của g²) + BIAS CORRECTION
+// (m/(1-beta1^t), v/(1-beta2^t)) — sửa thiên lệch vì m,v khởi tạo bằng 0 nên
+// những bước ĐẦU bị kéo lệch về 0 nếu không chia lại (xem Bài 9 Mục 3).
+class Adam {
+  constructor(params, lr = 0.001, beta1 = 0.9, beta2 = 0.999, eps = 1e-8) {
+    this.params = params;
+    this.lr = lr;
+    this.beta1 = beta1;
+    this.beta2 = beta2;
+    this.eps = eps;
+    this.m = params.map((p) => new Float32Array(p.size));
+    this.v = params.map((p) => new Float32Array(p.size));
+    this.t = 0;
+  }
+  step() {
+    this.t++;
+    const b1t = 1 - Math.pow(this.beta1, this.t);
+    const b2t = 1 - Math.pow(this.beta2, this.t);
+    this.params.forEach((p, idx) => {
+      const m = this.m[idx],
+        v = this.v[idx];
+      for (let i = 0; i < p.size; i++) {
+        const g = p.grad[i];
+        m[i] = this.beta1 * m[i] + (1 - this.beta1) * g;
+        v[i] = this.beta2 * v[i] + (1 - this.beta2) * g * g;
+        const mHat = m[i] / b1t;
+        const vHat = v[i] / b2t;
+        p.data[i] -= (this.lr * mHat) / (Math.sqrt(vHat) + this.eps);
+      }
+    });
+  }
+}
+
+export { Tensor, broadcastShapes, add, mul, matmul, relu, sigmoid, sum, SGD, RMSProp, Adam };
 
 // ---------------------------------------------------------------------------
 // Self-test — chỉ chạy khi gọi TRỰC TIẾP `node ai-neuro.js`, không chạy khi
@@ -659,6 +745,96 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   }
   check('exploding: N=10 nhan hang so 2, grad = 2^10', chainMulConst(10, 2), 1024, 1);
   check('exploding: N=20 nhan hang so 2, grad = 2^20', chainMulConst(20, 2), 1048576, 2000);
+
+  // ===========================================================================
+  // BÀI 9 — OPTIMIZER: verify từng công thức bằng tính tay từng bước (không
+  // qua backward — set thẳng .grad để kiểm soát input, tách biệt khỏi Bài 7).
+  // ===========================================================================
+
+  // --- SGD thuần: 1 bước = trừ đúng lr*grad ---
+  function setGrad(t, vals) {
+    t._ensureGrad();
+    vals.forEach((v, i) => (t.grad[i] = v));
+  }
+  const pSgd = Tensor.fromNested([5]);
+  setGrad(pSgd, [2]);
+  new SGD([pSgd], 0.1).step();
+  check('SGD thuan: 5 - 0.1*2', pSgd.data[0], 4.8);
+
+  // --- SGD+Momentum: v tich luy qua 2 buoc, khac SGD thuan tu buoc 2 ---
+  const pMom = Tensor.fromNested([5]);
+  const optMom = new SGD([pMom], 0.1, 0.9);
+  setGrad(pMom, [2]);
+  optMom.step(); // v=0.9*0+2=2 ; p=5-0.1*2=4.8
+  check('Momentum buoc 1 == SGD thuan buoc 1 (v moi = grad)', pMom.data[0], 4.8);
+  setGrad(pMom, [2]);
+  optMom.step(); // v=0.9*2+2=3.8 ; p=4.8-0.1*3.8=4.42
+  check('Momentum buoc 2: tich luy v lam buoc DI XA HON SGD thuan', pMom.data[0], 4.42);
+  const pSgd2 = Tensor.fromNested([5]);
+  const optSgd2 = new SGD([pSgd2], 0.1);
+  setGrad(pSgd2, [2]);
+  optSgd2.step();
+  setGrad(pSgd2, [2]);
+  optSgd2.step();
+  checkTrue('Momentum buoc 2 di xa hon SGD thuan cung 2 buoc (4.42 < 4.6)', pMom.data[0] < pSgd2.data[0]);
+
+  // --- RMSProp: cache = EMA(g²), buoc chia cho can(cache) ---
+  const pRms = Tensor.fromNested([5]);
+  const optRms = new RMSProp([pRms], 0.1, 0.9);
+  setGrad(pRms, [2]);
+  optRms.step(); // cache=0.1*4=0.4 ; buoc=0.1*2/sqrt(0.4)=0.3162...
+  check('RMSProp buoc 1', pRms.data[0], 5 - (0.1 * 2) / Math.sqrt(0.4), 1e-6);
+  setGrad(pRms, [2]);
+  optRms.step(); // cache=0.9*0.4+0.1*4=0.76
+  check('RMSProp buoc 2', pRms.data[0], 5 - (0.1 * 2) / Math.sqrt(0.4) - (0.1 * 2) / Math.sqrt(0.76), 1e-6);
+
+  // --- Adam: bias correction voi gradient HANG SO g -> mHat=g, vHat=g² CHINH
+  // XAC moi buoc t (dong nhat thuc: m_t=(1-beta1^t)*g khi m_0=0, chia lai
+  // dung 1-beta1^t la triet tieu HET) -> buoc = lr*g/(|g|+eps) ~ hang so lr
+  // MOI buoc, BAT KE do lon gradient — day la ly do Adam it nhay cam voi
+  // scale gradient hon SGD (xem Bai 9 Muc 3).
+  const pAdam = Tensor.fromNested([5]);
+  const optAdam = new Adam([pAdam], 0.1);
+  let expectAdam = 5;
+  for (let step = 0; step < 5; step++) {
+    setGrad(pAdam, [2]);
+    optAdam.step();
+    expectAdam -= 0.1; // lr*mHat/sqrt(vHat) = 0.1*2/2 = 0.1 (bo qua eps)
+    check('Adam buoc ' + (step + 1) + ': buoc ~hang so lr bat ke grad=2', pAdam.data[0], expectAdam, 1e-3);
+  }
+
+  // --- Đua optimizer trên loss ravine f(x,y)=0.1x²+2y² (khe hẹp: curvature
+  // theo y gấp 20 lần theo x) — cùng lr=0.1 cho cả 4, đếm số bước tới
+  // loss < 1e-3 từ điểm xuất phát (-2, 1) (loss ban đầu = 0.1*4+2*1 = 2.4).
+  function raceOptimizer(makeOpt) {
+    const p = Tensor.fromNested([-2, 1]);
+    const opt = makeOpt([p]);
+    for (let step = 1; step <= 20000; step++) {
+      const x = p.data[0],
+        y = p.data[1];
+      setGrad(p, [0.2 * x, 4 * y]);
+      opt.step();
+      const loss = 0.1 * p.data[0] * p.data[0] + 2 * p.data[1] * p.data[1];
+      if (loss < 1e-3) return step;
+    }
+    return Infinity;
+  }
+  const stepsSgd = raceOptimizer((ps) => new SGD(ps, 0.1));
+  const stepsMom = raceOptimizer((ps) => new SGD(ps, 0.1, 0.9));
+  const stepsRms = raceOptimizer((ps) => new RMSProp(ps, 0.1, 0.9));
+  const stepsAdam = raceOptimizer((ps) => new Adam(ps, 0.1));
+  checkTrue('dua optimizer: SGD thuan CHAM NHAT tren khe hep', stepsSgd > stepsMom && stepsSgd > stepsRms);
+  checkTrue('dua optimizer: RMSProp/Adam ve dich (huong x cong ca huong)', stepsRms < Infinity && stepsAdam < Infinity);
+  console.log(
+    'Dua optimizer (buoc toi loss<1e-3): SGD=' +
+      stepsSgd +
+      ' Momentum=' +
+      stepsMom +
+      ' RMSProp=' +
+      stepsRms +
+      ' Adam=' +
+      stepsAdam
+  );
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
 }
