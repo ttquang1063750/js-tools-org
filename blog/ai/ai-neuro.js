@@ -1,14 +1,16 @@
 // ai-neuro.js — "NeuroJS": tensor engine mini dùng chung cho Series 12
 // Khởi sinh ở Bài 5 (tensor); Bài 7 thêm AUTOGRAD; Bài 9 thêm OPTIMIZER; Bài
-// 10 thêm SOFTMAX+CROSS-ENTROPY; Bài 11 thêm CONV2D/MAXPOOL2D/FLATTEN (mục
-// này); mở rộng tiếp ở Bài 14 (attention). Import trực tiếp từ các bài sau,
-// KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11).
+// 10 thêm SOFTMAX+CROSS-ENTROPY; Bài 11 thêm CONV2D/MAXPOOL2D/FLATTEN; Bài 12
+// thêm EMBEDDING LOOKUP + SIGMOID CROSS-ENTROPY (mục này); mở rộng tiếp ở
+// Bài 14 (attention). Import trực tiếp từ các bài sau, KHÔNG copy-paste lại
+// logic (tiền lệ vlsi-verilite.js Series 11).
 //
 // Cách chạy self-test (không cần cài gì ngoài Node.js):
 //   node ai-neuro.js
-// Kỳ vọng in ra: "SELF-TEST PASS (76 checks)" — 61 check regression của Bài
-// 5+7+9+10 (KHÔNG được đổi hành vi) cộng tính tay + gradient checking cho
-// conv2d/maxPool2d/flatten — xem Bài 11 bài viết cho chi tiết từng con số.
+// Kỳ vọng in ra: "SELF-TEST PASS (84 checks)" — 76 check regression của Bài
+// 5+7+9+10+11 (KHÔNG được đổi hành vi) cộng tính tay + gradient checking cho
+// embeddingLookup/sigmoidCrossEntropy — xem Bài 12 bài viết cho chi tiết
+// từng con số.
 
 // ---------------------------------------------------------------------------
 // Tensor: dữ liệu phẳng (Float32Array) + shape + strides (row-major).
@@ -622,6 +624,64 @@ function flatten(t) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// embeddingLookup (Bài 12): "bảng tra" V×d — mỗi hàng là vector 1 từ. indices
+// là mảng JS số nguyên THƯỜNG (không phải Tensor — chỉ số từ không có đạo
+// hàm, giống hệt cách PyTorch tách long index khỏi float weight). Backward
+// CỘNG DỒN gradient về đúng hàng đã tra (một từ dùng lại nhiều lần trong 1
+// batch — vd 2 lần xuất hiện của "chữ" trong 1 câu — phải cộng dồn, không
+// ghi đè, giống bài học Mục 3 Bài 7).
+// ---------------------------------------------------------------------------
+function embeddingLookup(table, indices) {
+  const [V, d] = table.shape;
+  const out = new Float32Array(indices.length * d);
+  for (let i = 0; i < indices.length; i++) {
+    const row = indices[i];
+    for (let k = 0; k < d; k++) out[i * d + k] = table.data[row * d + k];
+  }
+  const outT = new Tensor(out, [indices.length, d]);
+  outT._prev = [table];
+  outT._backward = () => {
+    table._ensureGrad();
+    for (let i = 0; i < indices.length; i++) {
+      const row = indices[i];
+      for (let k = 0; k < d; k++) table.grad[row * d + k] += outT.grad[i * d + k];
+    }
+  };
+  return outT;
+}
+
+// sigmoidCrossEntropy (Bài 12): binary cross-entropy GỘP với sigmoid, giống
+// tinh thần softmaxCrossEntropy Bài 10 nhưng cho 2 lớp (dùng trong skip-gram
+// negative sampling — Mục 2 bài viết giải thích vì sao negative sampling
+// THAY THẾ softmax cả vocab bằng nhiều bài toán nhị phân nhỏ). Công thức ỔN
+// ĐỊNH SỐ HỌC (giống PyTorch binary_cross_entropy_with_logits, tránh tính
+// sigmoid() rồi log() riêng — log(sigmoid(z)) tràn số khi z rất âm):
+//   loss_i = max(z,0) - z*y + log(1+exp(-|z|))
+// Gradient GỘP rút về đúng 1 dòng, y hệt tinh thần softmax-CE:
+//   d(loss)/dz = sigmoid(z) - y
+function sigmoidCrossEntropy(logits, labels) {
+  const N = logits.size;
+  let lossSum = 0;
+  for (let i = 0; i < N; i++) {
+    const z = logits.data[i],
+      y = labels.data[i];
+    lossSum += Math.max(z, 0) - z * y + Math.log(1 + Math.exp(-Math.abs(z)));
+  }
+  const out = new Tensor([lossSum / N], [1]);
+  out._prev = [logits];
+  out._backward = () => {
+    logits._ensureGrad();
+    for (let i = 0; i < N; i++) {
+      const z = logits.data[i],
+        y = labels.data[i];
+      const sig = 1 / (1 + Math.exp(-z));
+      logits.grad[i] += ((sig - y) / N) * out.grad[0];
+    }
+  };
+  return out;
+}
+
 export {
   Tensor,
   broadcastShapes,
@@ -638,6 +698,8 @@ export {
   conv2d,
   maxPool2d,
   flatten,
+  embeddingLookup,
+  sigmoidCrossEntropy,
 };
 
 // ---------------------------------------------------------------------------
@@ -1217,6 +1279,79 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       Array.from(t.grad),
       [2, 4, 6, 8, 10, 12, 14, 16]
     );
+  }
+
+  // ===========================================================================
+  // BÀI 12 — EMBEDDING LOOKUP + SIGMOID CROSS-ENTROPY: tính tay + gradient checking.
+  // ===========================================================================
+
+  // --- embeddingLookup: bang tra V=4, d=3; tra 2 chi so, 1 chi so LAP LAI ---
+  {
+    const table = new Tensor(
+      Float32Array.from([1, 2, 3, /* tu 0 */ 4, 5, 6, /* tu 1 */ 7, 8, 9, /* tu 2 */ 10, 11, 12 /* tu 3 */]),
+      [4, 3]
+    );
+    const out = embeddingLookup(table, [2, 0, 2]); // tu 2 tra 2 LAN
+    checkDeepEqual('embeddingLookup tinh tay: shape (3,3)', out.shape, [3, 3]);
+    checkDeepEqual('embeddingLookup tinh tay: dung hang', Array.from(out.data), [7, 8, 9, 1, 2, 3, 7, 8, 9]);
+    out._ensureGrad();
+    out.grad.set([1, 1, 1, 0, 0, 0, 2, 2, 2]); // gradient tu 2 vien tri 1 va 3 (upstream khac nhau)
+    out._backward();
+    checkDeepEqual(
+      'embeddingLookup backward: CONG DON gradient ve dung hang (tu 2 lap lai)',
+      Array.from(table.grad),
+      [0, 0, 0, 0, 0, 0, 3, 3, 3, 0, 0, 0]
+    );
+  }
+
+  // --- sigmoidCrossEntropy: tinh tay 3 diem (z=0,y=1 / z=2,y=1 / z=-2,y=0) ---
+  {
+    const logits = Tensor.fromNested([0, 2, -2]);
+    const labels = Tensor.fromNested([1, 1, 0]);
+    const L = sigmoidCrossEntropy(logits, labels);
+    const expected = (Math.log(2) + 0.126928 + 0.126928) / 3; // -log(sigmoid(0)), -log(sigmoid(2)), -log(1-sigmoid(-2))
+    check('sigmoidCrossEntropy tinh tay (trung binh 3 diem)', L.data[0], expected, 1e-5);
+    L.backward();
+    check('sigmoidCrossEntropy grad z=0,y=1: sigmoid(0)-1=-0.5', logits.grad[0], -0.5 / 3, 1e-5);
+    check('sigmoidCrossEntropy grad z=2,y=1: sigmoid(2)-1', logits.grad[1], (1 / (1 + Math.exp(-2)) - 1) / 3, 1e-5);
+    check('sigmoidCrossEntropy grad z=-2,y=0: sigmoid(-2)-0', logits.grad[2], 1 / (1 + Math.exp(2)) / 3, 1e-5);
+  }
+
+  // --- Gradient checking end-to-end: embeddingLookup -> dot product -> sigmoidCE,
+  // dung DUNG kieu bai toan skip-gram Bai 12 (1 tu trung tam, 1 tu ngu canh) ---
+  {
+    const V = 5,
+      d = 4;
+    const tableData = Array.from({ length: V * d }, (_, i) => Math.sin(i * 0.9) * 0.5);
+    const table = new Tensor(tableData.slice(), [V, d]);
+    const centerIdx = [1],
+      contextIdx = [3];
+    const centerVec = embeddingLookup(table, centerIdx);
+    const contextVec = embeddingLookup(table, contextIdx);
+    const score = sum(mul(centerVec, contextVec));
+    const label = new Tensor([1], [1]);
+    const L = sigmoidCrossEntropy(score, label);
+    L.backward();
+    function scoreDouble(vals) {
+      let s = 0;
+      for (let k = 0; k < d; k++) s += vals[centerIdx[0] * d + k] * vals[contextIdx[0] * d + k];
+      return s;
+    }
+    function lossDouble(vals) {
+      const z = scoreDouble(vals);
+      return Math.max(z, 0) - z * 1 + Math.log(1 + Math.exp(-Math.abs(z)));
+    }
+    const eps = 1e-3;
+    let maxDiff = 0;
+    for (let idx = 0; idx < tableData.length; idx++) {
+      const p = tableData.slice(),
+        m = tableData.slice();
+      p[idx] += eps;
+      m[idx] -= eps;
+      const fd = (lossDouble(p) - lossDouble(m)) / (2 * eps);
+      maxDiff = Math.max(maxDiff, Math.abs(fd - table.grad[idx]));
+    }
+    checkTrue('skip-gram end-to-end gradient checking (embeddingLookup+dot+sigmoidCE)', maxDiff < 1e-2);
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
