@@ -90,10 +90,10 @@ const TRANSLATIONS = {
     'privacy.title': 'Privacy Policy — js-tools',
     'privacy.h1': 'Privacy Policy',
     'privacy.intro':
-      'Last updated: June 28, 2026. At js-tools (js-tools.org), protecting your privacy is a core priority. We build free, privacy-first tools that run entirely in your browser, alongside an educational programming blog. This policy explains what limited information is involved when you use the site and how it is handled.',
+      'Last updated: July 11, 2026. At js-tools (js-tools.org), protecting your privacy is a core priority. We build privacy-first utility tools that run entirely in your browser, cloud services for live events, and an educational programming blog. This policy explains what limited information is involved when you use the site and how it is handled.',
     'privacy.local.title': '1. Local Processing (Zero File Collection)',
     'privacy.local.desc':
-      'Every file you open in our tools — including the Image Optimizer, the RemoveBG background remover, the QR Code Generator, ColorQuarium and others — is processed entirely inside your web browser using client-side technologies such as WebAssembly, HTML5 Canvas and WebGL. Your images and files are never uploaded to, stored on, or viewed by any server. Some AI-powered tools (for example RemoveBG) download a one-time model file from a content delivery network so the computation can run on your own device; the file you process still never leaves your computer.',
+      'Every file you open in our utility tools — the Image Optimizer, the RemoveBG background remover and the QR Code Generator — is processed entirely inside your web browser using client-side technologies such as WebAssembly, HTML5 Canvas and WebGL. Your images and files are never uploaded to, stored on, or viewed by any server. Some AI-powered tools (for example RemoveBG) download a one-time model file from a content delivery network so the computation can run on your own device; the file you process still never leaves your computer.',
     'privacy.cookies.title': '2. Cookies & Local Storage',
     'privacy.cookies.desc':
       'js-tools uses a small amount of browser storage (cookies and local storage) to remember your preferences — such as your chosen language and light/dark theme — so the site behaves the way you expect on your next visit. These preferences stay on your device. The third-party services described below may set their own cookies.',
@@ -103,10 +103,13 @@ const TRANSLATIONS = {
     'privacy.comments.title': '4. Blog Comments (giscus & GitHub)',
     'privacy.comments.desc':
       'Our blog comments are powered by giscus, which stores discussions in GitHub Discussions. To post a comment you sign in with a GitHub account, and anything you post is public and handled under GitHub’s own privacy policy. If you never comment, no account or personal data is required to read the blog.',
-    'privacy.thirdparty.title': '5. Third-Party Links & Services',
+    'privacy.events.title': '5. Event Services (SnapCast & ColorQuarium)',
+    'privacy.events.desc':
+      'SnapCast and ColorQuarium are cloud services for live events and work differently from the utility tools above. Hosting an event requires an account, and paid plans are available. Photos that guests choose to share through SnapCast — along with your event settings — are uploaded and stored so they can appear on the live slideshow and in the post-event gallery; ColorQuarium stores your display configuration. This data is used to run your event and is handled under the terms of those services.',
+    'privacy.thirdparty.title': '6. Third-Party Links & Services',
     'privacy.thirdparty.desc':
       'The site links to companion tools on separate subdomains (such as SnapCast and ColorQuarium) and to external resources referenced in our articles. Once you follow a link to a third party — including Google, GitHub or any site cited in the blog — that party’s own privacy policy and terms apply. We are not responsible for the practices of external sites.',
-    'privacy.consent.title': '6. Consent & Changes',
+    'privacy.consent.title': '7. Consent & Changes',
     'privacy.consent.desc':
       'By using js-tools, you consent to this Privacy Policy. We may update it from time to time to reflect new tools or services; the "last updated" date above always indicates the current version.',
     'terms.title': 'Terms of Service — js-tools',
@@ -116,9 +119,9 @@ const TRANSLATIONS = {
     'terms.license.title': '1. Intellectual Property & Usage License',
     'terms.license.desc':
       'Unless otherwise stated, js-tools and/or its licensors own the intellectual property rights for all material on js-tools. All intellectual property rights are reserved. You may access this from js-tools for your own personal or business use subjected to restrictions set in these terms and conditions.',
-    'terms.local.title': '2. No-Server, Client-Side Guarantee',
+    'terms.local.title': '2. Client-Side Utilities & Cloud Event Services',
     'terms.local.desc':
-      'Our utilities — including the Image Optimizer, RemoveBG, QR Code Generator and ColorQuarium — run fully client-side in your browser. We do not provide file storage, hosting or backup services, and processed files are not retained anywhere. You are solely responsible for saving and keeping copies of any output you create.',
+      'Our utility tools — the Image Optimizer, RemoveBG and the QR Code Generator — run fully client-side in your browser. For these tools we do not provide file storage, hosting or backup services, and processed files are not retained anywhere; you are solely responsible for saving and keeping copies of any output you create. Our event services, SnapCast and ColorQuarium, are cloud services: they require an account, offer paid plans, and store the photos and settings you choose to share, as described in their own terms.',
     'terms.content.title': '3. Educational Content & User Comments',
     'terms.content.desc':
       'The articles and programming courses on our blog are provided for educational purposes "as is", without warranty of accuracy or fitness for a particular purpose. Code samples are offered as-is — please test them before using them in production. Comments are powered by giscus/GitHub and reflect the views of their authors, not js-tools. You agree not to post unlawful, infringing, abusive or spam content, and we may remove any comment at our discretion.',
@@ -167,7 +170,7 @@ const TRANSLATIONS = {
     'donate.title': 'Donate — js-tools',
     'donate.h1': 'Support js-tools',
     'donate.intro':
-      'js-tools is free, open-source, and does not collect your data. If you find these tools useful, please consider supporting the project to help cover server and development costs. Thank you so much!',
+      'js-tools is an independent project: the utility tools are free, run entirely in your browser, and collect no data, while optional paid plans on SnapCast and ColorQuarium help sustain development. If you find the free tools useful, please consider supporting the project to help cover server and development costs. Thank you so much!',
     'donate.paypal.title': 'PayPal',
     'donate.paypal.desc': 'Support via PayPal for international donors.',
     'donate.paypal.btn': 'Donate via PayPal',
@@ -181,13 +184,13 @@ const TRANSLATIONS = {
     'about.title': 'About js-tools — Free Browser Tools & Programming Tutorials',
     'about.h1': 'About js-tools',
     'about.intro':
-      'js-tools.org is an independent project with a simple goal: make genuinely useful software free, fast, and private by running it entirely in your web browser — no installs, no sign-ups, and no files ever leaving your device. Alongside the tools, we publish an in-depth, bilingual (English & Vietnamese) programming blog so the techniques behind these tools are open for anyone to learn.',
+      'js-tools.org is an independent project with a simple goal: make genuinely useful software free, fast, and private. Our utility tools run entirely in your web browser — no installs, no sign-ups, and your files never leave your device — while our cloud services bring real-time experiences to live events. Alongside the tools, we publish an in-depth, bilingual (English & Vietnamese) programming blog so the techniques behind these tools are open for anyone to learn.',
     'about.mission.title': 'Our Mission',
     'about.mission.desc':
       'Most online tools ask you to upload your files to a stranger’s server, wait, and hope your data is deleted afterwards. We believe that is unnecessary. Modern browsers ship with powerful technologies — WebAssembly, WebGL, the Canvas API, Web Audio and more — that can do real work directly on your machine. Every js-tools utility is built on this principle: your data stays with you, the result is instant, and the tool is free to use.',
     'about.what.title': 'What We Build',
     'about.what.desc':
-      'Our suite includes the Image Optimizer (compress and convert JPEG, PNG, WebP and HEIC), RemoveBG (AI background removal), a QR Code Generator, SnapCast (a real-time photo slideshow for live events), and ColorQuarium (a generative ambient display you control from your phone). Each runs 100% client-side, so it works offline, respects your privacy, and never sees your files.',
+      'Our free utility tools — the Image Optimizer (compress and convert JPEG, PNG, WebP and HEIC), RemoveBG (AI background removal) and the QR Code Generator — run 100% client-side, so they work offline, respect your privacy, and never see your files. Alongside them we operate two cloud services for live events: SnapCast (a real-time photo slideshow where guests share photos to the big screen) and ColorQuarium (a generative ambient display you control from your phone). The event services require an account, offer paid plans, and store the photos and settings you choose to share.',
     'about.blog.title': 'The Learning Blog',
     'about.blog.desc':
       'We write long-form, carefully edited tutorials that explain how this kind of software actually works — from C, C++ and JavaScript fundamentals to HTML5 Canvas, WebGL graphics and shell scripting. Each series is hands-on, with runnable code, interactive visualizers and quizzes, and every article is written in both English and Vietnamese to make deep technical material accessible to more readers.',
@@ -347,10 +350,10 @@ const TRANSLATIONS = {
     'privacy.title': 'Chính sách bảo mật — js-tools',
     'privacy.h1': 'Chính sách bảo mật',
     'privacy.intro':
-      'Cập nhật lần cuối: 28 tháng 6, 2026. Tại js-tools (js-tools.org), bảo vệ quyền riêng tư của bạn là ưu tiên cốt lõi. Chúng tôi xây dựng các công cụ miễn phí, ưu tiên quyền riêng tư, chạy hoàn toàn trong trình duyệt, cùng với một blog lập trình mang tính giáo dục. Chính sách này giải thích những thông tin hạn chế nào có liên quan khi bạn sử dụng trang web và cách chúng được xử lý.',
+      'Cập nhật lần cuối: 11 tháng 7, 2026. Tại js-tools (js-tools.org), bảo vệ quyền riêng tư của bạn là ưu tiên cốt lõi. Chúng tôi xây dựng các công cụ tiện ích ưu tiên quyền riêng tư chạy hoàn toàn trong trình duyệt, các dịch vụ cloud cho sự kiện trực tiếp, cùng một blog lập trình mang tính giáo dục. Chính sách này giải thích những thông tin hạn chế nào có liên quan khi bạn sử dụng trang web và cách chúng được xử lý.',
     'privacy.local.title': '1. Xử lý cục bộ (Không thu thập tệp)',
     'privacy.local.desc':
-      'Mọi tệp bạn mở trong các công cụ của chúng tôi — bao gồm Image Optimizer, công cụ tách nền RemoveBG, QR Code Generator, ColorQuarium và các công cụ khác — đều được xử lý hoàn toàn bên trong trình duyệt web của bạn bằng các công nghệ phía client như WebAssembly, HTML5 Canvas và WebGL. Hình ảnh và tệp của bạn không bao giờ được tải lên, lưu trữ hay xem bởi bất kỳ máy chủ nào. Một số công cụ dùng AI (ví dụ RemoveBG) tải về một tệp mô hình một lần từ mạng phân phối nội dung (CDN) để việc tính toán chạy trên chính thiết bị của bạn; tệp bạn xử lý vẫn không bao giờ rời khỏi máy tính của bạn.',
+      'Mọi tệp bạn mở trong các công cụ tiện ích của chúng tôi — Image Optimizer, công cụ tách nền RemoveBG và QR Code Generator — đều được xử lý hoàn toàn bên trong trình duyệt web của bạn bằng các công nghệ phía client như WebAssembly, HTML5 Canvas và WebGL. Hình ảnh và tệp của bạn không bao giờ được tải lên, lưu trữ hay xem bởi bất kỳ máy chủ nào. Một số công cụ dùng AI (ví dụ RemoveBG) tải về một tệp mô hình một lần từ mạng phân phối nội dung (CDN) để việc tính toán chạy trên chính thiết bị của bạn; tệp bạn xử lý vẫn không bao giờ rời khỏi máy tính của bạn.',
     'privacy.cookies.title': '2. Cookie & Bộ nhớ cục bộ',
     'privacy.cookies.desc':
       'js-tools sử dụng một lượng nhỏ bộ nhớ trình duyệt (cookie và local storage) để ghi nhớ tùy chọn của bạn — như ngôn ngữ đã chọn và giao diện sáng/tối — để trang web hoạt động đúng như bạn mong đợi trong lần truy cập tiếp theo. Các tùy chọn này nằm trên thiết bị của bạn. Các dịch vụ bên thứ ba mô tả bên dưới có thể đặt cookie riêng của họ.',
@@ -360,10 +363,13 @@ const TRANSLATIONS = {
     'privacy.comments.title': '4. Bình luận trên blog (giscus & GitHub)',
     'privacy.comments.desc':
       'Phần bình luận trên blog của chúng tôi được cung cấp bởi giscus, lưu các thảo luận trong GitHub Discussions. Để đăng bình luận, bạn đăng nhập bằng tài khoản GitHub, và mọi nội dung bạn đăng đều công khai và được xử lý theo chính sách quyền riêng tư của riêng GitHub. Nếu bạn không bao giờ bình luận, bạn không cần tài khoản hay dữ liệu cá nhân nào để đọc blog.',
-    'privacy.thirdparty.title': '5. Liên kết & Dịch vụ bên thứ ba',
+    'privacy.events.title': '5. Dịch vụ sự kiện (SnapCast & ColorQuarium)',
+    'privacy.events.desc':
+      'SnapCast và ColorQuarium là dịch vụ cloud cho sự kiện trực tiếp và hoạt động khác với các công cụ tiện ích ở trên. Để tổ chức sự kiện, bạn cần tạo tài khoản, và có các gói trả phí. Ảnh mà khách mời chủ động chia sẻ qua SnapCast — cùng các thiết lập sự kiện của bạn — được tải lên và lưu trữ để hiển thị trên slideshow trực tiếp và trong thư viện ảnh sau sự kiện; ColorQuarium lưu cấu hình hiển thị của bạn. Dữ liệu này được dùng để vận hành sự kiện của bạn và được xử lý theo điều khoản của các dịch vụ đó.',
+    'privacy.thirdparty.title': '6. Liên kết & Dịch vụ bên thứ ba',
     'privacy.thirdparty.desc':
       'Trang web liên kết tới các công cụ đồng hành trên các tên miền phụ riêng (như SnapCast và ColorQuarium) và tới các tài nguyên bên ngoài được trích dẫn trong các bài viết. Khi bạn theo một liên kết tới bên thứ ba — bao gồm Google, GitHub hay bất kỳ trang nào được trích dẫn trong blog — chính sách quyền riêng tư và điều khoản của bên đó sẽ được áp dụng. Chúng tôi không chịu trách nhiệm về cách hoạt động của các trang bên ngoài.',
-    'privacy.consent.title': '6. Sự đồng ý & Thay đổi',
+    'privacy.consent.title': '7. Sự đồng ý & Thay đổi',
     'privacy.consent.desc':
       'Bằng cách sử dụng js-tools, bạn đồng ý với Chính sách bảo mật này. Chúng tôi có thể cập nhật chính sách theo thời gian để phản ánh các công cụ hoặc dịch vụ mới; ngày "cập nhật lần cuối" ở trên luôn cho biết phiên bản hiện hành.',
     'terms.title': 'Điều khoản dịch vụ — js-tools',
@@ -373,9 +379,9 @@ const TRANSLATIONS = {
     'terms.license.title': '1. Sở hữu trí tuệ & Giấy phép sử dụng',
     'terms.license.desc':
       'Trừ khi có quy định khác, js-tools và/hoặc người cấp phép của nó sở hữu quyền sở hữu trí tuệ đối với tất cả tài liệu trên js-tools. Tất cả quyền sở hữu trí tuệ được bảo lưu. Bạn có thể truy cập tài liệu này từ js-tools cho mục đích sử dụng cá nhân hoặc kinh doanh của riêng bạn, tuân theo các hạn chế được đặt ra trong các điều khoản và điều kiện này.',
-    'terms.local.title': '2. Đảm bảo xử lý phía client, không có máy chủ',
+    'terms.local.title': '2. Công cụ phía client & Dịch vụ sự kiện cloud',
     'terms.local.desc':
-      'Các tiện ích của chúng tôi — bao gồm Image Optimizer, RemoveBG, QR Code Generator và ColorQuarium — chạy hoàn toàn phía client trong trình duyệt của bạn. Chúng tôi không cung cấp dịch vụ lưu trữ, hosting hay sao lưu tệp, và các tệp đã xử lý không được giữ lại ở bất kỳ đâu. Bạn hoàn toàn chịu trách nhiệm lưu và giữ bản sao của mọi kết quả bạn tạo ra.',
+      'Các công cụ tiện ích của chúng tôi — Image Optimizer, RemoveBG và QR Code Generator — chạy hoàn toàn phía client trong trình duyệt của bạn. Với các công cụ này, chúng tôi không cung cấp dịch vụ lưu trữ, hosting hay sao lưu tệp, và các tệp đã xử lý không được giữ lại ở bất kỳ đâu; bạn hoàn toàn chịu trách nhiệm lưu và giữ bản sao của mọi kết quả bạn tạo ra. Các dịch vụ sự kiện SnapCast và ColorQuarium là dịch vụ cloud: cần tài khoản, có gói trả phí, và lưu trữ ảnh cùng thiết lập bạn chủ động chia sẻ, theo điều khoản riêng của các dịch vụ đó.',
     'terms.content.title': '3. Nội dung giáo dục & Bình luận của người dùng',
     'terms.content.desc':
       'Các bài viết và khóa học lập trình trên blog của chúng tôi được cung cấp cho mục đích giáo dục theo nguyên trạng ("as is"), không bảo đảm về tính chính xác hay phù hợp cho một mục đích cụ thể. Các đoạn mã mẫu được cung cấp nguyên trạng — vui lòng kiểm thử trước khi dùng trong môi trường thực tế. Bình luận được cung cấp bởi giscus/GitHub và phản ánh quan điểm của tác giả, không phải của js-tools. Bạn đồng ý không đăng nội dung trái pháp luật, vi phạm bản quyền, lăng mạ hoặc spam, và chúng tôi có quyền gỡ bất kỳ bình luận nào tùy theo quyết định của mình.',
@@ -424,7 +430,7 @@ const TRANSLATIONS = {
     'donate.title': 'Ủng hộ — js-tools',
     'donate.h1': 'Ủng hộ dự án js-tools',
     'donate.intro':
-      'js-tools là dự án miễn phí, mã nguồn mở và không thu thập dữ liệu người dùng. Nếu bạn thấy các công cụ này hữu ích, hãy cân nhắc ủng hộ dự án để giúp chúng tôi duy trì chi phí máy chủ và phát triển. Xin chân thành cảm ơn!',
+      'js-tools là một dự án độc lập: các công cụ tiện ích hoàn toàn miễn phí, chạy ngay trong trình duyệt và không thu thập dữ liệu; còn các gói trả phí (tuỳ chọn) của SnapCast và ColorQuarium giúp duy trì phát triển. Nếu bạn thấy các công cụ miễn phí hữu ích, hãy cân nhắc ủng hộ dự án để giúp chúng tôi trang trải chi phí máy chủ và phát triển. Xin chân thành cảm ơn!',
     'donate.paypal.title': 'PayPal',
     'donate.paypal.desc': 'Ủng hộ qua PayPal đối với các nhà hảo tâm quốc tế.',
     'donate.paypal.btn': 'Ủng hộ qua PayPal',
@@ -438,13 +444,13 @@ const TRANSLATIONS = {
     'about.title': 'Giới thiệu js-tools — Công cụ trình duyệt miễn phí & Blog lập trình',
     'about.h1': 'Giới thiệu js-tools',
     'about.intro':
-      'js-tools.org là một dự án độc lập với mục tiêu đơn giản: mang đến phần mềm thực sự hữu ích — miễn phí, nhanh và riêng tư — bằng cách chạy hoàn toàn trong trình duyệt của bạn: không cài đặt, không đăng ký, và tệp của bạn không bao giờ rời khỏi máy. Bên cạnh các công cụ, chúng tôi xuất bản một blog lập trình chuyên sâu, song ngữ (Anh & Việt), để các kỹ thuật đằng sau những công cụ này được chia sẻ công khai cho mọi người cùng học.',
+      'js-tools.org là một dự án độc lập với mục tiêu đơn giản: mang đến phần mềm thực sự hữu ích — miễn phí, nhanh và riêng tư. Các công cụ tiện ích chạy hoàn toàn trong trình duyệt của bạn — không cài đặt, không đăng ký, và tệp của bạn không bao giờ rời khỏi máy — còn các dịch vụ cloud mang trải nghiệm thời gian thực đến sự kiện trực tiếp. Bên cạnh các công cụ, chúng tôi xuất bản một blog lập trình chuyên sâu, song ngữ (Anh & Việt), để các kỹ thuật đằng sau những công cụ này được chia sẻ công khai cho mọi người cùng học.',
     'about.mission.title': 'Sứ Mệnh',
     'about.mission.desc':
       'Hầu hết công cụ trực tuyến đều bắt bạn tải tệp lên máy chủ của một bên lạ, chờ đợi, rồi hy vọng dữ liệu được xoá sau đó. Chúng tôi tin điều đó là không cần thiết. Trình duyệt hiện đại đã tích hợp những công nghệ mạnh mẽ — WebAssembly, WebGL, Canvas API, Web Audio và nhiều hơn nữa — đủ sức xử lý thật ngay trên máy bạn. Mọi công cụ js-tools đều dựa trên nguyên tắc này: dữ liệu của bạn ở lại với bạn, kết quả tức thì, và công cụ thì miễn phí.',
     'about.what.title': 'Chúng Tôi Xây Dựng Gì',
     'about.what.desc':
-      'Bộ công cụ gồm Image Optimizer (nén và chuyển đổi JPEG, PNG, WebP và HEIC), RemoveBG (xoá nền bằng AI), QR Code Generator, SnapCast (trình chiếu ảnh thời gian thực cho sự kiện trực tiếp) và ColorQuarium (màn hình nghệ thuật sinh động điều khiển từ điện thoại). Tất cả chạy 100% phía trình duyệt, nên hoạt động được ngoại tuyến, tôn trọng quyền riêng tư và không bao giờ nhìn thấy tệp của bạn.',
+      'Các công cụ tiện ích miễn phí — Image Optimizer (nén và chuyển đổi JPEG, PNG, WebP và HEIC), RemoveBG (xoá nền bằng AI) và QR Code Generator — chạy 100% phía trình duyệt, nên hoạt động được ngoại tuyến, tôn trọng quyền riêng tư và không bao giờ nhìn thấy tệp của bạn. Bên cạnh đó, chúng tôi vận hành hai dịch vụ cloud cho sự kiện trực tiếp: SnapCast (trình chiếu ảnh thời gian thực, khách mời gửi ảnh lên màn hình lớn) và ColorQuarium (màn hình nghệ thuật sinh động điều khiển từ điện thoại). Các dịch vụ sự kiện cần tài khoản, có gói trả phí, và lưu trữ ảnh cùng thiết lập bạn chủ động chia sẻ.',
     'about.blog.title': 'Blog Học Lập Trình',
     'about.blog.desc':
       'Chúng tôi viết những bài hướng dẫn dài, biên tập kỹ lưỡng, giải thích cách loại phần mềm này thực sự vận hành — từ nền tảng C, C++ và JavaScript cho tới HTML5 Canvas, đồ hoạ WebGL và lập trình shell. Mỗi series đều thực hành trực tiếp, có code chạy được, visualizer tương tác và câu hỏi ôn tập; mọi bài viết đều song ngữ Anh–Việt để kiến thức kỹ thuật chuyên sâu đến được với nhiều người hơn.',
