@@ -1,0 +1,1135 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: UART &amp; giao tiếp nối tiếp — js-tools</title>
+    <meta
+      name="description"
+      content="Vì sao truyền nối tiếp thắng song song: 2 chân thay vì 8+, không cần dây clock chung — khung 8N1 mổ xẻ từng bit. Ngân sách sai số baud rate verified: lệch 5% vẫn đọc đúng, vượt ~5,3% bit đầu tiên vỡ (stop bit), lệch 8% chỉ còn 6/10 bit đúng. TX/RX bằng ngắt + ring buffer SPSC (Bài 8 dùng nguyên xi). Giao thức dòng lệnh mini LED ON/OFF/BLINK — kèm demo UART terminal điều khiển LED thật, waveform explorer từng bit, và thí nghiệm phá hoại baud chạy trên VMCU thật."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-uart" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-uart" />
+    <meta property="og:title" content="Bài 9: UART &amp; giao tiếp nối tiếp — js-tools" />
+    <meta
+      property="og:description"
+      content="Vì sao truyền nối tiếp thắng song song: 2 chân thay vì 8+ — khung 8N1 mổ xẻ từng bit. Ngân sách sai số baud rate verified: lệch 5% vẫn đọc đúng, vượt ~5,3% stop bit vỡ đầu tiên, lệch 8% chỉ còn 6/10 bit đúng. TX/RX bằng ngắt + ring buffer SPSC. Giao thức dòng lệnh mini LED ON/OFF/BLINK — kèm demo UART terminal, waveform explorer, thí nghiệm phá hoại baud trên VMCU thật."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 9: UART &amp; giao tiếp nối tiếp — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Vì sao truyền nối tiếp thắng song song: 2 chân thay vì 8+ — khung 8N1 mổ xẻ từng bit. Ngân sách sai số baud rate verified: lệch 5% vẫn đọc đúng, vượt ~5,3% stop bit vỡ đầu tiên, lệch 8% chỉ còn 6/10 bit đúng. TX/RX bằng ngắt + ring buffer SPSC. Giao thức dòng lệnh mini LED ON/OFF/BLINK — kèm demo UART terminal, waveform explorer, thí nghiệm phá hoại baud trên VMCU thật."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "UART & giao tiếp nối tiếp",
+        "description": "Vì sao truyền nối tiếp thắng song song: 2 chân thay vì 8+ — khung 8N1 mổ xẻ từng bit. Ngân sách sai số baud rate verified: lệch 5% vẫn đọc đúng, vượt ~5,3% stop bit vỡ đầu tiên, lệch 8% chỉ còn 6/10 bit đúng. TX/RX bằng ngắt + ring buffer SPSC. Giao thức dòng lệnh mini LED ON/OFF/BLINK — kèm demo UART terminal, waveform explorer, thí nghiệm phá hoại baud trên VMCU thật.",
+        "url": "https://js-tools.org/blog/embedded/embedded-uart",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-19"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 9 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">UART &amp; giao tiếp nối tiếp</h1>
+          <div class="article-hero__meta">19 tháng 7, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: nói chuyện với MCU qua đúng 2 sợi dây</h2>
+            <p>
+              Suốt 8 bài vừa qua, MCU chỉ "nói chuyện" với thế giới qua LED, nút nhấn và buzzer — mọi thông tin gửi ra
+              ngoài đều phải tự bạn nhìn bằng mắt. Bài này cho MCU một kênh giao tiếp thật sự: gõ lệnh từ máy tính, MCU
+              nhận và phản hồi lại bằng chữ. Đây chính xác là cách hầu hết board phát triển (Arduino, STM32 Nucleo...)
+              in ra dòng debug đầu tiên của bạn — và là nền tảng của mọi giao thức phức tạp hơn (Wi-Fi module, GPS, cảm
+              biến) vẫn dùng UART làm lớp vật lý bên dưới.
+            </p>
+            <p>
+              Thứ khiến UART đặc biệt: nó là giao tiếp nối tiếp <strong>bất đồng bộ</strong> — không có dây clock chung
+              nào cả, hai bên phải tự thoả thuận trước tốc độ, rồi tin tưởng đồng hồ nội của nhau đủ chính xác để không
+              lệch pha giữa chừng. Bài này verify chính xác lệch bao nhiêu phần trăm thì "niềm tin" đó sụp đổ, rồi ghép
+              UART với ring buffer SPSC của Bài 8 để xây một giao thức dòng lệnh mini điều khiển LED thật qua terminal.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-interrupts-nvic">Bài 7</a> (ngắt, NVIC),
+                <a href="embedded-isr-race-critical-section">Bài 8</a> (ring buffer SPSC — dùng nguyên xi cho cả TX lẫn
+                RX ở bài này).
+              </div>
+            </div>
+
+            <h2>1. Vì sao truyền nối tiếp thắng song song</h2>
+            <p>
+              Cách "hiển nhiên" để gửi 1 byte là dùng 8 chân, mỗi chân mang đúng 1 bit, tất cả đổi giá trị đồng thời —
+              truyền <strong>song song</strong>. Nhanh, nhưng tốn 8 chân GPIO chỉ cho 1 hướng truyền — nhớ lại Bài 3:
+              <strong>chân là tài nguyên đắt nhất của MCU</strong>. Truyền <strong>nối tiếp</strong> (serial) đảo ngược
+              đánh đổi: gửi từng bit một qua đúng 1 dây, chậm hơn nhưng chỉ tốn 2 chân cho giao tiếp 2 chiều trọn vẹn
+              (TX gửi, RX nhận).
+            </p>
+            <p>
+              UART còn bỏ luôn cả dây clock chung (khác SPI/I2C mà series này chưa chạm tới) — hai bên tự thoả thuận
+              trước một tốc độ gọi là <strong>baud rate</strong>, rồi mỗi bên tự đếm thời gian bằng đồng hồ nội của
+              mình. Để hai bên "đồng bộ" được với không dây clock chung, mỗi byte được đóng gói trong một
+              <strong>khung</strong> chuẩn — kiểu phổ biến nhất gọi là <strong>8N1</strong> (8 bit dữ liệu, không
+              parity, 1 stop bit):
+            </p>
+            <ol>
+              <li>
+                <strong>Start bit</strong> (1 bit, luôn = 0): báo "khung mới bắt đầu ngay đây" — dây đang nghỉ ở mức 1,
+                tụt xuống 0 là tín hiệu đồng bộ đầu tiên.
+              </li>
+              <li>
+                <strong>8 bit dữ liệu</strong>, gửi theo thứ tự <strong>LSB trước</strong> (bit thấp nhất đi trước, khác
+                thứ tự viết tay quen thuộc).
+              </li>
+              <li><strong>Parity</strong> (tuỳ chọn, "N" = None trong 8N1 nghĩa là bỏ qua): 8N1 không dùng.</li>
+              <li>
+                <strong>Stop bit</strong> (1 bit, luôn = 1): dây trở lại mức nghỉ, cho bên nhận thời gian "thở" trước
+                byte kế tiếp.
+              </li>
+            </ol>
+            <p>
+              Verify khung của ký tự <code>'A'</code> (mã ASCII <code>0x41</code> = <code>0b01000001</code>): bit thấp
+              nhất trước, khung 10 bit đầy đủ là <code>0 1 0 0 0 0 0 1 0 1</code> (start · d0..d7 · stop) — đúng như
+              demo Mục 5 vẽ ra.
+            </p>
+
+            <h2>2. Baud rate &amp; ngân sách sai số</h2>
+            <p>
+              Baud rate được cấu hình qua một thanh ghi chia clock, công thức đơn giản của bài (bỏ qua hệ số
+              oversampling 16x của thanh ghi thật):
+            </p>
+            <p>$$BRR = \frac{f_{clk}}{baud}$$</p>
+            <p>
+              Verify: với clock APB2 chuẩn 72MHz và baud 9600, <code>BRR = 72{.}000{.}000 / 9600 = 7500</code> — chia
+              hết tuyệt đối, baud thật khớp lại đúng 9600, không sai số. Nhưng không phải lúc nào cũng may mắn như vậy:
+              với một MCU dùng dao động RC nội rẻ tiền ~8MHz (không cắm thạch anh ngoài),
+              <code>BRR = 8{.}000{.}000 / 9600 ≈ 833</code> (làm tròn) — baud thật tính ngược lại chỉ còn
+              <strong>9603,84</strong>, lệch <strong>0,04%</strong> so với 9600 mong muốn. Sai số này tự nó vô hại,
+              nhưng nó cộng dồn với sai số dung sai thật của chính dao động RC (thường ±1% trở lên) — và đây chính là
+              nguồn gốc của loại bug "ma ám theo nhiệt độ" nổi tiếng trong nghề.
+            </p>
+            <p>
+              Câu hỏi cốt lõi: lệch baud giữa 2 bên bao nhiêu phần trăm thì khung vỡ? Bộ nhận lấy mẫu mỗi bit tại đúng
+              <em>giữa</em> chu kỳ bit theo đồng hồ của NÓ; nếu đồng hồ đó nhanh/chậm hơn bên gửi, điểm lấy mẫu trôi dần
+              xa khỏi giữa bit thật qua từng bit trong khung — 10 bit khung 8N1 nghĩa là sai số có 9,5 chu kỳ bit để
+              tích luỹ trước khi lấy mẫu bit cuối.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Verify: ngân sách an toàn thật sự nằm ở đâu</div>
+              <div class="callout__content">
+                Với khung 8N1 của <code>'A'</code>: lệch baud <strong>2%</strong> và ngay cả <strong>5%</strong> vẫn đọc
+                <strong>ĐÚNG</strong> trọn vẹn cả 10 bit — khớp đúng quy tắc kinh nghiệm "ngân sách an toàn ~±2%" của
+                ngành, với biên an toàn thực tế còn rộng hơn một chút. Nhưng vượt qua <strong>~5,3%</strong>, khung bắt
+                đầu vỡ: bit đầu tiên bị đọc sai chính là <strong>stop bit</strong> (bit cuối cùng, nơi sai số tích luỹ
+                nhiều nhất) — verify cụ thể: lệch <strong>5,3%</strong> cho đúng <strong>9/10</strong> bit đọc đúng;
+                lệch <strong>8%</strong> khung vỡ rõ rệt, chỉ còn <strong>6/10</strong> bit đúng (4 bit sai). Tự tay thử
+                ở demo Mục 5.
+              </div>
+            </div>
+
+            <h2>3. TX/RX bằng ngắt + ring buffer</h2>
+            <p>
+              Gửi/nhận từng byte bằng polling (main tự hỏi "gửi xong chưa? có byte mới chưa?") vừa tốn CPU vừa đúng y
+              hệt cạm bẫy polling của Bài 7. Cách chuẩn công nghiệp: dùng 2 ngắt của USART — <strong>TXE</strong>
+              (Transmit data register Empty — báo "sẵn sàng nhận byte kế tiếp để gửi") và
+              <strong>RXNE</strong> (Receive data register Not Empty — báo "vừa nhận xong 1 byte") — kết hợp với đúng
+              <strong>ring buffer SPSC</strong> của Bài 8:
+            </p>
+            <ul>
+              <li>
+                <strong>TX:</strong> main đẩy toàn bộ chuỗi cần gửi vào TX ring buffer rồi
+                <em>quay lại làm việc khác ngay</em>, không chờ. ISR TXE rút từng byte ra khỏi buffer, ghi vào DR, lặp
+                lại tới khi buffer rỗng.
+              </li>
+              <li>
+                <strong>RX:</strong> ISR RXNE đẩy byte vừa nhận vào RX ring buffer (chỉ đụng <code>head</code> — đúng
+                vai producer của Bài 8). Main thong thả rút byte ra ở <code>tail</code> khi rảnh, không mất byte nào dù
+                bận việc khác lúc byte tới.
+              </li>
+            </ul>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">uart_isr_ringbuffer.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// Dung nguyen xi RingBufferSPSC cua Bai 8 cho ca TX lan RX
+volatile uint8_t tx_buf[16], tx_head = 0, tx_tail = 0;
+volatile uint8_t rx_buf[16], rx_head = 0, rx_tail = 0;
+
+void USART1_IRQHandler(void) {
+    if (USART1_SR & (1 << 7)) {        // TXE: san sang gui byte ke tiep
+        if (tx_tail != tx_head) {
+            USART1_DR = tx_buf[tx_tail];
+            tx_tail = (tx_tail + 1) % 16;
+        } else {
+            USART1_CR1 &= ~(1 << 7);    // het du lieu - tat TXEIE, khong "gui rong"
+        }
+    }
+    if (USART1_SR & (1 << 5)) {         // RXNE: vua nhan xong 1 byte
+        uint8_t next = (rx_head + 1) % 16;
+        if (next != rx_tail) {          // con cho - khong ghi de neu day
+            rx_buf[rx_head] = USART1_DR; // doc DR TU DONG xoa RXNE
+            rx_head = next;
+        }
+    }
+}</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy tội lỗi kinh điển: <code>printf</code> bên trong ISR</div>
+              <div class="callout__content">
+                Gọi <code>printf</code> (hoặc bất kỳ hàm gửi UART kiểu BLOCKING nào — chờ tới khi gửi xong mới trả về)
+                ngay bên trong một ISR khác là lỗi runtime kinh điển: ISR đó bị "khoá cứng" chờ UART gửi xong từng byte,
+                vi phạm thẳng quy tắc vàng "ISR càng ngắn càng tốt" của Bài 7 — mọi ngắt khác (kể cả ưu tiên cao hơn) bị
+                trễ theo. Cách đúng: ISR chỉ đẩy dữ liệu vào ring buffer (không chờ gì cả), để ISR TXE của chính UART lo
+                phần gửi thật.
+              </div>
+            </div>
+
+            <h2>4. Giao thức dòng lệnh mini</h2>
+            <p>
+              UART chỉ truyền một dòng byte trần trụi <strong>không có ranh giới</strong> nào giữa các "thông điệp" —
+              bên nhận phải tự định nghĩa khi nào một lệnh kết thúc. Cách đơn giản và phổ biến nhất:
+              <strong>framing bằng ký tự xuống dòng</strong> (<code>'\n'</code>) — main tích luỹ byte vào một bộ đệm
+              chuỗi, khi gặp <code>'\n'</code> thì coi đó là hết 1 lệnh, đem đi phân tích rồi xoá bộ đệm để bắt đầu lệnh
+              kế tiếp.
+            </p>
+            <p>
+              Bộ lệnh mini của demo Mục 5: <code>LED ON</code> (bật LED), <code>LED OFF</code> (tắt LED),
+              <code>BLINK 500</code> (nháy LED với chu kỳ 500ms — số sau <code>BLINK</code> là tham số).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">command_parser.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">char line_buf[64];
+uint8_t line_len = 0;
+
+void on_byte_received(uint8_t b) {
+    if (b == '\n') {
+        line_buf[line_len] = 0;         // ket thuc chuoi C
+        parse_command(line_buf);        // xu ly lenh vua tich luy xong
+        line_len = 0;                    // reset cho lenh ke tiep
+    } else if (line_len < sizeof(line_buf) - 1) {
+        line_buf[line_len++] = b;       // tich luy tung ky tu
+    }
+}
+
+void parse_command(const char *cmd) {
+    if (strcmp(cmd, "LED ON") == 0)      led_set(1);
+    else if (strcmp(cmd, "LED OFF") == 0) led_set(0);
+    else if (strncmp(cmd, "BLINK ", 6) == 0) blink_start(atoi(cmd + 6));
+}</code></pre>
+            </div>
+            <p>
+              Outlook một đoạn: với đường truyền dễ nhiễu (dây dài, môi trường công nghiệp), người ta còn thêm checksum
+              hoặc CRC vào cuối mỗi khung để phát hiện lỗi truyền — ngoài phạm vi bài này, nhưng đáng biết tên khi cần
+              tra cứu thêm.
+            </p>
+
+            <h2>5. Thực hành: UART terminal + waveform explorer trên VMCU thật</h2>
+            <p>
+              Demo dưới đây chạy trên VMCU thật với USART1 vừa "sống": gõ lệnh điều khiển LED qua terminal, xem từng bit
+              của khung truyền, và tự tay phá hoại baud rate để tái hiện đúng con số verified ở Mục 2:
+            </p>
+
+            <div class="code-tabs" id="uart-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">📟 UART Terminal &amp; Waveform Explorer — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    1. Terminal — gõ <code>LED ON</code> / <code>LED OFF</code> / <code>BLINK 500</code>
+                  </p>
+                  <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; align-items: center">
+                    <input
+                      type="text"
+                      id="uart-input"
+                      placeholder="LED ON"
+                      style="
+                        font-family: Menlo, Monaco, monospace;
+                        padding: 7px 9px;
+                        border-radius: 6px;
+                        border: 1px solid #cbd5e1;
+                        flex: 1;
+                        min-width: 160px;
+                      "
+                    />
+                    <button class="mux-input-btn" type="button" id="uart-send-btn">📤 Gửi</button>
+                    <span
+                      id="uart-led-indicator"
+                      style="
+                        display: inline-block;
+                        width: 20px;
+                        height: 20px;
+                        border-radius: 50%;
+                        background: #334155;
+                        border: 2px solid #64748b;
+                      "
+                      title="Trạng thái LED"
+                    ></span>
+                  </div>
+                  <div
+                    id="uart-terminal-log"
+                    style="
+                      font-family: Menlo, Monaco, monospace;
+                      font-size: 12px;
+                      background: rgba(0, 0, 0, 0.2);
+                      border-radius: 6px;
+                      padding: 10px;
+                      height: 100px;
+                      overflow-y: auto;
+                      margin-bottom: 18px;
+                      white-space: pre-wrap;
+                    "
+                  ></div>
+
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    2. Waveform Explorer &amp; thí nghiệm phá hoại baud
+                  </p>
+                  <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap">
+                    <label style="font-size: 13px">Byte:</label>
+                    <select
+                      id="uart-byte-select"
+                      style="font-family: Menlo, Monaco, monospace; padding: 5px 8px; border-radius: 6px"
+                    >
+                      <option value="65">'A' (0x41)</option>
+                      <option value="75">'K' (0x4B)</option>
+                      <option value="255">0xFF</option>
+                      <option value="0">0x00</option>
+                    </select>
+                    <label style="font-size: 13px">Lệch baud: <span id="uart-error-label">0%</span></label>
+                    <input
+                      type="range"
+                      id="uart-error-slider"
+                      min="0"
+                      max="10"
+                      step="0.1"
+                      value="0"
+                      style="flex: 1; min-width: 140px"
+                    />
+                  </div>
+                  <div
+                    id="uart-waveform"
+                    style="font-family: Menlo, Monaco, monospace; font-size: 11px; margin-bottom: 8px"
+                  ></div>
+                  <div id="uart-error-status" class="mux-demo__output">Đang tải…</div>
+                  <p class="mux-demo__hint">
+                    Kéo thanh trượt qua 5,3% xem stop bit vỡ đầu tiên (verified: 9/10 bit đúng); kéo tới 8% xem khung vỡ
+                    rõ rệt (verified: chỉ còn 6/10 bit đúng). Dưới 5% luôn an toàn tuyệt đối.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">uart_demo.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// Xem code day du: uart_isr_ringbuffer.c (Muc 3) + command_parser.c (Muc 4).
+// Demo nay ghep ca 2 lai va chay dung tren VMCU, khong gia lap.</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">uart_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { VMCU, RingBufferSPSC, uartSampleWithBaudError, USART1_DR_ADDR, USART1_CR1_ADDR, USART1_CR1_RXNEIE_BIT, IRQ_USART1, NVIC_ISER1_ADDR } from './vmcu.js';
+
+const cpu = new VMCU();
+const rxRing = new RingBufferSPSC(64);
+
+cpu.write32(NVIC_ISER1_ADDR, 1 << (IRQ_USART1 - 32));
+cpu.write32(USART1_CR1_ADDR, 1 << USART1_CR1_RXNEIE_BIT);
+cpu.installIrqHandler(IRQ_USART1, (c) => {
+  rxRing.push(c.read8(USART1_DR_ADDR)); // doc DR tu dong xoa RXNE
+});
+
+function sendChar(ch) { cpu.uartInjectRxByte(ch.charCodeAt(0)); }
+// main loop: rxRing.pop() tich luy vao line_buf toi khi gap '\n', roi parse
+
+// Waveform / bau loi:
+const result = uartSampleWithBaudError(0x41, 0.08);
+console.log(result); // { bits, sampled, correctPerBit, allCorrect: false }</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Truyền <strong>nối tiếp</strong> tốn 2 chân (TX/RX) thay vì 8+ như song song — không cần dây clock
+                chung, khung <strong>8N1</strong> (start=0, 8 data LSB-first, stop=1) là cơ chế đồng bộ thay thế.
+              </li>
+              <li>
+                ✅ <strong>Baud rate</strong>: $BRR = f_{clk}/baud$ — verify: 9600 baud @ 72MHz chia hết (BRR=7500,
+                không sai số); @ 8MHz RC nội thì lệch nhỏ 0,04% do làm tròn.
+              </li>
+              <li>
+                ✅ Ngân sách sai số baud verified: <strong>2% và 5%</strong> vẫn đọc đúng trọn khung; vượt
+                <strong>~5,3%</strong> stop bit vỡ đầu tiên (9/10 đúng); <strong>8%</strong> khung vỡ rõ rệt (6/10
+                đúng).
+              </li>
+              <li>
+                ✅ TX/RX bằng ngắt (TXE/RXNE) + <strong>ring buffer SPSC</strong> của Bài 8 — không polling, không chặn;
+                cạm bẫy: <code>printf</code> blocking bên trong ISR vi phạm quy tắc "ISR ngắn" của Bài 7.
+              </li>
+              <li>
+                ✅ Giao thức dòng lệnh mini: framing bằng <code>'\n'</code>, parser <code>LED ON</code>/<code
+                  >LED OFF</code
+                >/<code>BLINK &lt;ms&gt;</code>.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao UART không cần một dây clock chung giữa 2 bên như một số giao tiếp khác?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'UART khong he cham hon nhieu giao tiep khac chi vi thieu day clock - toc do phu thuoc baud rate cau hinh, khong phai vi &quot;khong can dong bo&quot;.'
+                    )
+                  "
+                >
+                  A. Vì UART truyền dữ liệu chậm hơn nhiều nên không cần đồng bộ chính xác
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! UART la giao tiep BAT DONG BO - hai ben tu thoa thuan truoc mot toc do (baud rate) roi tu dem thoi gian bang dong ho noi cua rieng minh. Khung 8N1 (start/data/stop bit) chinh la co che dong bo THAY THE cho day clock chung.'
+                    )
+                  "
+                >
+                  B. Vì hai bên tự thoả thuận trước một tốc độ (baud rate) rồi tự đếm thời gian bằng đồng hồ nội, và
+                  khung 8N1 (start/stop bit) đóng vai trò đồng bộ thay thế
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'UART hoan toan CO THE truyen 2 chieu dong thoi (full-duplex) qua 2 day TX/RX rieng - day khong phai ly do lien quan den viec khong can day clock chung.'
+                    )
+                  "
+                >
+                  C. Vì UART chỉ truyền được 1 chiều tại một thời điểm nên không cần đồng bộ 2 chiều
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: lệch baud 5% giữa 2 bên vẫn đọc đúng trọn vẹn khung 8N1, nhưng vượt qua khoảng 5,3% thì bit
+                đầu tiên bị đọc sai — và đó luôn là <strong>stop bit</strong> (bit cuối cùng của khung). Vì sao đúng bit
+                đó vỡ trước?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Diem lay mau cua receiver troi dan xa khoi giua bit that qua TUNG bit trong khung, theo dong ho lech cua no. Bit cuoi cung (stop bit) la noi sai so TICH LUY nhieu nhat (qua ca 9,5 chu ky bit truoc do) - nen no la bit DAU TIEN vuot qua nguong 0,5 chu ky va bi doc nham.'
+                    )
+                  "
+                >
+                  A. Sai số lệch đồng hồ tích luỹ dần qua từng bit trong khung, và stop bit (bit cuối) là nơi sai số
+                  tích luỹ nhiều nhất nên vượt ngưỡng lấy mẫu sai trước tiên
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Stop bit khong he &quot;kem on dinh&quot; ve dien - no chi la muc logic 1 binh thuong. Van de hoan toan nam o THOI DIEM lay mau bi troi, khong phai do ban than gia tri bit do.'
+                    )
+                  "
+                >
+                  B. Vì stop bit vốn kém ổn định về điện áp hơn các bit dữ liệu khác
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Start bit la bit DAU TIEN trong khung - sai so lech dong ho hau nhu chua kip tich luy gi tai thoi diem do, nen no la bit AN TOAN NHAT, khong phai de vo nhat.'
+                    )
+                  "
+                >
+                  C. Vì start bit luôn được ưu tiên đọc đúng nên lỗi luôn dồn hết sang bit khác
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Vì sao gọi một hàm gửi UART kiểu blocking (chờ tới khi gửi xong mới trả về, ví dụ <code>printf</code>)
+                ngay bên trong một ISR là một lỗi nghiêm trọng?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'UART hoan toan co the goi tu ben trong ISR - van de khong phai UART co duoc dung trong ISR hay khong, ma la CACH goi (blocking hay khong).'
+                    )
+                  "
+                >
+                  A. Vì UART không bao giờ được phép sử dụng bên trong bất kỳ ISR nào
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Ham blocking khien ISR do bi &quot;khoa cung&quot; cho gui xong tung byte, vi pham thang quy tac vang &quot;ISR cang ngan cang tot&quot; cua Bai 7 - moi ngat khac (ke ca uu tien cao hon) bi tre theo dung do dai thoi gian cho do. Cach dung: ISR chi day du lieu vao ring buffer, de ISR TXE rieng cua UART lo phan gui.'
+                    )
+                  "
+                >
+                  B. Vì ISR đó sẽ bị "khoá cứng" chờ UART gửi xong, vi phạm quy tắc "ISR càng ngắn càng tốt" và làm trễ
+                  mọi ngắt khác trong lúc chờ
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Loi nay khong lien quan gi den dung luong bo nho Flash - no la van de VE THOI GIAN (timing/latency) khi mot ISR bi chan lai cho thao tac cham xong.'
+                    )
+                  "
+                >
+                  C. Vì hàm blocking chiếm quá nhiều dung lượng bộ nhớ Flash
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Giao thức dòng lệnh mini của bài dùng ký tự xuống dòng (<code>'\n'</code>) để "framing" — tách các lệnh
+                ra khỏi dòng byte UART liên tục. Vì sao cần một cơ chế framing như vậy?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! UART chi truyen mot dong byte TRAN TRUI, khong co khai niem &quot;thong diep&quot; hay &quot;lenh&quot; nao ca o tang vat ly - do la nhiem vu cua tang giao thuc PHIA TREN. Ky tu xuong dong danh dau ranh gioi ket thuc 1 lenh de main biet khi nao dem du byte va bat dau phan tich.'
+                    )
+                  "
+                >
+                  A. UART chỉ truyền một dòng byte thuần tuý không có khái niệm ranh giới thông điệp — cần một quy ước ở
+                  tầng trên (ví dụ ký tự xuống dòng) để biết khi nào một lệnh kết thúc
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Toc do UART (baud rate) hoan toan doc lap voi viec co framing hay khong - framing giai quyet van de RANH GIOI thong diep, khong phai toc do truyen.'
+                    )
+                  "
+                >
+                  B. Vì UART truyền quá chậm nên cần ký tự xuống dòng để "nghỉ" giữa các lệnh
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ky tu xuong dong khong lam gi voi loi truyen (checksum/CRC moi la co che phat hien loi, duoc nhac toi nhu mot huong mo rong ngoai pham vi bai). Framing chi giai quyet van de tach lenh, khong phai phat hien loi.'
+                    )
+                  "
+                >
+                  C. Vì ký tự xuống dòng giúp phát hiện và sửa lỗi truyền dữ liệu
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 9 vừa thêm USART1
+                (SR/DR/BRR/CR1), công thức baud rate, và mô phỏng lỗi baud (<code>uartFrameBits</code>,
+                <code>uartSampleWithBaudError</code>), kèm self-test đối chiếu đúng mọi hành vi trong bài (chạy
+                <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Universal Asynchronous Receiver-Transmitter (UART)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.st.com/resource/en/reference_manual/rm0008-stm32f101xx-stm32f102xx-stm32f103xx-stm32f105xx-and-stm32f107xx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    STMicroelectronics — RM0008 Reference Manual (chương USART)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.sparkfun.com/tutorials/113" target="_blank" rel="noopener noreferrer">
+                    SparkFun — Serial Communication
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-isr-race-critical-section" class="article-related__link article-related__link--prev">
+                  Bài 8: Chia sẻ dữ liệu ISR ↔ main: race condition &amp; critical section
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 10: ADC &amp; thế giới tương tự — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        VMCU,
+        RingBufferSPSC,
+        uartFrameBits,
+        uartSampleWithBaudError,
+        USART1_DR_ADDR,
+        USART1_CR1_ADDR,
+        USART1_CR1_RXNEIE_BIT,
+        USART1_CR1_TXEIE_BIT,
+        USART1_SR_TXE_BIT,
+        IRQ_USART1,
+        NVIC_ISER1_ADDR,
+      } from './vmcu.js';
+
+      // ==== Demo 1: UART terminal — LED ON/OFF/BLINK qua RX ring buffer thật ====
+      const cpu = new VMCU();
+      const rxRing = new RingBufferSPSC(64);
+      let lineBuf = '';
+      let ledOn = false;
+
+      cpu.write32(NVIC_ISER1_ADDR, 1 << (IRQ_USART1 - 32));
+      cpu.write32(USART1_CR1_ADDR, (1 << USART1_CR1_RXNEIE_BIT) | (1 << USART1_CR1_TXEIE_BIT));
+      cpu.installIrqHandler(IRQ_USART1, (c) => {
+        // ISR that su chi day byte vao ring buffer, KHONG xu ly lenh o day
+        // (dung quy tac "ISR cang ngan cang tot" cua Bai 7).
+        if (((c.usart1Sr >>> 5) & 1) === 1) {
+          rxRing.push(c.read32(USART1_DR_ADDR) & 0xff);
+        }
+      });
+
+      function terminalLog(text) {
+        const el = document.getElementById('uart-terminal-log');
+        el.textContent += text + '\n';
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function setLed(on) {
+        ledOn = on;
+        document.getElementById('uart-led-indicator').style.background = on ? '#22c55e' : '#334155';
+      }
+
+      // "main loop": rut tung byte tu ring buffer, tich luy toi khi gap '\n'
+      function mainLoopDrainRx() {
+        let b;
+        while ((b = rxRing.pop()) !== null) {
+          const ch = String.fromCharCode(b);
+          if (ch === '\n') {
+            parseCommand(lineBuf);
+            lineBuf = '';
+          } else {
+            lineBuf += ch;
+          }
+        }
+      }
+
+      function parseCommand(cmd) {
+        const trimmed = cmd.trim();
+        if (trimmed === 'LED ON') {
+          setLed(true);
+          terminalLog('> ' + trimmed);
+          terminalLog('OK: LED bật');
+        } else if (trimmed === 'LED OFF') {
+          setLed(false);
+          terminalLog('> ' + trimmed);
+          terminalLog('OK: LED tắt');
+        } else if (/^BLINK \d+$/.test(trimmed)) {
+          const ms = trimmed.split(' ')[1];
+          terminalLog('> ' + trimmed);
+          terminalLog('OK: nháy LED chu kỳ ' + ms + 'ms (mô phỏng — không chạy nền trong demo)');
+        } else if (trimmed.length > 0) {
+          terminalLog('> ' + trimmed);
+          terminalLog('LỖI: lệnh không nhận dạng được');
+        }
+      }
+
+      document.getElementById('uart-send-btn').addEventListener('click', () => {
+        const input = document.getElementById('uart-input');
+        const text = input.value + '\n';
+        for (const ch of text) {
+          cpu.uartInjectRxByte(ch.charCodeAt(0)); // mo phong tung byte "bay toi" chan RX
+        }
+        mainLoopDrainRx();
+        input.value = '';
+      });
+      document.getElementById('uart-input').addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') document.getElementById('uart-send-btn').click();
+      });
+
+      terminalLog('Terminal sẵn sàng. Gõ lệnh rồi bấm "Gửi" hoặc Enter.');
+
+      // ==== Demo 2: Waveform Explorer & thí nghiệm phá hoại baud ====
+      function renderWaveform() {
+        const byte = Number.parseInt(document.getElementById('uart-byte-select').value, 10);
+        const errorPct = Number.parseFloat(document.getElementById('uart-error-slider').value);
+        document.getElementById('uart-error-label').textContent = errorPct.toFixed(1) + '%';
+
+        const result = uartSampleWithBaudError(byte, errorPct / 100);
+        const labels = ['START', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'STOP'];
+
+        let html = '<div style="display:flex; gap:3px; margin-bottom:4px;">';
+        result.bits.forEach((bit, i) => {
+          html +=
+            '<div style="flex:1; text-align:center;"><div style="font-size:9px; opacity:0.6">' +
+            labels[i] +
+            '</div><div style="height:28px; background:' +
+            (bit ? '#16a34a' : '#dc2626') +
+            '; border-radius:3px; display:flex; align-items:center; justify-content:center; color:#fff;">' +
+            bit +
+            '</div></div>';
+        });
+        html += '</div><div style="font-size:10px; opacity:0.6; margin-bottom:2px;">↑ Bit thực sự gửi ra dây</div>';
+
+        html += '<div style="display:flex; gap:3px; margin-bottom:4px;">';
+        result.sampled.forEach((bit, i) => {
+          const wrong = !result.correctPerBit[i];
+          html +=
+            '<div style="flex:1; text-align:center;"><div style="height:28px; background:' +
+            (wrong ? '#f59e0b' : bit ? '#16a34a' : '#dc2626') +
+            '; border-radius:3px; display:flex; align-items:center; justify-content:center; color:#fff; ' +
+            (wrong ? 'box-shadow: 0 0 0 2px #f59e0b;' : '') +
+            '">' +
+            bit +
+            '</div></div>';
+        });
+        html += '</div><div style="font-size:10px; opacity:0.6;">↑ Bit receiver ĐỌC ĐƯỢC (vàng = sai)</div>';
+
+        document.getElementById('uart-waveform').innerHTML = html;
+
+        const correctCount = result.correctPerBit.filter(Boolean).length;
+        const statusEl = document.getElementById('uart-error-status');
+        if (result.allCorrect) {
+          statusEl.innerHTML = '✅ Khung ĐÚNG trọn vẹn — ' + correctCount + '/10 bit khớp.';
+          statusEl.style.color = '#16a34a';
+        } else {
+          statusEl.innerHTML =
+            '💥 Khung VỠ — chỉ ' + correctCount + '/10 bit khớp (' + (10 - correctCount) + ' bit sai).';
+          statusEl.style.color = '#dc2626';
+        }
+      }
+
+      document.getElementById('uart-byte-select').addEventListener('change', renderWaveform);
+      document.getElementById('uart-error-slider').addEventListener('input', renderWaveform);
+      renderWaveform();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

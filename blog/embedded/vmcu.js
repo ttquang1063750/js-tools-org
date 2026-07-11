@@ -3,10 +3,12 @@
 // vi nào được nối). Bài 2 thêm GPIO OUTPUT (MODER/ODR); Bài 3 thêm GPIO INPUT
 // (IDR + cấu hình pull-up/down PUPDR, mô phỏng cả chân floating đọc nhiễu
 // ngẫu nhiên) — đúng build-out table của từng bài. Bài 4 thêm SysTick; Bài 6
-// thêm Timer/PWM; Bài 7 thêm NVIC/EXTI; Bài 8 thêm race condition/critical
-// section/ring buffer SPSC (logic firmware thuần, không phải thanh ghi mới);
-// Bài 9 thêm UART; Bài 10 thêm ADC; Bài 11 thêm DMA; Bài 14-15 thêm mini-RTOS.
-// Import trực tiếp từ các bài sau,
+// thêm Timer/PWM; Bài 7 thêm NVIC/EXTI (mở rộng NVIC lên 2 từ 32-bit
+// ISER0/ISER1... để bao hết IRQ 0-63, cần cho USART1 = IRQ 37 ở Bài 9); Bài 8
+// thêm race condition/critical section/ring buffer SPSC (logic firmware
+// thuần, không phải thanh ghi mới); Bài 9 thêm USART1 (SR/DR/BRR/CR1) + công
+// thức baud rate + mô phỏng lỗi baud; Bài 10 thêm ADC; Bài 11 thêm DMA; Bài
+// 14-15 thêm mini-RTOS. Import trực tiếp từ các bài sau,
 // KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11 / ai-neuro.js
 // Series 12).
 //
@@ -144,11 +146,23 @@ const NVIC_ICER0_ADDR = 0xe000e180;
 const NVIC_ISPR0_ADDR = 0xe000e200;
 const NVIC_ICPR0_ADDR = 0xe000e280;
 const NVIC_IPR_BASE_ADDR = 0xe000e400; // byte-addressable: dia chi + irqNum = priority cua IRQ do
+// Bai 7 chi day/dung IRQ 0-31 (1 tu 32-bit la du). Bai 9 them USART1 tai VI TRI
+// THAT trong vector table (37) - vuot qua 31, can THEM 1 tu 32-bit nua, dung
+// DUNG kien truc that: ISER1/ICER1/ISPR1/ICPR1 nam ngay sau tu dau (+4 byte),
+// bao IRQ 32-63. Day KHONG phai gia lap rieng cho USART1 - la mo rong dung
+// NVIC that su co, chi la Bai 7 chua can dung toi.
+const NVIC_ISER1_ADDR = NVIC_ISER0_ADDR + 4;
+const NVIC_ICER1_ADDR = NVIC_ICER0_ADDR + 4;
+const NVIC_ISPR1_ADDR = NVIC_ISPR0_ADDR + 4;
+const NVIC_ICPR1_ADDR = NVIC_ICPR0_ADDR + 4;
 
 // Số hiệu IRQ lấy ĐÚNG vị trí thật trong vector table STM32F103 (mật độ
-// chuẩn/dòng phổ biến) — EXTI1 và TIM1_UP là 2 nguồn ngắt bài này dùng.
+// chuẩn/dòng phổ biến) — EXTI1 và TIM1_UP là 2 nguồn ngắt Bài 7 dùng; USART1
+// (Bài 9) dùng CHUNG 1 IRQ cho cả TX lẫn RX (đúng thiết kế thật — ISR tự đọc
+// SR để biết đang do TXE hay RXNE gây ra).
 const IRQ_EXTI1 = 7;
 const IRQ_TIM1_UP = 24;
+const IRQ_USART1 = 37;
 
 // ---------------------------------------------------------------------------
 // EXTI (Bài 7) — ngoại vi ĐẶC THÙ HÃNG CHIP, sinh ngắt từ cạnh tín hiệu trên
@@ -170,6 +184,37 @@ const EXTI_RTSR_ADDR = EXTI_BASE + EXTI_RTSR_OFFSET;
 const EXTI_FTSR_ADDR = EXTI_BASE + EXTI_FTSR_OFFSET;
 const EXTI_PR_ADDR = EXTI_BASE + EXTI_PR_OFFSET;
 const EXTI_LINE1_BIT = 1; // VI TRI bit (khong phai mask) cua duong EXTI line 1 - giong PA1 cac bai truoc
+
+// ---------------------------------------------------------------------------
+// USART1 (Bài 9) — ngoại vi ĐẶC THÙ HÃNG CHIP, địa chỉ base + offset ĐÚNG số
+// thật STM32F103 (bus APB2). VMCU mô hình 4 thanh ghi tối giản đủ cho bài:
+//   - SR (status): bit TXE (7) = "sẵn sàng nhận byte mới để gửi", bit RXNE
+//     (5) = "đã có byte mới nhận được, chưa đọc". VMCU đơn giản hoá: coi mỗi
+//     lần TX là tức thời (không có độ trễ dịch bit thật) nên TXE LUÔN = 1
+//     ngay sau khi ghi DR — điểm khác duy nhất với phần cứng thật (nơi TXE
+//     mất một khoảng thời gian bit mới set lại).
+//   - DR (data register): ghi = gửi 1 byte (đẩy vào uartTxLog cho waveform
+//     Mục 9.5); đọc = lấy byte RX vừa nhận, tự động xoá RXNE.
+//   - BRR (baud rate register): công thức ĐƠN GIẢN của bài (không tính hệ số
+//     oversampling 16x + phần thập phân của thanh ghi thật) — đúng cam kết
+//     "BRR = f_clk/baud" của Mục 9.2, không phải bản bit-exact phần cứng.
+//   - CR1: bit UE (13) bật cả khối, TXEIE (7)/RXNEIE (5) bật ngắt tương ứng.
+// ---------------------------------------------------------------------------
+const USART1_BASE = 0x40013800;
+const USART1_SR_OFFSET = 0x00;
+const USART1_DR_OFFSET = 0x04;
+const USART1_BRR_OFFSET = 0x08;
+const USART1_CR1_OFFSET = 0x0c;
+const USART1_SR_ADDR = USART1_BASE + USART1_SR_OFFSET;
+const USART1_DR_ADDR = USART1_BASE + USART1_DR_OFFSET;
+const USART1_BRR_ADDR = USART1_BASE + USART1_BRR_OFFSET;
+const USART1_CR1_ADDR = USART1_BASE + USART1_CR1_OFFSET;
+const USART1_SR_TXE_BIT = 7;
+const USART1_SR_RXNE_BIT = 5;
+const USART1_CR1_UE_BIT = 13;
+const USART1_CR1_TXEIE_BIT = 7;
+const USART1_CR1_RXNEIE_BIT = 5;
+const USART1_CLK_HZ = 72000000; // 72MHz - xung nhip APB2 tren STM32F103 (giong TIM1)
 
 // An toan tu test/demo: gioi han so lan _serviceInterrupts lap lai trong 1
 // lan goi de tranh treo that (vong lap vo han khi ISR quen xoa pending) -
@@ -235,9 +280,14 @@ class VMCU {
     // NVIC (Bài 7): reset về 0 đúng hành vi thật — mọi IRQ TẮT (ISER=0),
     // KHÔNG có gì đang chờ (ISPR=0), priority mặc định 0 cho mọi IRQ (số nhỏ
     // nhất có thể — vô hại vì chưa IRQ nào bật để so ưu tiên với nhau).
+    // nvicIser/nvicIspr bao IRQ 0-31 (đủ cho Bài 7); nvicIser1/nvicIspr1 bao
+    // IRQ 32-63 (Bài 9 cần cho USART1 = IRQ 37). nvicIpr mở lên 64 byte để
+    // theo kịp.
     this.nvicIser = 0;
     this.nvicIspr = 0;
-    this.nvicIpr = new Uint8Array(32);
+    this.nvicIser1 = 0;
+    this.nvicIspr1 = 0;
+    this.nvicIpr = new Uint8Array(64);
     // Danh sách priority của các ISR đang chạy (đỉnh mảng = ISR trong cùng
     // hiện tại) — KHÔNG phải thanh ghi thật, chỉ là móc nối mô phỏng cơ chế
     // preemption/nested interrupt của phần cứng thật cho demo/self-test.
@@ -252,6 +302,16 @@ class VMCU {
     this.extiRtsr = 0;
     this.extiFtsr = 0;
     this.extiPr = 0;
+    // USART1 (Bài 9): reset đúng thật — CR1=0 (khối tắt), SR có sẵn TXE=1
+    // (thanh ghi truyền LUÔN rảnh khi mới bật nguồn, chưa gửi gì), RXNE=0
+    // (chưa nhận gì), BRR=0 (chưa cấu hình baud). uartTxLog KHÔNG phải thanh
+    // ghi thật — chỉ để demo/self-test xem lại các byte đã "gửi ra" theo thứ
+    // tự, giống nối một máy phân tích logic vào chân TX thật.
+    this.usart1Cr1 = 0;
+    this.usart1Sr = 1 << USART1_SR_TXE_BIT;
+    this.usart1Dr = 0;
+    this.usart1Brr = 0;
+    this.uartTxLog = [];
   }
 
   // Đọc 1 byte trong 1 thanh ghi 32-bit lưu dạng số JS thường (little-endian,
@@ -298,10 +358,16 @@ class VMCU {
     if (addr >= NVIC_ISER0_ADDR && addr < NVIC_ISER0_ADDR + 4) {
       return this._readRegByte(this.nvicIser, addr - NVIC_ISER0_ADDR);
     }
+    if (addr >= NVIC_ISER1_ADDR && addr < NVIC_ISER1_ADDR + 4) {
+      return this._readRegByte(this.nvicIser1, addr - NVIC_ISER1_ADDR);
+    }
     if (addr >= NVIC_ISPR0_ADDR && addr < NVIC_ISPR0_ADDR + 4) {
       return this._readRegByte(this.nvicIspr, addr - NVIC_ISPR0_ADDR);
     }
-    if (addr >= NVIC_IPR_BASE_ADDR && addr < NVIC_IPR_BASE_ADDR + 32) {
+    if (addr >= NVIC_ISPR1_ADDR && addr < NVIC_ISPR1_ADDR + 4) {
+      return this._readRegByte(this.nvicIspr1, addr - NVIC_ISPR1_ADDR);
+    }
+    if (addr >= NVIC_IPR_BASE_ADDR && addr < NVIC_IPR_BASE_ADDR + 64) {
       return this.nvicIpr[addr - NVIC_IPR_BASE_ADDR];
     }
     return 0;
@@ -317,10 +383,20 @@ class VMCU {
       this.nvicIser = (this.nvicIser | (v << (byteIdx * 8))) >>> 0;
       return;
     }
+    if (addr >= NVIC_ISER1_ADDR && addr < NVIC_ISER1_ADDR + 4) {
+      const byteIdx = addr - NVIC_ISER1_ADDR;
+      this.nvicIser1 = (this.nvicIser1 | (v << (byteIdx * 8))) >>> 0;
+      return;
+    }
     // ICER: write-1-to-CLEAR enable (thanh ghi riêng, KHÔNG phải ghi đè ISER).
     if (addr >= NVIC_ICER0_ADDR && addr < NVIC_ICER0_ADDR + 4) {
       const byteIdx = addr - NVIC_ICER0_ADDR;
       this.nvicIser = (this.nvicIser & ~(v << (byteIdx * 8))) >>> 0;
+      return;
+    }
+    if (addr >= NVIC_ICER1_ADDR && addr < NVIC_ICER1_ADDR + 4) {
+      const byteIdx = addr - NVIC_ICER1_ADDR;
+      this.nvicIser1 = (this.nvicIser1 & ~(v << (byteIdx * 8))) >>> 0;
       return;
     }
     // ISPR: write-1-to-SET pending (dùng để test phần mềm kích ngắt thủ công).
@@ -330,14 +406,25 @@ class VMCU {
       this._serviceInterrupts();
       return;
     }
+    if (addr >= NVIC_ISPR1_ADDR && addr < NVIC_ISPR1_ADDR + 4) {
+      const byteIdx = addr - NVIC_ISPR1_ADDR;
+      this.nvicIspr1 = (this.nvicIspr1 | (v << (byteIdx * 8))) >>> 0;
+      this._serviceInterrupts();
+      return;
+    }
     // ICPR: write-1-to-CLEAR pending.
     if (addr >= NVIC_ICPR0_ADDR && addr < NVIC_ICPR0_ADDR + 4) {
       const byteIdx = addr - NVIC_ICPR0_ADDR;
       this.nvicIspr = (this.nvicIspr & ~(v << (byteIdx * 8))) >>> 0;
       return;
     }
+    if (addr >= NVIC_ICPR1_ADDR && addr < NVIC_ICPR1_ADDR + 4) {
+      const byteIdx = addr - NVIC_ICPR1_ADDR;
+      this.nvicIspr1 = (this.nvicIspr1 & ~(v << (byteIdx * 8))) >>> 0;
+      return;
+    }
     // IPR: mảng priority byte-addressable, ghi đè thường (không phải w1s/w1c).
-    if (addr >= NVIC_IPR_BASE_ADDR && addr < NVIC_IPR_BASE_ADDR + 32) {
+    if (addr >= NVIC_IPR_BASE_ADDR && addr < NVIC_IPR_BASE_ADDR + 64) {
       this.nvicIpr[addr - NVIC_IPR_BASE_ADDR] = v;
       return;
     }
@@ -408,6 +495,25 @@ class VMCU {
     if (addr >= EXTI_PR_ADDR && addr < EXTI_PR_ADDR + 4) {
       return this._readRegByte(this.extiPr, addr - EXTI_PR_ADDR);
     }
+    if (addr >= USART1_SR_ADDR && addr < USART1_SR_ADDR + 4) {
+      return this._readRegByte(this.usart1Sr, addr - USART1_SR_ADDR);
+    }
+    if (addr >= USART1_DR_ADDR && addr < USART1_DR_ADDR + 4) {
+      // Đọc DR: lấy byte RX vừa nhận, TỰ ĐỘNG xoá RXNE (đúng hành vi thật —
+      // đọc DR chính là cách phần cứng biết "main đã lấy byte, có thể nhận
+      // byte kế tiếp"). Chỉ byte thấp nhất (offset 0) có ý nghĩa.
+      if (addr - USART1_DR_ADDR === 0) {
+        this.usart1Sr = (this.usart1Sr & ~(1 << USART1_SR_RXNE_BIT)) >>> 0;
+        return this.usart1Dr;
+      }
+      return 0;
+    }
+    if (addr >= USART1_BRR_ADDR && addr < USART1_BRR_ADDR + 4) {
+      return this._readRegByte(this.usart1Brr, addr - USART1_BRR_ADDR);
+    }
+    if (addr >= USART1_CR1_ADDR && addr < USART1_CR1_ADDR + 4) {
+      return this._readRegByte(this.usart1Cr1, addr - USART1_CR1_ADDR);
+    }
     return 0;
   }
 
@@ -462,6 +568,28 @@ class VMCU {
       this.extiPr = (this.extiPr & ~(v << (byteIdx * 8))) >>> 0;
       return;
     }
+    if (addr >= USART1_DR_ADDR && addr < USART1_DR_ADDR + 4) {
+      // Ghi DR: "gửi" 1 byte. VMCU đơn giản hoá — coi truyền là TỨC THỜI
+      // (không có độ trễ dịch bit thật) nên TXE vẫn giữ nguyên = 1 ngay sau
+      // khi ghi (khác phần cứng thật — nơi TXE tạm về 0 rồi mới set lại khi
+      // dịch xong). uartTxLog ghi lại đúng thứ tự byte đã gửi cho waveform
+      // Mục 9.5 và self-test — KHÔNG phải thanh ghi thật.
+      if (addr - USART1_DR_ADDR === 0) {
+        this.uartTxLog.push(v);
+        if (((this.usart1Cr1 >>> USART1_CR1_TXEIE_BIT) & 1) === 1) {
+          this.triggerInterrupt(IRQ_USART1);
+        }
+      }
+      return;
+    }
+    if (addr >= USART1_BRR_ADDR && addr < USART1_BRR_ADDR + 4) {
+      this.usart1Brr = this._writeRegByte(this.usart1Brr, addr - USART1_BRR_ADDR, v);
+      return;
+    }
+    if (addr >= USART1_CR1_ADDR && addr < USART1_CR1_ADDR + 4) {
+      this.usart1Cr1 = this._writeRegByte(this.usart1Cr1, addr - USART1_CR1_ADDR, v);
+      return;
+    }
     // peripheral khác chưa nối — ghi không có tác dụng gì
   }
 
@@ -503,6 +631,24 @@ class VMCU {
     return this.tim1Ccr1 * this.tim1TickMicroseconds();
   }
 
+  // USART1 co dang bat hay khong (bit UE cua CR1).
+  usart1Enabled() {
+    return ((this.usart1Cr1 >>> USART1_CR1_UE_BIT) & 1) === 1;
+  }
+
+  // Mô phỏng 1 byte "từ bên ngoài" bay tới chân RX (vd người gõ phím trong
+  // demo Mục 9.5). Trên phần cứng thật đây là kết quả của quá trình dịch bit
+  // nối tiếp qua chân vật lý — VMCU bỏ qua tầng bit-serial, coi cả byte tới
+  // cùng lúc, giữ đúng Ý NGHĨA tầng thanh ghi: DR nhận giá trị, RXNE bật lên,
+  // và nếu RXNEIE đang bật thì báo ngắt NGAY (đúng thiết kế thật).
+  uartInjectRxByte(byte) {
+    this.usart1Dr = byte & 0xff;
+    this.usart1Sr = (this.usart1Sr | (1 << USART1_SR_RXNE_BIT)) >>> 0;
+    if (((this.usart1Cr1 >>> USART1_CR1_RXNEIE_BIT) & 1) === 1) {
+      this.triggerInterrupt(IRQ_USART1);
+    }
+  }
+
   // "Vector table" mô phỏng (Bài 7 Mục 2): trên phần cứng thật đây là 1 mảng
   // con trỏ hàm nằm đầu Flash, linker tự nối tên hàm (vd TIM1_UP_IRQHandler)
   // vào đúng ô ứng với số IRQ. VMCU không mô phỏng linker/Flash thật, chỉ
@@ -512,7 +658,8 @@ class VMCU {
   }
 
   nvicIrqEnabled(irqNum) {
-    return ((this.nvicIser >>> irqNum) & 1) === 1;
+    if (irqNum < 32) return ((this.nvicIser >>> irqNum) & 1) === 1;
+    return ((this.nvicIser1 >>> (irqNum - 32)) & 1) === 1;
   }
 
   nvicPriority(irqNum) {
@@ -540,10 +687,12 @@ class VMCU {
     this._serviceInterrupts();
   }
 
-  // Phần mềm/ngoại vi khác (vd TIM1 Mục 6/7) xin ngắt trực tiếp qua NVIC,
-  // không qua EXTI — dùng cho nguồn ngắt thứ hai trong demo nested interrupt.
+  // Phần mềm/ngoại vi khác (vd TIM1 Mục 6/7, USART1 Mục 9.3) xin ngắt trực
+  // tiếp qua NVIC, không qua EXTI — dùng cho nguồn ngắt thứ hai trong demo
+  // nested interrupt, và cho USART1 (IRQ >= 32, rơi vào từ thứ 2).
   triggerInterrupt(irqNum) {
-    this.nvicIspr = (this.nvicIspr | (1 << irqNum)) >>> 0;
+    if (irqNum < 32) this.nvicIspr = (this.nvicIspr | (1 << irqNum)) >>> 0;
+    else this.nvicIspr1 = (this.nvicIspr1 | (1 << (irqNum - 32))) >>> 0;
     this._serviceInterrupts();
   }
 
@@ -562,11 +711,16 @@ class VMCU {
       const currentPriority =
         this.activePriorityStack.length > 0 ? this.activePriorityStack[this.activePriorityStack.length - 1] : Infinity;
 
+      // Quét CẢ 2 từ 32-bit (IRQ 0-31 và 32-63) — Bài 7 chỉ dùng từ đầu, Bài
+      // 9 (USART1 = IRQ 37) mới cần tới từ thứ 2.
       let bestIrq = -1;
       let bestPriority = Infinity;
-      for (let irq = 0; irq < 32; irq++) {
-        const pending = (this.nvicIspr >>> irq) & 1;
-        const enabled = (this.nvicIser >>> irq) & 1;
+      for (let irq = 0; irq < 64; irq++) {
+        const word = irq < 32 ? this.nvicIspr : this.nvicIspr1;
+        const enabledWord = irq < 32 ? this.nvicIser : this.nvicIser1;
+        const bit = irq % 32;
+        const pending = (word >>> bit) & 1;
+        const enabled = (enabledWord >>> bit) & 1;
         if (pending && enabled) {
           const p = this.nvicIpr[irq];
           if (p < bestPriority) {
@@ -580,7 +734,8 @@ class VMCU {
 
       // Phan cung THAT xoa pending o NVIC ngay khi vao ISR (khac EXTI_PR o
       // muc ngoai vi - cai do PHAI tu tay xoa trong ISR, xem _syncExtiToNvic).
-      this.nvicIspr = (this.nvicIspr & ~(1 << bestIrq)) >>> 0;
+      if (bestIrq < 32) this.nvicIspr = (this.nvicIspr & ~(1 << bestIrq)) >>> 0;
+      else this.nvicIspr1 = (this.nvicIspr1 & ~(1 << (bestIrq - 32))) >>> 0;
       this.activePriorityStack.push(bestPriority);
       this.isrCallLog.push(bestIrq);
       const handler = this.irqHandlers[bestIrq];
@@ -895,6 +1050,53 @@ class RingBufferSPSC {
   }
 }
 
+// ---------------------------------------------------------------------------
+// UART: khung 8N1, baud rate, và mô phỏng lỗi baud (Bài 9) — cũng là hàm
+// FIRMWARE/toán học thuần, không phải thanh ghi, nên sống bên ngoài VMCU.
+// ---------------------------------------------------------------------------
+
+// Công thức ĐƠN GIẢN của Mục 9.2 (không có hệ số oversampling 16x của thanh
+// ghi BRR thật) — BRR = f_clk / baud, làm tròn về số nguyên gần nhất.
+function uartBrrForBaud(clockHz, baud) {
+  return Math.round(clockHz / baud);
+}
+
+// Baud THẬT SỰ đạt được với 1 giá trị BRR cụ thể (do làm tròn ở trên, baud
+// thật luôn lệch một chút so với baud mong muốn — chính là "sai số nội tại"
+// nhắc tới ở Mục 9.2, TRƯỚC CẢ khi tính tới sai số đồng hồ RC nội).
+function uartActualBaud(clockHz, brr) {
+  return clockHz / brr;
+}
+
+// Khung 8N1: 1 start bit (0) + 8 data bit LSB-first + 1 stop bit (1) — đúng
+// thứ tự bit thật sự được dịch ra dây, dùng cho waveform Mục 9.5.
+function uartFrameBits(byte) {
+  const bits = [0];
+  for (let i = 0; i < 8; i++) bits.push((byte >>> i) & 1);
+  bits.push(1);
+  return bits;
+}
+
+// Mô phỏng receiver có đồng hồ LỆCH errorFrac (vd 0.05 = 5%) so với
+// transmitter. Transmitter phát mỗi bit trong đúng 1 đơn vị thời gian (chu kỳ
+// baud lý tưởng = 1); receiver lấy mẫu tại GIỮA mỗi bit THEO ĐỒNG HỒ CỦA NÓ
+// (chu kỳ = 1 - errorFrac). Vì 2 đồng hồ không khớp, điểm lấy mẫu trôi dần xa
+// khỏi giữa bit thật qua từng bit — tới một lúc trôi quá nửa chu kỳ (0.5) thì
+// đọc NHẦM sang bit kế bên. Trả về bit đã gửi (bits), bit ĐÃ ĐỌC (sampled,
+// theo đồng hồ lệch), và có đúng/sai từng vị trí.
+function uartSampleWithBaudError(byte, errorFrac) {
+  const bits = uartFrameBits(byte); // 10 bit: start + 8 data + stop
+  const sampled = [];
+  const correctPerBit = [];
+  for (let i = 0; i < bits.length; i++) {
+    const sampleTime = (i + 0.5) * (1 - errorFrac); // thoi diem lay mau THEO DONG HO RECEIVER
+    const actualBitIndex = Math.min(bits.length - 1, Math.max(0, Math.floor(sampleTime)));
+    sampled.push(bits[actualBitIndex]);
+    correctPerBit.push(actualBitIndex === i);
+  }
+  return { bits, sampled, correctPerBit, allCorrect: correctPerBit.every(Boolean) };
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -931,6 +1133,10 @@ export {
   NVIC_ICER0_ADDR,
   NVIC_ISPR0_ADDR,
   NVIC_ICPR0_ADDR,
+  NVIC_ISER1_ADDR,
+  NVIC_ICER1_ADDR,
+  NVIC_ISPR1_ADDR,
+  NVIC_ICPR1_ADDR,
   NVIC_IPR_BASE_ADDR,
   IRQ_EXTI1,
   IRQ_TIM1_UP,
@@ -943,6 +1149,21 @@ export {
   raceDemo,
   TornReadPair,
   RingBufferSPSC,
+  USART1_SR_ADDR,
+  USART1_DR_ADDR,
+  USART1_BRR_ADDR,
+  USART1_CR1_ADDR,
+  USART1_SR_TXE_BIT,
+  USART1_SR_RXNE_BIT,
+  USART1_CR1_UE_BIT,
+  USART1_CR1_TXEIE_BIT,
+  USART1_CR1_RXNEIE_BIT,
+  USART1_CLK_HZ,
+  IRQ_USART1,
+  uartBrrForBaud,
+  uartActualBaud,
+  uartFrameBits,
+  uartSampleWithBaudError,
 };
 
 // ---------------------------------------------------------------------------
@@ -1453,6 +1674,98 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       if (a !== round || b !== round + 100) allCorrect = false;
     }
     checkTrue('Push/pop xen kẽ nhiều vòng (head/tail quay vòng qua lại): luôn đúng thứ tự FIFO', allCorrect);
+  }
+
+  // --- VMCU: USART1 (Bài 9) ---
+  {
+    const cpuU = new VMCU();
+    check('Reset: CR1 = 0 (UART tắt)', cpuU.read32(USART1_CR1_ADDR), 0);
+    checkTrue('Reset: usart1Enabled() = false', cpuU.usart1Enabled() === false);
+    checkTrue('Reset: TXE = 1 (sẵn sàng gửi ngay cả khi tắt)', ((cpuU.usart1Sr >>> USART1_SR_TXE_BIT) & 1) === 1);
+    checkTrue('Reset: RXNE = 0 (chưa nhận gì)', ((cpuU.usart1Sr >>> USART1_SR_RXNE_BIT) & 1) === 0);
+
+    // Bật UE (RMW quen thuộc từ các bài trước)
+    cpuU.write32(USART1_CR1_ADDR, cpuU.read32(USART1_CR1_ADDR) | (1 << USART1_CR1_UE_BIT));
+    checkTrue('Sau khi bật UE: usart1Enabled() = true', cpuU.usart1Enabled() === true);
+
+    // --- Ghi DR: "gửi" byte, ghi lại đúng thứ tự vào uartTxLog ---
+    cpuU.write32(USART1_DR_ADDR, 0x41); // 'A'
+    cpuU.write32(USART1_DR_ADDR, 0x42); // 'B'
+    checkTrue('uartTxLog ghi đúng 2 byte theo thứ tự đã gửi', cpuU.uartTxLog.join(',') === '65,66');
+    checkTrue('Sau khi gửi: TXE vẫn = 1 (VMCU coi truyền tức thời)', ((cpuU.usart1Sr >>> USART1_SR_TXE_BIT) & 1) === 1);
+
+    // --- Nhận byte (RX) qua uartInjectRxByte: RXNE bật, đọc DR trả đúng byte và tự xoá RXNE ---
+    cpuU.uartInjectRxByte(0x4c); // 'L'
+    checkTrue('Sau khi nhận: RXNE = 1', ((cpuU.usart1Sr >>> USART1_SR_RXNE_BIT) & 1) === 1);
+    check('Đọc DR trả đúng byte vừa nhận', cpuU.read32(USART1_DR_ADDR), 0x4c);
+    checkTrue('Đọc DR xong: RXNE tự động về 0', ((cpuU.usart1Sr >>> USART1_SR_RXNE_BIT) & 1) === 0);
+
+    // --- Ngắt TX/RX qua IRQ_USART1 (dùng chung, đúng thiết kế thật) ---
+    const cpuU2 = new VMCU();
+    cpuU2.write32(NVIC_ISER1_ADDR, 1 << (IRQ_USART1 - 32));
+    cpuU2.write32(USART1_CR1_ADDR, (1 << USART1_CR1_TXEIE_BIT) | (1 << USART1_CR1_RXNEIE_BIT));
+    const isrLog = [];
+    cpuU2.installIrqHandler(IRQ_USART1, () => isrLog.push('fired'));
+    cpuU2.write32(USART1_DR_ADDR, 0x58); // ghi DR (TX) voi TXEIE bat -> phai bao ngat
+    check('TXEIE bật: ghi DR kích hoạt đúng 1 lần ngắt IRQ_USART1', isrLog.length, 1);
+    cpuU2.uartInjectRxByte(0x59); // nhan byte (RX) voi RXNEIE bat -> phai bao ngat
+    check('RXNEIE bật: nhận byte kích hoạt thêm 1 lần ngắt IRQ_USART1', isrLog.length, 2);
+
+    const cpuU3 = new VMCU(); // KHONG bat TXEIE/RXNEIE - khong duoc bao ngat
+    cpuU3.write32(NVIC_ISER1_ADDR, 1 << (IRQ_USART1 - 32));
+    const isrLog2 = [];
+    cpuU3.installIrqHandler(IRQ_USART1, () => isrLog2.push('fired'));
+    cpuU3.write32(USART1_DR_ADDR, 0x5a);
+    cpuU3.uartInjectRxByte(0x5b);
+    check('TXEIE/RXNEIE tắt: không ngắt nào được báo dù có gửi/nhận', isrLog2.length, 0);
+  }
+
+  // --- UART: baud rate formula (Bài 9 Mục 9.2) ---
+  {
+    check('BRR cho 9600 baud @ 72MHz = 7500 (chia hết, không sai số)', uartBrrForBaud(USART1_CLK_HZ, 9600), 7500);
+    check('Baud thật từ BRR=7500 @ 72MHz = đúng 9600 (khớp lại)', uartActualBaud(USART1_CLK_HZ, 7500), 9600);
+
+    // Clock RC noi 8MHz (khong chia het cho 9600) -> co sai so lam tron nho
+    const clkRc = 8000000;
+    const brrRc = uartBrrForBaud(clkRc, 9600);
+    check('BRR cho 9600 baud @ 8MHz (RC nội) = 833', brrRc, 833);
+    const actualRc = uartActualBaud(clkRc, brrRc);
+    checkTrue(
+      'Baud thật @ 8MHz lệch NHỎ so với 9600 do làm tròn BRR (9603.84, ~0.04% - vẫn an toàn)',
+      Math.abs(actualRc - 9603.84) < 0.01
+    );
+  }
+
+  // --- UART: khung 8N1 & mô phỏng lỗi baud (Bài 9 Mục 9.1, 9.5) ---
+  {
+    checkTrue(
+      "Khung 8N1 của 'A' (0x41): start=0, data LSB-first, stop=1",
+      uartFrameBits(0x41).join(',') === [0, 1, 0, 0, 0, 0, 0, 1, 0, 1].join(',')
+    );
+
+    // Sai so baud nho (2%, 5%): van nam trong "ngan sach an toan" - doc DUNG het khung
+    checkTrue("Lệch baud 2%: khung 'A' vẫn đọc ĐÚNG hết 10 bit", uartSampleWithBaudError(0x41, 0.02).allCorrect);
+    checkTrue(
+      "Lệch baud 5%: khung 'A' vẫn đọc ĐÚNG hết 10 bit (sát biên an toàn)",
+      uartSampleWithBaudError(0x41, 0.05).allCorrect
+    );
+
+    // Vuot qua nguong ~5.3%: bit CUOI (stop bit, vi tri 9) la bit dau tien sai
+    const r53 = uartSampleWithBaudError(0x41, 0.053);
+    checkTrue('Lệch baud 5.3%: BẮT ĐẦU sai — đúng 1 bit sai (bit cuối/stop)', !r53.allCorrect);
+    check(
+      'Lệch baud 5.3%: chỉ đúng 9/10 bit (bit stop là bit sai đầu tiên)',
+      r53.correctPerBit.filter(Boolean).length,
+      9
+    );
+
+    // Loi baud lon (8%): vo khung ro ret - 4/10 bit sai (gan nua khung)
+    const r8 = uartSampleWithBaudError(0x41, 0.08);
+    check(
+      'Lệch baud 8%: vỡ khung rõ rệt — chỉ còn đúng 6/10 bit (4 bit sai)',
+      r8.correctPerBit.filter(Boolean).length,
+      6
+    );
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---
