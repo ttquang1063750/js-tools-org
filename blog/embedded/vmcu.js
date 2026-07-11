@@ -128,6 +128,53 @@ const TIM1_CCR1_ADDR = TIM1_BASE + TIM1_CCR1_OFFSET;
 const TIM1_CR1_CEN_BIT = 0; // bit 0 cua CR1: 1 = bo dem dang chay, 0 = dung
 const TIM1_CLK_HZ = 72000000; // 72MHz - xung nhip APB2 timer tren STM32F103
 
+// ---------------------------------------------------------------------------
+// NVIC (Bài 7) — "tổng đài ngắt" của lõi ARM Cortex-M, nằm trong vùng System
+// (giống SysTick — kiến trúc ARM chuẩn, không phải ngoại vi riêng hãng chip).
+// Địa chỉ ĐÚNG số thật trên mọi Cortex-M. VMCU mô hình 3 khái niệm cốt lõi
+// của bài: enable (ISER/ICER — set/clear enable, KHÔNG phải ghi đè thường,
+// đúng hành vi thật "write-1-to-set"/"write-1-to-clear"), pending (ISPR/ICPR
+// — cùng kiểu write-1-to-set/clear), và priority (IPR — mảng byte, MỖI IRQ
+// 1 byte, số CÀNG NHỎ = ưu tiên CÀNG CAO, đúng cạm bẫy ngược trực giác Mục 3).
+// ---------------------------------------------------------------------------
+const NVIC_ISER0_ADDR = 0xe000e100;
+const NVIC_ICER0_ADDR = 0xe000e180;
+const NVIC_ISPR0_ADDR = 0xe000e200;
+const NVIC_ICPR0_ADDR = 0xe000e280;
+const NVIC_IPR_BASE_ADDR = 0xe000e400; // byte-addressable: dia chi + irqNum = priority cua IRQ do
+
+// Số hiệu IRQ lấy ĐÚNG vị trí thật trong vector table STM32F103 (mật độ
+// chuẩn/dòng phổ biến) — EXTI1 và TIM1_UP là 2 nguồn ngắt bài này dùng.
+const IRQ_EXTI1 = 7;
+const IRQ_TIM1_UP = 24;
+
+// ---------------------------------------------------------------------------
+// EXTI (Bài 7) — ngoại vi ĐẶC THÙ HÃNG CHIP, sinh ngắt từ cạnh tín hiệu trên
+// chân GPIO. Địa chỉ base ĐÚNG số thật STM32F103. VMCU mô hình 4 thanh ghi:
+// IMR (mask — 1 = đường đó ĐƯỢC PHÉP báo ngắt lên NVIC), RTSR/FTSR (chọn
+// cạnh lên/xuống kích hoạt), PR (pending — set khi có cạnh xảy ra, BẤT KỂ
+// IMR có mask hay không; ghi 1 để XOÁ — "write-1-to-clear" giống ICPR của
+// NVIC). Quên xoá PR trong ISR là cạm bẫy chí mạng nhất của bài — vì PR vẫn
+// còn set nghĩa là đường yêu cầu ngắt VẪN CÒN treo, NVIC sẽ pend lại NGAY
+// khi ISR vừa thoát, gọi lại ISR vô hạn — mô phỏng chính xác ở _syncExtiToNvic.
+// ---------------------------------------------------------------------------
+const EXTI_BASE = 0x40010400;
+const EXTI_IMR_OFFSET = 0x00;
+const EXTI_RTSR_OFFSET = 0x08;
+const EXTI_FTSR_OFFSET = 0x0c;
+const EXTI_PR_OFFSET = 0x14;
+const EXTI_IMR_ADDR = EXTI_BASE + EXTI_IMR_OFFSET;
+const EXTI_RTSR_ADDR = EXTI_BASE + EXTI_RTSR_OFFSET;
+const EXTI_FTSR_ADDR = EXTI_BASE + EXTI_FTSR_OFFSET;
+const EXTI_PR_ADDR = EXTI_BASE + EXTI_PR_OFFSET;
+const EXTI_LINE1_BIT = 1; // VI TRI bit (khong phai mask) cua duong EXTI line 1 - giong PA1 cac bai truoc
+
+// An toan tu test/demo: gioi han so lan _serviceInterrupts lap lai trong 1
+// lan goi de tranh treo that (vong lap vo han khi ISR quen xoa pending) -
+// tren phan cung that, mot watchdog timer se cuoi cung reset board; VMCU
+// dung gioi han nay de MO PHONG duoc hau qua ma khong lam treo trinh duyet/Node.
+const NVIC_SERVICE_SAFETY_LIMIT = 1000;
+
 class HardFaultError extends Error {
   constructor(addr) {
     super('HardFault: dia chi 0x' + addr.toString(16).toUpperCase() + ' khong thuoc bat ky vung nho nao da anh xa');
@@ -183,6 +230,26 @@ class VMCU {
     this.tim1Psc = 0;
     this.tim1Arr = 0;
     this.tim1Ccr1 = 0;
+    // NVIC (Bài 7): reset về 0 đúng hành vi thật — mọi IRQ TẮT (ISER=0),
+    // KHÔNG có gì đang chờ (ISPR=0), priority mặc định 0 cho mọi IRQ (số nhỏ
+    // nhất có thể — vô hại vì chưa IRQ nào bật để so ưu tiên với nhau).
+    this.nvicIser = 0;
+    this.nvicIspr = 0;
+    this.nvicIpr = new Uint8Array(32);
+    // Danh sách priority của các ISR đang chạy (đỉnh mảng = ISR trong cùng
+    // hiện tại) — KHÔNG phải thanh ghi thật, chỉ là móc nối mô phỏng cơ chế
+    // preemption/nested interrupt của phần cứng thật cho demo/self-test.
+    this.activePriorityStack = [];
+    this.irqHandlers = {};
+    // Nhật ký thứ tự ISR đã chạy — KHÔNG phải thanh ghi thật, chỉ để
+    // demo/self-test xác minh đúng thứ tự phục vụ ngắt (Mục 6, 7).
+    this.isrCallLog = [];
+    // EXTI (Bài 7): reset về 0 — chưa đường nào được enable (IMR=0), chưa
+    // chọn cạnh nào (RTSR=FTSR=0), chưa có gì pending (PR=0).
+    this.extiImr = 0;
+    this.extiRtsr = 0;
+    this.extiFtsr = 0;
+    this.extiPr = 0;
   }
 
   // Đọc 1 byte trong 1 thanh ghi 32-bit lưu dạng số JS thường (little-endian,
@@ -220,17 +287,56 @@ class VMCU {
     return v;
   }
 
-  // Dispatch vùng System (lõi ARM) — hiện tại chỉ SYST_CSR (Bài 4). Địa chỉ
-  // system khác vẫn đọc 0/ghi vô tác dụng (NVIC sẽ lấp ở Bài 7).
+  // Dispatch vùng System (lõi ARM) — SysTick (Bài 4) + NVIC (Bài 7). Địa chỉ
+  // system khác vẫn đọc 0/ghi vô tác dụng.
   _systemRead8(addr) {
     if (addr >= SYST_CSR_ADDR && addr < SYST_CSR_ADDR + 4) {
       return this._readRegByte(this.systCsr, addr - SYST_CSR_ADDR);
+    }
+    if (addr >= NVIC_ISER0_ADDR && addr < NVIC_ISER0_ADDR + 4) {
+      return this._readRegByte(this.nvicIser, addr - NVIC_ISER0_ADDR);
+    }
+    if (addr >= NVIC_ISPR0_ADDR && addr < NVIC_ISPR0_ADDR + 4) {
+      return this._readRegByte(this.nvicIspr, addr - NVIC_ISPR0_ADDR);
+    }
+    if (addr >= NVIC_IPR_BASE_ADDR && addr < NVIC_IPR_BASE_ADDR + 32) {
+      return this.nvicIpr[addr - NVIC_IPR_BASE_ADDR];
     }
     return 0;
   }
   _systemWrite8(addr, v) {
     if (addr >= SYST_CSR_ADDR && addr < SYST_CSR_ADDR + 4) {
       this.systCsr = this._writeRegByte(this.systCsr, addr - SYST_CSR_ADDR, v);
+      return;
+    }
+    // ISER: write-1-to-SET (ghi 0 KHÔNG tắt được IRQ nào - phải dùng ICER).
+    if (addr >= NVIC_ISER0_ADDR && addr < NVIC_ISER0_ADDR + 4) {
+      const byteIdx = addr - NVIC_ISER0_ADDR;
+      this.nvicIser = (this.nvicIser | (v << (byteIdx * 8))) >>> 0;
+      return;
+    }
+    // ICER: write-1-to-CLEAR enable (thanh ghi riêng, KHÔNG phải ghi đè ISER).
+    if (addr >= NVIC_ICER0_ADDR && addr < NVIC_ICER0_ADDR + 4) {
+      const byteIdx = addr - NVIC_ICER0_ADDR;
+      this.nvicIser = (this.nvicIser & ~(v << (byteIdx * 8))) >>> 0;
+      return;
+    }
+    // ISPR: write-1-to-SET pending (dùng để test phần mềm kích ngắt thủ công).
+    if (addr >= NVIC_ISPR0_ADDR && addr < NVIC_ISPR0_ADDR + 4) {
+      const byteIdx = addr - NVIC_ISPR0_ADDR;
+      this.nvicIspr = (this.nvicIspr | (v << (byteIdx * 8))) >>> 0;
+      this._serviceInterrupts();
+      return;
+    }
+    // ICPR: write-1-to-CLEAR pending.
+    if (addr >= NVIC_ICPR0_ADDR && addr < NVIC_ICPR0_ADDR + 4) {
+      const byteIdx = addr - NVIC_ICPR0_ADDR;
+      this.nvicIspr = (this.nvicIspr & ~(v << (byteIdx * 8))) >>> 0;
+      return;
+    }
+    // IPR: mảng priority byte-addressable, ghi đè thường (không phải w1s/w1c).
+    if (addr >= NVIC_IPR_BASE_ADDR && addr < NVIC_IPR_BASE_ADDR + 32) {
+      this.nvicIpr[addr - NVIC_IPR_BASE_ADDR] = v;
       return;
     }
     // dia chi system khac chua noi
@@ -288,6 +394,18 @@ class VMCU {
     if (addr >= TIM1_CCR1_ADDR && addr < TIM1_CCR1_ADDR + 4) {
       return this._readRegByte(this.tim1Ccr1, addr - TIM1_CCR1_ADDR);
     }
+    if (addr >= EXTI_IMR_ADDR && addr < EXTI_IMR_ADDR + 4) {
+      return this._readRegByte(this.extiImr, addr - EXTI_IMR_ADDR);
+    }
+    if (addr >= EXTI_RTSR_ADDR && addr < EXTI_RTSR_ADDR + 4) {
+      return this._readRegByte(this.extiRtsr, addr - EXTI_RTSR_ADDR);
+    }
+    if (addr >= EXTI_FTSR_ADDR && addr < EXTI_FTSR_ADDR + 4) {
+      return this._readRegByte(this.extiFtsr, addr - EXTI_FTSR_ADDR);
+    }
+    if (addr >= EXTI_PR_ADDR && addr < EXTI_PR_ADDR + 4) {
+      return this._readRegByte(this.extiPr, addr - EXTI_PR_ADDR);
+    }
     return 0;
   }
 
@@ -321,6 +439,25 @@ class VMCU {
     }
     if (addr >= TIM1_CCR1_ADDR && addr < TIM1_CCR1_ADDR + 4) {
       this.tim1Ccr1 = this._writeRegByte(this.tim1Ccr1, addr - TIM1_CCR1_ADDR, v);
+      return;
+    }
+    if (addr >= EXTI_IMR_ADDR && addr < EXTI_IMR_ADDR + 4) {
+      this.extiImr = this._writeRegByte(this.extiImr, addr - EXTI_IMR_ADDR, v);
+      return;
+    }
+    if (addr >= EXTI_RTSR_ADDR && addr < EXTI_RTSR_ADDR + 4) {
+      this.extiRtsr = this._writeRegByte(this.extiRtsr, addr - EXTI_RTSR_ADDR, v);
+      return;
+    }
+    if (addr >= EXTI_FTSR_ADDR && addr < EXTI_FTSR_ADDR + 4) {
+      this.extiFtsr = this._writeRegByte(this.extiFtsr, addr - EXTI_FTSR_ADDR, v);
+      return;
+    }
+    // EXTI_PR: write-1-to-CLEAR (giống ICPR của NVIC) - KHÔNG phải ghi đè.
+    // Quên gọi write này trong ISR là cạm bẫy chí mạng nhất của Bài 7.
+    if (addr >= EXTI_PR_ADDR && addr < EXTI_PR_ADDR + 4) {
+      const byteIdx = addr - EXTI_PR_ADDR;
+      this.extiPr = (this.extiPr & ~(v << (byteIdx * 8))) >>> 0;
       return;
     }
     // peripheral khác chưa nối — ghi không có tác dụng gì
@@ -362,6 +499,92 @@ class VMCU {
   // Do rong xung cao hien tai (micro-giay), tinh tu CCR1 va tick hien tai.
   tim1PulseWidthUs() {
     return this.tim1Ccr1 * this.tim1TickMicroseconds();
+  }
+
+  // "Vector table" mô phỏng (Bài 7 Mục 2): trên phần cứng thật đây là 1 mảng
+  // con trỏ hàm nằm đầu Flash, linker tự nối tên hàm (vd TIM1_UP_IRQHandler)
+  // vào đúng ô ứng với số IRQ. VMCU không mô phỏng linker/Flash thật, chỉ
+  // giữ đúng Ý NGHĨA: đăng ký 1 hàm JS làm "ISR" cho 1 số IRQ cụ thể.
+  installIrqHandler(irqNum, fn) {
+    this.irqHandlers[irqNum] = fn;
+  }
+
+  nvicIrqEnabled(irqNum) {
+    return ((this.nvicIser >>> irqNum) & 1) === 1;
+  }
+
+  nvicPriority(irqNum) {
+    return this.nvicIpr[irqNum];
+  }
+
+  // EXTI request tới NVIC là MỨC (level), không phải chốt 1 lần: đường yêu
+  // cầu ngắt của EXTI = (PR & IMR) — hễ PR vẫn còn set (quên xoá trong ISR)
+  // VÀ đường đó vẫn được enable qua IMR, yêu cầu ngắt VẪN CÒN, nên NVIC phải
+  // pend LẠI ngay khi có dịp kiểm tra tiếp — đây là gốc rễ thật của cạm bẫy
+  // "quên xoá PR -> ISR gọi lại vô hạn" (Mục 4), không phải lỗi giả lập.
+  _syncExtiToNvic() {
+    const requesting = (this.extiPr & this.extiImr & (1 << EXTI_LINE1_BIT)) !== 0;
+    if (requesting) this.nvicIspr = (this.nvicIspr | (1 << IRQ_EXTI1)) >>> 0;
+  }
+
+  // Mô phỏng 1 cạnh tín hiệu xảy ra trên đường EXTI line 1 (chân nút nhấn,
+  // giống PA1 các bài trước). Trên phần cứng thật, PR được phần cứng SET
+  // ngay cả khi IMR đang mask đường đó (chỉ IMR quyết định có BÁO lên NVIC
+  // hay không, không quyết định PR có set hay không) — VMCU giữ đúng hành
+  // vi này để Mục 4 test được cả 2 trường hợp.
+  exti1EdgeOccurred() {
+    this.extiPr = (this.extiPr | (1 << EXTI_LINE1_BIT)) >>> 0;
+    this._syncExtiToNvic();
+    this._serviceInterrupts();
+  }
+
+  // Phần mềm/ngoại vi khác (vd TIM1 Mục 6/7) xin ngắt trực tiếp qua NVIC,
+  // không qua EXTI — dùng cho nguồn ngắt thứ hai trong demo nested interrupt.
+  triggerInterrupt(irqNum) {
+    this.nvicIspr = (this.nvicIspr | (1 << irqNum)) >>> 0;
+    this._serviceInterrupts();
+  }
+
+  // Trung tâm mô phỏng ngắt: chạy MỌI ISR đang chờ, được BẬT, và có priority
+  // CAO HƠN (số nhỏ hơn) priority đang chạy hiện tại — đúng cơ chế
+  // preemption/nested interrupt thật. Đệ quy tự nhiên: nếu 1 ISR đang chạy
+  // tự kích 1 ngắt ưu tiên cao hơn (triggerInterrupt/exti1EdgeOccurred), lời
+  // gọi _serviceInterrupts bên trong sẽ chen ngang chạy NGAY (nested), rồi
+  // trả lại đúng chỗ ISR ban đầu đang dở dang — không cần dựng máy trạng
+  // thái phức tạp, JS call stack tự làm việc đó.
+  _serviceInterrupts() {
+    let safety = 0;
+    while (safety++ < NVIC_SERVICE_SAFETY_LIMIT) {
+      this._syncExtiToNvic(); // EXTI la muc (level) - phai tinh lai moi vong
+
+      const currentPriority =
+        this.activePriorityStack.length > 0 ? this.activePriorityStack[this.activePriorityStack.length - 1] : Infinity;
+
+      let bestIrq = -1;
+      let bestPriority = Infinity;
+      for (let irq = 0; irq < 32; irq++) {
+        const pending = (this.nvicIspr >>> irq) & 1;
+        const enabled = (this.nvicIser >>> irq) & 1;
+        if (pending && enabled) {
+          const p = this.nvicIpr[irq];
+          if (p < bestPriority) {
+            bestPriority = p;
+            bestIrq = irq;
+          }
+        }
+      }
+
+      if (bestIrq === -1 || bestPriority >= currentPriority) break;
+
+      // Phan cung THAT xoa pending o NVIC ngay khi vao ISR (khac EXTI_PR o
+      // muc ngoai vi - cai do PHAI tu tay xoa trong ISR, xem _syncExtiToNvic).
+      this.nvicIspr = (this.nvicIspr & ~(1 << bestIrq)) >>> 0;
+      this.activePriorityStack.push(bestPriority);
+      this.isrCallLog.push(bestIrq);
+      const handler = this.irqHandlers[bestIrq];
+      if (handler) handler(this);
+      this.activePriorityStack.pop();
+    }
   }
 
   // IDR tính "sống" mỗi lần đọc — không lưu trạng thái cố định như MODER/ODR,
@@ -571,6 +794,18 @@ export {
   TIM1_CCR1_ADDR,
   TIM1_CR1_CEN_BIT,
   TIM1_CLK_HZ,
+  NVIC_ISER0_ADDR,
+  NVIC_ICER0_ADDR,
+  NVIC_ISPR0_ADDR,
+  NVIC_ICPR0_ADDR,
+  NVIC_IPR_BASE_ADDR,
+  IRQ_EXTI1,
+  IRQ_TIM1_UP,
+  EXTI_IMR_ADDR,
+  EXTI_RTSR_ADDR,
+  EXTI_FTSR_ADDR,
+  EXTI_PR_ADDR,
+  EXTI_LINE1_BIT,
 };
 
 // ---------------------------------------------------------------------------
@@ -896,6 +1131,126 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     check('Servo: CCR1=1000 -> độ rộng xung = 1000us = 1ms (góc servo min)', cpu5.tim1PulseWidthUs(), 1000);
     cpu5.write32(TIM1_CCR1_ADDR, 2000);
     check('Servo: CCR1=2000 -> độ rộng xung = 2000us = 2ms (góc servo max)', cpu5.tim1PulseWidthUs(), 2000);
+  }
+
+  // --- VMCU: NVIC + EXTI (Bài 7) ---
+  {
+    const cpu6 = new VMCU();
+    check('Reset: NVIC ISER = 0 (mọi IRQ tắt)', cpu6.read32(NVIC_ISER0_ADDR), 0);
+    check('Reset: NVIC ISPR = 0 (không gì pending)', cpu6.read32(NVIC_ISPR0_ADDR), 0);
+    checkTrue('Reset: IRQ_EXTI1 chưa enable', cpu6.nvicIrqEnabled(IRQ_EXTI1) === false);
+
+    // Bat 1 IRQ qua ISER (write-1-to-set)
+    cpu6.write32(NVIC_ISER0_ADDR, 1 << IRQ_EXTI1);
+    checkTrue('Sau khi ghi ISER: IRQ_EXTI1 đã enable', cpu6.nvicIrqEnabled(IRQ_EXTI1) === true);
+    checkTrue('IRQ khác (TIM1_UP) KHÔNG bị ảnh hưởng — vẫn tắt', cpu6.nvicIrqEnabled(IRQ_TIM1_UP) === false);
+
+    // Tat lai qua ICER (KHONG phai ghi de ISER)
+    cpu6.write32(NVIC_ICER0_ADDR, 1 << IRQ_EXTI1);
+    checkTrue('Sau khi ghi ICER: IRQ_EXTI1 tắt lại', cpu6.nvicIrqEnabled(IRQ_EXTI1) === false);
+
+    // --- Priority nguoc truc giac: so NHO HON = uu tien CAO HON ---
+    cpu6.nvicIpr[IRQ_TIM1_UP] = 0; // uu tien CAO nhat
+    cpu6.nvicIpr[IRQ_EXTI1] = 1; // uu tien THAP hon
+    cpu6.write32(NVIC_ISER0_ADDR, (1 << IRQ_EXTI1) | (1 << IRQ_TIM1_UP));
+    cpu6.installIrqHandler(IRQ_EXTI1, () => {});
+    cpu6.installIrqHandler(IRQ_TIM1_UP, () => {});
+    // Dat CA 2 pending CUNG LUC (truc tiep, mo phong dung tinh huong "2 ngat
+    // cung xin phuc vu" - goi triggerInterrupt() 2 lan rieng le se tu phuc vu
+    // ngay lan dau, khong tao duoc tinh huong dong thoi can test o day).
+    cpu6.nvicIspr = (1 << IRQ_EXTI1) | (1 << IRQ_TIM1_UP);
+    cpu6._serviceInterrupts();
+    check(
+      'Cùng pending 1 lúc: IRQ ưu tiên SỐ NHỎ HƠN (TIM1_UP=0) chạy TRƯỚC dù EXTI1 đứng trước trong bitmask',
+      cpu6.isrCallLog[0],
+      IRQ_TIM1_UP
+    );
+    check('Sau đó mới tới IRQ ưu tiên thấp hơn (EXTI1=1)', cpu6.isrCallLog[1], IRQ_EXTI1);
+
+    // --- Nested interrupt: uu tien CAO HON duoc phep CHEN NGANG (preemption) ---
+    const cpu7 = new VMCU();
+    const log7 = [];
+    cpu7.nvicIpr[IRQ_EXTI1] = 5; // dang chay, uu tien THAP
+    cpu7.nvicIpr[IRQ_TIM1_UP] = 1; // uu tien CAO hon EXTI1
+    cpu7.write32(NVIC_ISER0_ADDR, (1 << IRQ_EXTI1) | (1 << IRQ_TIM1_UP));
+    cpu7.installIrqHandler(IRQ_TIM1_UP, () => log7.push('TIM1_UP running'));
+    cpu7.installIrqHandler(IRQ_EXTI1, () => {
+      log7.push('EXTI1 start');
+      cpu7.triggerInterrupt(IRQ_TIM1_UP); // uu tien cao hon - PHAI chen ngang NGAY
+      log7.push('EXTI1 resumed');
+    });
+    cpu7.triggerInterrupt(IRQ_EXTI1);
+    check(
+      'Nested: ISR ưu tiên cao chen ngang NGAY LẬP TỨC, rồi trả lại đúng chỗ ISR đang dở dang',
+      log7.join(' -> '),
+      'EXTI1 start -> TIM1_UP running -> EXTI1 resumed'
+    );
+    check(
+      'isrCallLog ghi đúng cả 2 lần chạy theo thứ tự chen ngang',
+      cpu7.isrCallLog.join(','),
+      IRQ_EXTI1 + ',' + IRQ_TIM1_UP
+    );
+
+    // --- Uu tien THAP HON khong duoc phep chen ngang - phai cho ---
+    const cpu8 = new VMCU();
+    const log8 = [];
+    cpu8.nvicIpr[IRQ_EXTI1] = 1; // dang chay, uu tien CAO
+    cpu8.nvicIpr[IRQ_TIM1_UP] = 5; // uu tien THAP hon EXTI1
+    cpu8.write32(NVIC_ISER0_ADDR, (1 << IRQ_EXTI1) | (1 << IRQ_TIM1_UP));
+    cpu8.installIrqHandler(IRQ_TIM1_UP, () => log8.push('TIM1_UP running'));
+    cpu8.installIrqHandler(IRQ_EXTI1, () => {
+      log8.push('EXTI1 start');
+      cpu8.triggerInterrupt(IRQ_TIM1_UP); // uu tien thap hon - KHONG duoc chen ngang
+      log8.push('EXTI1 finish');
+    });
+    cpu8.triggerInterrupt(IRQ_EXTI1);
+    check(
+      'Ưu tiên thấp hơn PHẢI chờ ISR đang chạy xong hẳn mới được phục vụ',
+      log8.join(' -> '),
+      'EXTI1 start -> EXTI1 finish -> TIM1_UP running'
+    );
+
+    // --- Cam bay chi mang: quen xoa EXTI_PR trong ISR -> goi lai vo han ---
+    const cpu9 = new VMCU();
+    cpu9.write32(EXTI_IMR_ADDR, 1 << EXTI_LINE1_BIT); // enable duong line1
+    cpu9.write32(NVIC_ISER0_ADDR, 1 << IRQ_EXTI1);
+    let goodCount = 0;
+    cpu9.installIrqHandler(IRQ_EXTI1, (cpu) => {
+      goodCount++;
+      cpu.write32(EXTI_PR_ADDR, 1 << EXTI_LINE1_BIT); // XOA pending DUNG cach (write-1-to-clear)
+    });
+    cpu9.exti1EdgeOccurred();
+    check('ISR ĐÚNG (có xoá EXTI_PR): chỉ chạy đúng 1 lần cho 1 cạnh', goodCount, 1);
+    check('EXTI_PR đã được xoá về 0 sau khi ISR xoá đúng cách', cpu9.extiPr, 0);
+
+    const cpu10 = new VMCU();
+    cpu10.write32(EXTI_IMR_ADDR, 1 << EXTI_LINE1_BIT);
+    cpu10.write32(NVIC_ISER0_ADDR, 1 << IRQ_EXTI1);
+    let badCount = 0;
+    cpu10.installIrqHandler(IRQ_EXTI1, () => {
+      badCount++; // QUEN xoa EXTI_PR - dung dung cam bay that
+    });
+    cpu10.exti1EdgeOccurred();
+    checkTrue(
+      'ISR SAI (quên xoá EXTI_PR): yêu cầu ngắt vẫn còn treo -> gọi lại LIÊN TỤC tới khi chạm giới hạn an toàn (mô phỏng đúng vòng lặp vô hạn thật, phần cứng thật cần watchdog reset)',
+      badCount === NVIC_SERVICE_SAFETY_LIMIT
+    );
+
+    // --- IMR mask: PR van set khi co canh, nhung KHONG bao len NVIC neu bi mask ---
+    const cpu11 = new VMCU();
+    cpu11.write32(NVIC_ISER0_ADDR, 1 << IRQ_EXTI1);
+    // KHONG bat EXTI_IMR (extiImr = 0 mac dinh) - duong bi mask
+    let maskedCount = 0;
+    cpu11.installIrqHandler(IRQ_EXTI1, () => {
+      maskedCount++;
+    });
+    cpu11.exti1EdgeOccurred();
+    checkTrue('Đường bị mask (IMR=0): ISR KHÔNG được gọi dù có cạnh xảy ra', maskedCount === 0);
+    check(
+      'Nhưng EXTI_PR VẪN được set bởi phần cứng (đúng hành vi thật — IMR chỉ chặn báo lên NVIC, không chặn PR)',
+      cpu11.extiPr,
+      1 << EXTI_LINE1_BIT
+    );
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---

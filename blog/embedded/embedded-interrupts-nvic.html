@@ -1,0 +1,1123 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 7: Ngắt (Interrupt) &amp; NVIC — js-tools</title>
+    <meta
+      name="description"
+      content="Polling là liên tục hỏi 'xong chưa?', ngắt là phần cứng tự gõ vai đúng lúc có việc — mở hộp đen của SysTick từ Bài 4: vector table, NVIC (ISER/ISPR/IPR), và cạm bẫy ngược trực giác 'số ưu tiên càng nhỏ càng cao'. EXTI biến cạnh tín hiệu GPIO thành ngắt thật — cùng cạm bẫy chí mạng nhất chương: quên xoá cờ pending khiến ISR gọi lại vô hạn, main đóng băng. Quy tắc vàng 'ISR càng ngắn càng tốt' — kèm demo timeline ngắt thật trên VMCU: main bận thì polling bỏ lỡ, ngắt luôn bắt được, và tự tay kích hoạt bug PR-quên-xoá để thấy vòng lặp vô hạn thật."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-interrupts-nvic" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-interrupts-nvic" />
+    <meta property="og:title" content="Bài 7: Ngắt (Interrupt) &amp; NVIC — js-tools" />
+    <meta
+      property="og:description"
+      content="Polling là liên tục hỏi 'xong chưa?', ngắt là phần cứng tự gõ vai đúng lúc có việc — mở hộp đen của SysTick từ Bài 4: vector table, NVIC (ISER/ISPR/IPR), cạm bẫy ngược trực giác 'số ưu tiên càng nhỏ càng cao'. EXTI + cạm bẫy chí mạng: quên xoá cờ pending khiến ISR gọi lại vô hạn — kèm demo timeline ngắt thật: main bận thì polling bỏ lỡ, ngắt luôn bắt được."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 7: Ngắt (Interrupt) &amp; NVIC — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Polling là liên tục hỏi 'xong chưa?', ngắt là phần cứng tự gõ vai đúng lúc có việc — NVIC (ISER/ISPR/IPR), cạm bẫy 'số ưu tiên càng nhỏ càng cao', EXTI và cạm bẫy chí mạng: quên xoá pending khiến ISR gọi lại vô hạn — kèm demo timeline ngắt thật: main bận thì polling bỏ lỡ, ngắt luôn bắt được."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Ngắt (Interrupt) & NVIC",
+        "description": "Polling là liên tục hỏi 'xong chưa?', ngắt là phần cứng tự gõ vai đúng lúc có việc — mở hộp đen của SysTick từ Bài 4: vector table, NVIC (ISER/ISPR/IPR), cạm bẫy ngược trực giác 'số ưu tiên càng nhỏ càng cao'. EXTI + cạm bẫy chí mạng: quên xoá cờ pending khiến ISR gọi lại vô hạn — kèm demo timeline ngắt thật: main bận thì polling bỏ lỡ, ngắt luôn bắt được.",
+        "url": "https://js-tools.org/blog/embedded/embedded-interrupts-nvic",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-17"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 7 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">Ngắt (Interrupt) &amp; NVIC</h1>
+          <div class="article-hero__meta">17 tháng 7, 2026 · 23 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: hộp đen của Bài 4, giờ mới mở ra</h2>
+            <p>
+              Sáu bài vừa qua, MCU luôn phải TỰ HỎI: Bài 3 polling đọc chân nút mỗi vòng lặp, Bài 5 lấy mẫu định kỳ để
+              chống dội — tất cả đều là CPU chủ động đi hỏi "có gì mới không?". Nhưng có một chỗ bạn đã âm thầm dùng một
+              cơ chế hoàn toàn khác mà không để ý: Bài 4, khi SysTick "tự động" tăng <code>millis()</code> — bạn chưa
+              từng viết code nào gọi hàm tăng biến đó cả. Nó tự chạy. Bằng cách nào?
+            </p>
+            <p>
+              Câu trả lời là <strong>ngắt</strong> (interrupt): thay vì CPU đi hỏi, phần cứng chủ động
+              <strong>"gõ vai"</strong> CPU đúng lúc có việc, tạm dừng bất kỳ việc gì CPU đang làm, chạy một hàm xử lý
+              riêng gọi là <abbr title="Interrupt Service Routine — hàm xử lý ngắt, chạy khi ngắt xảy ra">ISR</abbr>,
+              rồi trả lại đúng chỗ cũ như chưa hề gián đoạn. Bài này mở hộp đen SysTick, giới thiệu
+              <strong>NVIC</strong> — bộ điều phối toàn bộ ngắt của lõi ARM — và <strong>EXTI</strong>, nguồn ngắt từ
+              chính chân nút nhấn quen thuộc. Cẩn thận: chương này có cạm bẫy được xem là chí mạng nhất trong toàn bộ
+              phần cứng nhúng cấp thấp.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-gpio-input-pullup">Bài 3</a> (đọc nút nhấn),
+                <a href="embedded-systick-nonblocking">Bài 4</a> (đã dùng ISR của SysTick như hộp đen, giờ mở ra), và
+                <a href="embedded-timer-pwm">Bài 6</a> (TIM1 — dùng làm nguồn ngắt thứ hai trong demo).
+              </div>
+            </div>
+
+            <h2>1. Polling vs Interrupt</h2>
+            <p>
+              Polling là CPU liên tục hỏi "xong chưa? xong chưa?" trong vòng lặp — tốn CPU ngay cả khi chẳng có gì xảy
+              ra, và CÓ THỂ bỏ lỡ sự kiện nếu CPU đang bận việc khác đúng lúc sự kiện xảy ra (Mục 7 sẽ đo trực tiếp điều
+              này). Ngắt đảo ngược hoàn toàn: CPU không hỏi gì cả, cứ làm việc của mình — phần cứng sẽ chủ động "gõ vai"
+              khi có việc thật sự cần xử lý.
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Polling</th>
+                  <th>Interrupt</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>CPU chủ động hỏi liên tục — tốn CPU kể cả khi không có gì xảy ra</td>
+                  <td>CPU không hỏi gì — phần cứng chủ động báo khi có việc, CPU rảnh thì làm việc khác</td>
+                </tr>
+                <tr>
+                  <td>CÓ THỂ bỏ lỡ sự kiện nếu bận việc khác đúng lúc</td>
+                  <td>KHÔNG bao giờ bỏ lỡ (phần cứng luôn ghi nhận, dù CPU đang làm gì)</td>
+                </tr>
+                <tr>
+                  <td>Là nền tảng của chế độ tiết kiệm điện — SAI (CPU phải thức để hỏi liên tục)</td>
+                  <td>Là nền tảng THẬT của tiết kiệm điện — CPU ngủ, ngắt đánh thức đúng lúc cần</td>
+                </tr>
+                <tr>
+                  <td>THẮNG khi sự kiện dày đặc liên tục hoặc cần jitter cực thấp, ổn định</td>
+                  <td>Có overhead chuyển ngữ cảnh mỗi lần — không lý tưởng nếu sự kiện quá dày</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Dòng cuối bảng là điểm dễ bị bỏ qua: ngắt không phải lúc nào cũng thắng tuyệt đối — khi sự kiện xảy ra
+              liên tục dày đặc (ví dụ đọc ADC hàng trăm nghìn lần/giây), overhead vào-ra ngắt mỗi lần có thể còn tốn hơn
+              polling đơn giản. Chọn đúng công cụ theo đúng tình huống, không phải "ngắt luôn luôn tốt hơn".
+            </p>
+
+            <h2>2. Mở hộp đen Bài 4: điều gì thực sự xảy ra khi ngắt "nổ"</h2>
+            <p>
+              Khi bạn viết <code>void TIM1_UP_IRQHandler(void) { ... }</code>, "phép thuật" nằm ở
+              <strong>linker</strong>: nó nhận diện đúng cái tên hàm đặc biệt này và tự nối con trỏ hàm đó vào đúng vị
+              trí trong <strong>vector table</strong> — một mảng con trỏ hàm nằm ngay ĐẦU vùng Flash (đã học ở
+              <a href="embedded-mcu-anatomy">Bài 1</a>), mỗi ô ứng với đúng 1 số IRQ.
+            </p>
+            <p>
+              Khi ngắt xảy ra (ví dụ nút nhấn tạo cạnh tín hiệu), phần cứng làm đúng 3 việc theo thứ tự, HOÀN TOÀN TỰ
+              ĐỘNG, không cần 1 dòng code nào của bạn:
+            </p>
+            <ol>
+              <li>
+                <strong>Tự lưu ngữ cảnh:</strong> phần cứng tự đẩy một loạt thanh ghi (xPSR, PC, LR, R0–R3, R12) lên
+                stack — đây chính là lý do main loop có thể "tiếp tục y hệt" sau khi ISR chạy xong: mọi thứ được lưu lại
+                trước khi nhảy đi.
+              </li>
+              <li>
+                <strong>Nạp PC từ vector:</strong> CPU đọc đúng con trỏ hàm tại ô vector table ứng với IRQ đang xảy ra,
+                nhảy tới đó — đây chính là <code>TIM1_UP_IRQHandler</code> bắt đầu chạy.
+              </li>
+              <li>
+                <strong>Trả về bằng <code>EXC_RETURN</code>:</strong> khi ISR chạy xong (return bình thường), phần cứng
+                nhận ra giá trị đặc biệt này trong LR, biết đây là "trả về từ ngắt" thay vì gọi hàm thường, và tự khôi
+                phục lại toàn bộ ngữ cảnh đã lưu ở bước 1.
+              </li>
+            </ol>
+            <p>
+              Không có gì "ma thuật" cả — chỉ là phần cứng làm hộ 3 bước cơ học này mỗi lần ngắt xảy ra, để lập trình
+              viên chỉ cần lo đúng 1 việc: viết nội dung xử lý bên trong hàm có đúng tên.
+            </p>
+
+            <h2>3. NVIC — tổng đài ngắt của lõi ARM</h2>
+            <p>
+              <abbr
+                title="Nested Vectored Interrupt Controller — bộ điều phối ngắt lồng nhau có vector, tích hợp sẵn trong mọi lõi ARM Cortex-M"
+                >NVIC</abbr
+              >
+              là "tổng đài" quyết định: IRQ nào được PHÉP báo (enable), IRQ nào đang CHỜ được phục vụ (pending), và IRQ
+              nào quan trọng hơn IRQ nào (priority). Giống SysTick (Bài 4), NVIC là một phần CỐ ĐỊNH của kiến trúc ARM —
+              không phải ngoại vi riêng của hãng chip.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">nvic_enable_priority.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// ISER: ghi 1 vao bit tuong ung SO IRQ de BAT (write-1-to-set)
+// KHONG the tat bang cach ghi 0 vao day - phai dung thanh ghi rieng ICER!
+NVIC_ISER0 |= (1 << IRQ_EXTI1);
+
+// IPR: 1 byte rieng cho MOI IRQ - so CANG NHO, uu tien CANG CAO
+NVIC_IPR[IRQ_TIM1_UP] = 0;  // uu tien CAO NHAT
+NVIC_IPR[IRQ_EXTI1]   = 1;  // uu tien THAP hon (so lon hon)</code></pre>
+            </div>
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: vì sao "số nhỏ hơn = ưu tiên cao hơn" — ngược trực giác?</div>
+              <div class="callout__content">
+                Trực giác thường nghĩ "priority 10" quan trọng hơn "priority 1" (giống thứ hạng thể thao). NVIC làm
+                NGƯỢC LẠI: ưu tiên 0 là cao nhất. Lý do thực dụng: giá trị reset mặc định của thanh ghi (toàn số 0) tự
+                động trở thành "ưu tiên cao nhất có thể" mà không cần code khởi tạo nào set nó lên — một lựa chọn thiết
+                kế phần cứng có chủ đích, không phải ngẫu nhiên. Đây là lý do gần như MỌI lập trình viên nhúng mới đều
+                từng viết nhầm <code>priority = 10</code> để "ưu tiên cao" và ngạc nhiên khi nó bị interrupt khác
+                priority 0 chen ngang liên tục.
+              </div>
+            </div>
+            <p>
+              Khi 2 IRQ cùng pending một lúc (Mục 6 sẽ verify bằng số thật), NVIC LUÔN chọn IRQ có priority số nhỏ hơn
+              chạy trước — và nếu 1 ISR đang chạy mà một IRQ ưu tiên CAO HƠN xuất hiện, NVIC cho phép nó
+              <strong>chen ngang ngay lập tức</strong> (gọi là <em>nested interrupt</em> / preemption), tạm dừng ISR
+              đang chạy, xử lý ISR ưu tiên cao hơn, rồi mới quay lại ISR ban đầu.
+            </p>
+
+            <h2>4. EXTI — ngắt từ chân GPIO</h2>
+            <p>
+              EXTI là ngoại vi đặc thù hãng chip (giống GPIOA, khác NVIC) biến một cạnh tín hiệu trên chân GPIO thành
+              một yêu cầu ngắt thật. 4 thanh ghi cốt lõi: <code>IMR</code> (mask — đường nào ĐƯỢC PHÉP báo lên NVIC),
+              <code>RTSR</code>/<code>FTSR</code> (chọn cạnh lên/xuống kích hoạt), và <code>PR</code> (pending — set khi
+              có cạnh xảy ra).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">exti_isr_dung_va_sai.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// DUNG: xoa EXTI_PR truoc khi thoat ISR (write-1-to-clear)
+void EXTI1_IRQHandler(void) {
+    button_pressed_count++;
+    EXTI_PR = (1 << 1);   // XOA pending - BAT BUOC, khong duoc thieu
+}
+
+// SAI: quen xoa EXTI_PR - hau qua xay ra NGAY khi ISR nay thoat
+void EXTI1_IRQHandler_LOI(void) {
+    button_pressed_count++;
+    // ...quen mat dong EXTI_PR = (1 << 1);...
+}</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy chí mạng nhất chương: quên xoá pending flag</div>
+              <div class="callout__content">
+                Yêu cầu ngắt từ EXTI tới NVIC là theo MỨC (level), không phải một "xung" chốt một lần: chừng nào
+                <code>EXTI_PR</code> còn set VÀ đường đó còn được enable qua <code>IMR</code>, yêu cầu ngắt VẪN CÒN
+                TREO. Nếu ISR không xoá <code>PR</code> trước khi thoát, NVIC sẽ pend lại NGAY LẬP TỨC khi ISR vừa kết
+                thúc — gọi lại ISR đó, ISR lại không xoá, lại pend lại... <strong>vô hạn</strong>. Kết quả quan sát
+                được: main loop hoàn toàn "đóng băng" — không phải vì nó bị lỗi, mà vì CPU không bao giờ thoát ra khỏi
+                vòng lặp ISR để quay lại main. Đây là triệu chứng kinh điển: bấm 1 nút, cả board "treo" — không phải
+                crash, mà là kẹt trong ngắt vô hạn. Verify bằng self-test thật ở Mục 6.
+              </div>
+            </div>
+
+            <h2>5. Quy tắc vàng: "ISR càng ngắn càng tốt"</h2>
+            <p>
+              Trong lúc 1 ISR đang chạy, mọi ngắt khác cùng hoặc thấp hơn priority PHẢI CHỜ (Mục 3). ISR càng dài,
+              latency của những ngắt khác càng tích luỹ — với hệ thống cần phản hồi nhanh (đọc cảm biến, điều khiển động
+              cơ), vài mili-giây trễ có thể là thảm hoạ. Pattern chuẩn: ISR chỉ làm việc TỐI THIỂU (ghi 1 cờ, đẩy 1 giá
+              trị vào buffer), main loop xử lý phần nặng.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">isr_ngan_vs_dai.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// XAU: ISR lam viec NANG (in chuoi qua UART co the mat hang tram micro-giay)
+void EXTI1_IRQHandler(void) {
+    uart_print("Nut vua duoc nhan!\n");  // CHAN moi ngat khac trong luc nay
+    EXTI_PR = (1 << 1);
+}
+
+// TOT: ISR chi ghi co, main loop xu ly phan nang
+volatile uint8_t button_flag = 0;
+void EXTI1_IRQHandler(void) {
+    button_flag = 1;      // chi 1 lenh, cuc nhanh
+    EXTI_PR = (1 << 1);
+}
+// ... trong main loop:
+if (button_flag) {
+    uart_print("Nut vua duoc nhan!\n"); // viec NANG lam o day, khong chan ngat nao
+    button_flag = 0;
+}</code></pre>
+            </div>
+            <div class="callout callout--warning">
+              <div class="callout__title">🚧 Cái giá của ISR dài: latency tích luỹ</div>
+              <div class="callout__content">
+                Nếu ISR EXTI mất 500 micro-giây để chạy, MỌI ngắt khác cùng hoặc thấp priority phải đợi ít nhất 500
+                micro-giây trước khi được phục vụ — kể cả một ngắt cực khẩn cấp (miễn cùng/thấp priority hơn). Nhân với
+                hàng trăm/nghìn lần ngắt mỗi giây trong hệ thống thực, độ trễ tích luỹ đủ để phá hỏng một vòng điều
+                khiển động cơ hay bỏ lỡ một khung dữ liệu UART. Chia sẻ dữ liệu an toàn giữa ISR (chạy nhanh) và main
+                (xử lý nặng) cần thêm kỹ thuật — chính là chủ đề Bài 8 sắp tới (race condition, ring buffer).
+              </div>
+            </div>
+
+            <h2>6. VMCU: NVIC + EXTI đã "sống"</h2>
+            <p>
+              VMCU thêm NVIC vào vùng System (địa chỉ thật <code>0xE000E100</code>-<code>0xE000E400</code>) và EXTI vào
+              vùng Peripheral (địa chỉ thật STM32F103 <code>0x40010400</code>). "Vector table" được mô phỏng bằng
+              <code>installIrqHandler(irq, fn)</code> — đăng ký 1 hàm JS làm ISR cho 1 số IRQ, đúng tinh thần Mục 2
+              nhưng không cần mô phỏng Flash/linker thật:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">vmcu_nvic.js (trích engine vmcu.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// EXTI la yeu cau MUC (level) - phai tinh lai moi lan kiem tra, dung 1 lan
+_syncExtiToNvic() {
+  const requesting = (this.extiPr & this.extiImr & (1 << EXTI_LINE1_BIT)) !== 0;
+  if (requesting) this.nvicIspr |= (1 << IRQ_EXTI1);
+}
+
+_serviceInterrupts() {
+  // ... quet IRQ dang pending+enabled, chon priority SO NHO NHAT ...
+  // ... chi chay neu priority do CAO HON priority dang chay hien tai ...
+}</code></pre>
+            </div>
+            <p>Số đo thật từ self-test (<code>node vmcu.js</code>):</p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Kịch bản</th>
+                  <th>Kết quả</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>2 IRQ cùng pending (priority 0 và 1) — IRQ nào chạy trước?</td>
+                  <td><strong>Priority 0</strong> chạy trước, dù IRQ kia được kích trước trong bitmask</td>
+                </tr>
+                <tr>
+                  <td>ISR priority thấp đang chạy, ISR priority CAO xuất hiện</td>
+                  <td>Chen ngang NGAY: <code>EXTI1 start → TIM1_UP running → EXTI1 resumed</code></td>
+                </tr>
+                <tr>
+                  <td>ISR priority cao đang chạy, ISR priority THẤP xuất hiện</td>
+                  <td>KHÔNG chen ngang: <code>EXTI1 start → EXTI1 finish → TIM1_UP running</code></td>
+                </tr>
+                <tr>
+                  <td>ISR ĐÚNG (xoá EXTI_PR) cho 1 cạnh</td>
+                  <td>Chạy đúng <strong>1 lần</strong></td>
+                </tr>
+                <tr>
+                  <td>ISR SAI (quên xoá EXTI_PR) cho 1 cạnh</td>
+                  <td>Gọi lại <strong>1000 lần</strong> liên tiếp (chạm giới hạn an toàn của VMCU)</td>
+                </tr>
+                <tr>
+                  <td>Đường EXTI bị mask (IMR=0) khi có cạnh</td>
+                  <td>ISR KHÔNG chạy, nhưng <code>EXTI_PR</code> vẫn được set (đúng hành vi thật)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h2>7. Thực hành: Timeline ngắt trên VMCU thật</h2>
+            <p>
+              Demo dưới đây chạy trên VMCU thật — main loop "nhịp tim" liên tục chạy nền, và bạn có thể mô phỏng main
+              đang bận (busy-loop) để so sánh trực tiếp polling vs ngắt. Bật cờ "ISR có bug" để tự tay kích hoạt đúng
+              cạm bẫy Mục 4 và thấy hậu quả thật (KHÔNG giả lập bằng text, engine thật sự lặp tới giới hạn an toàn):
+            </p>
+
+            <div class="code-tabs" id="interrupt-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">⚡ Timeline ngắt — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__inputs" style="margin-bottom: 14px; flex-wrap: wrap">
+                    <button class="mux-input-btn is-on" type="button" id="mode-interrupt-btn">🟢 Ngắt (EXTI)</button>
+                    <button class="mux-input-btn" type="button" id="mode-polling-btn">🔴 Chỉ Polling</button>
+                  </div>
+                  <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px">
+                    <button class="mux-input-btn" type="button" id="press-interrupt-btn">👆 Nhấn nút</button>
+                    <button class="mux-input-btn" type="button" id="busy-btn">😴 Main bận 2 giây</button>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px">
+                      <input type="checkbox" id="isr-bug-checkbox" />
+                      🐛 ISR có bug (quên xoá PR)
+                    </label>
+                  </div>
+                  <p style="margin: 0 0 6px; font-size: 13px; opacity: 0.7">
+                    Timeline (main = xanh dương nhạt, đã bắt = xanh lá, bỏ lỡ = đỏ):
+                  </p>
+                  <div
+                    id="interrupt-timeline"
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 2px;
+                      height: 32px;
+                      padding: 8px;
+                      background: rgba(0, 0, 0, 0.2);
+                      border-radius: 8px;
+                      margin-bottom: 14px;
+                      overflow: hidden;
+                    "
+                  ></div>
+                  <div id="interrupt-status" class="mux-demo__output">Đang khởi tạo…</div>
+                  <p class="mux-demo__hint">
+                    Ở chế độ ngắt, nút luôn được bắt NGAY LẬP TỨC dù main có đang "bận" hay không. Chuyển sang chỉ
+                    polling rồi bấm "Main bận 2 giây" — bấm nút trong lúc đó sẽ bị tính là "bỏ lỡ" vì main không rảnh để
+                    tự hỏi. Bật "ISR có bug" rồi bấm nút để tự tay kích hoạt cạm bẫy Mục 4 (engine thật sự lặp tới giới
+                    hạn an toàn 1000 lần).
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">interrupt_vs_polling.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// CHE DO NGAT: luon bat duoc, bat ke main dang lam gi
+void EXTI1_IRQHandler(void) {
+    caught_count++;
+    EXTI_PR = (1 << 1); // nho xoa - neu co checkbox bug, dong nay bi "quen"
+}
+
+// CHE DO CHI POLLING: main phai TU HOI - neu dang ban thi bo lo
+while (1) {
+    if (main_is_busy()) continue;   // dang ban - khong kiem tra duoc
+    if (button_pin_is_pressed()) caught_count++;
+}</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">interrupt_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { VMCU, EXTI_IMR_ADDR, NVIC_ISER0_ADDR, IRQ_EXTI1, EXTI_PR_ADDR } from './vmcu.js';
+
+const cpu = new VMCU();
+cpu.write32(EXTI_IMR_ADDR, 1 << 1);       // bat duong EXTI line 1
+cpu.write32(NVIC_ISER0_ADDR, 1 << IRQ_EXTI1);
+
+cpu.installIrqHandler(IRQ_EXTI1, (cpu) => {
+  caughtCount++;
+  if (!isrHasBug) cpu.write32(EXTI_PR_ADDR, 1 << 1); // XOA - tru khi bat bug
+});
+
+function onPressClicked() {
+  if (mode === 'interrupt') {
+    cpu.exti1EdgeOccurred(); // luon bat duoc - bat ke main dang lam gi
+  } else if (mainBusyUntil > Date.now()) {
+    missedCount++;           // che do polling, main dang "ban" -> bo lo
+  } else {
+    caughtCount++;
+  }
+}</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ <strong>Polling</strong> chủ động hỏi liên tục (tốn CPU, có thể bỏ lỡ); <strong>ngắt</strong> để phần
+                cứng chủ động báo (không bỏ lỡ, nền tảng tiết kiệm điện thật) — nhưng polling vẫn thắng khi sự kiện quá
+                dày đặc.
+              </li>
+              <li>
+                ✅ Ngắt "nổ" qua 3 bước phần cứng tự động: lưu ngữ cảnh lên stack, nạp PC từ vector table, trả về bằng
+                <code>EXC_RETURN</code> — linker tự nối tên hàm <code>..._IRQHandler</code> vào đúng vector.
+              </li>
+              <li>
+                ✅ <strong>NVIC</strong>: ISER/ICER (enable), ISPR/ICPR (pending), IPR (priority) — verified: số ưu tiên
+                NHỎ HƠN luôn chạy trước, và được phép chen ngang (nested) ISR ưu tiên thấp hơn đang chạy.
+              </li>
+              <li>
+                ✅ <strong>EXTI</strong>: quên xoá <code>PR</code> trong ISR → yêu cầu ngắt vẫn treo → gọi lại vô hạn,
+                main đóng băng (verified: 1000 lần liên tiếp chạm giới hạn an toàn).
+              </li>
+              <li>
+                ✅ ISR càng ngắn càng tốt — chỉ ghi cờ/đẩy buffer, để main xử lý việc nặng (nối tiếp Bài 8: race
+                condition &amp; ring buffer).
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">Vì sao cách polling có thể bỏ lỡ một sự kiện trong khi ngắt thì không?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Toc do xung nhip khong phai ly do cot loi o day - van de la CO CHE hoi/bao, khong phai toc do chay.'
+                    )
+                  "
+                >
+                  A. Vì polling chạy chậm hơn ngắt về mặt xung nhịp CPU
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Polling can CPU chu dong hoi dung luc su kien xay ra - neu CPU dang ban viec khac, no khong hoi duoc va bo lo hoan toan. Ngat thi phan cung TU bao, khong can CPU phai ranh de hoi.'
+                    )
+                  "
+                >
+                  B. Vì polling cần CPU chủ động hỏi đúng lúc — nếu CPU đang bận việc khác, sự kiện xảy ra trong lúc đó
+                  bị bỏ lỡ hoàn toàn; ngắt thì phần cứng tự báo bất kể CPU đang làm gì
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca 2 co che deu doc dung 1 chan GPIO nhu nhau - khong phai van de ve so luong chan doc duoc.'
+                    )
+                  "
+                >
+                  C. Vì polling chỉ đọc được 1 chân GPIO còn ngắt đọc được nhiều chân
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                IRQ A có priority = 0, IRQ B có priority = 5. Cả 2 cùng pending một lúc. IRQ nào chạy trước?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! NVIC dung so CANG NHO = uu tien CANG CAO (nguoc truc giac thong thuong) - IRQ A (priority 0) luon chay truoc IRQ B (priority 5), da verify bang self-test that.'
+                    )
+                  "
+                >
+                  A. IRQ A (priority 0) chạy trước, vì số nhỏ hơn = ưu tiên cao hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Day la truc giac THONG THUONG (giong xep hang thi thao) nhung NVIC lam NGUOC LAI - so nho hon moi la uu tien cao hon, dung cam bay da giai thich o Muc 3.'
+                    )
+                  "
+                >
+                  B. IRQ B (priority 5) chạy trước, vì số lớn hơn = ưu tiên cao hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'NVIC LUON co quy tac uu tien ro rang dua tren gia tri IPR - khong co chuyen chay dong thoi that ca 2, CPU van la 1 loi xu ly tai 1 thoi diem.'
+                    )
+                  "
+                >
+                  C. Cả 2 chạy đồng thời vì CPU đa nhân
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">Nếu ISR của EXTI quên xoá thanh ghi <code>EXTI_PR</code>, điều gì xảy ra?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'PR khong lien quan gi den bo nho SRAM - day la thanh ghi rieng cua ngoai vi EXTI, khong phai vung nho chung.'
+                    )
+                  "
+                >
+                  A. Chương trình sẽ ghi đè nhầm vào một vùng nhớ SRAM khác
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! PR con set nghia la yeu cau ngat VAN CON TREO - NVIC se pend lai NGAY khi ISR vua thoat, goi lai ISR do, ISR lai khong xoa, lai pend lai... vo han. Quan sat duoc: main loop hoan toan dong bang. Verified bang self-test: 1000 lan lien tiep cham gioi han an toan.'
+                    )
+                  "
+                >
+                  B. Yêu cầu ngắt vẫn còn treo — NVIC gọi lại ISR đó liên tục vô hạn, main loop bị "đóng băng"
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Nguoc lai - quen xoa PR khien ISR chay LAP LAI qua nhieu (vo han), khong phai khong chay lai duoc lan nao.'
+                    )
+                  "
+                >
+                  C. ISR đó sẽ không bao giờ chạy được lần thứ 2 nữa
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">Vì sao quy tắc "ISR càng ngắn càng tốt" lại quan trọng?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'ISR khong lam nong CPU vat ly theo cach nay - van de thuc su la ve THOI GIAN CHAN cac ngat khac, khong phai nhiet do phan cung.'
+                    )
+                  "
+                >
+                  A. Vì ISR dài làm CPU nóng lên và giảm tuổi thọ phần cứng
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Trong luc 1 ISR dang chay, MOI ngat khac cung hoac thap hon priority phai CHO. ISR cang dai, latency cua nhung ngat do tich luy cang nhieu - voi he thong can phan hoi nhanh, vai mili-giay tre co the la tham hoa. Pattern chuan: ISR chi ghi co/day buffer, main xu ly phan nang.'
+                    )
+                  "
+                >
+                  B. Vì trong lúc ISR chạy, mọi ngắt khác cùng/thấp priority phải chờ — ISR càng dài, latency của chúng
+                  càng tích luỹ, có thể gây hậu quả nghiêm trọng cho hệ thống cần phản hồi nhanh
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'ISR dai khong lam sai lech gia tri thanh ghi - van de la ve THOI GIAN cac ngat khac phai cho, khong phai loi du lieu.'
+                    )
+                  "
+                >
+                  C. Vì ISR dài làm sai lệch giá trị các thanh ghi khác trong hệ thống
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 7 vừa thêm NVIC
+                (enable/pending/priority, preemption thật) và EXTI (ngắt từ GPIO, cạm bẫy quên xoá pending), kèm
+                self-test đối chiếu đúng mọi hành vi trong bài (chạy <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://developer.arm.com/documentation/ddi0403/latest"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    ARM — Cortex-M NVIC Architecture Reference
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.st.com/resource/en/reference_manual/rm0008-stm32f101xx-stm32f102xx-stm32f103xx-stm32f105xx-and-stm32f107xx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    STMicroelectronics — RM0008 Reference Manual (chương EXTI)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Interrupt" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Interrupt
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-timer-pwm" class="article-related__link article-related__link--prev">
+                  Bài 6: Timer đa năng &amp; PWM
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 8: Chia sẻ dữ liệu ISR ↔ main: race condition &amp; critical section — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { VMCU, EXTI_IMR_ADDR, NVIC_ISER0_ADDR, IRQ_EXTI1, EXTI_PR_ADDR } from './vmcu.js';
+
+      const cpu = new VMCU();
+      cpu.write32(EXTI_IMR_ADDR, 1 << 1);
+      cpu.write32(NVIC_ISER0_ADDR, 1 << IRQ_EXTI1);
+
+      let mode = 'interrupt';
+      let mainBusyUntil = 0;
+      let caughtCount = 0;
+      let missedCount = 0;
+      let mainTicks = 0;
+      const timelineEvents = [];
+
+      function isrHasBug() {
+        return document.getElementById('isr-bug-checkbox').checked;
+      }
+
+      cpu.installIrqHandler(IRQ_EXTI1, (cpuRef) => {
+        caughtCount++;
+        if (!isrHasBug()) cpuRef.write32(EXTI_PR_ADDR, 1 << 1);
+      });
+
+      function setMode(m, btnId) {
+        mode = m;
+        ['mode-interrupt-btn', 'mode-polling-btn'].forEach((id) => {
+          document.getElementById(id).classList.toggle('is-on', id === btnId);
+        });
+        render();
+      }
+      document
+        .getElementById('mode-interrupt-btn')
+        .addEventListener('click', () => setMode('interrupt', 'mode-interrupt-btn'));
+      document
+        .getElementById('mode-polling-btn')
+        .addEventListener('click', () => setMode('polling', 'mode-polling-btn'));
+
+      document.getElementById('busy-btn').addEventListener('click', () => {
+        mainBusyUntil = Date.now() + 2000;
+        render();
+      });
+
+      document.getElementById('press-interrupt-btn').addEventListener('click', () => {
+        const bugActive = isrHasBug();
+        if (mode === 'interrupt') {
+          const before = cpu.isrCallLog.length;
+          cpu.exti1EdgeOccurred();
+          const isrRuns = cpu.isrCallLog.length - before;
+          timelineEvents.push(isrRuns > 1 ? 'bug' : 'caught');
+        } else if (mainBusyUntil > Date.now()) {
+          missedCount++;
+          timelineEvents.push('missed');
+        } else {
+          caughtCount++;
+          timelineEvents.push('caught');
+        }
+        if (timelineEvents.length > 60) timelineEvents.shift();
+        render();
+      });
+
+      function renderTimeline() {
+        const el = document.getElementById('interrupt-timeline');
+        const dots = [];
+        for (let i = 0; i < mainTicks % 40; i++) {
+          dots.push('<span style="flex-shrink:0;width:5px;height:10px;background:#334155;border-radius:1px;"></span>');
+        }
+        const colorMap = { caught: '#22c55e', missed: '#dc2626', bug: '#f59e0b' };
+        timelineEvents.forEach((ev) => {
+          dots.push(
+            '<span style="flex-shrink:0;width:5px;height:22px;background:' +
+              colorMap[ev] +
+              ';border-radius:1px;"></span>'
+          );
+        });
+        el.innerHTML = dots.join('');
+      }
+
+      function render() {
+        const busyLeft = Math.max(0, mainBusyUntil - Date.now());
+        document.getElementById('interrupt-status').innerHTML =
+          '<strong>Đã bắt được:</strong> ' +
+          caughtCount +
+          ' &nbsp;·&nbsp; <strong style="color:' +
+          (missedCount > 0 ? '#dc2626' : 'inherit') +
+          '">Bỏ lỡ (polling):</strong> ' +
+          missedCount +
+          (busyLeft > 0
+            ? ' &nbsp;·&nbsp; <strong style="color:#f59e0b">😴 Main đang BẬN (' +
+              Math.ceil(busyLeft / 1000) +
+              's)</strong>'
+            : '');
+        renderTimeline();
+      }
+
+      setInterval(() => {
+        mainTicks++;
+        render();
+      }, 200);
+
+      render();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
