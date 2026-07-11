@@ -47,6 +47,13 @@ const MEMORY_MAP = [
     size: 0x00020000, // 128KB
     desc: 'Không gian địa chỉ dành cho thanh ghi điều khiển phần cứng (GPIO, timer, UART, ADC...). Bài 1 chưa nối ngoại vi nào vào đây — sẽ lấp dần từ Bài 2 trở đi.',
   },
+  {
+    name: 'System (lõi ARM)',
+    kind: 'system',
+    base: 0xe000e000,
+    size: 0x00001000, // 4KB — dung luong that cua System Control Space tren Cortex-M
+    desc: 'Vùng địa chỉ CỐ ĐỊNH (giống hệt trên MỌI chip Cortex-M, không đổi theo hãng) chứa các thanh ghi điều khiển lõi CPU — SysTick (Bài 4), NVIC (Bài 7). Khác với Peripheral (đặc thù từng hãng chip), vùng này là một phần của kiến trúc ARM.',
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -81,6 +88,22 @@ const GPIO_MODE_OUTPUT = 0b01;
 const GPIO_PULL_NONE = 0b00; // floating khi khong co gi khac dieu khien dien ap
 const GPIO_PULL_UP = 0b01; // keo len VCC -> doc mac dinh la 1
 const GPIO_PULL_DOWN = 0b10; // keo xuong GND -> doc mac dinh la 0
+
+// ---------------------------------------------------------------------------
+// SysTick (Bài 4) — bộ đếm giờ tích hợp SẴN trong MỌI lõi ARM Cortex-M (khác
+// GPIOA — SysTick là 1 phần kiến trúc ARM, không phải ngoại vi riêng của hãng
+// chip). Địa chỉ SYST_CSR lấy ĐÚNG offset thật trên mọi Cortex-M. VMCU chỉ mô
+// hình hoá đúng phần cần cho bài này: bật/tắt (SYST_CSR bit 0) — KHÔNG mô
+// phỏng thanh ghi đếm ngược 24-bit (SYST_RVR/SYST_CVR) của phần cứng thật, vì
+// bài này chỉ cần "có tick hay không", chưa cần tự tính chu kỳ tick từ clock.
+// Một bộ đếm "mốc thời gian hệ thống" tăng dần mỗi tick — trên phần cứng
+// thật, con số này KHÔNG phải một thanh ghi, mà là 1 biến `volatile` toàn cục
+// (thường gọi millis()) được chính firmware tăng lên trong ISR của SysTick
+// (NVIC/ngắt chưa xuất hiện tới Bài 7, nên ở đây VMCU tự "làm hộ" việc tăng
+// biến đó qua hàm tick() — xem Mục 3 bài viết).
+// ---------------------------------------------------------------------------
+const SYST_CSR_ADDR = 0xe000e010;
+const SYST_CSR_ENABLE_BIT = 0; // bit 0: 1 = SysTick dang chay, 0 = dung (mac dinh reset)
 
 class HardFaultError extends Error {
   constructor(addr) {
@@ -126,6 +149,11 @@ class VMCU {
     // chỉ là móc nối cho demo/self-test; null nghĩa là không có gì nối.
     this.gpioaPupdr = 0;
     this.externalDrive = new Array(GPIO_NUM_PINS).fill(null);
+    // SysTick (Bài 4): CSR=0 (dừng) đúng trạng thái reset thật — firmware
+    // PHẢI tự bật SysTick, không có sẵn. millis = "biến toàn cục" firmware
+    // dùng làm mốc thời gian, KHÔNG phải thanh ghi thật (xem ghi chú ở trên).
+    this.systCsr = 0;
+    this.millis = 0;
   }
 
   // Đọc 1 byte trong 1 thanh ghi 32-bit lưu dạng số JS thường (little-endian,
@@ -148,6 +176,7 @@ class VMCU {
     const offset = addr - region.base;
     if (region.kind === 'flash') return this.flash[offset];
     if (region.kind === 'ram') return this.sram[offset];
+    if (region.kind === 'system') return this._systemRead8(addr);
     return this._peripheralRead8(addr);
   }
 
@@ -157,8 +186,49 @@ class VMCU {
     if (region.kind === 'flash') throw new FlashProtectedError(addr);
     const v = value & 0xff;
     if (region.kind === 'ram') this.sram[addr - region.base] = v;
+    else if (region.kind === 'system') this._systemWrite8(addr, v);
     else this._peripheralWrite8(addr, v);
     return v;
+  }
+
+  // Dispatch vùng System (lõi ARM) — hiện tại chỉ SYST_CSR (Bài 4). Địa chỉ
+  // system khác vẫn đọc 0/ghi vô tác dụng (NVIC sẽ lấp ở Bài 7).
+  _systemRead8(addr) {
+    if (addr >= SYST_CSR_ADDR && addr < SYST_CSR_ADDR + 4) {
+      return this._readRegByte(this.systCsr, addr - SYST_CSR_ADDR);
+    }
+    return 0;
+  }
+  _systemWrite8(addr, v) {
+    if (addr >= SYST_CSR_ADDR && addr < SYST_CSR_ADDR + 4) {
+      this.systCsr = this._writeRegByte(this.systCsr, addr - SYST_CSR_ADDR, v);
+      return;
+    }
+    // dia chi system khac chua noi
+  }
+
+  // SysTick co dang chay hay khong (bit ENABLE cua SYST_CSR).
+  systickEnabled() {
+    return ((this.systCsr >>> SYST_CSR_ENABLE_BIT) & 1) === 1;
+  }
+
+  // Mo phong 1 khoang thoi gian THAT troi qua (ms) — dung "thay" cho ISR
+  // SysTick that (chua co NVIC den Bai 7): neu SysTick dang BAT, tang bien
+  // millis len dung so ms da troi qua, CUON VONG (wrap) qua 2^32 dung nhu
+  // mot bien uint32_t that tren phan cung — day chinh la nguon goc "bug 49
+  // ngay" cua Mục 4 bài viết. Neu SysTick TAT, khong lam gi ca (dung thiet ke
+  // that: khong bat SysTick thi khong ai tang millis ca).
+  tick(ms = 1) {
+    if (this.systickEnabled()) {
+      this.millis = (this.millis + ms) >>> 0;
+    }
+  }
+
+  // Doc "mốc thời gian hệ thống" hien tai — tren phan cung that day la doc
+  // truc tiep bien volatile toan cuc do ISR SysTick duy tri, khong phai doc
+  // qua bus dia chi (khong co lenh read32(dia_chi) nao cho no ca).
+  getMillis() {
+    return this.millis;
   }
 
   // Dispatch truy cập ngoại vi tới đúng thanh ghi đã "nối dây" — hiện tại chỉ
@@ -286,6 +356,8 @@ export {
   GPIO_PULL_NONE,
   GPIO_PULL_UP,
   GPIO_PULL_DOWN,
+  SYST_CSR_ADDR,
+  SYST_CSR_ENABLE_BIT,
 };
 
 // ---------------------------------------------------------------------------
@@ -449,6 +521,51 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     cpu3.setExternalDrive(1, null);
     cpu3.write8(GPIOA_IDR_ADDR, 0xff); // khong duoc nem loi, khong co tac dung
     check('Ghi vào IDR (read-only) không ảnh hưởng gì tới ODR/MODER', cpu3.gpioaPinMode(1), GPIO_MODE_OUTPUT);
+  }
+
+  // --- VMCU: SysTick — bật/tắt, đếm tick, và tràn số (Bài 4) ---
+  {
+    const cpu4 = new VMCU();
+    check('Reset: SysTick TẮT (SYST_CSR = 0)', cpu4.read32(SYST_CSR_ADDR), 0);
+    checkTrue('Reset: systickEnabled() = false', cpu4.systickEnabled() === false);
+    check('Reset: millis() = 0', cpu4.getMillis(), 0);
+
+    // Tick khi CHUA bat SysTick: millis KHONG duoc tang (dung thiet ke that)
+    for (let i = 0; i < 50; i++) cpu4.tick(1);
+    check('Tick 50 lần khi SysTick TẮT: millis() vẫn = 0', cpu4.getMillis(), 0);
+
+    // Bat SysTick (RMW dung ky thuat cac bai truoc)
+    cpu4.write32(SYST_CSR_ADDR, cpu4.read32(SYST_CSR_ADDR) | (1 << SYST_CSR_ENABLE_BIT));
+    checkTrue('Sau khi bật: systickEnabled() = true', cpu4.systickEnabled() === true);
+
+    for (let i = 0; i < 100; i++) cpu4.tick(1);
+    check('Tick 100 lần (1ms/lần) khi SysTick BẬT: millis() = 100', cpu4.getMillis(), 100);
+
+    // Tat SysTick giua chung: millis phai DUNG LAI, khong tang tiep
+    cpu4.write32(SYST_CSR_ADDR, 0);
+    for (let i = 0; i < 30; i++) cpu4.tick(1);
+    check('Tắt SysTick giữa chừng: millis() không tăng tiếp (vẫn = 100)', cpu4.getMillis(), 100);
+
+    // --- Cạm bẫy tràn số (Bài 4 Mục 4): dat millis gan diem cuon vong ---
+    cpu4.write32(SYST_CSR_ADDR, 1); // bat lai
+    cpu4.millis = 0xfffffff0; // 4294967280 - chi con 16 don vi la cuon vong ve 0
+    const startMillis = cpu4.getMillis();
+    for (let i = 0; i < 25; i++) cpu4.tick(1); // troi qua 25ms - VUOT QUA diem cuon vong
+    const afterMillis = cpu4.getMillis();
+    check('Sau khi cuộn vòng (tràn số 32-bit): millis() = 9 (đúng số học modular)', afterMillis, 9);
+
+    // Cong thuc DUNG: tru KHONG DAU (>>> 0) van cho ra dung so ms da troi qua
+    const elapsedCorrect = (afterMillis - startMillis) >>> 0;
+    check('Công thức ĐÚNG (elapsed = (current - start) >>> 0) vẫn ra đúng 25ms dù đã tràn số', elapsedCorrect, 25);
+    checkTrue('=> elapsed(25) >= interval(20): phát hiện ĐÚNG là đã đủ thời gian', elapsedCorrect >= 20);
+
+    // Cong thuc SAI (loi kinh dien): so sanh truc tiep "current >= start + interval"
+    // khong xu ly tran so - se ket luan SAI la "chua du thoi gian" ngay sau khi tran.
+    const naiveWrongResult = afterMillis >= startMillis + 20;
+    checkTrue(
+      'Công thức SAI (current >= start + interval) kết luận SAI ngay sau khi tràn số',
+      naiveWrongResult === false
+    );
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---
