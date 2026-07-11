@@ -17,8 +17,14 @@ function setupViOnlyArticles() {
         viContent.removeAttribute('data-lang-content');
         viContent.style.display = 'block';
 
-        // Remove data-lang-content from any nested elements inside the Vietnamese content to prevent them from being hidden in English mode
+        // Remove data-lang-content from any nested elements inside the Vietnamese content to prevent them from being hidden in English mode.
+        // Nested "en" elements (e.g. bilingual related-article link labels) must be explicitly hidden here too —
+        // once their attribute is stripped, step 3 below can no longer find them to hide, so both language
+        // versions would otherwise render side by side (bug: related-links showing EN + VI text at once).
         viContent.querySelectorAll('[data-lang-content]').forEach(function (nestedEl) {
+          if (nestedEl.dataset.langContent === 'en') {
+            nestedEl.style.display = 'none';
+          }
           nestedEl.removeAttribute('data-lang-content');
         });
       }
