@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 2: Thanh ghi & Memory-Mapped I/O — js-tools</title>
+    <meta
+      name="description"
+      content="Con trỏ volatile — vì sao thiếu nó, trình biên dịch có quyền xoá sạch code đọc/ghi thanh ghi; đại số bit set/clear/toggle bằng OR/AND-NOT/XOR để sửa đúng 1 chân mà không đụng 15 chân còn lại; đọc-sửa-ghi (RMW) và vì sao nó KHÔNG nguyên tử — cạm bẫy sẽ quay lại ở Bài 8; mở rộng VMCU thêm GPIOA (MODER/ODR) — kèm demo gõ hex bật LED thật và bộ đếm bit set/clear/toggle chạy trên engine thật."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-registers-mmio" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-registers-mmio" />
+    <meta property="og:title" content="Bài 2: Thanh ghi & Memory-Mapped I/O — js-tools" />
+    <meta
+      property="og:description"
+      content="Con trỏ volatile — vì sao thiếu nó, trình biên dịch có quyền xoá sạch code đọc/ghi thanh ghi; đại số bit set/clear/toggle bằng OR/AND-NOT/XOR; đọc-sửa-ghi (RMW) và vì sao nó KHÔNG nguyên tử — cạm bẫy sẽ quay lại ở Bài 8; mở rộng VMCU thêm GPIOA (MODER/ODR) — kèm demo gõ hex bật LED thật chạy trên engine thật."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 2: Thanh ghi & Memory-Mapped I/O — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Con trỏ volatile — vì sao thiếu nó, trình biên dịch có quyền xoá sạch code đọc/ghi thanh ghi; đại số bit set/clear/toggle bằng OR/AND-NOT/XOR; đọc-sửa-ghi (RMW) và vì sao nó KHÔNG nguyên tử — cạm bẫy sẽ quay lại ở Bài 8; mở rộng VMCU thêm GPIOA (MODER/ODR) — kèm demo gõ hex bật LED thật chạy trên engine thật."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Thanh ghi & Memory-Mapped I/O",
+        "description": "Con trỏ volatile — vì sao thiếu nó, trình biên dịch có quyền xoá sạch code đọc/ghi thanh ghi; đại số bit set/clear/toggle bằng OR/AND-NOT/XOR; đọc-sửa-ghi (RMW) và vì sao nó KHÔNG nguyên tử — cạm bẫy sẽ quay lại ở Bài 8; mở rộng VMCU thêm GPIOA (MODER/ODR) — kèm demo gõ hex bật LED thật chạy trên engine thật.",
+        "url": "https://js-tools.org/blog/embedded/embedded-registers-mmio",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-12"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 2 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">Thanh ghi & Memory-Mapped I/O</h1>
+          <div class="article-hero__meta">12 tháng 7, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: dòng code không hề sai, nhưng LED không bao giờ sáng</h2>
+            <p>
+              Một sinh viên thực tập viết đúng 3 dòng code: cấu hình một chân làm output, rồi ghi 1 vào đúng bit của
+              chân đó để bật LED. Biên dịch sạch, không cảnh báo. Nạp vào board — LED không sáng. Không có lỗi cú pháp,
+              không có lỗi logic theo nghĩa thông thường: trình biên dịch, để "tối ưu cho nhanh", nhận thấy dòng code
+              ghi vào một con trỏ rồi <em>không bao giờ đọc lại nó trong hàm này</em> nên đã âm thầm
+              <strong>xoá luôn phép ghi đó</strong> khỏi bản build cuối cùng. Đây không phải chuyện hiếm — đây là cạm
+              bẫy đầu tiên và phổ biến nhất mà gần như mọi lập trình viên nhúng mới vào nghề đều dính ít nhất một lần.
+            </p>
+            <p>
+              Bài 1 đã dạy ý tưởng nền: mọi ngoại vi đều là một địa chỉ bộ nhớ. Bài này biến ý tưởng đó thành công cụ
+              dùng được thật — cách đọc và ghi thanh ghi AN TOÀN bằng con trỏ <code>volatile</code>, cách sửa đúng 1 bit
+              mà không đụng đến 15 bit anh em, và một cạm bẫy tinh vi hơn nữa (đọc-sửa-ghi không nguyên tử) mà bạn sẽ
+              còn gặp lại xuyên suốt cả series. Cuối bài, VMCU có thêm ngoại vi ĐẦU TIÊN — GPIOA — và bạn sẽ tự tay bật
+              một LED thật bằng đúng cơ chế vừa học.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-mcu-anatomy">Bài 1</a> (memory map, HardFault) và
+                <a href="/blog/c/c-programming-series">Series C</a> — đặc biệt
+                <a href="/blog/c/c-operators-and-bitwise">phép toán Bitwise (AND, OR, XOR, NOT, shift)</a>, sẽ dùng liên
+                tục trong bài này.
+              </div>
+            </div>
+
+            <h2>1. <code>volatile</code>: nói với trình biên dịch "đừng tự ý bịa"</h2>
+            <p>
+              Trình biên dịch C được thiết kế để tối ưu tối đa: nếu nó thấy một biến được ghi rồi không hề được đọc lại
+              trước khi hàm kết thúc, nó có quyền coi phép ghi đó là "vô nghĩa" và loại bỏ hoàn toàn — hợp lý với biến
+              thường trong RAM, nhưng <strong>thảm hoạ</strong> với một thanh ghi ngoại vi, vì phép ghi vào đó có tác
+              dụng phụ (bật LED, khởi động timer...) nằm hoàn toàn ngoài tầm nhìn của trình biên dịch.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">volatile_pitfall.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// KHONG co volatile - loi ngam, khong bao gio bi bao warning/error
+uint32_t *odr = (uint32_t *)0x40010800;
+*odr = 0x01;          // trinh bien dich thay bien nay khong doc lai...
+                      // ...co quyen XOA luon dong tren khoi ban build toi uu!
+
+// CO volatile - dung
+volatile uint32_t *odr_v = (volatile uint32_t *)0x40010800;
+*odr_v = 0x01;        // "volatile" = "gia tri co the doi bat cu luc nao vi
+                      // ly do NGOAI code nay (phan cung) - luon doc/ghi
+                      // THAT vao dia chi, khong duoc cache lai, khong duoc
+                      // sap xep lai thu tu, khong duoc xoa"</code></pre>
+            </div>
+            <p>
+              Ba điều <code>volatile</code> ép trình biên dịch phải tuân thủ, mỗi điều đều từng gây ra một lớp bug nhúng
+              kinh điển nếu thiếu: <strong>(1) không được cache</strong> giá trị trong một thanh ghi CPU rồi dùng lại
+              giá trị cũ (nếu không, vòng lặp <code>while (FLAG_REG == 0);</code> chờ một cờ phần cứng đổi có thể chạy
+              MÃI MÃI vì trình biên dịch chỉ đọc bộ nhớ đúng 1 lần rồi coi như hằng số);
+              <strong>(2) không được sắp xếp lại thứ tự</strong> các phép đọc/ghi so với code xung quanh;
+              <strong>(3) không được loại bỏ</strong> phép đọc/ghi "trông có vẻ thừa". Registers ngoại vi luôn cần con
+              trỏ <code>volatile</code> — biến thường trong SRAM thì không.
+            </p>
+
+            <h2>2. Đọc-sửa-ghi (RMW): sửa đúng 1 bit mà không đụng 15 bit còn lại</h2>
+            <p>
+              Một thanh ghi như
+              <abbr title="Output Data Register — thanh ghi giữ mức logic muốn xuất ra cho từng chân">ODR</abbr> của
+              GPIOA giữ trạng thái của <strong>16 chân cùng lúc</strong> — mỗi chân 1 bit. Muốn bật LED ở chân 0 nhưng
+              lại ghi thẳng <code>ODR = 1</code> sẽ vô tình đặt luôn 15 bit còn lại về 0 — tắt hết mọi chân khác đang
+              bật! Đây là lỗi runtime cực kỳ phổ biến ở người mới, và không hề bị bất kỳ trình biên dịch nào cảnh báo vì
+              cú pháp hoàn toàn hợp lệ.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">overwrite_pitfall.c (SAI — xoá mất mọi chân khác)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// Gia su chan 3 dang BAT (LED sang), muon bat them chan 0
+GPIOA_ODR = (1 << 0);   // SAI: ghi DE toan bo thanh ghi
+                        // -> chan 0 bat DUNG, nhung chan 3 (va moi chan
+                        // khac) bi dat ve 0 - LED chan 3 tat theo, du
+                        // khong ai "bao" no lam vay ca</code></pre>
+            </div>
+            <p>
+              Cách đúng là <strong>đọc-sửa-ghi</strong> (Read-Modify-Write, viết tắt RMW): đọc giá trị hiện tại của cả
+              thanh ghi, chỉ sửa đúng bit cần, rồi ghi lại toàn bộ. Ba thao tác kinh điển dùng đại số bit — mỗi thao tác
+              chỉ đúng 1 dòng, và mọi lập trình viên nhúng đều gõ chúng hàng nghìn lần trong sự nghiệp:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thao tác</th>
+                  <th>Công thức</th>
+                  <th>Vì sao đúng</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Set bit</strong> (bật)</td>
+                  <td><code>REG |= (1 &lt;&lt; n)</code></td>
+                  <td>OR với 1 luôn ra 1 (bật đúng bit n), OR với 0 giữ nguyên (mọi bit khác không đổi)</td>
+                </tr>
+                <tr>
+                  <td><strong>Clear bit</strong> (tắt)</td>
+                  <td><code>REG &amp;= ~(1 &lt;&lt; n)</code></td>
+                  <td>AND với 0 luôn ra 0 (tắt đúng bit n), AND với 1 giữ nguyên (mọi bit khác không đổi)</td>
+                </tr>
+                <tr>
+                  <td><strong>Toggle bit</strong> (đảo)</td>
+                  <td><code>REG ^= (1 &lt;&lt; n)</code></td>
+                  <td>XOR với 1 luôn đảo bit n, XOR với 0 giữ nguyên mọi bit khác</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">gpio_bit_ops.c (ĐÚNG — chỉ sửa đúng 1 bit)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">volatile uint32_t *odr = (volatile uint32_t *)0x4001080C;
+
+*odr |=  (1 << 0);   // set:    bat chan 0, GIU NGUYEN 15 chan con lai
+*odr &= ~(1 << 0);   // clear:  tat chan 0, GIU NGUYEN 15 chan con lai
+*odr ^=  (1 << 0);   // toggle: dao chan 0, GIU NGUYEN 15 chan con lai
+
+// Nhac lai tu Series C (phep Bitwise): AND/OR/XOR/NOT lam viec TUNG BIT
+// doc lap - day chinh la ly do chung dung tuyet doi cho bai toan nay.</code></pre>
+            </div>
+
+            <h2>3. Cấu hình MODER: một chân phải "được cho phép" mới xuất ra ngoài</h2>
+            <p>
+              ODR quyết định <em>mức logic muốn xuất</em>, nhưng bản thân chân đó phải được cấu hình đúng chế độ trước —
+              nếu không, việc ghi ODR vẫn "thành công" về mặt thanh ghi (bit lưu lại được), nhưng
+              <strong>không có LED hay chân vật lý nào phản hồi theo nó cả</strong>. Thanh ghi
+              <abbr title="Mode Register — thanh ghi cấu hình chế độ hoạt động (input/output/...) cho từng chân"
+                >MODER</abbr
+              >
+              dùng 2 bit cho mỗi chân để chọn chế độ:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Giá trị 2-bit</th>
+                  <th>Chế độ</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>00</code></td>
+                  <td>Input</td>
+                  <td>Giá trị RESET mặc định — an toàn vì không vô tình đẩy dòng ra một chân đang nối với thứ khác</td>
+                </tr>
+                <tr>
+                  <td><code>01</code></td>
+                  <td>Output push-pull</td>
+                  <td>Dùng trong bài này — chân chủ động kéo lên/xuống mức logic</td>
+                </tr>
+                <tr>
+                  <td><code>10</code> / <code>11</code></td>
+                  <td>Alternate function / Analog</td>
+                  <td>Dành cho các bài sau (timer/PWM Bài 6, ADC Bài 10)</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: vì sao RESET mặc định luôn là Input, không phải Output?</div>
+              <div class="callout__content">
+                Nhìn kỹ bảng trên: giá trị <code>00</code> (Input) luôn là trạng thái MẶC ĐỊNH khi MCU vừa cấp nguồn,
+                không phải ngẫu nhiên. Một chân Output chủ động kéo dòng ra — nếu chân đó vô tình đang được nối với một
+                chân Output KHÁC trên mạch (hoặc với nguồn/đất qua một linh kiện), hai bên "kéo co" nhau có thể gây ra
+                dòng ngắn mạch thực sự, làm nóng chip hoặc hỏng linh kiện ngay khi vừa cấp điện — trước cả khi firmware
+                kịp chạy dòng code đầu tiên. Input thì an toàn tuyệt đối: nó chỉ "lắng nghe", không bao giờ chủ động đẩy
+                dòng ra. Đây là lý do mọi MCU thật đều thiết kế trạng thái reset "an toàn trước, hiệu quả sau" — một
+                nguyên tắc sẽ lặp lại nhiều lần trong series này (ví dụ ngắt cũng mặc định bị vô hiệu hoá cho tới khi
+                được bật tay ở Bài 7).
+              </div>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: đọc-sửa-ghi (RMW) KHÔNG nguyên tử</div>
+              <div class="callout__content">
+                RMW là 2 lệnh máy tách rời — <em>đọc</em> rồi <em>ghi</em> — không phải 1 thao tác duy nhất. Trên một hệ
+                chỉ có 1 luồng thực thi tuần tự (như trong bài này), điều đó vô hại. Nhưng hãy tưởng tượng: main loop
+                đang thực hiện <code>ODR |= (1&lt;&lt;3)</code> — vừa ĐỌC xong giá trị cũ của ODR — thì một
+                <strong>ngắt</strong> (interrupt, sẽ học ở <a href="#">Bài 7</a>) xen ngang, tự nó cũng làm RMW để tắt
+                chân 5 (<code>ODR &amp;= ~(1&lt;&lt;5)</code>), rồi trả quyền lại cho main loop. Main loop tiếp tục dùng
+                đúng giá trị ODR nó đã đọc <strong>TRƯỚC</strong> khi ngắt xảy ra (đã lỗi thời!) để ghi lại — vô tình
+                <strong>xoá mất</strong> thay đổi mà ngắt vừa thực hiện, dù không dòng code nào "sai" cả. Đây là một
+                dạng race condition kinh điển của lập trình nhúng, và <a href="#">Bài 8</a> sẽ dạy cách giải quyết bằng
+                critical section. Bây giờ, chỉ cần nhớ: <strong>RMW không nguyên tử</strong> — demo Mục 5 cho bạn tự tay
+                "chạy lại" đúng kịch bản mất-cập-nhật này theo từng bước.
+              </div>
+            </div>
+
+            <h2>4. VMCU: GPIOA vừa được "nối dây"</h2>
+            <p>
+              VMCU giờ có ngoại vi đầu tiên — <strong>GPIOA</strong>, đặt đúng theo địa chỉ APB2 thật của dòng STM32F1
+              (<code>0x40010800</code>) để chuyển sang board thật không bỡ ngỡ. Hai thanh ghi vừa được nối:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thanh ghi</th>
+                  <th>Địa chỉ</th>
+                  <th>Vai trò</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>MODER</strong></td>
+                  <td><code>0x40010800</code></td>
+                  <td>2 bit/chân — chọn input (<code>00</code>, mặc định) hay output (<code>01</code>)</td>
+                </tr>
+                <tr>
+                  <td><strong>ODR</strong></td>
+                  <td><code>0x4001080C</code></td>
+                  <td>1 bit/chân — mức logic muốn xuất (chỉ có tác dụng thật khi MODER = output)</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">vmcu_gpio.js (trích engine vmcu.js — logic đang chạy ở demo Mục 5)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// LED co that su SANG hay khong - can DU 2 dieu kien:
+gpioaLedOn(pin) {
+  return this.gpioaPinMode(pin) === GPIO_MODE_OUTPUT
+      && ((this.gpioaOdr >>> pin) & 1) === 1;
+}
+
+// Che do hien tai cua 1 chan (0=input, 1=output) - doc 2 bit tai vi tri pin*2
+gpioaPinMode(pin) {
+  return (this.gpioaModer >>> (pin * 2)) & 0b11;
+}</code></pre>
+            </div>
+
+            <h2>5. Thực hành: Register Inspector — bật LED thật bằng RMW</h2>
+            <p>
+              Demo dưới đây chạy trên <strong>VMCU thật</strong> — không phải hoạt ảnh giả lập. Đặt chế độ cho từng chân
+              PA0–PA7 (input/output), rồi bật/tắt/đảo LED bằng đúng 3 thao tác bit Mục 2. Thử tắt LED khác trong lúc một
+              LED đang bật — bạn sẽ thấy các chân khác không hề bị ảnh hưởng, đúng như đại số bit hứa hẹn.
+            </p>
+
+            <div class="code-tabs" id="gpio-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🔌 Register Inspector — GPIOA MODER/ODR</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div id="gpio-pins" style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px"></div>
+                  <div
+                    id="gpio-reg-info"
+                    class="mux-demo__output"
+                    style="margin-bottom: 14px; font-family: Menlo, Monaco, monospace"
+                  >
+                    Đang tải…
+                  </div>
+                  <p class="mux-demo__hint">
+                    Mỗi cột PA0–PA7: nút trên đổi <strong>MODE</strong> (Input/Output), nút dưới
+                    <strong>SET/CLR/TGL</strong> làm RMW thật trên ODR (chỉ có tác dụng — LED sáng — khi mode đang là
+                    Output). Thử bật LED PA0 rồi đổi mode PA0 về Input: bit ODR vẫn còn đó, nhưng LED tắt ngay — đúng
+                    cạm bẫy Mục 3.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">gpio_led_blink.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">#include &lt;stdint.h&gt;
+
+#define GPIOA_MODER (*(volatile uint32_t *)0x40010800)
+#define GPIOA_ODR   (*(volatile uint32_t *)0x4001080C)
+
+int main(void) {
+    // Cau hinh PA0 lam output push-pull (MODER bit[1:0] = 01)
+    GPIOA_MODER = (GPIOA_MODER & ~(0b11 << (0 * 2))) | (0b01 << (0 * 2));
+
+    GPIOA_ODR |=  (1 << 0);   // bat LED PA0 (set, RMW)
+    GPIOA_ODR &= ~(1 << 0);   // tat LED PA0 (clear, RMW)
+    GPIOA_ODR ^=  (1 << 0);   // dao LED PA0 (toggle, RMW)
+
+    while (1) { /* Bai 4 se thay bang SysTick khong-blocking */ }
+}</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">gpio_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { VMCU, GPIOA_MODER_ADDR, GPIOA_ODR_ADDR, GPIO_MODE_OUTPUT } from './vmcu.js';
+
+const cpu = new VMCU();
+const pin = 0;
+
+// Cau hinh PA0 lam output (RMW tren MODER, 2 bit/chan)
+const moder = cpu.read32(GPIOA_MODER_ADDR);
+cpu.write32(GPIOA_MODER_ADDR, (moder & ~(0b11 << (pin * 2))) | (GPIO_MODE_OUTPUT << (pin * 2)));
+
+cpu.write32(GPIOA_ODR_ADDR, cpu.read32(GPIOA_ODR_ADDR) |  (1 << pin)); // set
+console.log(cpu.gpioaLedOn(pin)); // true
+
+cpu.write32(GPIOA_ODR_ADDR, cpu.read32(GPIOA_ODR_ADDR) &amp; ~(1 << pin)); // clear
+console.log(cpu.gpioaLedOn(pin)); // false</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>6. Thực hành: chứng kiến RMW mất-cập-nhật</h2>
+            <p>
+              Demo dưới đây "diễn lại" từng bước đúng kịch bản của cạm bẫy Mục 3 — không phải hoạt ảnh, mà là 3 lệnh
+              <code>read32</code>/<code>write32</code> THẬT gọi tuần tự trên cùng một VMCU, theo đúng thứ tự một
+              interrupt xen ngang giữa main loop sẽ tạo ra. Bấm lần lượt 3 bước và quan sát bit PA5:
+            </p>
+
+            <div class="code-tabs" id="rmw-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">⚡ RMW không nguyên tử — mô phỏng từng bước</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div class="mux-demo__inputs" style="margin-bottom: 10px; flex-wrap: wrap">
+                    <button class="mux-input-btn" type="button" id="rmw-step1-btn">Bước 1: Main đọc ODR</button>
+                    <button class="mux-input-btn" type="button" id="rmw-step2-btn" disabled>
+                      Bước 2: "Ngắt" bật PA5
+                    </button>
+                    <button class="mux-input-btn" type="button" id="rmw-step3-btn" disabled>
+                      Bước 3: Main ghi lại (dùng giá trị CŨ)
+                    </button>
+                    <button class="mux-input-btn" type="button" id="rmw-reset-btn">↺ Làm lại</button>
+                  </div>
+                  <div id="rmw-log" class="mux-demo__output" style="white-space: pre-line">
+                    Bấm "Bước 1" để bắt đầu. PA3 đang BẬT sẵn (giả lập trạng thái main loop trước đó).
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ <strong><code>volatile</code></strong> ép trình biên dịch KHÔNG cache, KHÔNG sắp xếp lại, KHÔNG loại
+                bỏ phép đọc/ghi thanh ghi — thiếu nó là cạm bẫy phổ biến nhất khi mới học nhúng.
+              </li>
+              <li>
+                ✅ <strong>RMW</strong> (đọc-sửa-ghi) qua <code>|=</code>/<code>&amp;=~</code>/<code>^=</code> sửa đúng
+                1 bit mà không đụng các bit khác — ghi đè cả thanh ghi (<code>REG = ...</code>) là lỗi runtime kinh điển
+                không trình biên dịch nào cảnh báo.
+              </li>
+              <li>
+                ✅ <strong>MODER</strong> phải cấu hình đúng OUTPUT thì bit <strong>ODR</strong> mới có tác dụng điện
+                thật — ghi ODR cho một chân đang INPUT vẫn "thành công" nhưng không LED nào sáng.
+              </li>
+              <li>
+                ✅ <strong>RMW không nguyên tử</strong>: một ngắt xen ngang giữa đọc và ghi có thể khiến thay đổi của nó
+                bị main loop ghi đè mất — verified bằng demo 3 bước; giải pháp (critical section) hẹn ở Bài 8.
+              </li>
+              <li>✅ VMCU vừa có ngoại vi đầu tiên: <strong>GPIOA</strong> (MODER/ODR) tại địa chỉ APB2 thật.</li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao con trỏ trỏ tới thanh ghi ngoại vi luôn cần khai báo <code>volatile</code>?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      '&quot;volatile&quot; khong lien quan toi kieu du lieu hay pham vi gia tri - no la 1 chi thi cho trinh bien dich ve HANH VI toi uu hoa, khong phai kich thuoc bien.'
+                    )
+                  "
+                >
+                  A. Vì thanh ghi luôn cần nhiều bit hơn biến thường
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Neu khong co volatile, trinh bien dich co the cache gia tri trong thanh ghi CPU, sap xep lai thu tu, hoac xoa han phep doc/ghi ma no cho la &quot;thua&quot; - trong khi gia tri thanh ghi ngoai vi co the doi bat cu luc nao vi ly do phan cung, hoan toan ngoai tam nhin cua code.'
+                    )
+                  "
+                >
+                  B. Vì giá trị của thanh ghi có thể thay đổi bất cứ lúc nào do phần cứng, nên trình biên dịch không
+                  được phép cache/sắp xếp lại/loại bỏ phép đọc-ghi tới nó
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Volatile khong lam cham chuong trinh mot cach co chu dich va cang khong lien quan toi bao mat - no chi tat mot so toi uu hoa CU THE de dam bao doc/ghi that su xay ra dung nhu code viet.'
+                    )
+                  "
+                >
+                  C. Vì nó giúp chương trình chạy nhanh hơn và bảo mật hơn
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Chân PA3 đang BẬT (LED sáng). Dòng code nào sau đây bật thêm PA0 mà KHÔNG làm tắt PA3?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'GPIOA_ODR = (1 << 0) GHI DE toan bo thanh ghi bang gia tri chi co bit 0 = 1, moi bit khac (ke ca PA3) bi dat ve 0 - day chinh la loi ghi de kinh dien cua Muc 2.'
+                    )
+                  "
+                >
+                  A. <code>GPIOA_ODR = (1 &lt;&lt; 0);</code>
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Toan tu OR (|=) chi DAT bit 0 len 1, moi bit khac duoc OR voi 0 nen GIU NGUYEN gia tri cu - dung RMW dung cach, PA3 khong bi anh huong.'
+                    )
+                  "
+                >
+                  B. <code>GPIOA_ODR |= (1 &lt;&lt; 0);</code>
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Day la thao tac CLEAR (tat) bit 0, khong phai bat. Neu PA0 dang tat thi khong doi gi ca, va du sao PA3 van an toan vi day cung la RMW dung cach - nhung no khong dat duoc yeu cau &quot;bat PA0&quot; cua de bai.'
+                    )
+                  "
+                >
+                  C. <code>GPIOA_ODR &amp;= ~(1 &lt;&lt; 0);</code>
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Bạn ghi <code>GPIOA_ODR |= (1 &lt;&lt; 5)</code> nhưng chân PA5 vẫn đang ở chế độ MODER = Input. Điều gì
+                xảy ra?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Bit ODR van luu lai binh thuong (khong co loi gi ca ve mat thanh ghi), nhung vi MODER chua duoc cau hinh Output nen KHONG co chan vat ly/LED nao phan hoi theo bit do - day la cam bay cot loi cua Muc 3, dung nguyen nhan gay ra cau chuyen &quot;LED khong bao gio sang&quot; o dau bai.'
+                    )
+                  "
+                >
+                  A. Bit ODR vẫn được ghi và lưu lại bình thường, nhưng LED không sáng vì MODER chưa cấu hình Output cho
+                  chân đó
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'VMCU (va phan cung that) khong nem loi/crash trong truong hop nay - day la mot trang thai hop le, chi la khong co tac dung dien nao xay ra. Khong co HardFault o day.'
+                    )
+                  "
+                >
+                  B. Chương trình sẽ crash vì ghi vào chân chưa cấu hình đúng chế độ
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'MODER va ODR la 2 thanh ghi HOAN TOAN doc lap ve mat luu tru - ghi ODR khong he tu dong doi MODER. Chinh vi 2 thanh ghi doc lap nay ma nguoi lap trinh phai tu cau hinh MODER TRUOC.'
+                    )
+                  "
+                >
+                  C. VMCU tự động chuyển MODER sang Output để bit ODR có tác dụng
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">Vì sao RMW (đọc-sửa-ghi) được gọi là "không nguyên tử"?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Toc do khong phai van de cot loi o day - van de la RMW gom 2 THAO TAC TACH ROI (doc, roi ghi), va giua 2 thao tac do co the co thu khac (nhu ngat) xen vao, chu khong phai vi no &quot;cham&quot;.'
+                    )
+                  "
+                >
+                  A. Vì nó luôn chạy chậm hơn ghi trực tiếp một lần
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! RMW la 2 lenh may tach roi: DOC gia tri cu, roi GHI gia tri moi. Neu mot ngat xen ngang DUNG giua 2 buoc do va tu no cung sua thanh ghi, khi main loop tiep tuc ghi lai (dung gia tri da doc TRUOC khi ngat xay ra - da loi thoi), thay doi cua ngat se bi ghi de mat, du khong dong code nao &quot;sai&quot; ca. Day chinh la cam bay da demo o Muc 6.'
+                    )
+                  "
+                >
+                  B. Vì nó gồm 2 thao tác tách rời (đọc rồi ghi) — nếu một ngắt xen vào đúng lúc giữa 2 thao tác đó và
+                  cũng sửa cùng thanh ghi, thay đổi của ngắt có thể bị ghi đè mất
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'RMW hoan toan co the dung tren ca so nguyen 32-bit binh thuong (GPIOA_ODR la uint32_t) - kich thuoc kieu du lieu khong phai ly do no khong nguyen tu. Van de nam o SO LUONG THAO TAC MAY (2, khong phai 1), khong phai do rong bit.'
+                    )
+                  "
+                >
+                  C. Vì nó chỉ hoạt động đúng trên số nguyên 8-bit, không phải 32-bit
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 2 vừa thêm GPIOA
+                (MODER/ODR), kèm self-test đối chiếu đúng mọi hành vi trong bài (chạy <code>node vmcu.js</code>, không
+                cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://www.st.com/resource/en/reference_manual/rm0008-stm32f101xx-stm32f102xx-stm32f103xx-stm32f105xx-and-stm32f107xx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    STMicroelectronics — STM32F1 Reference Manual (RM0008, chương GPIO)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Volatile_(computer_programming)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — volatile (computer programming)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Memory-mapped_I/O" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Memory-mapped I/O (đọc lại Bài 1)
+                  </a>
+                </li>
+                <li>
+                  <a href="/blog/c/c-operators-and-bitwise">Series C — Toán tử số học &amp; Bitwise</a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-mcu-anatomy" class="article-related__link article-related__link--prev">
+                  Bài 1: Hệ nhúng là gì &amp; giải phẫu một MCU
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 3: GPIO input: pull-up/down &amp; đọc nút nhấn — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        VMCU,
+        GPIOA_MODER_ADDR,
+        GPIOA_ODR_ADDR,
+        GPIO_MODE_INPUT,
+        GPIO_MODE_OUTPUT,
+        GPIO_NUM_PINS,
+      } from './vmcu.js';
+
+      const cpu = new VMCU();
+      const NUM_SHOWN_PINS = 8; // PA0-PA7, khop voi 8 LED tren bang mach ao
+
+      function fmtBin(n, bits) {
+        return n.toString(2).padStart(bits, '0');
+      }
+      function fmtHex(n, digits) {
+        return '0x' + n.toString(16).toUpperCase().padStart(digits, '0');
+      }
+
+      function setPinMode(pin, mode) {
+        const moder = cpu.read32(GPIOA_MODER_ADDR);
+        const cleared = moder & ~(0b11 << (pin * 2));
+        cpu.write32(GPIOA_MODER_ADDR, cleared | (mode << (pin * 2)));
+      }
+      function setOdrBit(pin, op) {
+        const odr = cpu.read32(GPIOA_ODR_ADDR);
+        if (op === 'set') cpu.write32(GPIOA_ODR_ADDR, odr | (1 << pin));
+        else if (op === 'clear') cpu.write32(GPIOA_ODR_ADDR, odr & ~(1 << pin));
+        else if (op === 'toggle') cpu.write32(GPIOA_ODR_ADDR, odr ^ (1 << pin));
+      }
+
+      function renderRegInfo() {
+        const moder = cpu.read32(GPIOA_MODER_ADDR);
+        const odr = cpu.read32(GPIOA_ODR_ADDR);
+        document.getElementById('gpio-reg-info').innerHTML =
+          'MODER = ' +
+          fmtHex(moder, 8) +
+          ' (' +
+          fmtBin(moder, 16) +
+          ')<br>ODR&nbsp;&nbsp;&nbsp; = ' +
+          fmtHex(odr, 8) +
+          ' (' +
+          fmtBin(odr, 16) +
+          ')';
+      }
+
+      function renderPins() {
+        const container = document.getElementById('gpio-pins');
+        container.innerHTML = '';
+        for (let pin = 0; pin < NUM_SHOWN_PINS; pin++) {
+          const mode = cpu.gpioaPinMode(pin);
+          const isOutput = mode === GPIO_MODE_OUTPUT;
+          const ledOn = cpu.gpioaLedOn(pin);
+          const col = document.createElement('div');
+          col.style.cssText =
+            'display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;min-width:64px';
+          col.innerHTML =
+            '<div style="font-size:11px;font-weight:700">PA' +
+            pin +
+            '</div>' +
+            '<div style="width:28px;height:28px;border-radius:50%;border:2px solid #334155;background:' +
+            (ledOn ? '#22c55e' : '#e2e8f0') +
+            ';box-shadow:' +
+            (ledOn ? '0 0 10px #22c55e' : 'none') +
+            '"></div>' +
+            '<button type="button" class="mux-input-btn" data-mode-btn data-pin="' +
+            pin +
+            '" style="font-size:11px;padding:4px 6px">' +
+            (isOutput ? 'OUTPUT' : 'input') +
+            '</button>' +
+            '<div style="display:flex;gap:3px">' +
+            '<button type="button" class="mux-input-btn" data-op-btn data-pin="' +
+            pin +
+            '" data-op="set" style="font-size:10px;padding:3px 5px">SET</button>' +
+            '<button type="button" class="mux-input-btn" data-op-btn data-pin="' +
+            pin +
+            '" data-op="clear" style="font-size:10px;padding:3px 5px">CLR</button>' +
+            '<button type="button" class="mux-input-btn" data-op-btn data-pin="' +
+            pin +
+            '" data-op="toggle" style="font-size:10px;padding:3px 5px">TGL</button>' +
+            '</div>';
+          container.appendChild(col);
+        }
+        container.querySelectorAll('[data-mode-btn]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const pin = Number(btn.dataset.pin);
+            const cur = cpu.gpioaPinMode(pin);
+            setPinMode(pin, cur === GPIO_MODE_OUTPUT ? GPIO_MODE_INPUT : GPIO_MODE_OUTPUT);
+            renderPins();
+            renderRegInfo();
+          });
+        });
+        container.querySelectorAll('[data-op-btn]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            setOdrBit(Number(btn.dataset.pin), btn.dataset.op);
+            renderPins();
+            renderRegInfo();
+          });
+        });
+        renderRegInfo();
+      }
+
+      renderPins();
+
+      // ---- Demo 2: RMW khong nguyen tu, mo phong tung buoc ----
+      // CPU RIENG, doc lap voi Register Inspector o tren - tranh 2 demo lam
+      // lan trang thai cua nhau (vd PA3 "dang bat" o demo nay khong lien
+      // quan gi toi cau hinh PA3 nguoi dung dang chinh o demo Muc 5).
+      const rmwCpu = new VMCU();
+      // PA0/PA3/PA5 cau hinh san la OUTPUT de "PA3 dang bat" trong cau
+      // chuyen co nghia dung theo dinh nghia gpioaLedOn (mode=output VA bit=1).
+      for (const pin of [0, 3, 5]) {
+        const moder = rmwCpu.read32(GPIOA_MODER_ADDR);
+        rmwCpu.write32(GPIOA_MODER_ADDR, (moder & ~(0b11 << (pin * 2))) | (GPIO_MODE_OUTPUT << (pin * 2)));
+      }
+      const rmwState = { snapshotBeforeIsr: null };
+      function rmwLog(msg) {
+        document.getElementById('rmw-log').textContent = msg;
+      }
+      function rmwSetup() {
+        rmwCpu.write32(GPIOA_ODR_ADDR, 1 << 3); // PA3 dang bat san
+        rmwState.snapshotBeforeIsr = null;
+        document.getElementById('rmw-step1-btn').disabled = false;
+        document.getElementById('rmw-step2-btn').disabled = true;
+        document.getElementById('rmw-step3-btn').disabled = true;
+        rmwLog('Bấm "Bước 1" để bắt đầu. PA3 đang BẬT sẵn (giả lập trạng thái main loop trước đó).');
+      }
+      document.getElementById('rmw-step1-btn').addEventListener('click', () => {
+        rmwState.snapshotBeforeIsr = rmwCpu.read32(GPIOA_ODR_ADDR); // Main DOC ODR (chua ghi voi)
+        rmwLog(
+          'Bước 1 xong: Main loop vừa READ ODR = ' +
+            fmtBin(rmwState.snapshotBeforeIsr, 16) +
+            ' (PA3=1) — nhưng CHƯA ghi lại, đang giữ bản snapshot này trong CPU register để chuẩn bị set thêm PA0.'
+        );
+        document.getElementById('rmw-step1-btn').disabled = true;
+        document.getElementById('rmw-step2-btn').disabled = false;
+      });
+      document.getElementById('rmw-step2-btn').addEventListener('click', () => {
+        // "Ngat" xen ngang: tu no lam RMW that tren VMCU that, doc lap voi snapshot cua Main
+        const before = rmwCpu.read32(GPIOA_ODR_ADDR);
+        rmwCpu.write32(GPIOA_ODR_ADDR, before | (1 << 5));
+        rmwLog(
+          'Bước 2 xong: một "ngắt" xen ngang GIỮA lúc Main đang dở dang — nó tự làm RMW để BẬT thêm PA5. ODR THẬT SỰ bây giờ = ' +
+            fmtBin(rmwCpu.read32(GPIOA_ODR_ADDR), 16) +
+            ' (PA3=1, PA5=1 — đúng, cả 2 cùng bật). Main loop KHÔNG HỀ HAY BIẾT chuyện này vừa xảy ra.'
+        );
+        document.getElementById('rmw-step2-btn').disabled = true;
+        document.getElementById('rmw-step3-btn').disabled = false;
+      });
+      document.getElementById('rmw-step3-btn').addEventListener('click', () => {
+        // Main tiep tuc dung dung SNAPSHOT CU (khong biet ngat da doi ODR) de set PA0 roi ghi lai
+        const staleValue = rmwState.snapshotBeforeIsr | (1 << 0);
+        rmwCpu.write32(GPIOA_ODR_ADDR, staleValue);
+        const finalOdr = rmwCpu.read32(GPIOA_ODR_ADDR);
+        const pa5Lost = ((finalOdr >>> 5) & 1) === 0;
+        rmwLog(
+          'Bước 3 xong: Main ghi lại ODR = ' +
+            fmtBin(staleValue, 16) +
+            ' (dựa trên snapshot CŨ từ Bước 1 — set PA0, nhưng KHÔNG biết PA5 đã được ngắt bật ở Bước 2). ODR THẬT SỰ bây giờ = ' +
+            fmtBin(finalOdr, 16) +
+            '.\n\n' +
+            (pa5Lost
+              ? '💥 MẤT CẬP NHẬT: PA5 đã bị ghi đè về 0 — thay đổi của "ngắt" biến mất, dù không dòng code nào sai cú pháp cả. Đây chính là lý do RMW cần được bảo vệ (Bài 8: critical section).'
+              : 'Không mất bit nào lần này — thử bấm "Làm lại" để xem lại từ đầu.')
+        );
+        document.getElementById('rmw-step3-btn').disabled = true;
+      });
+      document.getElementById('rmw-reset-btn').addEventListener('click', rmwSetup);
+      rmwSetup();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

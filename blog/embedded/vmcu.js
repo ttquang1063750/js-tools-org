@@ -1,10 +1,11 @@
 // vmcu.js — "VMCU": MCU ảo mức thanh ghi dùng chung cho Series 13 (Hệ Thống
 // Nhúng). Khởi sinh ở Bài 1 (memory map + bus đọc/ghi thuần — CHƯA có ngoại
-// vi nào được nối). Bài 2 sẽ thêm GPIO (MODER/IDR/ODR) vào vùng Peripheral;
-// Bài 4 thêm SysTick; Bài 6 thêm Timer/PWM; Bài 7 thêm NVIC/EXTI; Bài 9 thêm
-// UART; Bài 10 thêm ADC; Bài 11 thêm DMA; Bài 14-15 thêm mini-RTOS. Import
-// trực tiếp từ các bài sau, KHÔNG copy-paste lại logic (tiền lệ
-// vlsi-verilite.js Series 11 / ai-neuro.js Series 12).
+// vi nào được nối). Bài 2 thêm GPIO OUTPUT (MODER/ODR) — đúng build-out table
+// của bài đó; Bài 3 sẽ thêm GPIO input (IDR + cấu hình pull-up/down). Bài 4
+// thêm SysTick; Bài 6 thêm Timer/PWM; Bài 7 thêm NVIC/EXTI; Bài 9 thêm UART;
+// Bài 10 thêm ADC; Bài 11 thêm DMA; Bài 14-15 thêm mini-RTOS. Import trực
+// tiếp từ các bài sau, KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js
+// Series 11 / ai-neuro.js Series 12).
 //
 // Cách chạy self-test (không cần cài gì ngoài Node.js):
 //   node vmcu.js
@@ -47,6 +48,30 @@ const MEMORY_MAP = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// GPIOA (Bài 2) — port ngoại vi ĐẦU TIÊN được "nối dây" vào VMCU. Địa chỉ base
+// lấy đúng theo STM32F1 thật (bus APB2) để chuyển sang board thật không bỡ
+// ngỡ; tên và offset thanh ghi (MODER/ODR) theo họ STM32 hiện đại (F0/F4/L-
+// series) vì đơn giản hơn cặp CRL/CRH cổ của F1 — VMCU lấy cảm hứng từ STM32,
+// không phải bản sao bit-exact 1 chip cụ thể.
+//   - MODER (offset 0x00): 2 bit/chân — 00 = input (giá trị reset mặc định,
+//     AN TOÀN vì không vô tình đẩy dòng ra một chân đang nối với thứ khác),
+//     01 = output push-pull. Series này chỉ dùng 2 mã đó; 10/11 (alt
+//     function/analog) để dành cho các bài sau.
+//   - ODR (offset 0x0C): 1 bit/chân — mức logic MUỐN xuất ra. Bit này CHỈ có
+//     tác dụng điện thật khi MODER của đúng chân đó đang ở chế độ output —
+//     nếu để input, phần cứng vẫn cho ghi/đọc lại bit đó bình thường (không
+//     lỗi), chỉ là không có LED/chân vật lý nào phản hồi theo nó.
+// ---------------------------------------------------------------------------
+const GPIOA_BASE = 0x40010800;
+const GPIOA_MODER_OFFSET = 0x00;
+const GPIOA_ODR_OFFSET = 0x0c;
+const GPIOA_MODER_ADDR = GPIOA_BASE + GPIOA_MODER_OFFSET;
+const GPIOA_ODR_ADDR = GPIOA_BASE + GPIOA_ODR_OFFSET;
+const GPIO_NUM_PINS = 16;
+const GPIO_MODE_INPUT = 0b00;
+const GPIO_MODE_OUTPUT = 0b01;
+
 class HardFaultError extends Error {
   constructor(addr) {
     super('HardFault: dia chi 0x' + addr.toString(16).toUpperCase() + ' khong thuoc bat ky vung nho nao da anh xa');
@@ -80,6 +105,24 @@ class VMCU {
     this.flash = new Uint8Array(flashRegion.size).fill(0xff);
     // SRAM: quy ước khởi động = 0 cho demo dễ theo dõi (thật ra là rác).
     this.sram = new Uint8Array(sramRegion.size);
+    // GPIOA (Bài 2): reset về 0 — MODER=0 nghĩa là CẢ 16 chân mặc định INPUT,
+    // đúng hành vi an toàn của phần cứng thật lúc mới cấp nguồn.
+    this.gpioaModer = 0;
+    this.gpioaOdr = 0;
+  }
+
+  // Đọc 1 byte trong 1 thanh ghi 32-bit lưu dạng số JS thường (little-endian,
+  // giống layout thật trên Cortex-M) — dùng chung cho MODER và ODR.
+  _readRegByte(regValue, byteIdx) {
+    return (regValue >>> (byteIdx * 8)) & 0xff;
+  }
+  // Ghi ĐÈ đúng 1 byte trong thanh ghi 32-bit, giữ nguyên 3 byte còn lại —
+  // bắt buộc phải làm đúng kiểu này, nếu không write8 riêng lẻ (dùng bên
+  // trong write32) sẽ xoá mất dữ liệu của các byte khác trong cùng thanh ghi.
+  _writeRegByte(regValue, byteIdx, byteVal) {
+    const shift = byteIdx * 8;
+    const mask = ~(0xff << shift);
+    return ((regValue & mask) | (byteVal << shift)) >>> 0;
   }
 
   read8(addr) {
@@ -88,7 +131,7 @@ class VMCU {
     const offset = addr - region.base;
     if (region.kind === 'flash') return this.flash[offset];
     if (region.kind === 'ram') return this.sram[offset];
-    return 0; // peripheral: chưa nối thanh ghi nào ở Bài 1 — đọc ra 0
+    return this._peripheralRead8(addr);
   }
 
   write8(addr, value) {
@@ -97,8 +140,47 @@ class VMCU {
     if (region.kind === 'flash') throw new FlashProtectedError(addr);
     const v = value & 0xff;
     if (region.kind === 'ram') this.sram[addr - region.base] = v;
-    // peripheral: Bài 1 chưa nối gì — ghi không có tác dụng gì (sẽ đổi từ Bài 2)
+    else this._peripheralWrite8(addr, v);
     return v;
+  }
+
+  // Dispatch truy cập ngoại vi tới đúng thanh ghi đã "nối dây" — hiện tại chỉ
+  // GPIOA (MODER/ODR, Bài 2). Địa chỉ peripheral khác vẫn đọc 0/ghi vô tác
+  // dụng đúng hành vi "chưa nối" của Bài 1.
+  _peripheralRead8(addr) {
+    if (addr >= GPIOA_MODER_ADDR && addr < GPIOA_MODER_ADDR + 4) {
+      return this._readRegByte(this.gpioaModer, addr - GPIOA_MODER_ADDR);
+    }
+    if (addr >= GPIOA_ODR_ADDR && addr < GPIOA_ODR_ADDR + 4) {
+      return this._readRegByte(this.gpioaOdr, addr - GPIOA_ODR_ADDR);
+    }
+    return 0;
+  }
+
+  _peripheralWrite8(addr, v) {
+    if (addr >= GPIOA_MODER_ADDR && addr < GPIOA_MODER_ADDR + 4) {
+      this.gpioaModer = this._writeRegByte(this.gpioaModer, addr - GPIOA_MODER_ADDR, v);
+      return;
+    }
+    if (addr >= GPIOA_ODR_ADDR && addr < GPIOA_ODR_ADDR + 4) {
+      this.gpioaOdr = this._writeRegByte(this.gpioaOdr, addr - GPIOA_ODR_ADDR, v);
+      return;
+    }
+    // peripheral khác chưa nối — ghi không có tác dụng gì
+  }
+
+  // Chế độ hiện tại của 1 chân (0=input, 1=output) — đọc 2 bit tại vị trí
+  // pin*2 trong MODER.
+  gpioaPinMode(pin) {
+    return (this.gpioaModer >>> (pin * 2)) & 0b11;
+  }
+
+  // LED có thực sự SÁNG hay không — cần ĐỦ 2 điều kiện: chân đang ở chế độ
+  // OUTPUT (MODER) VÀ bit ODR tương ứng đang là 1. Đây là điểm dễ nhầm nhất
+  // của bài: ghi ODR=1 cho một chân đang để INPUT vẫn "thành công" (bit lưu
+  // lại được) nhưng không có LED nào sáng cả.
+  gpioaLedOn(pin) {
+    return this.gpioaPinMode(pin) === GPIO_MODE_OUTPUT && ((this.gpioaOdr >>> pin) & 1) === 1;
   }
 
   read32(addr) {
@@ -112,7 +194,19 @@ class VMCU {
   }
 }
 
-export { MEMORY_MAP, HardFaultError, FlashProtectedError, findRegion, VMCU };
+export {
+  MEMORY_MAP,
+  HardFaultError,
+  FlashProtectedError,
+  findRegion,
+  VMCU,
+  GPIOA_BASE,
+  GPIOA_MODER_ADDR,
+  GPIOA_ODR_ADDR,
+  GPIO_NUM_PINS,
+  GPIO_MODE_INPUT,
+  GPIO_MODE_OUTPUT,
+};
 
 // ---------------------------------------------------------------------------
 // Self-test — chạy bằng `node vmcu.js`. Dùng đúng cùng cơ chế phát hiện
@@ -177,9 +271,52 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   checkThrows('Flash write8 ném FlashProtectedError', () => cpu.write8(0x08000100, 0x99), FlashProtectedError);
   check('Flash vẫn 0xFF sau khi write bị chặn', cpu.read8(0x08000100), 0xff);
 
-  // --- VMCU: Peripheral chưa nối gì ở Bài 1 ---
+  // --- VMCU: Peripheral chưa nối gì ở Bài 1 (địa chỉ KHÔNG thuộc GPIOA) ---
   check('Peripheral đọc ra 0 (chưa nối)', cpu.read8(0x40000000), 0);
   check('Peripheral ghi không có tác dụng', (cpu.write8(0x40000000, 0x55), cpu.read8(0x40000000)), 0);
+  check('Địa chỉ peripheral khác GPIOA (nhưng cùng vùng) vẫn "chưa nối"', cpu.read8(GPIOA_BASE + 0x100), 0);
+
+  // --- VMCU: GPIOA MODER/ODR (Bài 2) ---
+  {
+    const cpu2 = new VMCU();
+    check('Reset: MODER = 0 (tất cả chân INPUT)', cpu2.read32(GPIOA_MODER_ADDR), 0);
+    check('Reset: pin 0 mặc định INPUT', cpu2.gpioaPinMode(0), GPIO_MODE_INPUT);
+    checkTrue('Reset: LED pin 0 tắt (chưa cấu hình gì)', cpu2.gpioaLedOn(0) === false);
+
+    // Cấu hình pin 0 làm OUTPUT: MODER bit[1:0] = 01
+    cpu2.write32(GPIOA_MODER_ADDR, 0b01);
+    check('MODER sau khi set pin 0 = OUTPUT', cpu2.gpioaPinMode(0), GPIO_MODE_OUTPUT);
+    check('Pin 1 KHÔNG bị ảnh hưởng — vẫn INPUT', cpu2.gpioaPinMode(1), GPIO_MODE_INPUT);
+    checkTrue('LED pin 0 vẫn TẮT (mới cấu hình mode, chưa set ODR)', cpu2.gpioaLedOn(0) === false);
+
+    // Bật LED pin 0 bằng RMW kiểu C thật: ODR |= (1 << 0)
+    cpu2.write32(GPIOA_ODR_ADDR, cpu2.read32(GPIOA_ODR_ADDR) | (1 << 0));
+    checkTrue('LED pin 0 SÁNG sau khi set bit ODR (đã ở chế độ OUTPUT)', cpu2.gpioaLedOn(0) === true);
+
+    // Bật ODR bit cho pin 5 (đang INPUT) — bit vẫn ghi được, nhưng LED không sáng
+    cpu2.write32(GPIOA_ODR_ADDR, cpu2.read32(GPIOA_ODR_ADDR) | (1 << 5));
+    checkTrue('ODR bit pin 5 lưu được dù đang INPUT', ((cpu2.read32(GPIOA_ODR_ADDR) >>> 5) & 1) === 1);
+    checkTrue('Nhưng LED pin 5 KHÔNG sáng vì MODER vẫn INPUT (cạm bẫy cốt lõi của bài)', cpu2.gpioaLedOn(5) === false);
+
+    // Tắt LED pin 0 bằng RMW: ODR &= ~(1 << 0)
+    cpu2.write32(GPIOA_ODR_ADDR, cpu2.read32(GPIOA_ODR_ADDR) & ~(1 << 0));
+    checkTrue('LED pin 0 TẮT sau khi clear bit ODR', cpu2.gpioaLedOn(0) === false);
+    checkTrue(
+      'ODR bit pin 5 KHÔNG bị ảnh hưởng bởi việc clear bit pin 0',
+      ((cpu2.read32(GPIOA_ODR_ADDR) >>> 5) & 1) === 1
+    );
+
+    // Toggle 2 lần bằng RMW: ODR ^= (1 << 0) — phải quay lại đúng trạng thái ban đầu
+    const before = cpu2.read32(GPIOA_ODR_ADDR);
+    cpu2.write32(GPIOA_ODR_ADDR, cpu2.read32(GPIOA_ODR_ADDR) ^ (1 << 0));
+    cpu2.write32(GPIOA_ODR_ADDR, cpu2.read32(GPIOA_ODR_ADDR) ^ (1 << 0));
+    check('Toggle 2 lần liên tiếp quay lại đúng giá trị ban đầu', cpu2.read32(GPIOA_ODR_ADDR), before);
+
+    // Ghi byte thấp của ODR không được xoá mất byte cao (round-trip 32-bit qua write8)
+    cpu2.write32(GPIOA_ODR_ADDR, 0xdead0000);
+    cpu2.write8(GPIOA_ODR_ADDR, 0xef); // chỉ sửa byte thấp nhất
+    check('write8 vào 1 byte không xoá mất 3 byte còn lại của ODR', cpu2.read32(GPIOA_ODR_ADDR), 0xdead00ef);
+  }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---
   checkThrows('read8 địa chỉ không hợp lệ -> HardFault', () => cpu.read8(0x00001000), HardFaultError);
