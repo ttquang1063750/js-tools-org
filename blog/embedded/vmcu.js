@@ -48,8 +48,13 @@ const MEMORY_MAP = [
     name: 'Peripheral (ngoại vi)',
     kind: 'peripheral',
     base: 0x40000000,
-    size: 0x00020000, // 128KB
-    desc: 'Không gian địa chỉ dành cho thanh ghi điều khiển phần cứng (GPIO, timer, UART, ADC...). Bài 1 chưa nối ngoại vi nào vào đây — sẽ lấp dần từ Bài 2 trở đi.',
+    // 192KB (Bài 11 mở rộng thêm 64KB so với Bài 1 để chứa DMA1 tại
+    // 0x40020000 thật — trên STM32F103 thật, ngoại vi AHB (DMA, RCC...) nằm
+    // NGAY SAU dải APB1/APB2 mà VMCU đã dùng từ Bài 2, không phải một vùng
+    // riêng biệt — mở rộng size thay vì thêm entry MEMORY_MAP mới là đúng
+    // kiến trúc thật.
+    size: 0x00030000,
+    desc: 'Không gian địa chỉ dành cho thanh ghi điều khiển phần cứng (GPIO, timer, UART, ADC, DMA...). Bài 1 chưa nối ngoại vi nào vào đây — sẽ lấp dần từ Bài 2 trở đi.',
   },
   {
     name: 'System (lõi ARM)',
@@ -247,6 +252,55 @@ const ADC1_CR2_SWSTART_BIT = 22;
 const ADC_RESOLUTION_BITS = 10; // 10-bit = 1024 mức (0-1023), dung STM32F103 that
 const ADC_VREF_MV = 3300; // 3.3V tinh bang mV - Vref pho bien tren board STM32F103
 const IRQ_ADC1 = 18; // vi tri vector that cua ADC1_2 tren STM32F103 (nam trong ISER0, <32)
+const ADC1_CR2_DMA_BIT = 8; // bit that: bat yeu cau DMA moi khi EOC (Bai 11)
+
+// ---------------------------------------------------------------------------
+// DMA1 Channel 1 (Bài 11) — địa chỉ base + offset ISR/IFCR/CCR1/CNDTR1/CPAR1/
+// CMAR1 lấy đúng theo STM32F103 thật (0x40020000 nằm trên vùng AHB, ngay sau
+// APB1/APB2 mà GPIO/TIM/USART/ADC dùng — vì vậy Mục MEMORY_MAP ở trên phải
+// mở rộng size). VMCU đơn giản hoá: mỗi phần tử truyền LUÔN là 1 word (4
+// byte) — không mô phỏng PSIZE/MSIZE (byte/half-word/word) của thanh ghi
+// thật, giữ đúng Ý NGHĨA (CPU không đụng tay vào từng mẫu) mà không rối thêm
+// chi tiết ngoài phạm vi bài.
+//   - CCR1: EN (0) bật kênh; TCIE (1)/HTIE (2) bật ngắt Transfer-Complete/
+//     Half-Transfer; CIRC (5) bật chế độ vòng tròn (ping-pong); MINC (7) tự
+//     tăng địa chỉ bộ nhớ đích sau mỗi lần truyền.
+//   - CNDTR1: số phần tử CÒN LẠI phải truyền — đếm NGƯỢC về 0. Ghi EN từ 0
+//     lên 1 (cạnh kích hoạt) chốt lại giá trị CNDTR/CMAR gốc để CIRC biết
+//     "vòng lại" đúng chỗ.
+//   - CPAR1/CMAR1: địa chỉ nguồn (ngoại vi, KHÔNG tăng) / đích (RAM, tăng
+//     theo MINC).
+//   - ISR/IFCR: cờ trạng thái TCIF1 (bit 1)/HTIF1 (bit 2) — đọc qua ISR, xoá
+//     bằng cách ghi 1 vào IFCR (giống EXTI_PR/NVIC ICPR, KHÔNG phải ghi đè).
+// ---------------------------------------------------------------------------
+const DMA1_BASE = 0x40020000;
+const DMA1_ISR_OFFSET = 0x00;
+const DMA1_IFCR_OFFSET = 0x04;
+const DMA1_CCR1_OFFSET = 0x08;
+const DMA1_CNDTR1_OFFSET = 0x0c;
+const DMA1_CPAR1_OFFSET = 0x10;
+const DMA1_CMAR1_OFFSET = 0x14;
+const DMA1_ISR_ADDR = DMA1_BASE + DMA1_ISR_OFFSET;
+const DMA1_IFCR_ADDR = DMA1_BASE + DMA1_IFCR_OFFSET;
+const DMA1_CCR1_ADDR = DMA1_BASE + DMA1_CCR1_OFFSET;
+const DMA1_CNDTR1_ADDR = DMA1_BASE + DMA1_CNDTR1_OFFSET;
+const DMA1_CPAR1_ADDR = DMA1_BASE + DMA1_CPAR1_OFFSET;
+const DMA1_CMAR1_ADDR = DMA1_BASE + DMA1_CMAR1_OFFSET;
+const DMA1_CCR_EN_BIT = 0;
+const DMA1_CCR_TCIE_BIT = 1;
+const DMA1_CCR_HTIE_BIT = 2;
+const DMA1_CCR_CIRC_BIT = 5;
+const DMA1_CCR_MINC_BIT = 7;
+const DMA1_ISR_TCIF1_BIT = 1;
+const DMA1_ISR_HTIF1_BIT = 2;
+const IRQ_DMA1_CHANNEL1 = 9; // vi tri vector that cua DMA1 Channel1 tren STM32F103
+
+// Chi phi minh hoa cho Muc 11.1/11.5 — "vao/ra ngat ~12+12 cycle" la con so
+// thuong duoc trich dan cho viec luu/khoi phuc thanh ghi tren loi Cortex-M
+// (khong phai bit-exact 1 chip cu the, nhung dung so luong that: 12 thanh
+// ghi R0-R3,R12,LR,PC,xPSR luu/khoi phuc). isrBodyCycles la uoc luong minh
+// hoa cho phan than ISR (vd day 1 mau vao ring buffer).
+const ISR_ENTRY_EXIT_CYCLES = 24;
 
 // An toan tu test/demo: gioi han so lan _serviceInterrupts lap lai trong 1
 // lan goi de tranh treo that (vong lap vo han khi ISR quen xoa pending) -
@@ -354,6 +408,18 @@ class VMCU {
     this.adc1Cr2 = 0;
     this.adc1Dr = 0;
     this.adcAnalogInputMv = 0;
+    // DMA1 Channel 1 (Bài 11): reset đúng thật — ISR=0 (chưa cờ nào), CCR1=0
+    // (kênh tắt, EN=0), CNDTR1/CPAR1/CMAR1=0 (chưa cấu hình gì).
+    // _dmaChan1OriginalCndtr/_dmaChan1OriginalCmar KHÔNG phải thanh ghi thật
+    // — chốt lại giá trị CNDTR/CMAR tại đúng thời điểm EN bật lên (cạnh kích
+    // hoạt), để chế độ CIRC biết "vòng lại" đúng chỗ ban đầu.
+    this.dma1Isr = 0;
+    this.dma1Ccr1 = 0;
+    this.dma1Cndtr1 = 0;
+    this.dma1Cpar1 = 0;
+    this.dma1Cmar1 = 0;
+    this._dmaChan1OriginalCndtr = 0;
+    this._dmaChan1OriginalCmar = 0;
   }
 
   // Đọc 1 byte trong 1 thanh ghi 32-bit lưu dạng số JS thường (little-endian,
@@ -577,6 +643,21 @@ class VMCU {
       }
       return 0;
     }
+    if (addr >= DMA1_ISR_ADDR && addr < DMA1_ISR_ADDR + 4) {
+      return this._readRegByte(this.dma1Isr, addr - DMA1_ISR_ADDR);
+    }
+    if (addr >= DMA1_CCR1_ADDR && addr < DMA1_CCR1_ADDR + 4) {
+      return this._readRegByte(this.dma1Ccr1, addr - DMA1_CCR1_ADDR);
+    }
+    if (addr >= DMA1_CNDTR1_ADDR && addr < DMA1_CNDTR1_ADDR + 4) {
+      return this._readRegByte(this.dma1Cndtr1, addr - DMA1_CNDTR1_ADDR);
+    }
+    if (addr >= DMA1_CPAR1_ADDR && addr < DMA1_CPAR1_ADDR + 4) {
+      return this._readRegByte(this.dma1Cpar1, addr - DMA1_CPAR1_ADDR);
+    }
+    if (addr >= DMA1_CMAR1_ADDR && addr < DMA1_CMAR1_ADDR + 4) {
+      return this._readRegByte(this.dma1Cmar1, addr - DMA1_CMAR1_ADDR);
+    }
     return 0;
   }
 
@@ -670,18 +751,89 @@ class VMCU {
       }
       return;
     }
+    if (addr >= DMA1_IFCR_ADDR && addr < DMA1_IFCR_ADDR + 4) {
+      // IFCR: write-1-to-CLEAR (giống EXTI_PR/NVIC ICPR) - KHÔNG phải ghi đè.
+      const byteIdx = addr - DMA1_IFCR_ADDR;
+      this.dma1Isr = (this.dma1Isr & ~(v << (byteIdx * 8))) >>> 0;
+      return;
+    }
+    if (addr >= DMA1_CCR1_ADDR && addr < DMA1_CCR1_ADDR + 4) {
+      const before = this.dma1Ccr1;
+      this.dma1Ccr1 = this._writeRegByte(this.dma1Ccr1, addr - DMA1_CCR1_ADDR, v);
+      const enNow = ((this.dma1Ccr1 >>> DMA1_CCR_EN_BIT) & 1) === 1;
+      const enBefore = ((before >>> DMA1_CCR_EN_BIT) & 1) === 1;
+      // Cạnh kích hoạt EN 0->1: chốt lại CNDTR/CMAR gốc để CIRC biết vòng lại
+      // đúng chỗ ban đầu (giống snapshot đầu băng ping-pong).
+      if (enNow && !enBefore) {
+        this._dmaChan1OriginalCndtr = this.dma1Cndtr1;
+        this._dmaChan1OriginalCmar = this.dma1Cmar1;
+      }
+      return;
+    }
+    if (addr >= DMA1_CNDTR1_ADDR && addr < DMA1_CNDTR1_ADDR + 4) {
+      this.dma1Cndtr1 = this._writeRegByte(this.dma1Cndtr1, addr - DMA1_CNDTR1_ADDR, v);
+      return;
+    }
+    if (addr >= DMA1_CPAR1_ADDR && addr < DMA1_CPAR1_ADDR + 4) {
+      this.dma1Cpar1 = this._writeRegByte(this.dma1Cpar1, addr - DMA1_CPAR1_ADDR, v);
+      return;
+    }
+    if (addr >= DMA1_CMAR1_ADDR && addr < DMA1_CMAR1_ADDR + 4) {
+      this.dma1Cmar1 = this._writeRegByte(this.dma1Cmar1, addr - DMA1_CMAR1_ADDR, v);
+      return;
+    }
     // peripheral khác chưa nối — ghi không có tác dụng gì
   }
 
   // Thực hiện 1 lần chuyển đổi SAR (Mục 10.1) — VMCU bỏ qua thời gian chuyển
   // đổi thật, chỉ giữ đúng Ý NGHĨA: lượng tử hoá adcAnalogInputMv thành mã
   // 10-bit đúng công thức Mục 10.2, ghi vào DR, bật EOC, báo ngắt nếu EOCIE.
+  // Bài 11: nếu bit DMA của CR2 bật VÀ kênh DMA1 đang chạy, mỗi lần EOC cũng
+  // "gõ cửa" DMA — đúng cơ chế thật (ADC không tự đẩy dữ liệu, nó chỉ báo
+  // yêu cầu, DMA controller mới là bên thực hiện việc chuyển).
   _adcRunConversion() {
     const code = adcVoltageToCode(this.adcAnalogInputMv, ADC_VREF_MV, ADC_RESOLUTION_BITS);
     this.adc1Dr = code;
     this.adc1Sr = (this.adc1Sr | (1 << ADC1_SR_EOC_BIT)) >>> 0;
+    const dmaRequested = ((this.adc1Cr2 >>> ADC1_CR2_DMA_BIT) & 1) === 1;
+    const dmaChannelOn = ((this.dma1Ccr1 >>> DMA1_CCR_EN_BIT) & 1) === 1;
+    if (dmaRequested && dmaChannelOn) {
+      this._dmaChannel1Transfer(code);
+    }
     if (((this.adc1Cr1 >>> ADC1_CR1_EOCIE_BIT) & 1) === 1) {
       this.triggerInterrupt(IRQ_ADC1);
+    }
+  }
+
+  // DMA1 Channel 1 thực hiện ĐÚNG 1 lần truyền (Mục 11.2/11.3) — copy value
+  // vào *CMAR, tăng CMAR nếu MINC, giảm CNDTR. Half-Transfer (Mục 11.3 ping-
+  // pong) báo đúng lúc CNDTR chạm nửa số gốc; Transfer-Complete báo lúc CNDTR
+  // về 0 — nếu CIRC đang bật thì TỰ vòng lại CNDTR/CMAR gốc (dòng dữ liệu
+  // liên tục không cần phần mềm can thiệp lại). Không CIRC + CNDTR đã về 0 =>
+  // khối đã xong, KHÔNG nhận thêm cho tới khi phần mềm nạp lại CNDTR.
+  _dmaChannel1Transfer(value) {
+    if (this.dma1Cndtr1 === 0) return;
+    this.write32(this.dma1Cmar1, value);
+    if (((this.dma1Ccr1 >>> DMA1_CCR_MINC_BIT) & 1) === 1) {
+      this.dma1Cmar1 = (this.dma1Cmar1 + 4) >>> 0;
+    }
+    this.dma1Cndtr1 = (this.dma1Cndtr1 - 1) >>> 0;
+    const half = Math.floor(this._dmaChan1OriginalCndtr / 2);
+    if (half > 0 && this.dma1Cndtr1 === half) {
+      this.dma1Isr = (this.dma1Isr | (1 << DMA1_ISR_HTIF1_BIT)) >>> 0;
+      if (((this.dma1Ccr1 >>> DMA1_CCR_HTIE_BIT) & 1) === 1) {
+        this.triggerInterrupt(IRQ_DMA1_CHANNEL1);
+      }
+    }
+    if (this.dma1Cndtr1 === 0) {
+      this.dma1Isr = (this.dma1Isr | (1 << DMA1_ISR_TCIF1_BIT)) >>> 0;
+      if (((this.dma1Ccr1 >>> DMA1_CCR_TCIE_BIT) & 1) === 1) {
+        this.triggerInterrupt(IRQ_DMA1_CHANNEL1);
+      }
+      if (((this.dma1Ccr1 >>> DMA1_CCR_CIRC_BIT) & 1) === 1) {
+        this.dma1Cndtr1 = this._dmaChan1OriginalCndtr;
+        this.dma1Cmar1 = this._dmaChan1OriginalCmar;
+      }
     }
   }
 
@@ -1248,6 +1400,23 @@ function deterministicNoiseMv(index, amplitudeMv) {
   return (frac * 2 - 1) * amplitudeMv; // trải đều ra [-amplitudeMv, +amplitudeMv]
 }
 
+// Mô hình MINH HOẠ chi phí CPU (%) của Mục 11.1/11.5 cho 3 chiến lược đọc
+// một dòng mẫu ADC đều đặn — KHÔNG phải số đo thật trên 1 chip cụ thể, nhưng
+// dùng đúng con số hay được trích dẫn cho chi phí vào/ra ngắt Cortex-M
+// (ISR_ENTRY_EXIT_CYCLES = 24) và đúng quan hệ clock/tần số lấy mẫu thật:
+//   - 'polling': CPU coi như bận 100% suốt chu kỳ mẫu (busy-wait chờ EOC).
+//   - 'interrupt': tốn đúng 1 lần chi phí ISR mỗi MẪU.
+//   - 'dma': tốn đúng 1 lần chi phí ISR mỗi KHỐI (blockSize mẫu) — đây chính
+//     là điểm khác biệt cốt lõi Mục 11.2: CPU chỉ nhận MỘT ngắt khi cả khối
+//     xong, không phải từng mẫu.
+function cpuLoadPercent(strategy, samplePeriodCycles, blockSize = 1, isrBodyCycles = 10) {
+  if (strategy === 'polling') return 100;
+  const overhead = ISR_ENTRY_EXIT_CYCLES + isrBodyCycles;
+  if (strategy === 'interrupt') return (overhead / samplePeriodCycles) * 100;
+  if (strategy === 'dma') return (overhead / (blockSize * samplePeriodCycles)) * 100;
+  throw new Error('Chiến lược không hợp lệ: ' + strategy);
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -1331,6 +1500,23 @@ export {
   adcLsbMv,
   movingAverage,
   deterministicNoiseMv,
+  ADC1_CR2_DMA_BIT,
+  DMA1_ISR_ADDR,
+  DMA1_IFCR_ADDR,
+  DMA1_CCR1_ADDR,
+  DMA1_CNDTR1_ADDR,
+  DMA1_CPAR1_ADDR,
+  DMA1_CMAR1_ADDR,
+  DMA1_CCR_EN_BIT,
+  DMA1_CCR_TCIE_BIT,
+  DMA1_CCR_HTIE_BIT,
+  DMA1_CCR_CIRC_BIT,
+  DMA1_CCR_MINC_BIT,
+  DMA1_ISR_TCIF1_BIT,
+  DMA1_ISR_HTIF1_BIT,
+  IRQ_DMA1_CHANNEL1,
+  ISR_ENTRY_EXIT_CYCLES,
+  cpuLoadPercent,
 };
 
 // ---------------------------------------------------------------------------
@@ -2032,6 +2218,87 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       Math.abs(smoothedVar - 250.25) < 1
     );
     checkTrue('Trung bình trượt LUÔN giảm phương sai so với tín hiệu thô ở demo này', smoothedVar < rawVar);
+  }
+
+  // --- DMA1 Channel 1: ping-pong (CIRC + HTIF/TCIF) qua ADC1 (Bài 11 Mục 11.2, 11.3) ---
+  {
+    const cpuD = new VMCU();
+    const RAM_BASE = 0x20000000;
+    cpuD.write32(DMA1_CMAR1_ADDR, RAM_BASE);
+    cpuD.write32(DMA1_CNDTR1_ADDR, 8);
+    check('Reset: CCR1 = 0 (kênh DMA1 tắt)', cpuD.read32(DMA1_CCR1_ADDR), 0);
+    cpuD.write32(
+      DMA1_CCR1_ADDR,
+      (1 << DMA1_CCR_TCIE_BIT) | (1 << DMA1_CCR_HTIE_BIT) | (1 << DMA1_CCR_CIRC_BIT) | (1 << DMA1_CCR_MINC_BIT)
+    );
+    cpuD.write32(NVIC_ISER0_ADDR, 1 << IRQ_DMA1_CHANNEL1);
+    const dmaIsrLog = [];
+    cpuD.installIrqHandler(IRQ_DMA1_CHANNEL1, () =>
+      dmaIsrLog.push({
+        tc: (cpuD.read32(DMA1_ISR_ADDR) >>> DMA1_ISR_TCIF1_BIT) & 1,
+        ht: (cpuD.read32(DMA1_ISR_ADDR) >>> DMA1_ISR_HTIF1_BIT) & 1,
+      })
+    );
+    cpuD.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_DMA_BIT));
+    // Bat EN SAU khi da cau hinh CNDTR/CMAR - dung thu tu that (chot gia tri goc de CIRC vong lai dung cho).
+    cpuD.write32(DMA1_CCR1_ADDR, cpuD.read32(DMA1_CCR1_ADDR) | (1 << DMA1_CCR_EN_BIT));
+
+    for (let i = 0; i < 8; i++) {
+      cpuD.adcSetAnalogInputMv(1000 + i * 100);
+      cpuD.write32(ADC1_CR2_ADDR, cpuD.read32(ADC1_CR2_ADDR) | (1 << ADC1_CR2_SWSTART_BIT));
+    }
+    check('1 vòng CIRC (8 mẫu, khối=8): đúng 2 lần ngắt (1 HT + 1 TC)', dmaIsrLog.length, 2);
+    checkTrue(
+      'Ngắt thứ 1 là Half-Transfer (đúng lúc CNDTR chạm nửa = 4)',
+      dmaIsrLog[0].ht === 1 && dmaIsrLog[0].tc === 0
+    );
+    checkTrue('Ngắt thứ 2 là Transfer-Complete (CNDTR về 0)', dmaIsrLog[1].tc === 1);
+    check('CIRC: CNDTR tự vòng lại về 8 (giá trị gốc) sau 1 vòng đầy', cpuD.read32(DMA1_CNDTR1_ADDR), 8);
+    check('CIRC: CMAR tự vòng lại về địa chỉ RAM gốc', cpuD.read32(DMA1_CMAR1_ADDR), RAM_BASE);
+
+    const dmaSamples = [];
+    for (let i = 0; i < 8; i++) dmaSamples.push(cpuD.read32(RAM_BASE + i * 4));
+    checkTrue(
+      'CPU không đụng tay: DMA tự ghi đúng 8 mẫu vào RAM theo đúng thứ tự tăng dần',
+      dmaSamples.every((v, i) => i === 0 || v > dmaSamples[i - 1])
+    );
+
+    // Khong CIRC: het khoi thi DUNG, khong nhan them cho toi khi phan mem nap lai
+    const cpuE = new VMCU();
+    cpuE.write32(DMA1_CMAR1_ADDR, RAM_BASE);
+    cpuE.write32(DMA1_CNDTR1_ADDR, 4);
+    cpuE.write32(DMA1_CCR1_ADDR, 1 << DMA1_CCR_MINC_BIT); // KHONG CIRC, KHONG TCIE/HTIE
+    cpuE.write32(DMA1_CCR1_ADDR, cpuE.read32(DMA1_CCR1_ADDR) | (1 << DMA1_CCR_EN_BIT));
+    cpuE.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_DMA_BIT));
+    for (let i = 0; i < 6; i++) {
+      cpuE.adcSetAnalogInputMv(1000 + i * 100);
+      cpuE.write32(ADC1_CR2_ADDR, cpuE.read32(ADC1_CR2_ADDR) | (1 << ADC1_CR2_SWSTART_BIT));
+    }
+    check('Không CIRC: sau khi khối (4 mẫu) xong, CNDTR dừng ở 0 (không âm)', cpuE.read32(DMA1_CNDTR1_ADDR), 0);
+    check(
+      'Không CIRC: CMAR dừng đúng chỗ (mẫu 5, 6 KHÔNG được nhận thêm)',
+      cpuE.read32(DMA1_CMAR1_ADDR),
+      RAM_BASE + 16
+    );
+  }
+
+  // --- Chi phí CPU minh hoạ: polling vs interrupt vs DMA (Bài 11 Mục 11.1, 11.5) ---
+  {
+    const period = USART1_CLK_HZ / 10000; // 72MHz / 10kHz lay mau = 7200 cycle/mau
+    check('Chu kỳ 1 mẫu ADC @ 10kHz trên clock 72MHz = 7200 cycle', period, 7200);
+    check('Polling: CPU load = 100% (bận suốt chu kỳ chờ EOC)', cpuLoadPercent('polling', period), 100);
+    checkTrue(
+      'Ngắt từng mẫu: CPU load ≈ 0,472% (34 cycle chi phí ISR / 7200 cycle chu kỳ)',
+      Math.abs(cpuLoadPercent('interrupt', period) - 0.4722222222) < 1e-6
+    );
+    checkTrue(
+      'DMA khối 64 mẫu: CPU load ≈ 0,00738% — thấp hơn ngắt-từng-mẫu đúng 64 lần',
+      Math.abs(cpuLoadPercent('dma', period, 64) - 0.0073784722) < 1e-6
+    );
+    checkTrue(
+      'DMA luôn rẻ hơn ngắt-từng-mẫu KHI blockSize > 1 (đúng lý do DMA tồn tại)',
+      cpuLoadPercent('dma', period, 64) < cpuLoadPercent('interrupt', period)
+    );
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---

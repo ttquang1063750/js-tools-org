@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 11: DMA — chuyển dữ liệu không cần CPU — js-tools</title>
+    <meta
+      name="description"
+      content="CPU làm 'cửu vạn' từng byte ADC/UART qua ISR tốn phí vào/ra ngắt thật (~24 cycle/mẫu, verified). DMA controller là người khuân vác chuyên nghiệp: CPU chỉ nhận MỘT ngắt khi cả khối xong. Verified trên VMCU thật: CPU load polling=100%, ngắt-từng-mẫu≈0,472%, DMA khối 64 mẫu chỉ ≈0,0074% — rẻ hơn đúng 64 lần. Ping-pong (double buffering) qua CIRC+Half-Transfer/Transfer-Complete thật của DMA1: verified 1 vòng 8 mẫu cho đúng 2 ngắt (1 HT tại mẫu 4, 1 TC tại mẫu 8), tự vòng lại không cần phần mềm can thiệp. Kèm demo đồng hồ CPU-load ảo + ping-pong visualizer chạy trên VMCU thật."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-dma" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-dma" />
+    <meta property="og:title" content="Bài 11: DMA — chuyển dữ liệu không cần CPU — js-tools" />
+    <meta
+      property="og:description"
+      content="CPU làm 'cửu vạn' từng byte ADC/UART qua ISR tốn phí vào/ra ngắt thật (~24 cycle/mẫu). DMA là người khuân vác chuyên nghiệp: CPU chỉ nhận MỘT ngắt khi cả khối xong. Verified: CPU load polling=100%, ngắt-từng-mẫu≈0,472%, DMA khối 64 mẫu chỉ ≈0,0074% — rẻ hơn 64 lần. Ping-pong qua CIRC+HT/TC thật: 1 vòng 8 mẫu cho đúng 2 ngắt, tự vòng lại. Kèm demo đồng hồ CPU-load ảo + ping-pong visualizer trên VMCU thật."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 11: DMA — chuyển dữ liệu không cần CPU — js-tools" />
+    <meta
+      name="twitter:description"
+      content="CPU làm 'cửu vạn' từng byte ADC/UART qua ISR tốn phí vào/ra ngắt thật (~24 cycle/mẫu). DMA là người khuân vác chuyên nghiệp: CPU chỉ nhận MỘT ngắt khi cả khối xong. Verified: CPU load polling=100%, ngắt-từng-mẫu≈0,472%, DMA khối 64 mẫu chỉ ≈0,0074% — rẻ hơn 64 lần. Ping-pong qua CIRC+HT/TC thật: 1 vòng 8 mẫu cho đúng 2 ngắt, tự vòng lại. Kèm demo đồng hồ CPU-load ảo + ping-pong visualizer trên VMCU thật."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "DMA: chuyển dữ liệu không cần CPU",
+        "description": "CPU làm 'cửu vạn' từng byte ADC/UART qua ISR tốn phí vào/ra ngắt thật (~24 cycle/mẫu). DMA là người khuân vác chuyên nghiệp: CPU chỉ nhận MỘT ngắt khi cả khối xong. Verified: CPU load polling=100%, ngắt-từng-mẫu≈0,472%, DMA khối 64 mẫu chỉ ≈0,0074% — rẻ hơn 64 lần. Ping-pong qua CIRC+HT/TC thật: 1 vòng 8 mẫu cho đúng 2 ngắt, tự vòng lại. Kèm demo đồng hồ CPU-load ảo + ping-pong visualizer trên VMCU thật.",
+        "url": "https://js-tools.org/blog/embedded/embedded-dma",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-21"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 11 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">DMA: chuyển dữ liệu không cần CPU</h1>
+          <div class="article-hero__meta">21 tháng 7, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: CPU đang làm việc của một cái băng chuyền</h2>
+            <p>
+              Bài 10 dạy hai cách đọc ADC: polling (CPU tự hỏi) và ngắt EOCIE (phần cứng gõ vai). Cả hai đều có một điểm
+              chung dễ bị bỏ qua: <strong>CPU phải đích thân tham gia mọi lần</strong> — dù chỉ là chạy vào ISR, đọc DR,
+              cất vào một biến rồi thoát ra. Ở tốc độ lấy mẫu thấp, chi phí đó không đáng kể. Nhưng khi dòng dữ liệu dồn
+              dập — audio 44,1kHz, một cảm biến đọc hàng chục nghìn lần/giây — CPU biến thành một cái băng chuyền: cứ
+              mỗi mẫu lại dừng việc đang làm, chạy vào ISR, sao chép 1 giá trị, rồi quay lại. Đó chính xác là công việc
+              của một người khuân vác, không phải một bộ xử lý.
+            </p>
+            <p>
+              <strong>DMA</strong> (Direct Memory Access) là câu trả lời: một bộ điều khiển phần cứng RIÊNG, chuyên
+              trách việc di chuyển dữ liệu giữa ngoại vi và RAM mà KHÔNG cần CPU nhúng tay vào từng byte. Bài này verify
+              bằng số thật chênh lệch chi phí đó lớn tới mức nào, và mổ xẻ kỹ thuật ping-pong (double buffering) — kiến
+              trúc chuẩn của mọi hệ thống audio/DSP thời gian thực (nối thẳng Series 14 Bài 14).
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-adc">Bài 10</a> (ADC làm nguồn dữ liệu cho DMA ở bài này),
+                <a href="embedded-isr-race-critical-section">Bài 8</a> (torn read — Mục 4 tái xuất ở quy mô lớn hơn).
+                <strong>Có nhắc lại:</strong> <a href="embedded-uart">Bài 9</a> (UART cũng có thể dùng DMA cho TX, chỉ
+                nhắc qua).
+              </div>
+            </div>
+
+            <h2>1. Bài toán: CPU làm "cửu vạn"</h2>
+            <p>
+              Mỗi lần một ISR chạy, CPU phải trả một khoản phí cố định trước cả khi chạm vào logic thật của ISR: lưu lại
+              ngữ cảnh đang chạy dở (các thanh ghi R0–R3, R12, LR, PC, xPSR) lên stack, rồi khi ISR xong lại khôi phục
+              đúng ngần ấy thanh ghi để quay về chỗ cũ. Con số thường được trích dẫn cho lõi Cortex-M: khoảng
+              <strong>12 chu kỳ đẩy vào + 12 chu kỳ khôi phục ≈ 24 chu kỳ</strong> — đây là cái giá phải trả DÙ ISR có
+              làm gì hay không.
+            </p>
+            <p>
+              Verify bằng một kịch bản cụ thể: lấy mẫu ADC ở 10kHz trên clock 72MHz — mỗi mẫu có đúng
+              <code>72.000.000 / 10.000 = 7200</code> chu kỳ để "sống". Nếu dùng ngắt-từng-mẫu, mỗi mẫu tốn khoảng 24
+              chu kỳ vào/ra ISR cộng thêm một chút cho thân ISR (minh hoạ ~10 chu kỳ để cất giá trị vào ring buffer) —
+              tổng ≈34 chu kỳ. Tỷ lệ CPU bị chiếm dụng:
+            </p>
+            <p>$$\text{CPU load} = \frac{34}{7200} \times 100\% \approx 0{,}472\%$$</p>
+            <p>
+              Nghe có vẻ nhỏ — và ĐÚNG LÀ nhỏ cho một luồng dữ liệu. Nhưng một hệ thống thật hiếm khi chỉ có một luồng:
+              cộng dồn UART, vài kênh cảm biến khác, mỗi luồng đều "cắn" vào ngân sách CPU giống hệt vậy. Polling thì tệ
+              hơn nhiều — verify: CPU coi như bận <strong>100%</strong> suốt chu kỳ mẫu vì phải busy-wait chờ cờ EOC,
+              không làm được việc gì khác trong lúc đó.
+            </p>
+
+            <h2>2. DMA controller — người khuân vác chuyên nghiệp</h2>
+            <p>
+              DMA controller là một mạch phần cứng độc lập, được cấu hình MỘT LẦN với: địa chỉ nguồn (ngoại vi, ví dụ
+              thanh ghi DR của ADC), địa chỉ đích (một vùng RAM), chế độ tăng địa chỉ (đích tăng dần sau mỗi lần truyền,
+              nguồn thì không — vì DR luôn ở đúng một chỗ), và số phần tử cần truyền. Sau đó, mỗi khi ngoại vi "gõ cửa"
+              (một request — ví dụ ADC báo "tôi vừa có kết quả mới"), DMA tự thực hiện việc sao chép mà KHÔNG đánh thức
+              CPU.
+            </p>
+            <p>
+              Điểm mấu chốt: <strong>CPU chỉ nhận đúng MỘT ngắt khi cả khối hoàn tất</strong>, chứ không phải một ngắt
+              cho từng phần tử. Verify: với khối 64 mẫu, chi phí ISR (~34 chu kỳ) giờ chia đều cho cả 64 mẫu:
+            </p>
+            <p>$$\text{CPU load}_{DMA} = \frac{34}{64 \times 7200} \times 100\% \approx 0{,}0074\%$$</p>
+            <p>
+              So với 0,472% của ngắt-từng-mẫu, đây là rẻ hơn <strong>đúng 64 lần</strong> — chính xác bằng kích thước
+              khối, vì bản chất phép tính chỉ là chia chi phí cố định cho số mẫu mỗi lần "trả góp". Đây KHÔNG đáng để
+              làm cho vài byte lẻ tẻ (cấu hình DMA cũng có phí, dù nhỏ) — nhưng với dòng dữ liệu đều đặn tốc độ cao,
+              khoản tiết kiệm này là lý do DMA tồn tại trên mọi MCU nghiêm túc.
+            </p>
+
+            <h2>3. Ping-pong (double buffering)</h2>
+            <p>
+              Vấn đề tiếp theo: nếu DMA đổ đầy MỘT buffer rồi mới báo ngắt, CPU xử lý xong thì buffer đó lại đang bị DMA
+              ghi đè cho lượt kế tiếp — xử lý dữ liệu VÀ ghi dữ liệu mới tranh nhau cùng một vùng nhớ.
+              <strong>Ping-pong</strong> (double buffering) giải quyết bằng cách chia đôi: DMA ghi vào nửa A trong khi
+              CPU xử lý nửa B (đã ghi xong từ trước), rồi khi DMA ghi hết nửa A, chuyển sang ghi nửa B trong khi CPU
+              quay lại xử lý nửa A vừa xong — luân phiên vô tận, không rớt mẫu nào.
+            </p>
+            <p>
+              Cơ chế thật của STM32 cho việc này không cần 2 buffer vật lý tách biệt: dùng MỘT buffer vòng tròn (chế độ
+              <strong>CIRC</strong>) với 2 loại ngắt: <strong>Half-Transfer</strong> (HTIF, báo khi đã đổ đầy đúng NỬA
+              buffer — an toàn để xử lý nửa đầu trong khi DMA tiếp tục ghi nửa sau) và
+              <strong>Transfer-Complete</strong> (TCIF, báo khi đầy TOÀN BỘ buffer — DMA tự vòng lại đầu buffer, không
+              cần phần mềm can thiệp). Verify trên VMCU thật với buffer 8 phần tử: đúng
+              <strong>1 lần ngắt HT tại mẫu thứ 4</strong> (nửa buffer) và <strong>1 lần ngắt TC tại mẫu thứ 8</strong>
+              (đầy buffer) — tổng cộng đúng 2 ngắt cho 1 vòng đầy, sau đó CNDTR và địa chỉ đích tự động vòng lại về giá
+              trị gốc để tiếp tục vòng kế tiếp.
+            </p>
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Vì sao quan trọng: kiến trúc chuẩn của audio/DSP thời gian thực</div>
+              <div class="callout__content">
+                Ping-pong qua CIRC + HT/TC không phải một mẹo riêng của ADC — đây CHÍNH LÀ cách mọi driver audio thật
+                (kể cả trên máy tính lớn) truyền dòng mẫu liên tục không ngắt quãng. Series 14 (DSP Âm thanh) Bài 14 sẽ
+                dùng lại đúng mô hình này khi xử lý audio thời gian thực theo block.
+              </div>
+            </div>
+
+            <h2>4. Pitfall: torn data quy mô lớn &amp; cache coherency</h2>
+            <p>
+              Nếu main đọc buffer đúng lúc DMA đang ghi dở vào chính buffer đó, kết quả là một phiên bản "xé đôi" của cả
+              khối dữ liệu — nửa cũ nửa mới lẫn lộn. Đây chính xác là
+              <a href="embedded-isr-race-critical-section">torn read của Bài 8 Mục 4</a>, chỉ khác quy mô: thay vì 2
+              trường của một struct nhỏ, giờ là hàng chục/hàng trăm phần tử của cả một buffer. Cách phòng tránh giống
+              hệt về nguyên tắc: KHÔNG đọc nửa đang được DMA ghi — đây chính là lý do ping-pong tồn tại (nửa CPU đang
+              đọc luôn là nửa DMA KHÔNG động vào).
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Outlook: cache coherency trên MCU lớn hơn</div>
+              <div class="callout__content">
+                Trên các MCU cao cấp hơn có bộ nhớ cache (ngoài phạm vi dòng STM32F103 đơn giản của series này), CPU đọc
+                dữ liệu qua cache — nhưng DMA ghi trực tiếp vào RAM, KHÔNG đi qua cache. Nếu không cẩn thận, CPU có thể
+                đọc một bản sao CŨ trong cache trong khi RAM thật đã có dữ liệu mới từ DMA — cần lệnh
+                <em>invalidate cache</em> trước khi đọc vùng nhớ do DMA vừa ghi. Chi tiết này nằm ngoài phạm vi series
+                (VMCU không mô phỏng cache), nhưng đáng biết tên khi gặp trên phần cứng thật.
+              </div>
+            </div>
+
+            <h2>5. Thực hành: đồng hồ CPU-load ảo &amp; ping-pong visualizer</h2>
+            <p>
+              Demo dưới đây chạy trên VMCU thật với DMA1 Channel 1 vừa "sống": so sánh trực quan chi phí CPU của 3 chiến
+              lược, và xem ping-pong CIRC+HT/TC hoạt động qua từng mẫu:
+            </p>
+
+            <div class="code-tabs" id="dma-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🚚 CPU-Load Clock &amp; Ping-Pong Visualizer — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">1. Đồng hồ CPU-load — 3 chiến lược</p>
+                  <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap">
+                    <label style="font-size: 13px">Tốc độ lấy mẫu: <span id="dma-rate-label">10.000 Hz</span></label>
+                    <input
+                      type="range"
+                      id="dma-rate-slider"
+                      min="1000"
+                      max="50000"
+                      step="1000"
+                      value="10000"
+                      style="flex: 1; min-width: 140px"
+                    />
+                    <label style="font-size: 13px">Khối DMA: <span id="dma-block-label">64</span> mẫu</label>
+                    <input
+                      type="range"
+                      id="dma-block-slider"
+                      min="1"
+                      max="256"
+                      step="1"
+                      value="64"
+                      style="flex: 1; min-width: 140px"
+                    />
+                  </div>
+                  <div
+                    id="dma-load-bars"
+                    style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px"
+                  ></div>
+
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    2. Ping-pong visualizer (buffer vòng 8 mẫu)
+                  </p>
+                  <div style="display: flex; gap: 8px; margin-bottom: 10px">
+                    <button class="mux-input-btn" type="button" id="dma-step-btn">▶️ Chuyển đổi 1 mẫu</button>
+                    <button class="mux-input-btn" type="button" id="dma-run-lap-btn">⏩ Chạy 1 vòng đầy (8 mẫu)</button>
+                    <button class="mux-input-btn" type="button" id="dma-reset-btn">↺ Reset</button>
+                  </div>
+                  <div id="dma-buffer-viz" style="display: flex; gap: 4px; margin-bottom: 8px"></div>
+                  <div id="dma-event-log" class="mux-demo__output">Đang tải…</div>
+                  <p class="mux-demo__hint">
+                    Ô xanh lá = nửa buffer AN TOÀN để CPU xử lý (DMA vừa ghi xong); ô hổ phách = nửa buffer DMA ĐANG ghi
+                    (CPU không nên đụng vào). Sau mẫu thứ 4 sẽ thấy sự kiện Half-Transfer, sau mẫu thứ 8 là
+                    Transfer-Complete kèm tự vòng lại.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">dma_adc_pingpong.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">#define BUF_LEN 8   // phai la so CHAN de nua buffer chia het
+uint16_t adc_buf[BUF_LEN];
+
+void dma_adc_init(void) {
+    DMA1_CMAR1 = (uint32_t)adc_buf;   // dia chi dich: RAM
+    DMA1_CNDTR1 = BUF_LEN;             // so phan tu can truyen
+    DMA1_CCR1 = (1 << 1)  // TCIE: bao ngat khi day buffer
+              | (1 << 2)  // HTIE: bao ngat khi day NUA buffer
+              | (1 << 5)  // CIRC: tu vong lai, khong can phan mem nap lai
+              | (1 << 7); // MINC: tu tang dia chi dich sau moi lan
+    ADC1_CR2 |= (1 << 8);  // bat yeu cau DMA moi khi EOC
+    DMA1_CCR1 |= (1 << 0); // EN: bat kenh (chot CNDTR/CMAR goc cho CIRC)
+}
+
+// CPU KHONG can lam gi ca de nhan tung mau - chi can xu ly khi co ngat:
+void DMA1_Channel1_IRQHandler(void) {
+    if (DMA1_ISR & (1 << 2)) {              // HTIF: nua dau buffer da day
+        process_half(&adc_buf[0], BUF_LEN / 2); // an toan xu ly nua dau
+        DMA1_IFCR = (1 << 2);                // xoa co (ghi 1 de xoa)
+    }
+    if (DMA1_ISR & (1 << 1)) {              // TCIF: nua sau buffer da day
+        process_half(&adc_buf[BUF_LEN / 2], BUF_LEN / 2); // an toan xu ly nua sau
+        DMA1_IFCR = (1 << 1);
+    }
+}</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">dma_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import {
+  VMCU, ADC1_CR2_ADDR, ADC1_CR2_ADON_BIT, ADC1_CR2_SWSTART_BIT, ADC1_CR2_DMA_BIT,
+  DMA1_CCR1_ADDR, DMA1_CNDTR1_ADDR, DMA1_CMAR1_ADDR, DMA1_ISR_ADDR,
+  DMA1_CCR_EN_BIT, DMA1_CCR_TCIE_BIT, DMA1_CCR_HTIE_BIT, DMA1_CCR_CIRC_BIT, DMA1_CCR_MINC_BIT,
+  DMA1_ISR_TCIF1_BIT, DMA1_ISR_HTIF1_BIT, cpuLoadPercent,
+} from './vmcu.js';
+
+const cpu = new VMCU();
+const RAM_BASE = 0x20000000;
+cpu.write32(DMA1_CMAR1_ADDR, RAM_BASE);
+cpu.write32(DMA1_CNDTR1_ADDR, 8);
+cpu.write32(DMA1_CCR1_ADDR,
+  (1 << DMA1_CCR_TCIE_BIT) | (1 << DMA1_CCR_HTIE_BIT) | (1 << DMA1_CCR_CIRC_BIT) | (1 << DMA1_CCR_MINC_BIT));
+cpu.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_DMA_BIT));
+cpu.write32(DMA1_CCR1_ADDR, cpu.read32(DMA1_CCR1_ADDR) | (1 << DMA1_CCR_EN_BIT));
+
+function feedOneSample(mv) {
+  cpu.adcSetAnalogInputMv(mv);
+  cpu.write32(ADC1_CR2_ADDR, cpu.read32(ADC1_CR2_ADDR) | (1 << ADC1_CR2_SWSTART_BIT));
+  // CPU KHONG doc DR - DMA da tu chuyen thang vao RAM tai CMAR
+}
+
+// Chi phi CPU minh hoa - xem cong thuc Muc 11.1/11.2
+console.log(cpuLoadPercent('polling', 7200), cpuLoadPercent('interrupt', 7200), cpuLoadPercent('dma', 7200, 64));</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Mỗi ISR tốn chi phí vào/ra cố định (~24 cycle, con số thường trích dẫn cho Cortex-M) — verify: ở
+                10kHz/72MHz, ngắt-từng-mẫu chiếm ≈0,472% CPU, polling chiếm 100%.
+              </li>
+              <li>
+                ✅ <strong>DMA controller</strong>: cấu hình MỘT LẦN (nguồn, đích, số phần tử), tự chuyển dữ liệu mỗi
+                khi ngoại vi "gõ cửa" — CPU chỉ nhận MỘT ngắt khi cả khối xong. Verify: khối 64 mẫu chỉ ≈0,0074% CPU —
+                rẻ hơn ngắt-từng-mẫu đúng 64 lần.
+              </li>
+              <li>
+                ✅ <strong>Ping-pong</strong> qua CIRC + Half-Transfer/Transfer-Complete: verify 1 vòng 8 mẫu cho đúng 2
+                ngắt (HT tại mẫu 4, TC tại mẫu 8), tự vòng lại CNDTR/CMAR không cần phần mềm can thiệp — kiến trúc chuẩn
+                của audio/DSP thời gian thực.
+              </li>
+              <li>
+                ✅ Pitfall: đọc buffer đang bị DMA ghi dở = torn data quy mô khối (Bài 8.4 phóng to); cache coherency là
+                vấn đề riêng trên MCU có cache (ngoài phạm vi VMCU).
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Verified: ngắt-từng-mẫu chiếm ≈0,472% CPU ở 10kHz/72MHz, còn DMA khối 64 mẫu chỉ chiếm ≈0,0074% — rẻ hơn
+                đúng 64 lần. Vì sao chênh lệch lại đúng bằng kích thước khối?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Chi phi ISR co dinh (~34 cycle) la nhu nhau du dung cach nao - khac biet DUY NHAT la no duoc &quot;tra gop&quot; cho bao nhieu mau. Ngat-tung-mau: 1 lan chi phi / 1 mau. DMA khoi 64: 1 lan chi phi / 64 mau - chia deu ra nen re di dung 64 lan, khop chinh xac voi ty le toan hoc.'
+                    )
+                  "
+                >
+                  A. Vì cùng một khoản chi phí ISR cố định giờ được chia đều cho 64 mẫu thay vì tính riêng cho từng mẫu
+                  một — DMA gộp N mẫu lại chỉ trả phí ISR đúng 1 lần
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'DMA khong lam CPU chay nhanh hon - clock CPU khong doi. Su khac biet nam o SO LAN CPU phai vao/ra ISR, khong phai toc do xung nhip.'
+                    )
+                  "
+                >
+                  B. Vì DMA khiến CPU chạy ở xung nhịp cao hơn trong lúc xử lý dữ liệu
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'DMA khong lam ADC do nhanh hon - toc do lay mau (10kHz) la thong so rieng cua ADC, khong lien quan gi den viec ai chuyen du lieu (CPU hay DMA controller).'
+                    )
+                  "
+                >
+                  C. Vì DMA khiến ADC lấy mẫu nhanh hơn hẳn so với khi dùng ngắt
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Ping-pong (double buffering) qua chế độ CIRC dùng đúng 2 loại ngắt: Half-Transfer (HT) và
+                Transfer-Complete (TC). Vì sao cần CẢ HAI thay vì chỉ dùng Transfer-Complete khi buffer đầy?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Neu chi co TC, CPU chi biet duoc &quot;ca buffer da day&quot; - nhung luc do DMA da bat dau ghi de tu dau buffer cho vong ke tiep (CIRC tu vong lai NGAY). HT bao dung luc NUA DAU buffer vua day xong VA DMA dang chuyen sang ghi nua SAU - day la thoi diem AN TOAN de xu ly nua dau ma khong lo bi DMA ghi de.'
+                    )
+                  "
+                >
+                  A. HT báo đúng lúc nửa đầu buffer vừa đầy và DMA đang chuyển sang ghi nửa sau — đây là thời điểm AN
+                  TOÀN để xử lý nửa đầu mà không lo bị DMA ghi đè, tránh phải chờ tới khi cả buffer đầy mới xử lý
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca hai loai ngat deu bao chinh xac 100% - khong co van de do chinh xac o day. Ly do dung ca hai la VE THOI DIEM AN TOAN de xu ly, khong phai do TC kem tin cay.'
+                    )
+                  "
+                >
+                  B. Vì Transfer-Complete đôi khi báo sai, cần Half-Transfer để xác nhận lại
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'HT khong lam DMA chay nhanh hon - toc do DMA chuyen du lieu khong doi du co bat HT hay khong. HT chi la MOT TIN HIEU BAO THOI DIEM, khong anh huong toc do truyen.'
+                    )
+                  "
+                >
+                  C. Vì bật Half-Transfer khiến DMA truyền dữ liệu nhanh gấp đôi
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Đọc một buffer đúng lúc DMA đang ghi dở vào chính buffer đó gây ra hiện tượng gì, và nó liên hệ thế nào
+                với kiến thức đã học?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Day chinh xac la torn read cua Bai 8 Muc 4 (mot cap gio/phut bi ISR doi giua 2 lan doc), chi khac QUY MO: thay vi 2 truong cua 1 struct nho, gio la ca mot KHOI du lieu lon bi &quot;xe doi&quot; giua phien ban cu va moi. Nguyen tac phong tranh giong het: khong doc phan dang duoc ghi do.'
+                    )
+                  "
+                >
+                  A. Torn data — về bản chất giống hệt torn read của Bài 8 (một phần dữ liệu cũ, một phần dữ liệu mới
+                  lẫn lộn), chỉ khác là xảy ra ở quy mô cả một khối thay vì vài trường của một struct nhỏ
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'DMA khong lam mat du lieu theo nghia &quot;bien mat&quot; - van de la doc duoc mot to hop CHUA TUNG TON TAI (nua cu nua moi), khong phai mat mau.'
+                    )
+                  "
+                >
+                  B. Mất mẫu vĩnh viễn — dữ liệu bị DMA ghi đè biến mất hoàn toàn không cách nào phục hồi
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Day khong phai loi phan cung - DMA hoat dong dung thiet ke cua no. Van de la CACH PHAN MEM doc du lieu (doc dung luc dang ghi), khong phai ban than DMA controller bi loi.'
+                    )
+                  "
+                >
+                  C. Lỗi phần cứng DMA controller — chip bị hỏng cần thay thế
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">DMA có luôn luôn là lựa chọn tốt hơn ngắt-từng-mẫu hay polling không?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Cong thuc CPU load cho thay loi ich cua DMA ty le voi KICH THUOC KHOI - voi vai byte le te, chi phi CAU HINH DMA (dat CPAR/CMAR/CNDTR/CCR) co the con dat hon la don gian dung ngat hoac polling. DMA dang gia nhat khi DONG DU LIEU DEU DAN TOC DO CAO, dung nhu plan.md da neu.'
+                    )
+                  "
+                >
+                  A. Không — DMA đáng giá nhất với dòng dữ liệu đều đặn tốc độ cao; với vài byte lẻ tẻ, chi phí cấu hình
+                  DMA có thể không đáng so với đơn giản dùng ngắt hoặc polling
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cong thuc CPU load cho thay ro loi ich DMA PHU THUOC vao kich thuoc khoi (blockSize) - khong phai luon luon tot hon trong MOI truong hop, dac biet voi du lieu it/khong deu.'
+                    )
+                  "
+                >
+                  B. Có — DMA luôn tốt hơn trong mọi trường hợp vì nó là phần cứng chuyên dụng
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'DMA hoan toan tuong thich voi ca ADC lan UART (va nhieu ngoai vi khac) - khong co gioi han nay. Cau tra loi dung lien quan den KICH THUOC/DEU DAN cua dong du lieu, khong phai loai ngoai vi.'
+                    )
+                  "
+                >
+                  C. Có, nhưng chỉ với UART — ADC luôn nên dùng ngắt-từng-mẫu
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 11 vừa thêm DMA1
+                Channel 1 (ISR/IFCR/CCR/CNDTR/CPAR/CMAR), mô hình chi phí CPU (<code>cpuLoadPercent</code>), và
+                ping-pong qua CIRC+HT/TC, kèm self-test đối chiếu đúng mọi hành vi trong bài (chạy
+                <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Direct_memory_access"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Direct memory access (DMA)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.st.com/resource/en/reference_manual/rm0008-stm32f101xx-stm32f102xx-stm32f103xx-stm32f105xx-and-stm32f107xx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    STMicroelectronics — RM0008 Reference Manual (chương DMA)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Multi-buffering" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Multiple buffering (double/ping-pong buffering)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-adc" class="article-related__link article-related__link--prev">
+                  Bài 10: ADC &amp; thế giới tương tự
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 12: Boot &amp; bản đồ bộ nhớ chương trình — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        VMCU,
+        ADC1_CR2_ADDR,
+        ADC1_CR2_ADON_BIT,
+        ADC1_CR2_SWSTART_BIT,
+        ADC1_CR2_DMA_BIT,
+        DMA1_CCR1_ADDR,
+        DMA1_CNDTR1_ADDR,
+        DMA1_CMAR1_ADDR,
+        DMA1_ISR_ADDR,
+        DMA1_IFCR_ADDR,
+        DMA1_CCR_EN_BIT,
+        DMA1_CCR_TCIE_BIT,
+        DMA1_CCR_HTIE_BIT,
+        DMA1_CCR_CIRC_BIT,
+        DMA1_CCR_MINC_BIT,
+        DMA1_ISR_TCIF1_BIT,
+        DMA1_ISR_HTIF1_BIT,
+        cpuLoadPercent,
+      } from './vmcu.js';
+
+      // ==== Demo 1: đồng hồ CPU-load ====
+      function renderLoadBars() {
+        const rate = Number.parseInt(document.getElementById('dma-rate-slider').value, 10);
+        const block = Number.parseInt(document.getElementById('dma-block-slider').value, 10);
+        document.getElementById('dma-rate-label').textContent = rate.toLocaleString('vi-VN') + ' Hz';
+        document.getElementById('dma-block-label').textContent = block;
+
+        const period = 72000000 / rate;
+        const strategies = [
+          { key: 'polling', label: 'Polling', color: '#ef4444' },
+          { key: 'interrupt', label: 'Ngắt-từng-mẫu', color: '#f59e0b' },
+          { key: 'dma', label: 'DMA khối ' + block, color: '#22c55e' },
+        ];
+        const container = document.getElementById('dma-load-bars');
+        container.innerHTML = strategies
+          .map((s) => {
+            const load = cpuLoadPercent(s.key, period, block);
+            const widthPct = Math.max(0.5, Math.min(100, load));
+            return (
+              '<div style="display:flex; align-items:center; gap:8px; font-size:12px;">' +
+              '<span style="width:110px; flex-shrink:0;">' +
+              s.label +
+              '</span>' +
+              '<div style="flex:1; background:rgba(0,0,0,0.15); border-radius:4px; height:16px; overflow:hidden;">' +
+              '<div style="width:' +
+              widthPct +
+              '%; height:100%; background:' +
+              s.color +
+              ';"></div></div>' +
+              '<span style="width:90px; text-align:right; flex-shrink:0;">' +
+              (load < 0.01 ? load.toFixed(5) : load < 1 ? load.toFixed(3) : load.toFixed(1)) +
+              '%</span></div>'
+            );
+          })
+          .join('');
+      }
+      document.getElementById('dma-rate-slider').addEventListener('input', renderLoadBars);
+      document.getElementById('dma-block-slider').addEventListener('input', renderLoadBars);
+      renderLoadBars();
+
+      // ==== Demo 2: ping-pong visualizer (DMA1 Channel 1 thật, CIRC 8 phần tử) ====
+      const RAM_BASE = 0x20000000;
+      const BUF_LEN = 8;
+      let cpu, sampleIndex, eventLog, writtenThisLap;
+
+      function resetDma() {
+        cpu = new VMCU();
+        sampleIndex = 0;
+        writtenThisLap = 0;
+        eventLog = [];
+        cpu.write32(DMA1_CMAR1_ADDR, RAM_BASE);
+        cpu.write32(DMA1_CNDTR1_ADDR, BUF_LEN);
+        cpu.write32(
+          DMA1_CCR1_ADDR,
+          (1 << DMA1_CCR_TCIE_BIT) | (1 << DMA1_CCR_HTIE_BIT) | (1 << DMA1_CCR_CIRC_BIT) | (1 << DMA1_CCR_MINC_BIT)
+        );
+        cpu.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_DMA_BIT));
+        cpu.write32(DMA1_CCR1_ADDR, cpu.read32(DMA1_CCR1_ADDR) | (1 << DMA1_CCR_EN_BIT));
+        renderBuffer();
+        eventLog.push('Đã reset — buffer vòng ' + BUF_LEN + ' phần tử, sẵn sàng nhận mẫu.');
+        renderLog();
+      }
+
+      function stepOne() {
+        const mv = 1000 + (sampleIndex % 8) * 100;
+        cpu.adcSetAnalogInputMv(mv);
+        const beforeCndtr = cpu.read32(DMA1_CNDTR1_ADDR);
+        cpu.write32(ADC1_CR2_ADDR, cpu.read32(ADC1_CR2_ADDR) | (1 << ADC1_CR2_SWSTART_BIT));
+        sampleIndex++;
+        writtenThisLap++;
+        const isr = cpu.read32(DMA1_ISR_ADDR);
+        const ht = (isr >>> DMA1_ISR_HTIF1_BIT) & 1;
+        const tc = (isr >>> DMA1_ISR_TCIF1_BIT) & 1;
+        let msg = 'Mẫu #' + sampleIndex + ' (' + mv + 'mV) → CNDTR ' + beforeCndtr + '→' + cpu.read32(DMA1_CNDTR1_ADDR);
+        if (tc) msg += '  🔵 TRANSFER-COMPLETE (buffer đầy, tự vòng lại)';
+        else if (ht) msg += '  🟡 HALF-TRANSFER (nửa đầu sẵn sàng xử lý)';
+        eventLog.push(msg);
+        if (eventLog.length > 12) eventLog.shift();
+        renderBuffer(writtenThisLap);
+        renderLog();
+        // Xoá cờ NGAY SAU KHI đã dùng để vẽ (giống ISR thật ghi IFCR sau khi
+        // xử lý xong — nếu không, cờ vẫn còn 1 và sự kiện bị báo lại mỗi mẫu
+        // tiếp theo dù không có gì mới xảy ra).
+        if (ht) cpu.write32(DMA1_IFCR_ADDR, 1 << DMA1_ISR_HTIF1_BIT);
+        if (tc) {
+          cpu.write32(DMA1_IFCR_ADDR, 1 << DMA1_ISR_TCIF1_BIT);
+          writtenThisLap = 0; // vong moi bat dau tu dau (CIRC da tu vong lai CNDTR/CMAR)
+        }
+      }
+
+      function renderBuffer(filledOverride) {
+        // filledOverride: dung ngay sau 1 buoc de hien thi DUNG trang thai
+        // VUA XONG trước khi vòng mới ghi đè — CNDTR tự vòng lại về giá trị
+        // gốc ngay khi TC xảy ra nên không thể suy filled từ CNDTR hiện tại.
+        const filled = filledOverride !== undefined ? filledOverride : BUF_LEN - cpu.read32(DMA1_CNDTR1_ADDR);
+        const container = document.getElementById('dma-buffer-viz');
+        let html = '';
+        for (let i = 0; i < BUF_LEN; i++) {
+          const written = i < filled;
+          const inSafeHalf = i < BUF_LEN / 2;
+          let bg = 'rgba(255,255,255,0.08)';
+          if (written) bg = inSafeHalf ? '#22c55e' : '#f59e0b';
+          html +=
+            '<div style="flex:1; height:36px; border-radius:4px; background:' +
+            bg +
+            '; display:flex; align-items:center; justify-content:center; font-size:11px; color:#0a0f1e; font-weight:600;">' +
+            (written ? cpu.read32(RAM_BASE + i * 4) : '·') +
+            '</div>';
+        }
+        container.innerHTML = html;
+      }
+
+      function renderLog() {
+        document.getElementById('dma-event-log').innerHTML = eventLog.map((l) => l).join('<br/>');
+      }
+
+      document.getElementById('dma-step-btn').addEventListener('click', stepOne);
+      document.getElementById('dma-run-lap-btn').addEventListener('click', () => {
+        for (let i = 0; i < BUF_LEN; i++) stepOne();
+      });
+      document.getElementById('dma-reset-btn').addEventListener('click', resetDma);
+      resetDma();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
