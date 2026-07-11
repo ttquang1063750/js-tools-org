@@ -25,7 +25,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 10: Điện Tử**        | **Điện Tử & Mô Phỏng Vi Mạch**          | **16/16**      | **16**   | **100%** ✅ |
 | 🎉 **Series 11: VLSI**           | **Thiết Kế Vi Mạch Số & FPGA (VLSI)**   | **14/14**      | **14**   | **100%** ✅ |
 | 🎉 **Series 12: AI**             | **Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM** | **19/19**      | **19**   | **100%** ✅ |
-| Series 13                        | Hệ Thống Nhúng: Từ Thanh Ghi Đến RTOS   | 0/16           | 16       | 0%          |
+| Series 13                        | Hệ Thống Nhúng: Từ Thanh Ghi Đến RTOS   | 1/16           | 16       | 6%          |
 | Series 14                        | Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ       | 0/15           | 15       | 0%          |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
