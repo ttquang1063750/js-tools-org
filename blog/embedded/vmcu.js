@@ -1068,6 +1068,44 @@ class VMCU {
   write32(addr, value) {
     for (let i = 0; i < 4; i++) this.write8(addr + i, (value >>> (i * 8)) & 0xff);
   }
+
+  // Bài 12 Mục 12.4 — "sơn" một vùng RAM dành cho stack bằng 1 byte canary cố
+  // định (mặc định 0xCD, quy ước phổ biến) — cách kỹ thuật watermark thật đo
+  // "mực nước" stack: điền canary TRƯỚC khi chạy, sau đó xem còn bao nhiêu
+  // byte canary NGUYÊN VẸN từ đáy lên để biết chỗ SÂU NHẤT stack từng chạm
+  // tới trong suốt vòng đời chương trình.
+  initStackRegion(stackTopAddr, stackSizeBytes, canaryByte = 0xcd) {
+    this._stackTopAddr = stackTopAddr;
+    this._stackSizeBytes = stackSizeBytes;
+    this._canaryByte = canaryByte;
+    const base = stackTopAddr - stackSizeBytes;
+    for (let i = 0; i < stackSizeBytes; i++) this.write8(base + i, canaryByte);
+  }
+
+  // Watermark = số byte đã từng bị "đụng" tới, tính từ ĐÁY (địa chỉ thấp
+  // nhất) của vùng stack đã cấp lên trên — quét từ đáy, đếm canary còn
+  // nguyên cho tới byte KHÁC canary đầu tiên gặp phải.
+  stackWatermarkBytes() {
+    const base = this._stackTopAddr - this._stackSizeBytes;
+    let i = 0;
+    while (i < this._stackSizeBytes && this.read8(base + i) === this._canaryByte) i++;
+    return this._stackSizeBytes - i;
+  }
+
+  // Mô phỏng đệ quy sâu (Mục 12.4/12.5): KHÔNG có MMU nghĩa là KHÔNG có gì
+  // ngăn cản việc ghi ra ngoài vùng stack đã "cấp" — mỗi tầng đệ quy lùi SP
+  // xuống đúng frameBytes rồi ghi đè dữ liệu (giá trị 0x00 minh hoạ, khác
+  // canary để watermark nhận ra) — nếu SP tụt xuống dưới cả đáy vùng stack đã
+  // cấp, những byte đó thuộc về bất kỳ thứ gì được đặt liền kề bên dưới
+  // (thường là .bss) sẽ bị GHI ĐÈ ÂM THẦM, đúng cơ chế bug thật của Mục 12.4.
+  simulateDeepRecursion(depth, frameBytes) {
+    let sp = this._stackTopAddr;
+    for (let level = 0; level < depth; level++) {
+      sp -= frameBytes;
+      for (let b = 0; b < frameBytes; b++) this.write8(sp + b, 0x00);
+    }
+    return sp;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1417,6 +1455,55 @@ function cpuLoadPercent(strategy, samplePeriodCycles, blockSize = 1, isrBodyCycl
   throw new Error('Chiến lược không hợp lệ: ' + strategy);
 }
 
+// Bài 12 Mục 12.2 — phân loại 1 khai báo vào ĐÚNG section linker thật sẽ đặt
+// nó vào, theo đúng quy tắc trình biên dịch C/linker script dùng:
+//   - decl.kind === 'function'  -> .text (mã máy, luôn ở Flash)
+//   - decl.storage === 'local'  -> stack (biến cục bộ KHÔNG static, sống
+//     trên stack của hàm đang gọi, KHÔNG có section .data/.bss nào cả)
+//   - decl.isConst === true     -> .rodata (hằng số, Flash, không bao giờ ghi)
+//   - initValue null/undefined  -> .bss (không khởi tạo, chỉ cấp chỗ RAM)
+//   - initValue === 0           -> .bss — CHI TIẾT hay bị bỏ sót: trình biên
+//     dịch thường KHÔNG lãng phí chỗ trong ảnh .data cho giá trị khởi tạo
+//     bằng 0, vì bước zero-.bss lúc boot (Mục 12.1) đã lo sẵn — "int x = 0;"
+//     ở phạm vi toàn cục thường rơi vào .bss y hệt "int x;" không khởi tạo.
+//   - initValue khác 0          -> .data (cần giá trị THẬT chép từ Flash
+//     sang RAM lúc boot, vì RAM mất điện thì mất nội dung).
+function classifySection(decl) {
+  if (decl.kind === 'function') return '.text';
+  if (decl.storage === 'local') return 'stack';
+  if (decl.isConst) return '.rodata';
+  if (decl.initValue === null || decl.initValue === undefined) return '.bss';
+  if (decl.initValue === 0) return '.bss';
+  return '.data';
+}
+
+// Bài 12 Mục 12.3 — dựng bản đồ bộ nhớ RAM đơn giản đúng thứ tự thật:
+// .data (đầu RAM) -> .bss (ngay sau) -> heap (mọc LÊN từ sau .bss) -> ...
+// khoảng trống... -> stack (mọc XUỐNG từ đỉnh RAM). heapCeiling là ranh giới
+// AN TOÀN cao nhất heap được phép mọc tới trước khi đụng đáy stack đã cấp
+// (không phải giới hạn phần cứng — chỉ là quy ước layout của bài).
+function buildMemoryLayout({ ramBase, ramSize, dataVars, bssVars, stackSizeBytes }) {
+  const dataSize = dataVars.reduce((a, v) => a + v.size, 0);
+  const bssSize = bssVars.reduce((a, v) => a + v.size, 0);
+  const dataStart = ramBase;
+  const bssStart = dataStart + dataSize;
+  const heapStart = bssStart + bssSize;
+  const stackTop = ramBase + ramSize;
+  const stackBottom = stackTop - stackSizeBytes;
+  return {
+    dataStart,
+    dataSize,
+    bssStart,
+    bssSize,
+    heapStart,
+    heapCeiling: stackBottom,
+    heapSize: stackBottom - heapStart,
+    stackTop,
+    stackBottom,
+    stackSizeBytes,
+  };
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -1517,6 +1604,8 @@ export {
   IRQ_DMA1_CHANNEL1,
   ISR_ENTRY_EXIT_CYCLES,
   cpuLoadPercent,
+  classifySection,
+  buildMemoryLayout,
 };
 
 // ---------------------------------------------------------------------------
@@ -2298,6 +2387,115 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'DMA luôn rẻ hơn ngắt-từng-mẫu KHI blockSize > 1 (đúng lý do DMA tồn tại)',
       cpuLoadPercent('dma', period, 64) < cpuLoadPercent('interrupt', period)
+    );
+  }
+
+  // --- Phân loại section (Bài 12 Mục 12.2) ---
+  {
+    check('function -> .text', classifySection({ kind: 'function' }), '.text');
+    check('biến cục bộ (local) -> stack', classifySection({ storage: 'local' }), 'stack');
+    check(
+      'const toàn cục CÓ khởi tạo -> .rodata',
+      classifySection({ storage: 'global', isConst: true, initValue: 5 }),
+      '.rodata'
+    );
+    check(
+      'const toàn cục KHÔNG khởi tạo -> .rodata (vẫn là hằng, vẫn ở Flash)',
+      classifySection({ storage: 'global', isConst: true, initValue: null }),
+      '.rodata'
+    );
+    check(
+      'biến toàn cục khởi tạo ≠ 0 -> .data (cần chép giá trị thật từ Flash)',
+      classifySection({ storage: 'global', isConst: false, initValue: 42 }),
+      '.data'
+    );
+    check(
+      'biến toàn cục khởi tạo = 0 -> .bss (trình biên dịch không phí chỗ .data cho giá trị 0)',
+      classifySection({ storage: 'global', isConst: false, initValue: 0 }),
+      '.bss'
+    );
+    check(
+      'biến toàn cục KHÔNG khởi tạo -> .bss',
+      classifySection({ storage: 'global', isConst: false, initValue: null }),
+      '.bss'
+    );
+    check(
+      'Pitfall verified: bảng tra cứu lớn QUÊN const -> rơi vào .data (ngốn RAM)',
+      classifySection({ storage: 'global', isConst: false, initValue: 99 }),
+      '.data'
+    );
+    check(
+      'Cùng bảng tra cứu CÓ const -> đúng chỗ .rodata (Flash, không tốn RAM)',
+      classifySection({ storage: 'global', isConst: true, initValue: 99 }),
+      '.rodata'
+    );
+  }
+
+  // --- Bản đồ bộ nhớ RAM (Bài 12 Mục 12.3) ---
+  {
+    const ramRegion = MEMORY_MAP.find((r) => r.kind === 'ram');
+    const layout = buildMemoryLayout({
+      ramBase: ramRegion.base,
+      ramSize: ramRegion.size,
+      dataVars: [
+        { name: 'g_volume', size: 4 },
+        { name: 'g_threshold', size: 4 },
+      ],
+      bssVars: [
+        { name: 'g_buffer', size: 200 },
+        { name: 'g_flag', size: 1 },
+      ],
+      stackSizeBytes: 256,
+    });
+    check('.data bắt đầu đúng đầu RAM', layout.dataStart, ramRegion.base);
+    check('.data dài đúng tổng kích thước biến (4+4=8 byte)', layout.dataSize, 8);
+    check('.bss bắt đầu NGAY SAU .data', layout.bssStart, ramRegion.base + 8);
+    check('.bss dài đúng tổng kích thước biến (200+1=201 byte)', layout.bssSize, 201);
+    check('heap bắt đầu NGAY SAU .bss', layout.heapStart, ramRegion.base + 8 + 201);
+    check('stack đỉnh = đúng đỉnh RAM', layout.stackTop, ramRegion.base + ramRegion.size);
+    check(
+      'stack đáy = đỉnh RAM trừ đúng kích thước cấp cho stack',
+      layout.stackBottom,
+      ramRegion.base + ramRegion.size - 256
+    );
+    checkTrue('heap có khoảng trống dương trước khi đụng đáy stack', layout.heapSize > 0);
+  }
+
+  // --- Stack watermark & tràn stack ăn vào .bss (Bài 12 Mục 12.4, 12.5) ---
+  {
+    const RAM_BASE_12 = 0x20000000;
+    const RAM_SIZE_12 = 0x5000;
+    const stackTop12 = RAM_BASE_12 + RAM_SIZE_12;
+    const stackSize12 = 256;
+    const victimAddr = stackTop12 - stackSize12 - 4; // "bien toan cuc" gia dinh nam ngay duoi day stack
+
+    const cpu12a = new VMCU();
+    cpu12a.initStackRegion(stackTop12, stackSize12);
+    check('Reset: watermark = 0 (chưa chạy gì)', cpu12a.stackWatermarkBytes(), 0);
+    cpu12a.write32(victimAddr, 0xdeadbeef);
+    checkTrue('Victim ban đầu = 0xDEADBEEF', cpu12a.read32(victimAddr) === 0xdeadbeef);
+
+    // De quy AN TOAN: 10 tang x 16 byte = 160 byte, con du 96 byte trong 256 -> khong tran
+    const spSafe = cpu12a.simulateDeepRecursion(10, 16);
+    check('Đệ quy AN TOÀN (10×16=160 byte < 256): SP lùi đúng 160 byte', stackTop12 - spSafe, 160);
+    check('Watermark sau đệ quy an toàn = 160 (đúng độ sâu đã dùng)', cpu12a.stackWatermarkBytes(), 160);
+    checkTrue('Victim VẪN NGUYÊN VẸN sau đệ quy an toàn (không tràn)', cpu12a.read32(victimAddr) === 0xdeadbeef);
+
+    // De quy TRAN: 20 tang x 16 byte = 320 byte > 256 cap cho stack -> an vao vung ke tiep (victim)
+    const cpu12b = new VMCU();
+    cpu12b.initStackRegion(stackTop12, stackSize12);
+    cpu12b.write32(victimAddr, 0xdeadbeef);
+    const spOverflow = cpu12b.simulateDeepRecursion(20, 16);
+    check('Đệ quy TRÀN (20×16=320 byte > 256): SP lùi đúng 320 byte (vượt cả vùng cấp)', stackTop12 - spOverflow, 320);
+    check('Watermark KHÔNG thể vượt quá kích thước vùng đã sơn canary (kẹp ở 256)', cpu12b.stackWatermarkBytes(), 256);
+    checkTrue(
+      'Pitfall verified: Victim (.bss giả định) bị GHI ĐÈ ÂM THẦM sau khi tràn — KHÔNG còn 0xDEADBEEF',
+      cpu12b.read32(victimAddr) !== 0xdeadbeef
+    );
+    check(
+      'Victim bị ghi đè thành đúng giá trị 0x00000000 (dữ liệu frame đệ quy ghi vào)',
+      cpu12b.read32(victimAddr),
+      0
     );
   }
 

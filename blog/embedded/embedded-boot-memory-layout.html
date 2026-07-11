@@ -1,0 +1,1127 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 12: Boot &amp; bản đồ bộ nhớ chương trình — js-tools</title>
+    <meta
+      name="description"
+      content="Trước main() là gì: reset vector đọc SP + Reset_Handler, chép .data từ Flash sang RAM, xoá trắng .bss, rồi mới gọi main(). Bốn section .text/.rodata/.data/.bss — verified quy tắc phân loại thật: biến toàn cục khởi tạo bằng 0 rơi vào .bss chứ không phải .data, quên const khiến bảng tra cứu lớn ngốn RAM thay vì nằm Flash. Stack mọc xuống từ đỉnh RAM, heap mọc lên sau .bss — không MMU nghĩa là đệ quy sâu tràn stack ăn mòn .bss âm thầm, verified bằng kỹ thuật watermark canary thật trên VMCU: đệ quy an toàn giữ biến nguyên vẹn, đệ quy tràn ghi đè biến toàn cục thành 0 không báo lỗi gì cả."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-boot-memory-layout" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-boot-memory-layout" />
+    <meta property="og:title" content="Bài 12: Boot &amp; bản đồ bộ nhớ chương trình — js-tools" />
+    <meta
+      property="og:description"
+      content="Trước main() là gì: reset vector đọc SP + Reset_Handler, chép .data từ Flash sang RAM, xoá trắng .bss. Bốn section .text/.rodata/.data/.bss — verified: biến toàn cục =0 rơi vào .bss chứ không phải .data, quên const khiến bảng tra cứu ngốn RAM. Stack mọc xuống, heap mọc lên — không MMU nghĩa là đệ quy sâu tràn stack ăn mòn .bss âm thầm, verified bằng watermark canary thật trên VMCU."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 12: Boot &amp; bản đồ bộ nhớ chương trình — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Trước main() là gì: reset vector đọc SP + Reset_Handler, chép .data từ Flash sang RAM, xoá trắng .bss. Bốn section .text/.rodata/.data/.bss — verified: biến toàn cục =0 rơi vào .bss chứ không phải .data, quên const khiến bảng tra cứu ngốn RAM. Stack mọc xuống, heap mọc lên — không MMU nghĩa là đệ quy sâu tràn stack ăn mòn .bss âm thầm, verified bằng watermark canary thật trên VMCU."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Boot & bản đồ bộ nhớ chương trình",
+        "description": "Trước main() là gì: reset vector đọc SP + Reset_Handler, chép .data từ Flash sang RAM, xoá trắng .bss. Bốn section .text/.rodata/.data/.bss — verified: biến toàn cục =0 rơi vào .bss chứ không phải .data, quên const khiến bảng tra cứu ngốn RAM. Stack mọc xuống, heap mọc lên — không MMU nghĩa là đệ quy sâu tràn stack ăn mòn .bss âm thầm, verified bằng watermark canary thật trên VMCU.",
+        "url": "https://js-tools.org/blog/embedded/embedded-boot-memory-layout",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-22"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 12 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">Boot &amp; bản đồ bộ nhớ chương trình</h1>
+          <div class="article-hero__meta">22 tháng 7, 2026 · 23 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: ai chạy trước cả <code>main()</code>?</h2>
+            <p>
+              Suốt 11 bài vừa qua, mọi thứ đều bắt đầu từ <code>main()</code> — như thể nó là điểm khởi đầu tuyệt đối
+              của chương trình. Nhưng một câu hỏi đơn giản sẽ lật ngược giả định đó: một biến toàn cục như
+              <code>int volume = 7;</code> lấy đâu ra giá trị <code>7</code> ngay khi <code>main()</code> vừa bắt đầu
+              chạy, trong khi RAM mất điện là trắng xoá hoàn toàn? Câu trả lời là có cả một đoạn code chạy
+              <strong>TRƯỚC</strong> <code>main()</code> mà bạn chưa từng viết — do trình biên dịch và linker tự sinh
+              ra, âm thầm chuẩn bị sẵn cả bộ nhớ trước khi giao quyền điều khiển lại cho bạn.
+            </p>
+            <p>
+              Bài này mổ xẻ chính xác điều gì xảy ra giữa lúc cấp nguồn và dòng code đầu tiên của <code>main()</code>,
+              bản đồ bộ nhớ chương trình chia ra sao, và một pitfall nguy hiểm bậc nhất của lập trình nhúng: không có
+              MMU bảo vệ nghĩa là một lỗi đệ quy sâu có thể âm thầm ghi đè lên dữ liệu của bạn mà không hề có một thông
+              báo lỗi nào.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-mcu-anatomy">Bài 1</a> (bản đồ bộ nhớ tổng quan),
+                <a href="embedded-interrupts-nvic">Bài 7</a> (vector table — Mục 1 bài này dùng lại đúng khái niệm đó
+                cho vector reset). <strong>Nên biết thêm:</strong> phạm vi biến và con trỏ trong C.
+              </div>
+            </div>
+
+            <h2>1. Trước <code>main()</code> là gì</h2>
+            <p>
+              Nhớ lại vector table của <a href="embedded-interrupts-nvic">Bài 7</a>: một mảng con trỏ hàm nằm đầu Flash,
+              mỗi ô ứng với một loại ngắt. Ô ĐẦU TIÊN của mảng đó (địa chỉ 0x00000000) không phải một ngắt thông thường
+              — nó chứa giá trị khởi đầu của <strong>Stack Pointer (SP)</strong>, và ô thứ hai chứa địa chỉ của
+              <strong>Reset_Handler</strong>. Khi vừa cấp nguồn hoặc reset, CPU làm đúng 3 việc trước khi chạm vào bất
+              kỳ dòng code nào của bạn:
+            </p>
+            <ol>
+              <li>Đọc ô đầu vector table, nạp giá trị đó vào thanh ghi SP — stack đã có "đỉnh" để bắt đầu.</li>
+              <li>Đọc ô thứ hai, nhảy tới đó — đây chính là <code>Reset_Handler</code>, đoạn code khởi động.</li>
+              <li>
+                <code>Reset_Handler</code> làm 2 việc quan trọng:
+                <strong>chép <code>.data</code> từ Flash sang RAM</strong> (giá trị khởi tạo thật của các biến toàn cục
+                ≠ 0), rồi <strong>xoá trắng <code>.bss</code></strong> (đặt về 0 toàn bộ) — chỉ sau đó mới gọi
+                <code>main()</code>.
+              </li>
+            </ol>
+            <p>
+              Câu hỏi mở đầu giờ có lời giải: <code>volume = 7</code> lấy giá trị <code>7</code> từ một bản sao được lưu
+              SẴN trong Flash (không mất khi cúp điện), và <code>Reset_Handler</code> chép đúng giá trị đó sang RAM
+              trước khi <code>main()</code> kịp chạy dòng đầu tiên.
+            </p>
+
+            <h2>2. Các section — nhà của từng loại biến</h2>
+            <p>Trình biên dịch và linker xếp mọi thứ trong chương trình vào 4 "khu" cố định, mỗi khu có luật riêng:</p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>Chứa gì</th>
+                  <th>Nằm ở</th>
+                  <th>Ví dụ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>.text</code></td>
+                  <td>Mã máy đã biên dịch</td>
+                  <td>Flash</td>
+                  <td>Mọi hàm bạn viết</td>
+                </tr>
+                <tr>
+                  <td><code>.rodata</code></td>
+                  <td>Hằng số (<code>const</code>)</td>
+                  <td>Flash</td>
+                  <td><code>const int TABLE[100] = {...};</code></td>
+                </tr>
+                <tr>
+                  <td><code>.data</code></td>
+                  <td>Biến toàn cục khởi tạo ≠ 0</td>
+                  <td>RAM (bản sao chép từ Flash)</td>
+                  <td><code>int volume = 7;</code></td>
+                </tr>
+                <tr>
+                  <td><code>.bss</code></td>
+                  <td>Biến toàn cục = 0 hoặc chưa khởi tạo</td>
+                  <td>RAM (chỉ cấp chỗ, không cần lưu giá trị)</td>
+                  <td><code>int counter;</code> hoặc <code>int flag = 0;</code></td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Một chi tiết hay bị bỏ sót: <code>int flag = 0;</code> ở phạm vi toàn cục thường KHÔNG rơi vào
+              <code>.data</code> dù có viết <code>= 0</code> tường minh — trình biên dịch đủ thông minh để nhận ra bước
+              xoá trắng <code>.bss</code> (Mục 1) đã lo sẵn giá trị 0, nên xếp nó vào <code>.bss</code> luôn cho đỡ tốn
+              chỗ trong ảnh <code>.data</code> phải nạp vào Flash. Verify: <code>classifySection</code> trên VMCU trả về
+              đúng <code>.bss</code> cho cả hai trường hợp "khởi tạo bằng 0" và "không khởi tạo".
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall verified: quên <code>const</code> cho bảng tra cứu lớn</div>
+              <div class="callout__content">
+                Một bảng tra cứu 100 phần tử viết <code>int TABLE[100] = {...};</code> (thiếu <code>const</code>) rơi
+                thẳng vào <code>.data</code> — chiếm cả chỗ trong Flash (bản gốc) LẪN RAM (bản sao được chép mỗi lần
+                khởi động), dù không bao giờ bị ghi trong suốt vòng đời chương trình. Chỉ cần thêm đúng 1 từ khoá
+                <code>const</code>, cùng bảng đó chuyển thẳng sang <code>.rodata</code> — ở lại Flash, KHÔNG tốn một
+                byte RAM nào. Với MCU chỉ có vài chục KB RAM, đây là lỗi có thể khiến chương trình hết RAM một cách khó
+                hiểu.
+              </div>
+            </div>
+
+            <h2>3. Linker script — bản thiết kế bộ nhớ ở mức đọc-hiểu</h2>
+            <p>
+              Linker script là file cấu hình cho linker biết bộ nhớ thật của chip trông ra sao, gồm 2 khối chính: khối
+              <strong>MEMORY</strong> khai báo từng vùng nhớ (tên, <code>ORIGIN</code> — địa chỉ bắt đầu,
+              <code>LENGTH</code> — dung lượng), và khối <strong>SECTIONS</strong> quy định mỗi section ở Mục 2 rơi vào
+              vùng nào.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">linker_script_minh_hoa.ld</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">MEMORY {
+  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 128K
+  RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 20K
+}
+
+SECTIONS {
+  .text   : { *(.text) *(.rodata) } > FLASH   /* code + hang so - o Flash */
+  .data   : { *(.data) } > RAM AT > FLASH      /* RAM chay, nhung NAP tu Flash */
+  .bss    : { *(.bss)  } > RAM                 /* chi can cho, khong can noi dung */
+}</code></pre>
+            </div>
+            <p>
+              Cú pháp <code>&gt; RAM AT &gt; FLASH</code> cho <code>.data</code> chính là chìa khoá của bước chép ở Mục
+              1: <strong>LMA</strong> (Load Memory Address — nơi dữ liệu NẰM SẴN khi nạp firmware, tức Flash) và
+              <strong>VMA</strong> (Virtual/run Memory Address — nơi chương trình THỰC SỰ đọc/ghi khi chạy, tức RAM) là
+              hai địa chỉ KHÁC NHAU cho cùng một section. Đây chính xác là lý do bước copy <code>.data</code>
+              tồn tại: không có nó, chương trình sẽ đọc nhầm vào Flash (đúng địa chỉ LMA) thay vì bản RAM sống động
+              (VMA) mà nó cần ghi/đọc lúc chạy.
+            </p>
+
+            <h2>4. Stack &amp; heap trong nhúng</h2>
+            <p>
+              Trong không gian RAM còn lại sau <code>.data</code>/<code>.bss</code>, hai vùng nữa cùng tồn tại nhưng mọc
+              theo <strong>hai hướng ngược nhau</strong>: <strong>heap</strong> mọc LÊN (địa chỉ tăng dần) ngay sau
+              <code>.bss</code>, còn <strong>stack</strong> mọc XUỐNG (địa chỉ giảm dần) từ đỉnh RAM. Ý tưởng: nếu cả
+              hai không bao giờ gặp nhau, RAM được dùng hiệu quả nhất có thể mà không cần biết trước chính xác mỗi bên
+              cần bao nhiêu.
+            </p>
+            <p>
+              Firmware nghiêm túc gần như luôn NÉ <code>malloc</code>: bộ cấp phát động gây phân mảnh theo thời gian,
+              thời gian cấp phát không tất định (tệ cho hệ thời gian thực), và tệ nhất — hết heap thường xảy ra ở một
+              thời điểm ngẫu nhiên sau hàng giờ/hàng ngày chạy ổn định, không phải ngay khi khởi động. Thay vào đó,
+              firmware ưu tiên cấp phát TĨNH (biến toàn cục, mảng kích thước cố định) — biết chắc chắn ngay từ lúc biên
+              dịch RAM có đủ hay không.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Pitfall chí mạng: KHÔNG có MMU — stack tràn ăn mòn <code>.bss</code> âm thầm
+              </div>
+              <div class="callout__content">
+                Trên máy tính lớn, một chương trình đọc/ghi ra ngoài vùng nhớ được cấp sẽ bị hệ điều hành (qua MMU) chặn
+                lại ngay lập tức bằng lỗi segfault. MCU tầm thấp KHÔNG có MMU — không có gì kiểm tra hay ngăn cản việc
+                Stack Pointer tụt xuống dưới vùng đã cấp cho nó. Nếu điều đó xảy ra (thường do đệ quy quá sâu hoặc mảng
+                cục bộ quá lớn), stack sẽ ghi đè trực tiếp lên bất cứ thứ gì nằm liền kề — thường là
+                <code>.bss</code> — và chương trình KHÔNG BÁO LỖI GÌ CẢ, chỉ đơn giản "chạy tiếp mà dữ liệu sai". Đây là
+                một trong những loại bug khó chẩn đoán nhất trong nghề: một biến toàn cục "tự nhiên" đổi giá trị ở một
+                chỗ hoàn toàn không liên quan tới code vừa sửa.
+              </div>
+            </div>
+            <p>
+              Kỹ thuật phòng thủ tiêu chuẩn: <strong>canary &amp; watermark</strong>. Trước khi chạy, "sơn" toàn bộ vùng
+              stack bằng một byte cố định dễ nhận ra (ví dụ <code>0xCD</code>). Sau một thời gian chạy, quét từ đáy vùng
+              stack lên: đếm số byte canary CÒN NGUYÊN — phần còn lại chính là "mực nước" (watermark) sâu nhất stack
+              từng chạm tới. Nếu watermark tiệm cận sát kích thước đã cấp, đó là tín hiệu cảnh báo sớm trước khi tràn
+              thật sự xảy ra.
+            </p>
+
+            <h2>5. Thực hành: Memory Layout Visualizer</h2>
+            <p>
+              Demo dưới đây chạy trên VMCU thật: phân loại khai báo vào đúng section, xem bản đồ RAM dựng theo tỷ lệ, và
+              tự tay kích hoạt một vụ tràn stack ăn vào biến toàn cục để thấy pitfall Mục 4 xảy ra thật:
+            </p>
+
+            <div class="code-tabs" id="boot-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🗺️ Memory Layout Visualizer — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">1. Phân loại khai báo vào section</p>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px">
+                    <button class="mux-input-btn" type="button" data-preset="func">int main(void) {…}</button>
+                    <button class="mux-input-btn" type="button" data-preset="local">int i; (trong hàm)</button>
+                    <button class="mux-input-btn" type="button" data-preset="const">const int TABLE[100]</button>
+                    <button class="mux-input-btn" type="button" data-preset="nonzero">int volume = 7;</button>
+                    <button class="mux-input-btn" type="button" data-preset="zero">int flag = 0;</button>
+                    <button class="mux-input-btn" type="button" data-preset="uninit">int counter;</button>
+                    <button class="mux-input-btn" type="button" data-preset="pitfall">
+                      int TABLE[100] (quên const!)
+                    </button>
+                  </div>
+                  <div id="section-result" class="mux-demo__output">Bấm một khai báo phía trên để phân loại.</div>
+
+                  <p style="margin: 18px 0 8px; font-size: 14px; font-weight: 600">
+                    2. Bản đồ bộ nhớ RAM (theo tỷ lệ thật)
+                  </p>
+                  <div
+                    id="memory-map-bar"
+                    style="display: flex; height: 40px; border-radius: 6px; overflow: hidden; margin-bottom: 6px"
+                  ></div>
+                  <div
+                    id="memory-map-legend"
+                    style="font-size: 11px; display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px"
+                  ></div>
+
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    3. Thí nghiệm tràn stack — canary &amp; watermark
+                  </p>
+                  <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap">
+                    <label style="font-size: 13px">Độ sâu đệ quy: <span id="depth-label">10</span></label>
+                    <input
+                      type="range"
+                      id="depth-slider"
+                      min="1"
+                      max="30"
+                      step="1"
+                      value="10"
+                      style="flex: 1; min-width: 140px"
+                    />
+                    <label style="font-size: 13px">Byte/tầng: <span id="frame-label">16</span></label>
+                    <input
+                      type="range"
+                      id="frame-slider"
+                      min="4"
+                      max="32"
+                      step="4"
+                      value="16"
+                      style="flex: 1; min-width: 140px"
+                    />
+                    <button class="mux-input-btn" type="button" id="run-recursion-btn">▶️ Chạy đệ quy</button>
+                  </div>
+                  <div
+                    id="stack-viz"
+                    style="
+                      height: 28px;
+                      border-radius: 6px;
+                      overflow: hidden;
+                      background: rgba(0, 0, 0, 0.15);
+                      margin-bottom: 6px;
+                      position: relative;
+                    "
+                  ></div>
+                  <div id="stack-result" class="mux-demo__output">Đang tải…</div>
+                  <p class="mux-demo__hint">
+                    Stack cấp 256 byte. 10 tầng × 16 byte = 160 byte (an toàn). Kéo lên 20 tầng × 16 byte = 320 byte
+                    (vượt 256) để thấy biến "victim" ngay dưới đáy stack bị ghi đè âm thầm — không có lỗi nào được báo.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">startup_reset_handler.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// Ky hieu do LINKER tu sinh, danh dau bien duoc dinh nghia o dau (khong phai bien C thuong)
+extern uint32_t _sidata; // dia chi LMA: noi anh .data nam trong Flash
+extern uint32_t _sdata, _edata; // dia chi VMA: dau/cuoi .data trong RAM
+extern uint32_t _sbss, _ebss;   // dau/cuoi .bss trong RAM
+
+void Reset_Handler(void) {
+    // Buoc 1: chep .data tu Flash (LMA) sang RAM (VMA)
+    uint32_t *src = &_sidata;
+    uint32_t *dst = &_sdata;
+    while (dst < &_edata) *dst++ = *src++;
+
+    // Buoc 2: xoa trang .bss ve 0
+    dst = &_sbss;
+    while (dst < &_ebss) *dst++ = 0;
+
+    main(); // CHI SAU KHI ca 2 buoc tren xong moi goi main()
+}
+
+// Pitfall Muc 2: thieu const khien bang nay roi vao .data thay vi .rodata
+int BANG_TRA_CUU[100] = { /* ... */ };          // <- SAI: .data, ton RAM
+const int BANG_TRA_CUU_DUNG[100] = { /* ... */ }; // <- DUNG: .rodata, o Flash</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">memory_layout_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { classifySection, buildMemoryLayout, VMCU, MEMORY_MAP } from './vmcu.js';
+
+console.log(classifySection({ kind: 'function' }));                              // .text
+console.log(classifySection({ storage: 'global', isConst: false, initValue: 0 })); // .bss
+console.log(classifySection({ storage: 'global', isConst: true, initValue: 99 })); // .rodata
+
+const ram = MEMORY_MAP.find((r) => r.kind === 'ram');
+const layout = buildMemoryLayout({
+  ramBase: ram.base, ramSize: ram.size,
+  dataVars: [{ name: 'g_volume', size: 4 }],
+  bssVars: [{ name: 'g_buffer', size: 200 }],
+  stackSizeBytes: 256,
+});
+
+// Thi nghiem tran stack that tren VMCU:
+const cpu = new VMCU();
+const stackTop = ram.base + ram.size;
+cpu.initStackRegion(stackTop, 256);
+const victimAddr = stackTop - 256 - 4; // "bien toan cuc" ngay duoi day stack
+cpu.write32(victimAddr, 0xdeadbeef);
+cpu.simulateDeepRecursion(20, 16); // 320 byte > 256 -> tran
+console.log(cpu.read32(victimAddr).toString(16)); // KHONG con la deadbeef nua!</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Trước <code>main()</code>: <code>Reset_Handler</code> đọc SP + địa chỉ khởi động từ vector table,
+                chép <code>.data</code> từ Flash sang RAM, xoá trắng <code>.bss</code> — chỉ sau đó mới gọi
+                <code>main()</code>.
+              </li>
+              <li>
+                ✅ 4 section: <code>.text</code>/<code>.rodata</code> ở Flash, <code>.data</code>/<code>.bss</code> ở
+                RAM — verified: biến khởi tạo bằng 0 rơi vào <code>.bss</code> chứ không phải <code>.data</code>; quên
+                <code>const</code> cho bảng lớn khiến nó ngốn cả Flash lẫn RAM thay vì chỉ Flash.
+              </li>
+              <li>
+                ✅ Linker script: khối MEMORY + SECTIONS; <strong>LMA</strong> (nơi nạp, Flash) vs
+                <strong>VMA</strong> (nơi chạy, RAM) khác nhau cho <code>.data</code> — đúng lý do bước chép tồn tại.
+              </li>
+              <li>
+                ✅ Stack mọc xuống từ đỉnh RAM, heap mọc lên sau <code>.bss</code>; firmware né
+                <code>malloc</code> (phân mảnh, thời gian không tất định). Pitfall chí mạng: KHÔNG MMU — tràn stack ăn
+                <code>.bss</code>
+                âm thầm, không báo lỗi. Verified: đệ quy 320 byte vượt cấp phát 256 byte ghi đè biến toàn cục thành 0
+                không một cảnh báo nào; canary/watermark là cách phát hiện sớm.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao <code>Reset_Handler</code> phải chép <code>.data</code> từ Flash sang RAM TRƯỚC khi gọi
+                <code>main()</code>, thay vì để biến toàn cục tự "có sẵn" giá trị khởi tạo?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! RAM mat noi dung khi cup dien - gia tri khoi tao THAT (vd 7) chi ton tai on dinh trong Flash. Reset_Handler phai tu tay chep dung gia tri do sang dia chi RAM (VMA) ma chuong trinh se doc/ghi luc chay, truoc khi main() kip cham vao bien do.'
+                    )
+                  "
+                >
+                  A. Vì RAM mất nội dung khi mất điện — giá trị khởi tạo thật chỉ tồn tại ổn định trong Flash, và phải
+                  được chép sang đúng địa chỉ RAM trước khi chương trình đọc/ghi biến đó
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'CPU khong the doc/ghi truc tiep vao Flash trong luc chay firmware giong RAM - Flash la vung CHI DOC qua bus thuong (nhu Bai 1 da noi). Day khong phai ly do can chep .data.'
+                    )
+                  "
+                >
+                  B. Vì CPU không thể đọc trực tiếp từ Flash trong lúc chương trình đang chạy
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      '.data khong he lien quan gi den toc do CPU - day la van de VE NOI LUU TRU ON DINH cua gia tri khoi tao (RAM mat dien, Flash thi khong), khong phai toc do truy cap.'
+                    )
+                  "
+                >
+                  C. Vì RAM chạy chậm hơn Flash nên cần thời gian "làm nóng" trước
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: <code>int flag = 0;</code> ở phạm vi toàn cục thường rơi vào <code>.bss</code>, KHÔNG phải
+                <code>.data</code>, dù có viết tường minh <code>= 0</code>. Vì sao?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Buoc xoa trang .bss ve 0 (Muc 1) da xay ra TRUOC main() du sao - trinh bien dich &quot;biet&quot; dieu do nen khong can lang phi cho trong anh .data (phai nap vao Flash) chi de luu lai gia tri 0 ma .bss se tu tao ra mien phi. Ket qua: bien khoi tao bang 0 duoc xep chung vao .bss voi bien KHONG khoi tao.'
+                    )
+                  "
+                >
+                  A. Vì bước xoá trắng .bss về 0 đã xảy ra trước main() rồi — trình biên dịch tận dụng luôn bước đó thay
+                  vì tốn thêm chỗ trong ảnh .data chỉ để lưu lại giá trị 0
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Gia tri 0 khong he dac biet ve mat CU PHAP C - &quot;= 0&quot; la mot khoi tao HOP LE binh thuong. Van de nam o toi uu hoa CHO TRO cua trinh bien dich/linker, khong phai loi cu phap.'
+                    )
+                  "
+                >
+                  B. Vì giá trị 0 là một lỗi cú pháp C không hợp lệ khi khởi tạo tường minh
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca hai section deu nam trong RAM nhu nhau (khong phai Flash) - khac biet la .data CAN mot ban sao gia tri that trong anh Flash de chep sang, con .bss thi KHONG can vi da duoc xoa ve 0 san.'
+                    )
+                  "
+                >
+                  C. Vì .bss nằm ở Flash còn .data nằm ở RAM, nên giá trị 0 luôn ưu tiên Flash
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                LMA (Load Memory Address) và VMA (Virtual/run Memory Address) của section <code>.data</code> là hai địa
+                chỉ KHÁC NHAU. Ý nghĩa của sự khác biệt này là gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! LMA la noi anh .data NAM SAN trong Flash luc nap firmware; VMA la dia chi RAM ma chuong trinh THAT SU doc/ghi luc chay. Hai dia chi khac nhau CHINH LA ly do buoc chep o Muc 1 ton tai - khong co no, chuong trinh se doc nham vao dia chi Flash (LMA) thay vi ban RAM song dong (VMA).'
+                    )
+                  "
+                >
+                  A. LMA là nơi dữ liệu nằm sẵn trong Flash khi nạp firmware, còn VMA là địa chỉ RAM chương trình thực
+                  sự đọc/ghi lúc chạy — chính sự khác biệt này là lý do bước chép .data tồn tại
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'LMA/VMA khong lien quan gi den toc do doc/ghi - day la khai niem VE VI TRI (dia chi nao) chu khong phai VE TOC DO truy cap.'
+                    )
+                  "
+                >
+                  B. LMA là địa chỉ đọc nhanh, VMA là địa chỉ ghi nhanh — trình biên dịch tự chọn cái phù hợp
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'LMA/VMA chi ap dung dung 1 lan luc boot (buoc chep .data) - khong phai co che chuyen doi lien tuc trong luc chuong trinh dang chay binh thuong.'
+                    )
+                  "
+                >
+                  C. LMA dùng khi chương trình chạy ban ngày, VMA dùng ban đêm để tiết kiệm điện
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Verified: một đệ quy 20 tầng × 16 byte/tầng (320 byte) vượt quá 256 byte đã cấp cho stack đã ghi đè một
+                biến toàn cục thành 0 mà KHÔNG có bất kỳ lỗi hay cảnh báo nào xuất hiện. Vì sao MCU không tự phát hiện
+                và chặn lỗi này lại như một máy tính lớn vẫn làm?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! MMU (bo phan kiem tra/chan truy cap ngoai vung duoc cap, thuong co tren may tinh lon) KHONG TON TAI tren hau het MCU tam thap. Khong co gi kiem tra dia chi truoc khi ghi - CPU don gian ghi vao bat ky dia chi RAM hop le nao duoc dua, du no thuoc &quot;vung&quot; nao theo quy uoc phan mem.'
+                    )
+                  "
+                >
+                  A. Vì MCU tầm thấp không có MMU — không có phần cứng nào kiểm tra hay chặn việc ghi ra ngoài vùng đã
+                  cấp, CPU cứ ghi vào bất kỳ địa chỉ RAM hợp lệ nào được đưa ra
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Toc do CPU khong lien quan gi den viec phat hien tran stack - day la van de VE PHAN CUNG BAO VE BO NHO (MMU) co ton tai hay khong, khong phai toc do xu ly.'
+                    )
+                  "
+                >
+                  B. Vì MCU chạy quá nhanh nên không kịp kiểm tra lỗi tràn stack
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Day khong phai &quot;tinh nang&quot; duoc thiet ke co chu dich - day la mot GIOI HAN PHAN CUNG (khong co MMU) khien loi nay khong the tu dong phat hien duoc, chinh la ly do ky thuat canary/watermark duoc dung de PHONG THU thu cong.'
+                    )
+                  "
+                >
+                  C. Vì đây là tính năng được thiết kế có chủ đích để tiết kiệm chi phí sản xuất chip
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 12 vừa thêm phân loại
+                section (<code>classifySection</code>), dựng bản đồ bộ nhớ (<code>buildMemoryLayout</code>), và mô phỏng
+                canary/watermark chống tràn stack, kèm self-test đối chiếu đúng mọi hành vi trong bài (chạy
+                <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Data_segment" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Data segment (.data, .bss, .rodata, .text)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://sourceware.org/binutils/docs/ld/Scripts.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    GNU Binutils — Linker script format (ld)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Stack_overflow" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Stack overflow &amp; canary values
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-dma" class="article-related__link article-related__link--prev">
+                  Bài 11: DMA — chuyển dữ liệu không cần CPU
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 13: Super-loop vs Cooperative Scheduler — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { classifySection, buildMemoryLayout, VMCU, MEMORY_MAP } from './vmcu.js';
+
+      // ==== Demo 1: phân loại section ====
+      const PRESETS = {
+        func: { decl: { kind: 'function' }, label: 'int main(void) {…}' },
+        local: { decl: { storage: 'local' }, label: 'int i; (biến cục bộ trong hàm)' },
+        const: { decl: { storage: 'global', isConst: true, initValue: 99 }, label: 'const int TABLE[100] = {...};' },
+        nonzero: { decl: { storage: 'global', isConst: false, initValue: 7 }, label: 'int volume = 7;' },
+        zero: { decl: { storage: 'global', isConst: false, initValue: 0 }, label: 'int flag = 0;' },
+        uninit: { decl: { storage: 'global', isConst: false, initValue: null }, label: 'int counter;' },
+        pitfall: {
+          decl: { storage: 'global', isConst: false, initValue: 99 },
+          label: 'int TABLE[100] = {...}; (QUÊN const!)',
+        },
+      };
+      const SECTION_COLORS = {
+        '.text': '#8b5cf6',
+        '.rodata': '#06b6d4',
+        '.data': '#f59e0b',
+        '.bss': '#22c55e',
+        stack: '#ef4444',
+      };
+
+      document.querySelectorAll('[data-preset]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const preset = PRESETS[btn.dataset.preset];
+          const section = classifySection(preset.decl);
+          const el = document.getElementById('section-result');
+          const color = SECTION_COLORS[section] || '#94a3b8';
+          el.innerHTML =
+            '<code>' +
+            preset.label +
+            '</code> &nbsp;→&nbsp; <strong style="color:' +
+            color +
+            '">' +
+            section +
+            '</strong>' +
+            (btn.dataset.preset === 'pitfall'
+              ? ' &nbsp;⚠️ Ngốn cả Flash lẫn RAM — thêm <code>const</code> để chuyển sang <code>.rodata</code>!'
+              : '');
+        });
+      });
+
+      // ==== Demo 2: bản đồ bộ nhớ RAM theo tỷ lệ thật ====
+      const ramRegion = MEMORY_MAP.find((r) => r.kind === 'ram');
+      const layout = buildMemoryLayout({
+        ramBase: ramRegion.base,
+        ramSize: ramRegion.size,
+        dataVars: [{ name: 'g_volume', size: 4 }],
+        bssVars: [{ name: 'g_buffer', size: 200 }],
+        stackSizeBytes: 256,
+      });
+
+      function renderMemoryMap() {
+        const total = ramRegion.size;
+        const segments = [
+          { label: '.data (' + layout.dataSize + 'B)', size: layout.dataSize, color: SECTION_COLORS['.data'] },
+          { label: '.bss (' + layout.bssSize + 'B)', size: layout.bssSize, color: SECTION_COLORS['.bss'] },
+          { label: 'heap (' + layout.heapSize.toLocaleString('vi-VN') + 'B)', size: layout.heapSize, color: '#64748b' },
+          {
+            label: 'stack (' + layout.stackSizeBytes + 'B, cấp sẵn)',
+            size: layout.stackSizeBytes,
+            color: SECTION_COLORS.stack,
+          },
+        ];
+        const bar = document.getElementById('memory-map-bar');
+        bar.innerHTML = segments
+          .map((s) => '<div style="width:' + (s.size / total) * 100 + '%; background:' + s.color + ';"></div>')
+          .join('');
+        const legend = document.getElementById('memory-map-legend');
+        legend.innerHTML = segments
+          .map(
+            (s) =>
+              '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' +
+              s.color +
+              ';margin-right:4px;"></span>' +
+              s.label +
+              '</span>'
+          )
+          .join('');
+      }
+      renderMemoryMap();
+
+      // ==== Demo 3: canary/watermark — thí nghiệm tràn stack ăn vào .bss ====
+      const stackTop = ramRegion.base + ramRegion.size;
+      const STACK_SIZE = 256;
+      const victimAddr = stackTop - STACK_SIZE - 4;
+
+      function renderStackViz(cpu) {
+        const watermark = cpu.stackWatermarkBytes();
+        const pct = Math.min(100, (watermark / STACK_SIZE) * 100);
+        const viz = document.getElementById('stack-viz');
+        viz.innerHTML =
+          '<div style="position:absolute; right:0; top:0; bottom:0; width:' +
+          pct +
+          '%; background:' +
+          (watermark >= STACK_SIZE ? '#ef4444' : '#22c55e') +
+          ';"></div>' +
+          '<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);">watermark: ' +
+          watermark +
+          ' / ' +
+          STACK_SIZE +
+          ' byte</div>';
+      }
+
+      function runRecursion() {
+        const depth = Number.parseInt(document.getElementById('depth-slider').value, 10);
+        const frame = Number.parseInt(document.getElementById('frame-slider').value, 10);
+        const cpu = new VMCU();
+        cpu.initStackRegion(stackTop, STACK_SIZE);
+        cpu.write32(victimAddr, 0xdeadbeef);
+        cpu.simulateDeepRecursion(depth, frame);
+        renderStackViz(cpu);
+        const victimNow = cpu.read32(victimAddr);
+        const totalBytes = depth * frame;
+        const resultEl = document.getElementById('stack-result');
+        if (victimNow === 0xdeadbeef) {
+          resultEl.innerHTML =
+            '✅ AN TOÀN — ' +
+            totalBytes +
+            ' byte (' +
+            depth +
+            '×' +
+            frame +
+            ') vẫn trong 256 byte cấp phát. Victim = 0x' +
+            victimNow.toString(16).toUpperCase();
+          resultEl.style.color = '#22c55e';
+        } else {
+          resultEl.innerHTML =
+            '💥 TRÀN STACK — ' +
+            totalBytes +
+            ' byte vượt quá 256 byte cấp phát. Victim (biến toàn cục giả định) bị ghi đè: 0x' +
+            victimNow.toString(16).toUpperCase() +
+            ' (KHÔNG còn 0xDEADBEEF, KHÔNG có lỗi nào được báo!)';
+          resultEl.style.color = '#ef4444';
+        }
+      }
+
+      document.getElementById('depth-slider').addEventListener('input', () => {
+        document.getElementById('depth-label').textContent = document.getElementById('depth-slider').value;
+      });
+      document.getElementById('frame-slider').addEventListener('input', () => {
+        document.getElementById('frame-label').textContent = document.getElementById('frame-slider').value;
+      });
+      document.getElementById('run-recursion-btn').addEventListener('click', runRecursion);
+      runRecursion();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
