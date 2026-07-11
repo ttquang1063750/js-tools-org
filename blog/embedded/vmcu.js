@@ -339,6 +339,111 @@ class VMCU {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Chống dội (debounce) & Máy trạng thái hữu hạn (Bài 5) — KHÔNG cần thêm
+// ngoại vi mới (tận dụng GPIOA của Bài 2-3 + tick của Bài 4). Đây là logic
+// FIRMWARE chạy TRÊN NỀN VMCU, không phải một thanh ghi phần cứng, nên sống
+// bên ngoài class VMCU, đúng như code C thật sống bên ngoài bản thân con chip.
+// ---------------------------------------------------------------------------
+
+const BTN_STATE_RELEASED = 0;
+const BTN_STATE_MAYBE_PRESSED = 1;
+const BTN_STATE_PRESSED = 2;
+const BTN_STATE_MAYBE_RELEASED = 3;
+
+// Máy trạng thái hữu hạn chống dội chuẩn firmware: enum state + switch, tách
+// SỰ KIỆN (cạnh đã lọc sạch) khỏi HÀNH ĐỘNG (người gọi tự quyết định làm gì
+// với sự kiện). Gọi sample() đúng 1 lần mỗi tick lấy mẫu (vd. mỗi 5ms) với
+// mức logic thô đọc từ IDR — có thể còn dội hoặc chưa. Chỉ công nhận trạng
+// thái mới sau khi thấy stableSamplesNeeded mẫu liên tiếp CÙNG một mức logic.
+class ButtonFSM {
+  constructor(stableSamplesNeeded = 5) {
+    this.stableSamplesNeeded = stableSamplesNeeded;
+    this.state = BTN_STATE_RELEASED;
+    this.counter = 0;
+  }
+
+  // rawPressed: true/false — mẫu thô 1 tick (đã bao gồm dội nếu có).
+  // Trả về: 'pressed' | 'released' | null (chưa có sự kiện sạch nào ở tick này).
+  sample(rawPressed) {
+    switch (this.state) {
+      case BTN_STATE_RELEASED:
+        if (rawPressed) {
+          this.state = BTN_STATE_MAYBE_PRESSED;
+          this.counter = 1;
+        }
+        return null;
+
+      case BTN_STATE_MAYBE_PRESSED:
+        if (!rawPressed) {
+          // Dội: mẫu chưa kịp ổn định đã quay lại mức cũ - huỷ ứng viên.
+          this.state = BTN_STATE_RELEASED;
+          this.counter = 0;
+          return null;
+        }
+        this.counter++;
+        if (this.counter >= this.stableSamplesNeeded) {
+          this.state = BTN_STATE_PRESSED;
+          this.counter = 0;
+          return 'pressed';
+        }
+        return null;
+
+      case BTN_STATE_PRESSED:
+        if (!rawPressed) {
+          this.state = BTN_STATE_MAYBE_RELEASED;
+          this.counter = 1;
+        }
+        return null;
+
+      case BTN_STATE_MAYBE_RELEASED:
+        if (rawPressed) {
+          this.state = BTN_STATE_PRESSED;
+          this.counter = 0;
+          return null;
+        }
+        this.counter++;
+        if (this.counter >= this.stableSamplesNeeded) {
+          this.state = BTN_STATE_RELEASED;
+          this.counter = 0;
+          return 'released';
+        }
+        return null;
+
+      default:
+        return null;
+    }
+  }
+}
+
+// MÔ PHỎNG vật lý bounce cho MỤC ĐÍCH DEMO/SELF-TEST — không có trên phần
+// cứng thật (lá kim loại thật nảy theo vật lý hỗn loạn, không theo mã có sẵn
+// này). Trả về mảng mẫu thô xen kẽ đúng/sai `numBounces` lần trước khi ổn
+// định hẳn ở finalPressed, mô phỏng dạng sóng nảy nhìn thấy trên oscilloscope.
+function simulateBouncedPress(finalPressed, numBounces = 3, settleSamples = 10) {
+  const samples = [];
+  let current = !finalPressed;
+  for (let i = 0; i < numBounces; i++) {
+    samples.push(current);
+    current = !current;
+  }
+  for (let i = 0; i < settleSamples; i++) samples.push(finalPressed);
+  return samples;
+}
+
+// Bộ đếm THÔ ngây thơ — đếm mọi cạnh lên (0->1) trong chuỗi mẫu thô, KHÔNG
+// lọc dội gì cả. Dùng để tái hiện đúng cạm bẫy "một nhấn đếm thành bảy" đã
+// hẹn từ Bài 3: input y hệt, nhưng đếm sai vì không debounce.
+function countRawRisingEdges(rawSamples) {
+  let count = 0;
+  let prev = false;
+  for (const s of rawSamples) {
+    if (s && !prev) count++;
+    prev = s;
+  }
+  return count;
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -358,6 +463,13 @@ export {
   GPIO_PULL_DOWN,
   SYST_CSR_ADDR,
   SYST_CSR_ENABLE_BIT,
+  BTN_STATE_RELEASED,
+  BTN_STATE_MAYBE_PRESSED,
+  BTN_STATE_PRESSED,
+  BTN_STATE_MAYBE_RELEASED,
+  ButtonFSM,
+  simulateBouncedPress,
+  countRawRisingEdges,
 };
 
 // ---------------------------------------------------------------------------
@@ -566,6 +678,64 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Công thức SAI (current >= start + interval) kết luận SAI ngay sau khi tràn số',
       naiveWrongResult === false
     );
+  }
+
+  // --- Chống dội & FSM (Bài 5) ---
+  {
+    // Chuỗi thô mô phỏng 1 lần nhấn thật: 3 lần dội trước khi ổn định ở
+    // pressed=true, giữ ổn định, rồi 3 lần dội khi thả trước khi ổn định lại.
+    const pressBounce = simulateBouncedPress(true, 3, 10);
+    const releaseBounce = simulateBouncedPress(false, 3, 10);
+    const oneFullPress = [...pressBounce, ...releaseBounce];
+
+    // Bộ đếm THÔ ngây thơ: đúng cạm bẫy "một nhấn đếm thành bảy" hẹn từ Bài 3.
+    const rawEdgeCount = countRawRisingEdges(oneFullPress);
+    checkTrue('Đếm thô (không debounce): dội tạo ra NHIỀU cạnh lên giả cho 1 nhấn thật', rawEdgeCount > 1);
+    check('Đếm thô cụ thể: dội cả lúc nhấn lẫn lúc thả -> đếm ra 3 cạnh lên giả cho 1 nhấn thật', rawEdgeCount, 3);
+
+    // FSM debounce: đúng 1 sự kiện 'pressed' và đúng 1 sự kiện 'released'
+    // dù đưa vào ĐÚNG chuỗi thô có dội y hệt bộ đếm ngây thơ ở trên.
+    const fsm = new ButtonFSM(5);
+    let pressedEvents = 0;
+    let releasedEvents = 0;
+    for (const raw of oneFullPress) {
+      const ev = fsm.sample(raw);
+      if (ev === 'pressed') pressedEvents++;
+      if (ev === 'released') releasedEvents++;
+    }
+    check('FSM debounce: đúng 1 sự kiện "pressed" dù input có dội', pressedEvents, 1);
+    check('FSM debounce: đúng 1 sự kiện "released" dù input có dội', releasedEvents, 1);
+
+    // Trạng thái ban đầu và chuyển tiếp đúng thứ tự (kiểm tra từng bước, không
+    // chỉ đếm sự kiện cuối cùng - xác nhận đúng cơ chế enum+switch của FSM).
+    const fsm2 = new ButtonFSM(3);
+    check('Reset: state = RELEASED', fsm2.state, BTN_STATE_RELEASED);
+    fsm2.sample(true);
+    check('Sau 1 mẫu pressed: state = MAYBE_PRESSED (chưa đủ ổn định)', fsm2.state, BTN_STATE_MAYBE_PRESSED);
+    fsm2.sample(false); // doi ngay lap tuc - huy ung vien
+    check('Dội ngay khi đang MAYBE_PRESSED: quay lại RELEASED, không có sự kiện', fsm2.state, BTN_STATE_RELEASED);
+
+    // Dội KHÔNG BAO GIỜ đủ N mẫu liên tiếp ổn định: không được phát sinh sự
+    // kiện nào cả (N=5 nhưng bounce chỉ giữ tối đa 1 mẫu mỗi mức trước khi đảo).
+    const fsmNeverStable = new ButtonFSM(5);
+    let neverStableEvents = 0;
+    const neverSettles = [true, false, true, false, true, false, true, false, true, false];
+    for (const raw of neverSettles) {
+      if (fsmNeverStable.sample(raw) !== null) neverStableEvents++;
+    }
+    check('Dội liên tục không bao giờ đủ N mẫu ổn định: không sự kiện nào cả', neverStableEvents, 0);
+
+    // Long-press: mở rộng chỉ bằng cách thêm 1 trạng thái - kiểm tra rằng ở
+    // trạng thái PRESSED ổn định, chân giữ nguyên pressed=true không tạo thêm
+    // sự kiện 'pressed' nào nữa (chỉ đúng 1 lần tại thời điểm chuyển trạng thái).
+    const fsm3 = new ButtonFSM(2);
+    fsm3.sample(true);
+    fsm3.sample(true); // chuyen sang PRESSED, phat sinh 'pressed'
+    let extraPressedEvents = 0;
+    for (let i = 0; i < 50; i++) {
+      if (fsm3.sample(true) !== null) extraPressedEvents++;
+    }
+    checkTrue('Giữ nút PRESSED lâu (mô phỏng long-press): không lặp lại sự kiện "pressed"', extraPressedEvents === 0);
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---
