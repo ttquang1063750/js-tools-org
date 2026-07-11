@@ -105,6 +105,29 @@ const GPIO_PULL_DOWN = 0b10; // keo xuong GND -> doc mac dinh la 0
 const SYST_CSR_ADDR = 0xe000e010;
 const SYST_CSR_ENABLE_BIT = 0; // bit 0: 1 = SysTick dang chay, 0 = dung (mac dinh reset)
 
+// ---------------------------------------------------------------------------
+// TIM1 + PWM (Bài 6) — ngoại vi ĐẶC THÙ HÃNG CHIP (khác SysTick), nằm trong
+// vùng Peripheral. Địa chỉ base và offset từng thanh ghi lấy ĐÚNG số thật của
+// TIM1 trên STM32F103 (APB2). VMCU chỉ mô hình hoá đúng phần cần cho PWM 1
+// kênh: CR1 (bit 0 CEN = bật/tắt bộ đếm), PSC (prescaler), ARR (auto-reload
+// — đặt chu kỳ), CCR1 (compare kênh 1 — đặt độ rộng xung cao). KHÔNG mô
+// phỏng CNT sống theo thời gian thực (không cần cho bài này — chỉ cần TÍNH
+// tần số/duty từ 4 thanh ghi, không cần chạy đồng hồ đến từng tick như
+// SysTick). f_clk lấy đúng xung nhịp APB2 timer thật của STM32F103 chạy tối
+// đa (72MHz) khi HCLK=72MHz (APB2 prescaler=1, timer clock = APB2 clock).
+// ---------------------------------------------------------------------------
+const TIM1_BASE = 0x40012c00;
+const TIM1_CR1_OFFSET = 0x00;
+const TIM1_PSC_OFFSET = 0x28;
+const TIM1_ARR_OFFSET = 0x2c;
+const TIM1_CCR1_OFFSET = 0x34;
+const TIM1_CR1_ADDR = TIM1_BASE + TIM1_CR1_OFFSET;
+const TIM1_PSC_ADDR = TIM1_BASE + TIM1_PSC_OFFSET;
+const TIM1_ARR_ADDR = TIM1_BASE + TIM1_ARR_OFFSET;
+const TIM1_CCR1_ADDR = TIM1_BASE + TIM1_CCR1_OFFSET;
+const TIM1_CR1_CEN_BIT = 0; // bit 0 cua CR1: 1 = bo dem dang chay, 0 = dung
+const TIM1_CLK_HZ = 72000000; // 72MHz - xung nhip APB2 timer tren STM32F103
+
 class HardFaultError extends Error {
   constructor(addr) {
     super('HardFault: dia chi 0x' + addr.toString(16).toUpperCase() + ' khong thuoc bat ky vung nho nao da anh xa');
@@ -154,6 +177,12 @@ class VMCU {
     // dùng làm mốc thời gian, KHÔNG phải thanh ghi thật (xem ghi chú ở trên).
     this.systCsr = 0;
     this.millis = 0;
+    // TIM1 (Bài 6): reset về 0 đúng hành vi thật — CR1=0 (bộ đếm dừng), PSC=0
+    // ARR=0 CCR1=0 (chưa cấu hình gì, PWM chưa chạy).
+    this.tim1Cr1 = 0;
+    this.tim1Psc = 0;
+    this.tim1Arr = 0;
+    this.tim1Ccr1 = 0;
   }
 
   // Đọc 1 byte trong 1 thanh ghi 32-bit lưu dạng số JS thường (little-endian,
@@ -247,6 +276,18 @@ class VMCU {
     if (addr >= GPIOA_ODR_ADDR && addr < GPIOA_ODR_ADDR + 4) {
       return this._readRegByte(this.gpioaOdr, addr - GPIOA_ODR_ADDR);
     }
+    if (addr >= TIM1_CR1_ADDR && addr < TIM1_CR1_ADDR + 4) {
+      return this._readRegByte(this.tim1Cr1, addr - TIM1_CR1_ADDR);
+    }
+    if (addr >= TIM1_PSC_ADDR && addr < TIM1_PSC_ADDR + 4) {
+      return this._readRegByte(this.tim1Psc, addr - TIM1_PSC_ADDR);
+    }
+    if (addr >= TIM1_ARR_ADDR && addr < TIM1_ARR_ADDR + 4) {
+      return this._readRegByte(this.tim1Arr, addr - TIM1_ARR_ADDR);
+    }
+    if (addr >= TIM1_CCR1_ADDR && addr < TIM1_CCR1_ADDR + 4) {
+      return this._readRegByte(this.tim1Ccr1, addr - TIM1_CCR1_ADDR);
+    }
     return 0;
   }
 
@@ -266,7 +307,61 @@ class VMCU {
       this.gpioaOdr = this._writeRegByte(this.gpioaOdr, addr - GPIOA_ODR_ADDR, v);
       return;
     }
+    if (addr >= TIM1_CR1_ADDR && addr < TIM1_CR1_ADDR + 4) {
+      this.tim1Cr1 = this._writeRegByte(this.tim1Cr1, addr - TIM1_CR1_ADDR, v);
+      return;
+    }
+    if (addr >= TIM1_PSC_ADDR && addr < TIM1_PSC_ADDR + 4) {
+      this.tim1Psc = this._writeRegByte(this.tim1Psc, addr - TIM1_PSC_ADDR, v);
+      return;
+    }
+    if (addr >= TIM1_ARR_ADDR && addr < TIM1_ARR_ADDR + 4) {
+      this.tim1Arr = this._writeRegByte(this.tim1Arr, addr - TIM1_ARR_ADDR, v);
+      return;
+    }
+    if (addr >= TIM1_CCR1_ADDR && addr < TIM1_CCR1_ADDR + 4) {
+      this.tim1Ccr1 = this._writeRegByte(this.tim1Ccr1, addr - TIM1_CCR1_ADDR, v);
+      return;
+    }
     // peripheral khác chưa nối — ghi không có tác dụng gì
+  }
+
+  // TIM1 co dang chay hay khong (bit CEN cua CR1).
+  tim1Enabled() {
+    return ((this.tim1Cr1 >>> TIM1_CR1_CEN_BIT) & 1) === 1;
+  }
+
+  // Tan so cap nhat (update event) cua TIM1 - dung DUNG cong thuc that co "+1":
+  // PSC/ARR la gia tri THANH GHI (0-based), nhung bo dem THAT su chia cho
+  // (PSC+1) va dem tu 0 den ARR (tuc ARR+1 buoc dem) - quen "+1" o ca 2 cho
+  // la cam bay kinh dien cua Muc 2 bai viet.
+  tim1Frequency() {
+    return TIM1_CLK_HZ / ((this.tim1Psc + 1) * (this.tim1Arr + 1));
+  }
+
+  // Duty cycle (ty le xung cao) - dung DUNG cong thuc don gian cua bai:
+  // duty = CCR/ARR. ARR=0 khong co y nghia PWM that (chi 1 muc), tra ve 0.
+  tim1DutyCycle() {
+    if (this.tim1Arr === 0) return 0;
+    return this.tim1Ccr1 / this.tim1Arr;
+  }
+
+  // So buoc do phan giai duty co the co - dung de minh hoa danh doi PSC lon
+  // (tan so thap) thi ARR phai nho (it buoc do sang) neu muon giu tan so cu.
+  tim1DutyResolutionSteps() {
+    return this.tim1Arr + 1;
+  }
+
+  // Thoi gian 1 tick bo dem (micro-giay) - dung cho ung dung servo Muc 4:
+  // voi PSC chon sao cho tick = 1us, CCR tinh truc tiep ra so micro-giay xung
+  // cao (khong can quy doi them).
+  tim1TickMicroseconds() {
+    return (1e6 * (this.tim1Psc + 1)) / TIM1_CLK_HZ;
+  }
+
+  // Do rong xung cao hien tai (micro-giay), tinh tu CCR1 va tick hien tai.
+  tim1PulseWidthUs() {
+    return this.tim1Ccr1 * this.tim1TickMicroseconds();
   }
 
   // IDR tính "sống" mỗi lần đọc — không lưu trạng thái cố định như MODER/ODR,
@@ -470,6 +565,12 @@ export {
   ButtonFSM,
   simulateBouncedPress,
   countRawRisingEdges,
+  TIM1_CR1_ADDR,
+  TIM1_PSC_ADDR,
+  TIM1_ARR_ADDR,
+  TIM1_CCR1_ADDR,
+  TIM1_CR1_CEN_BIT,
+  TIM1_CLK_HZ,
 };
 
 // ---------------------------------------------------------------------------
@@ -736,6 +837,65 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       if (fsm3.sample(true) !== null) extraPressedEvents++;
     }
     checkTrue('Giữ nút PRESSED lâu (mô phỏng long-press): không lặp lại sự kiện "pressed"', extraPressedEvents === 0);
+  }
+
+  // --- VMCU: TIM1 + PWM (Bài 6) ---
+  {
+    const cpu5 = new VMCU();
+    check('Reset: TIM1 CR1 = 0 (bộ đếm dừng)', cpu5.read32(TIM1_CR1_ADDR), 0);
+    checkTrue('Reset: tim1Enabled() = false', cpu5.tim1Enabled() === false);
+
+    cpu5.write32(TIM1_CR1_ADDR, cpu5.read32(TIM1_CR1_ADDR) | (1 << TIM1_CR1_CEN_BIT));
+    checkTrue('Sau khi bật CEN: tim1Enabled() = true', cpu5.tim1Enabled() === true);
+
+    // --- Cong thuc tan so: 1Hz, 1kHz (2 cach khac nhau), 20kHz ---
+    cpu5.write32(TIM1_PSC_ADDR, 7199);
+    cpu5.write32(TIM1_ARR_ADDR, 9999);
+    check('PSC=7199, ARR=9999 -> tần số = 1Hz (72MHz/(7200*10000))', cpu5.tim1Frequency(), 1);
+
+    cpu5.write32(TIM1_PSC_ADDR, 71);
+    cpu5.write32(TIM1_ARR_ADDR, 999);
+    check('PSC=71, ARR=999 -> tần số = 1000Hz (độ phân giải duty CAO: 1000 bậc)', cpu5.tim1Frequency(), 1000);
+    check('Độ phân giải duty (PSC nhỏ, ARR lớn) = ARR+1 = 1000 bậc', cpu5.tim1DutyResolutionSteps(), 1000);
+
+    cpu5.write32(TIM1_PSC_ADDR, 7199);
+    cpu5.write32(TIM1_ARR_ADDR, 9);
+    check('PSC=7199, ARR=9 -> CÙNG tần số 1000Hz (72MHz/(7200*10))', cpu5.tim1Frequency(), 1000);
+    check(
+      'Nhưng độ phân giải duty (PSC lớn, ARR nhỏ) chỉ còn = ARR+1 = 10 bậc - đúng đánh đổi Mục 2',
+      cpu5.tim1DutyResolutionSteps(),
+      10
+    );
+
+    cpu5.write32(TIM1_PSC_ADDR, 0);
+    cpu5.write32(TIM1_ARR_ADDR, 3599);
+    check('PSC=0, ARR=3599 -> tần số = 20000Hz (72MHz/(1*3600))', cpu5.tim1Frequency(), 20000);
+
+    // --- Cam bay "quen +1": PSC=0 dung nghia la chia cho 1, KHONG phai chia cho 0 ---
+    const naiveFreq = TIM1_CLK_HZ / (cpu5.tim1Psc * cpu5.tim1Arr); // SAI: quen +1 o ca 2 thanh phan
+    checkTrue('Công thức SAI (quên +1, PSC=0 dùng thẳng làm mẫu số) -> chia cho 0 -> Infinity', naiveFreq === Infinity);
+    check('Công thức ĐÚNG (có +1) vẫn ra 20000Hz dù PSC=0 (không chia cho 0)', cpu5.tim1Frequency(), 20000);
+
+    // --- Duty cycle: CCR/ARR ---
+    cpu5.write32(TIM1_PSC_ADDR, 71);
+    cpu5.write32(TIM1_ARR_ADDR, 1000);
+    cpu5.write32(TIM1_CCR1_ADDR, 250);
+    check('CCR1=250, ARR=1000 -> duty = 0.25 (25%)', cpu5.tim1DutyCycle(), 0.25);
+    cpu5.write32(TIM1_CCR1_ADDR, 1000);
+    check('CCR1=1000=ARR -> duty = 1 (100% - luôn cao)', cpu5.tim1DutyCycle(), 1);
+    cpu5.write32(TIM1_CCR1_ADDR, 0);
+    check('CCR1=0 -> duty = 0 (0% - luôn thấp, LED tắt hẳn)', cpu5.tim1DutyCycle(), 0);
+
+    // --- Ung dung servo: 50Hz, tick=1us, CCR truc tiep ra micro-giay xung ---
+    cpu5.write32(TIM1_PSC_ADDR, 71); // tick = 1us (72MHz / 72 = 1MHz)
+    cpu5.write32(TIM1_ARR_ADDR, 19999); // chu ky = 20000 tick = 20000us = 20ms = 50Hz
+    check('Servo: PSC=71, ARR=19999 -> tần số khung = 50Hz', cpu5.tim1Frequency(), 50);
+    check('Servo: 1 tick = 1 micro-giây (PSC=71 tại 72MHz)', cpu5.tim1TickMicroseconds(), 1);
+
+    cpu5.write32(TIM1_CCR1_ADDR, 1000);
+    check('Servo: CCR1=1000 -> độ rộng xung = 1000us = 1ms (góc servo min)', cpu5.tim1PulseWidthUs(), 1000);
+    cpu5.write32(TIM1_CCR1_ADDR, 2000);
+    check('Servo: CCR1=2000 -> độ rộng xung = 2000us = 2ms (góc servo max)', cpu5.tim1PulseWidthUs(), 2000);
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---
