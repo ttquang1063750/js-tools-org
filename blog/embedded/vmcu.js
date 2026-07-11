@@ -1504,6 +1504,56 @@ function buildMemoryLayout({ ramBase, ramSize, dataVars, bssVars, stackSizeBytes
   };
 }
 
+// ---------------------------------------------------------------------------
+// Cooperative Scheduler (Bài 13) — logic FIRMWARE chạy TRÊN NỀN VMCU, không
+// phải thanh ghi phần cứng, nên sống bên ngoài class VMCU (giống RingBufferSPSC
+// của Bài 8, ButtonFSM của Bài 5). Mô phỏng ĐÚNG mô hình super-loop thật: mỗi
+// "vòng quét" đi qua danh sách task theo THỨ TỰ CỐ ĐỊNH, task nào đến hạn thì
+// chạy-đến-hết-lượt (run-to-completion — "hợp tác" nghĩa là TIN task không
+// tham, không có gì ép nó nhường CPU giữa chừng). Thời gian mô phỏng (`now`)
+// tăng đúng bằng thời gian task vừa chạy chiếm dụng — nếu 1 task tham chiếm
+// nhiều thời gian, MỌI task đến hạn sau nó trong cùng vòng quét thấy `now` đã
+// trôi xa hơn lịch hẹn của chúng — đúng cơ chế jitter thật của Mục 13.1/13.4.
+function simulateSuperLoop({ tasks, durationMs, baseLoopOverheadMs = 1 }) {
+  let now = 0;
+  const lastRun = {};
+  tasks.forEach((t) => {
+    lastRun[t.name] = -t.periodMs;
+  });
+  const events = [];
+  while (now < durationMs) {
+    let ranSomething = false;
+    for (const t of tasks) {
+      const scheduledAt = lastRun[t.name] + t.periodMs;
+      if (now >= scheduledAt) {
+        const jitter = now - scheduledAt;
+        events.push({ name: t.name, scheduledAt, actualAt: now, jitter });
+        now += t.workMs; // chay-den-het-luot: chiem dung workMs thoi gian mo phong
+        lastRun[t.name] = now;
+        ranSomething = true;
+      }
+    }
+    // Khong task nao den han trong vong quet nay - tien 1 buoc nho de kiem tra lai
+    // (mo phong chi phi kiem tra dieu kien deu dan cua chinh vong lap super-loop).
+    if (!ranSomething) now += baseLoopOverheadMs;
+  }
+  return events;
+}
+
+// Thống kê jitter (Mục 13.1) của MỘT task cụ thể trong danh sách sự kiện do
+// simulateSuperLoop trả về — maxJitter là con số quan trọng nhất để đánh giá
+// "tệ tới đâu" (worst-case), không phải trung bình (average có thể nhỏ dù
+// thỉnh thoảng có 1 lần trễ rất nặng).
+function jitterStats(events, taskName) {
+  const filtered = events.filter((e) => e.name === taskName);
+  const jitters = filtered.map((e) => e.jitter);
+  return {
+    count: filtered.length,
+    maxJitter: jitters.length ? Math.max(...jitters) : 0,
+    avgJitter: jitters.length ? jitters.reduce((a, b) => a + b, 0) / jitters.length : 0,
+  };
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -1606,6 +1656,8 @@ export {
   cpuLoadPercent,
   classifySection,
   buildMemoryLayout,
+  simulateSuperLoop,
+  jitterStats,
 };
 
 // ---------------------------------------------------------------------------
@@ -2496,6 +2548,58 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Victim bị ghi đè thành đúng giá trị 0x00000000 (dữ liệu frame đệ quy ghi vào)',
       cpu12b.read32(victimAddr),
       0
+    );
+  }
+
+  // --- Cooperative Scheduler & jitter (Bài 13 Mục 13.1, 13.3, 13.4, 13.5) ---
+  {
+    const baseTasks = [
+      { name: 'led_fast', periodMs: 100, workMs: 1 },
+      { name: 'led_slow', periodMs: 500, workMs: 1 },
+      { name: 'button_scan', periodMs: 20, workMs: 1 },
+    ];
+
+    // Khong task tham: jitter phai NHO (chi phi vong quet ~1ms, khong co gi chiem dung lau)
+    const eventsClean = simulateSuperLoop({ tasks: baseTasks, durationMs: 5000 });
+    const jFastClean = jitterStats(eventsClean, 'led_fast');
+    const jSlowClean = jitterStats(eventsClean, 'led_slow');
+    const jButtonClean = jitterStats(eventsClean, 'button_scan');
+    check('Không task tham: led_fast chạy đúng 50 lần trong 5000ms (chu kỳ 100ms)', jFastClean.count, 50);
+    check('Không task tham: jitter tối đa led_fast = 0ms (mượt tuyệt đối)', jFastClean.maxJitter, 0);
+    check('Không task tham: jitter tối đa led_slow chỉ 1ms', jSlowClean.maxJitter, 1);
+    check('Không task tham: jitter tối đa button_scan chỉ 2ms', jButtonClean.maxJitter, 2);
+
+    // Co task tham (1000ms/300ms - chan MOI task khac trong luc no chay het luot)
+    const tasksGreedy = [...baseTasks, { name: 'task_tham', periodMs: 1000, workMs: 300 }];
+    const eventsGreedy = simulateSuperLoop({ tasks: tasksGreedy, durationMs: 5000 });
+    const jFastGreedy = jitterStats(eventsGreedy, 'led_fast');
+    const jSlowGreedy = jitterStats(eventsGreedy, 'led_slow');
+    const jButtonGreedy = jitterStats(eventsGreedy, 'button_scan');
+    checkTrue(
+      'Pitfall verified: task tham (300ms) kéo jitter led_fast từ 0ms lên GẦN 300ms',
+      jFastGreedy.maxJitter >= 280 && jFastGreedy.maxJitter <= 300
+    );
+    checkTrue(
+      'Pitfall verified: jitter led_slow cũng vọt lên gần 300ms — MỌI task khác đều bị kéo trễ',
+      jSlowGreedy.maxJitter >= 280 && jSlowGreedy.maxJitter <= 300
+    );
+    checkTrue(
+      'Pitfall verified: jitter button_scan cũng vọt lên gần 300ms — debounce Bài 5 sẽ bị trễ theo',
+      jButtonGreedy.maxJitter >= 280 && jButtonGreedy.maxJitter <= 300
+    );
+
+    // Che task tham thanh FSM nhieu buoc (workMs nho han han moi lan - 10ms thay vi 300ms)
+    const tasksSplit = [...baseTasks, { name: 'task_tham_fsm', periodMs: 1000, workMs: 10 }];
+    const eventsSplit = simulateSuperLoop({ tasks: tasksSplit, durationMs: 5000 });
+    const jFastSplit = jitterStats(eventsSplit, 'led_fast');
+    const jSlowSplit = jitterStats(eventsSplit, 'led_slow');
+    const jButtonSplit = jitterStats(eventsSplit, 'button_scan');
+    check('Chẻ thành FSM: jitter led_fast VỀ LẠI đúng 0ms — mượt như không có task tham', jFastSplit.maxJitter, 0);
+    check('Chẻ thành FSM: jitter led_slow về lại đúng 1ms', jSlowSplit.maxJitter, 1);
+    check(
+      'Chẻ thành FSM: jitter button_scan về lại đúng 2ms — pitfall Mục 13.4 đã được chữa',
+      jButtonSplit.maxJitter,
+      2
     );
   }
 

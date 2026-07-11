@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 13: Super-loop vs Cooperative Scheduler — js-tools</title>
+    <meta
+      name="description"
+      content="Super-loop có trần thật: một task tham (vòng lặp dài, delay ẩn) kéo trễ TẤT CẢ task khác — verified trên VMCU thật: 3 task chạy mượt với jitter tối đa chỉ 0-2ms, nhưng thêm một task chiếm 300ms mỗi giây khiến jitter mọi task khác vọt lên gần 300ms. Cooperative scheduler 30 dòng (mảng {fn, period, last} + millis()) là 'hệ điều hành' đầu tiên bạn tự viết — 'hợp tác' nghĩa là TIN mọi task không tham. Pitfall trung tâm chữa KHÔNG CẦN RTOS: chẻ việc nặng thành FSM nhiều bước nhỏ — verified: jitter quay lại đúng 0-2ms như ban đầu. Kèm bảng tiêu chí khi nào thật sự cần nâng cấp lên RTOS. Demo: 3 task thật + bật/tắt task tham + chẻ FSM, đo jitter trực tiếp."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-cooperative-scheduler" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-cooperative-scheduler" />
+    <meta property="og:title" content="Bài 13: Super-loop vs Cooperative Scheduler — js-tools" />
+    <meta
+      property="og:description"
+      content="Super-loop có trần thật: một task tham kéo trễ TẤT CẢ task khác — verified: 3 task chạy mượt jitter tối đa 0-2ms, nhưng thêm task chiếm 300ms/giây khiến jitter mọi task vọt lên gần 300ms. Cooperative scheduler 30 dòng là 'hệ điều hành' đầu tiên bạn tự viết. Chữa KHÔNG CẦN RTOS: chẻ việc nặng thành FSM — verified jitter quay lại 0-2ms. Kèm demo 3 task thật + bật/tắt task tham + chẻ FSM đo jitter trực tiếp."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 13: Super-loop vs Cooperative Scheduler — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Super-loop có trần thật: một task tham kéo trễ TẤT CẢ task khác — verified: 3 task chạy mượt jitter tối đa 0-2ms, nhưng thêm task chiếm 300ms/giây khiến jitter mọi task vọt lên gần 300ms. Cooperative scheduler 30 dòng là 'hệ điều hành' đầu tiên bạn tự viết. Chữa KHÔNG CẦN RTOS: chẻ việc nặng thành FSM — verified jitter quay lại 0-2ms. Kèm demo 3 task thật + bật/tắt task tham + chẻ FSM đo jitter trực tiếp."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Super-loop vs Cooperative Scheduler",
+        "description": "Super-loop có trần thật: một task tham kéo trễ TẤT CẢ task khác — verified: 3 task chạy mượt jitter tối đa 0-2ms, nhưng thêm task chiếm 300ms/giây khiến jitter mọi task vọt lên gần 300ms. Cooperative scheduler 30 dòng là 'hệ điều hành' đầu tiên bạn tự viết. Chữa KHÔNG CẦN RTOS: chẻ việc nặng thành FSM — verified jitter quay lại 0-2ms. Kèm demo 3 task thật + bật/tắt task tham + chẻ FSM đo jitter trực tiếp.",
+        "url": "https://js-tools.org/blog/embedded/embedded-cooperative-scheduler",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-23"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 13 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">Super-loop vs Cooperative Scheduler</h1>
+          <div class="article-hero__meta">23 tháng 7, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: khi <code>while(1)</code> không còn đủ gọn</h2>
+            <p>
+              Từ Bài 1, mọi demo của series đều nằm gọn trong một vòng lặp <code>while(1)</code> duy nhất — gọi tuần tự
+              vài FSM, đọc vài cảm biến, cập nhật vài LED. Đây gọi là <strong>super-loop</strong>, và với phần lớn sản
+              phẩm nhỏ, nó là kiến trúc HOÀN TOÀN ĐÚNG ĐẮN — đơn giản, dễ hiểu, không có race condition nào giữa các
+              "task" vì chúng chưa bao giờ chạy đồng thời cả.
+            </p>
+            <p>
+              Nhưng super-loop có một trần rõ ràng: thêm 5-6 FSM cùng chạy, rồi một việc "hơi nặng" len vào giữa chừng —
+              chu kỳ quét bắt đầu phình ra, độ trễ giữa các lần một task được chạy không còn đều đặn nữa. Bài này định
+              nghĩa và ĐO chính xác hiện tượng đó (gọi là <strong>jitter</strong>), viết một
+              <strong>cooperative scheduler</strong> gọn trong 30 dòng để quản lý nó có kỷ luật hơn, và chỉ ra pitfall
+              trung tâm khiến nó vẫn có thể sụp đổ — cùng cách chữa KHÔNG CẦN nhảy thẳng lên RTOS.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-systick-nonblocking">Bài 4</a> (<code>millis()</code> —
+                scheduler bài này xây thẳng trên đó), <a href="embedded-debounce-fsm">Bài 5</a> (FSM — lời giải cho
+                pitfall trung tâm dùng lại chính kỹ thuật này).
+              </div>
+            </div>
+
+            <h2>1. Trần của super-loop</h2>
+            <p>
+              Verify bằng số thật trên VMCU: 3 task chạy trong super-loop — LED nhanh (chu kỳ 100ms), LED chậm (chu kỳ
+              500ms), quét nút kiểu Bài 5 (chu kỳ 20ms) — mỗi task giả định chỉ tốn 1ms để chạy xong. Đo
+              <strong>jitter</strong> (độ lệch giữa thời điểm LẼ RA phải chạy và thời điểm THỰC SỰ chạy) của từng task
+              trong 5 giây mô phỏng: jitter tối đa chỉ <strong>0-2ms</strong> cho cả ba — gần như hoàn hảo, đúng như kỳ
+              vọng khi mọi task đều "nhẹ".
+            </p>
+            <p>
+              Giờ thêm một "task tham" — chiếm 300ms mỗi lần chạy (chu kỳ 1000ms), mô phỏng một thao tác nặng như ghi
+              log dài hay tính toán phức tạp. Verify: jitter tối đa của CẢ BA task còn lại vọt từ 0-2ms lên
+              <strong>gần 300ms</strong> — đúng bằng thời gian task tham chiếm dụng. Đây chính là trần của super-loop:
+              một task chạy-đến-hết-lượt (run-to-completion) không hề biết "nhường bớt" cho ai, nên khi nó dài, MỌI task
+              khác phải đợi.
+            </p>
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Khi nào super-loop vẫn ĐÚNG — đừng vác RTOS đi giết ruồi</div>
+              <div class="callout__content">
+                <table class="glossary-table" style="margin: 8px 0 0">
+                  <thead>
+                    <tr>
+                      <th>Tiêu chí</th>
+                      <th>Super-loop / Cooperative đủ dùng</th>
+                      <th>Nên cân nhắc RTOS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Số task</td>
+                      <td>Vài task, độ ưu tiên gần bằng nhau</td>
+                      <td>Nhiều task, ưu tiên rất khác nhau</td>
+                    </tr>
+                    <tr>
+                      <td>Deadline</td>
+                      <td>Mềm, dao động vài ms không sao</td>
+                      <td>Cứng, có task PHẢI phản hồi tức thời</td>
+                    </tr>
+                    <tr>
+                      <td>Đội ngũ</td>
+                      <td>1 người, cần đơn giản dễ debug</td>
+                      <td>Nhiều người, cần cô lập module rõ ràng</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <h2>2. Cooperative scheduler</h2>
+            <p>
+              Thay vì gọi tay từng task theo thứ tự cố định trong <code>while(1)</code>, một
+              <strong>cooperative scheduler</strong> giữ một BẢNG task — mỗi task gồm: hàm cần gọi, chu kỳ mong muốn, và
+              mốc thời gian lần chạy gần nhất. Mỗi vòng quét, scheduler chỉ cần hỏi từng task "đã tới hạn chưa?" (so
+              <code>millis()</code> hiện tại với mốc + chu kỳ), và gọi nếu đúng.
+            </p>
+            <p>
+              Chữ "hợp tác" (cooperative) mang một hàm ý QUAN TRỌNG: mỗi task PHẢI tự giác chạy xong rồi trả quyền điều
+              khiển lại ngay — không có cơ chế nào ép nó nhường CPU giữa chừng. Scheduler hoàn toàn TIN TƯỞNG mọi task
+              không "tham" (không chạy quá lâu). Đây chính là giả định sẽ bị phá vỡ ở Mục 4.
+            </p>
+
+            <h2>3. Viết scheduler 30 dòng</h2>
+            <p>
+              Đây là "hệ điều hành" đầu tiên bạn tự viết trong series — và rất nhiều sản phẩm thương mại thực tế dừng
+              lại đúng ở mức độ phức tạp này, không cần gì hơn:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">cooperative_scheduler.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">typedef struct {
+    void (*fn)(void);   // ham can goi khi den han
+    uint32_t period_ms; // chu ky mong muon
+    uint32_t last_ms;   // moc thoi gian lan chay gan nhat
+} task_t;
+
+#define NUM_TASKS 3
+task_t tasks[NUM_TASKS] = {
+    { led_fast_task,   100, 0 },
+    { led_slow_task,   500, 0 },
+    { button_scan_task, 20, 0 },
+};
+
+void scheduler_tick(void) {
+    uint32_t now = millis(); // Bai 4
+    for (int i = 0; i < NUM_TASKS; i++) {
+        if (now - tasks[i].last_ms >= tasks[i].period_ms) {
+            tasks[i].fn();           // chay-den-het-luot, KHONG bi ngat boi task khac
+            tasks[i].last_ms = now;
+        }
+    }
+}
+
+int main(void) {
+    setup();
+    while (1) {
+        scheduler_tick(); // toan bo "he dieu hanh" nam trong 1 dong nay
+    }
+}</code></pre>
+            </div>
+            <p>
+              Phép trừ <code>now - tasks[i].last_ms</code> tận dụng đúng tính chất cuộn vòng (wrap-around) của
+              <code>uint32_t</code> đã học ở Bài 4 — vẫn cho kết quả ĐÚNG dù <code>millis()</code> có cuộn qua
+              <span class="katex-inline">$2^{32}$</span> hay không, không cần xử lý đặc biệt gì thêm.
+            </p>
+
+            <h2>4. Pitfall trung tâm: một task tham kéo trễ tất cả</h2>
+            <p>
+              Vì scheduler hoàn toàn "hợp tác" (Mục 2), nó không có cách nào tự bảo vệ khỏi một task vi phạm lời hứa
+              "chạy nhanh rồi trả CPU". Verify lại con số Mục 1: task tham 300ms/1000ms đã kéo jitter của CẢ BA task
+              LÀNH khác lên gần 300ms — dù bản thân chúng không hề thay đổi gì. Đây là pitfall trung tâm của cả chương:
+              <strong>tính đúng đắn của một task phụ thuộc vào hành vi của NHỮNG task khác</strong> — một module tưởng
+              chừng độc lập lại có thể phá vỡ cả hệ thống.
+            </p>
+            <p>
+              Giải pháp KHÔNG CẦN nhảy thẳng lên RTOS: <strong>chẻ việc dài thành FSM nhiều bước</strong> — đúng kỹ
+              thuật máy trạng thái hữu hạn của <a href="embedded-debounce-fsm">Bài 5</a>. Thay vì một hàm chạy liền
+              300ms, chia thành nhiều bước nhỏ (ví dụ 30 bước × 10ms), mỗi lần scheduler gọi tới chỉ chạy ĐÚNG MỘT bước
+              rồi trả quyền điều khiển ngay — công việc vẫn hoàn thành sau vài chu kỳ, nhưng không còn chiếm dụng CPU
+              liên tục nữa.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Verify: chẻ thành FSM khôi phục jitter về ĐÚNG mức ban đầu</div>
+              <div class="callout__content">
+                Thay 1 bước 300ms bằng các bước 10ms (giữ nguyên chu kỳ tổng thể 1000ms), verify lại jitter của cả ba
+                task LÀNH: quay về ĐÚNG <strong>0ms / 1ms / 2ms</strong> — không sai một ly so với kịch bản hoàn toàn
+                KHÔNG có task tham. Không cần thêm bất kỳ cơ chế phần cứng hay hệ điều hành nào — chỉ cần đổi CÁCH viết
+                một task, cả hệ thống mượt trở lại.
+              </div>
+            </div>
+            <p>
+              Một kỹ thuật đi kèm hữu ích: đo <strong>WCET</strong> (Worst-Case Execution Time — thời gian chạy tệ nhất)
+              của từng task bằng cách bấm giờ (hoặc đếm chu kỳ CPU trên phần cứng thật) qua nhiều lần chạy với dữ liệu
+              đầu vào khác nhau — biết trước "tham" tới đâu trước khi nó gây sự cố trong sản phẩm thật.
+            </p>
+
+            <h2>5. Thực hành: 3 task + task tham + đo jitter</h2>
+            <p>
+              Demo dưới đây chạy cooperative scheduler thật trên VMCU: chọn 1 trong 3 kịch bản và xem jitter của từng
+              task thay đổi ra sao:
+            </p>
+
+            <div class="code-tabs" id="scheduler-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">⏱️ Cooperative Scheduler &amp; Jitter Meter — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    Kịch bản (5 giây mô phỏng, 3 task: LED nhanh 100ms, LED chậm 500ms, quét nút 20ms)
+                  </p>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px">
+                    <button class="mux-input-btn is-active" type="button" data-scenario="clean">
+                      ✅ Không task tham
+                    </button>
+                    <button class="mux-input-btn" type="button" data-scenario="greedy">
+                      😈 Có task tham (300ms/1000ms)
+                    </button>
+                    <button class="mux-input-btn" type="button" data-scenario="split">
+                      🧩 Task tham đã chẻ thành FSM (10ms/bước)
+                    </button>
+                  </div>
+                  <div
+                    id="jitter-bars"
+                    style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px"
+                  ></div>
+                  <div id="jitter-summary" class="mux-demo__output">Đang tải…</div>
+                  <p class="mux-demo__hint">
+                    So sánh 3 kịch bản: bật "Có task tham" xem jitter mọi task vọt lên gần 300ms; bật "Đã chẻ thành FSM"
+                    xem jitter quay lại y hệt kịch bản "Không task tham" — pitfall được chữa mà không cần RTOS.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">tach_task_tham_thanh_fsm.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// TRUOC: 1 buoc chan CPU nguyen 300ms - moi task khac phai doi
+void task_tham_CHAN(void) {
+    for (int i = 0; i < 300; i++) { do_mot_don_vi_viec(); delay_1ms(); }
+}
+
+// SAU: che thanh FSM 30 buoc x 10ms - scheduler goi lai nhieu lan, moi lan 1 buoc
+typedef enum { STEP_0, STEP_1, /* ... */ STEP_29, STEP_DONE } step_t;
+static step_t buoc_hien_tai = STEP_DONE;
+
+void task_tham_FSM(void) {
+    if (buoc_hien_tai == STEP_DONE) return;      // chua co viec, tra CPU ngay
+    do_mot_don_vi_viec();                         // chi 1 don vi viec (~10ms)
+    buoc_hien_tai = (buoc_hien_tai == STEP_29) ? STEP_DONE : buoc_hien_tai + 1;
+}   // <- TRA VE ngay, khong chan CPU lau hon 10ms moi lan goi</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">scheduler_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { simulateSuperLoop, jitterStats } from './vmcu.js';
+
+const baseTasks = [
+  { name: 'led_fast', periodMs: 100, workMs: 1 },
+  { name: 'led_slow', periodMs: 500, workMs: 1 },
+  { name: 'button_scan', periodMs: 20, workMs: 1 },
+];
+
+// Kich ban 'greedy': them 1 task chiem 300ms moi 1000ms
+const events = simulateSuperLoop({
+  tasks: [...baseTasks, { name: 'task_tham', periodMs: 1000, workMs: 300 }],
+  durationMs: 5000,
+});
+console.log(jitterStats(events, 'led_fast'));    // { maxJitter: ~290, ... }
+console.log(jitterStats(events, 'button_scan')); // { maxJitter: ~292, ... }
+
+// Kich ban 'split': doi workMs 300 -> 10 (che thanh FSM) - jitter ve lai 0-2ms</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Super-loop có trần thật — verified: task tham 300ms/1000ms kéo jitter mọi task khác từ 0-2ms lên gần
+                300ms. Vẫn là kiến trúc ĐÚNG cho đa số sản phẩm nhỏ — dùng bảng tiêu chí Mục 1 để quyết định khi nào cần
+                nâng cấp.
+              </li>
+              <li>
+                ✅ <strong>Cooperative scheduler</strong>: mảng <code>{fn, period, last}</code> + vòng lặp gọi task đến
+                hạn, xây trên <code>millis()</code> Bài 4 — chỉ ~30 dòng, "hệ điều hành" đầu tiên bạn tự viết. "Hợp tác"
+                nghĩa là TIN mọi task không tham.
+              </li>
+              <li>
+                ✅ Pitfall trung tâm: 1 task tham (run-to-completion dài) kéo trễ TẤT CẢ task khác — tính đúng đắn của
+                một task phụ thuộc vào hành vi của những task khác.
+              </li>
+              <li>
+                ✅ Chữa KHÔNG CẦN RTOS: chẻ việc dài thành FSM nhiều bước nhỏ (Bài 5) — verified: jitter quay lại ĐÚNG
+                mức ban đầu (0ms/1ms/2ms), không sai một ly.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Verified: không có task tham, jitter tối đa của mọi task chỉ 0-2ms; thêm một task chiếm 300ms mỗi giây
+                khiến jitter mọi task khác vọt lên gần 300ms — dù bản thân các task đó không đổi gì. Vì sao?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Cooperative scheduler chi la mot vong lap goi task LAN LUOT - KHONG co co che nao ep mot task nhuong CPU giua chung. Khi task tham dang &quot;chay-den-het-luot&quot; (300ms), MOI task khac phai doi den luot no xong roi scheduler moi kip kiem tra lai - jitter cua chung vi the tang dung bang khoang thoi gian bi &quot;chan lai&quot; do.'
+                    )
+                  "
+                >
+                  A. Vì cooperative scheduler không có cơ chế nào ép một task nhường CPU giữa chừng — khi task tham đang
+                  chạy-đến-hết-lượt, mọi task khác phải đợi tới lượt nó xong mới được kiểm tra lại
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cac task lanh khong he bi loi hay thay doi chu ky/logic cua chinh chung - van de nam o VIEC CHUNG PHAI CHO, khong phai ban than chung tro nen loi.'
+                    )
+                  "
+                >
+                  B. Vì thêm task mới làm hỏng logic bên trong của các task khác
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'millis() khong he bi anh huong boi so luong task hay task tham - no van dem dung thoi gian thuc troi qua. Van de la SCHEDULER CHUA KIP KIEM TRA LAI cac task khac trong luc task tham dang chiem dung, khong phai millis() sai.'
+                    )
+                  "
+                >
+                  C. Vì millis() bị lỗi đếm sai khi có quá nhiều task chạy cùng lúc
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">Chữ "hợp tác" (cooperative) trong "cooperative scheduler" mang ý nghĩa gì?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Scheduler khong co bat ky co che nao (nhu ngat dinh thoi hay uu tien) de EP mot task dang chay phai nhuong CPU - no hoan toan TIN moi task se tu giac chay xong that nhanh roi tra quyen dieu khien lai. Neu 1 task &quot;vi pham loi hua&quot; do (chay qua lau), khong co gi ngan no ca - day chinh la nguon goc pitfall Muc 4.'
+                    )
+                  "
+                >
+                  A. Scheduler hoàn toàn tin tưởng mọi task sẽ tự giác chạy xong nhanh rồi trả quyền điều khiển lại —
+                  không có cơ chế nào ép một task đang chạy phải nhường CPU nếu nó không tự làm vậy
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cooperative scheduler o day KHONG chia se du lieu giua cac task theo nghia dac biet nao - no chi lan luot GOI tung task theo lich, khong lien quan den chia se bien.'
+                    )
+                  "
+                >
+                  B. Các task chia sẻ dữ liệu với nhau qua một vùng nhớ chung đặc biệt
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cooperative scheduler CHAY TREN 1 CPU DUY NHAT, khong co nhieu loi (core) nao ca - day la mot dac diem quan trong cua kien truc nay, hoan toan khac voi cau tra loi nay.'
+                    )
+                  "
+                >
+                  C. Nhiều lõi CPU hợp tác cùng chạy song song thật sự
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Verified: chẻ task tham từ 1 bước 300ms thành 30 bước × 10ms (giữ nguyên chu kỳ tổng 1000ms) đưa jitter
+                của các task khác quay về ĐÚNG mức ban đầu (0-2ms). Vì sao cách này hiệu quả mà không cần RTOS?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Van de goc khong phai TONG luong cong viec (van 300ms tong cong sau 30 buoc) ma la MOI LAN CHIEM DUNG CPU LIEN TUC qua lau. Chia thanh cac buoc nho (10ms/buoc, tuong duong cac task &quot;lanh&quot; khac), scheduler co co hoi kiem tra lai CAC TASK KHAC giua nhung buoc do - jitter vi the tro ve muc binh thuong ma khong can co che uu tien/ngat cua RTOS.'
+                    )
+                  "
+                >
+                  A. Vì vấn đề gốc không phải tổng lượng công việc mà là MỖI LẦN chiếm dụng CPU liên tục quá lâu — chia
+                  thành các bước nhỏ giúp scheduler có cơ hội kiểm tra lại các task khác giữa các bước
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tong thoi gian CPU can de hoan thanh cong viec KHONG doi (van 300ms, chi chia nho ra thanh 30 buoc x 10ms) - khong co gi duoc &quot;tiet kiem&quot; ve tong luong tinh toan ca.'
+                    )
+                  "
+                >
+                  B. Vì chia nhỏ giúp tổng thời gian CPU cần để hoàn thành công việc giảm xuống đáng kể
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ky thuat chia FSM khong lam thay doi CHU KY cua task tham (van 1000ms nhu cu) - no chi thay doi CACH THUC HIEN cong viec ben trong moi lan chu ky do (nhieu buoc nho thay vi 1 buoc lon).'
+                    )
+                  "
+                >
+                  C. Vì chia thành các bước làm chu kỳ chạy của task tham nhanh hơn hẳn
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Theo bảng tiêu chí Mục 1, khi nào nên cân nhắc nâng cấp từ super-loop/cooperative scheduler lên RTOS?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Sung-loop/cooperative van la kien truc DUNG cho da so san pham nho voi vai task uu tien gan bang nhau va deadline mem. RTOS dang can khi so luong task nhieu, do uu tien rat khac nhau, hoac co task PHAI phan hoi tuc thoi (deadline cung) - dung mac dinh nang cap chi vi &quot;nghe co ve chuyen nghiep hon&quot;.'
+                    )
+                  "
+                >
+                  A. Khi có nhiều task với độ ưu tiên rất khác nhau, hoặc có task với deadline cứng cần phản hồi tức
+                  thời — không phải mặc định cho mọi dự án
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Bang tieu chi Muc 1 khong noi RTOS luon tot hon - &quot;dung vac RTOS di giet ruoi&quot; la thong diep CHINH cua muc nay. Voi da so san pham nho, cooperative scheduler la du va don gian hon nhieu.'
+                    )
+                  "
+                >
+                  B. Luôn luôn — RTOS tốt hơn super-loop trong mọi trường hợp nên nên dùng ngay từ đầu
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'So dong code khong phai tieu chi duoc de cap - quyet dinh dua tren SO LUONG TASK, DO UU TIEN KHAC NHAU, va DEADLINE CUNG hay khong, khong phai kich thuoc file code.'
+                    )
+                  "
+                >
+                  C. Chỉ khi chương trình vượt quá 1000 dòng code
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 13 vừa thêm mô phỏng
+                cooperative scheduler (<code>simulateSuperLoop</code>) và đo jitter (<code>jitterStats</code>), kèm
+                self-test đối chiếu đúng mọi hành vi trong bài (chạy <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Cooperative_multitasking"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Cooperative multitasking
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Jitter" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Jitter (định nghĩa tổng quát, áp dụng cả timing hệ thống nhúng)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Worst-case_execution_time"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Worst-case execution time (WCET)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-boot-memory-layout" class="article-related__link article-related__link--prev">
+                  Bài 12: Boot &amp; bản đồ bộ nhớ chương trình
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 14: RTOS preemptive: context switch &amp; task states — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { simulateSuperLoop, jitterStats } from './vmcu.js';
+
+      const BASE_TASKS = [
+        { name: 'led_fast', label: 'LED nhanh (100ms)', periodMs: 100, workMs: 1 },
+        { name: 'led_slow', label: 'LED chậm (500ms)', periodMs: 500, workMs: 1 },
+        { name: 'button_scan', label: 'Quét nút (20ms)', periodMs: 20, workMs: 1 },
+      ];
+
+      function tasksForScenario(scenario) {
+        if (scenario === 'greedy')
+          return [...BASE_TASKS, { name: 'task_tham', label: 'Task tham (300ms/1000ms)', periodMs: 1000, workMs: 300 }];
+        if (scenario === 'split')
+          return [
+            ...BASE_TASKS,
+            { name: 'task_tham_fsm', label: 'Task tham đã chẻ FSM (10ms/bước)', periodMs: 1000, workMs: 10 },
+          ];
+        return BASE_TASKS;
+      }
+
+      function renderScenario(scenario) {
+        const tasks = tasksForScenario(scenario);
+        const events = simulateSuperLoop({ tasks, durationMs: 5000 });
+        const allTasks = [...BASE_TASKS, ...(scenario !== 'clean' ? [tasks[tasks.length - 1]] : [])];
+
+        const bars = document.getElementById('jitter-bars');
+        bars.innerHTML = allTasks
+          .map((t) => {
+            const stats = jitterStats(events, t.name);
+            const pct = Math.min(100, (stats.maxJitter / 300) * 100);
+            const color = stats.maxJitter > 50 ? '#ef4444' : stats.maxJitter > 5 ? '#f59e0b' : '#22c55e';
+            return (
+              '<div style="display:flex; align-items:center; gap:8px; font-size:12px;">' +
+              '<span style="width:170px; flex-shrink:0;">' +
+              t.label +
+              '</span>' +
+              '<div style="flex:1; background:rgba(0,0,0,0.15); border-radius:4px; height:16px; overflow:hidden;">' +
+              '<div style="width:' +
+              Math.max(pct, 1) +
+              '%; height:100%; background:' +
+              color +
+              ';"></div></div>' +
+              '<span style="width:110px; text-align:right; flex-shrink:0;">jitter tối đa ' +
+              stats.maxJitter.toFixed(0) +
+              'ms</span></div>'
+            );
+          })
+          .join('');
+
+        const summaryEl = document.getElementById('jitter-summary');
+        if (scenario === 'clean') {
+          summaryEl.innerHTML = '✅ Không có task tham — mọi task chạy mượt, jitter tối đa chỉ 0-2ms.';
+          summaryEl.style.color = '#22c55e';
+        } else if (scenario === 'greedy') {
+          summaryEl.innerHTML =
+            '💥 Task tham (300ms/1000ms) đang CHIẾM DỤNG CPU liên tục mỗi lần chạy — jitter mọi task khác vọt lên gần 300ms, dù bản thân chúng không đổi gì.';
+          summaryEl.style.color = '#ef4444';
+        } else {
+          summaryEl.innerHTML =
+            '🧩 Task tham đã được chẻ thành 30 bước × 10ms — jitter quay lại ĐÚNG mức ban đầu (0-2ms), không cần RTOS.';
+          summaryEl.style.color = '#22c55e';
+        }
+      }
+
+      document.querySelectorAll('[data-scenario]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('[data-scenario]').forEach((b) => b.classList.remove('is-active'));
+          btn.classList.add('is-active');
+          renderScenario(btn.dataset.scenario);
+        });
+      });
+      renderScenario('clean');
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
