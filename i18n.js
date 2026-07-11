@@ -258,6 +258,9 @@ const TRANSLATIONS = {
     'learn.ai.title': 'AI from Zero to Master',
     'learn.ai.desc':
       'Build AI from scratch in vanilla JS — no API calls: gradient descent, your own autograd, MLP/CNN, Transformer, and a GPT-mini trained live in the browser.',
+    'learn.embedded.title': 'Embedded Systems',
+    'learn.embedded.desc':
+      'Bare-metal C on a self-built virtual MCU: registers, GPIO, interrupts, UART, ADC, DMA, up to a preemptive RTOS — no board required.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -518,6 +521,9 @@ const TRANSLATIONS = {
     'learn.ai.title': 'Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM',
     'learn.ai.desc':
       'Tự xây AI từ số 0 bằng vanilla JS — không gọi API: gradient descent, tự viết autograd, MLP/CNN, Transformer, và GPT-mini train ngay trong trình duyệt.',
+    'learn.embedded.title': 'Hệ Thống Nhúng: Từ Thanh Ghi Đến RTOS',
+    'learn.embedded.desc':
+      'C bare-metal trên một MCU ảo tự xây: thanh ghi, GPIO, ngắt, UART, ADC, DMA, đến RTOS preemptive — không cần board thật.',
   },
 };
 
