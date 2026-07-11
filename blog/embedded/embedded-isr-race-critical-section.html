@@ -1,0 +1,1017 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 8: Chia sẻ dữ liệu ISR ↔ main: race condition &amp; critical section — js-tools</title>
+    <meta
+      name="description"
+      content="counter++ là BA lệnh máy (LDR/ADD/STR) — một ISR chen đúng lúc giữa chừng làm mất cập nhật, verified: 10.000 vòng không bảo vệ chỉ còn đúng 10.000 (mất sạch 10.000 update), bật critical section thì đủ 20.000. volatile KHÔNG phải khoá — hiểu nhầm số một khi phỏng vấn nhúng. Đọc 'xé đôi' (torn read): cặp giờ/phút bị ISR đổi giữa 2 lần đọc ra tổ hợp chưa từng tồn tại. Ring buffer SPSC — cấu trúc dữ liệu quan trọng nhất series, chia sẻ ISR↔main không cần khoá gì cả — kèm demo race + ring buffer visualizer chạy trên VMCU thật."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-isr-race-critical-section" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-isr-race-critical-section" />
+    <meta
+      property="og:title"
+      content="Bài 8: Chia sẻ dữ liệu ISR ↔ main: race condition &amp; critical section — js-tools"
+    />
+    <meta
+      property="og:description"
+      content="counter++ là BA lệnh máy (LDR/ADD/STR) — ISR chen giữa chừng làm mất cập nhật, verified: 10.000 vòng không bảo vệ mất sạch 10.000 update, bật critical section đủ 20.000. volatile KHÔNG phải khoá. Torn read: cặp giờ/phút bị xé ra tổ hợp chưa từng tồn tại. Ring buffer SPSC — cấu trúc quan trọng nhất series — kèm demo race + ring buffer visualizer chạy trên VMCU thật."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Bài 8: Chia sẻ dữ liệu ISR ↔ main: race condition &amp; critical section — js-tools"
+    />
+    <meta
+      name="twitter:description"
+      content="counter++ là BA lệnh máy (LDR/ADD/STR) — ISR chen giữa chừng làm mất cập nhật, verified: 10.000 vòng không bảo vệ mất sạch 10.000 update, bật critical section đủ 20.000. volatile KHÔNG phải khoá. Torn read: cặp giờ/phút bị xé ra tổ hợp chưa từng tồn tại. Ring buffer SPSC — cấu trúc quan trọng nhất series — kèm demo race + ring buffer visualizer chạy trên VMCU thật."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Chia sẻ dữ liệu ISR ↔ main: race condition & critical section",
+        "description": "counter++ là BA lệnh máy (LDR/ADD/STR) — ISR chen giữa chừng làm mất cập nhật, verified: 10.000 vòng không bảo vệ mất sạch 10.000 update, bật critical section đủ 20.000. volatile KHÔNG phải khoá. Torn read: cặp giờ/phút bị xé ra tổ hợp chưa từng tồn tại. Ring buffer SPSC — cấu trúc quan trọng nhất series — kèm demo race + ring buffer visualizer chạy trên VMCU thật.",
+        "url": "https://js-tools.org/blog/embedded/embedded-isr-race-critical-section",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-18"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 8 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">Chia sẻ dữ liệu ISR ↔ main: race condition &amp; critical section</h1>
+          <div class="article-hero__meta">18 tháng 7, 2026 · 24 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: con bug đắt nhất nghề firmware</h2>
+            <p>
+              Có một loại bug mà dân nhúng kỳ cựu sợ hơn mọi HardFault: nó không hiện ra ngay khi bạn nạp firmware,
+              không lặp lại khi bạn bấm reset, và có thể chạy ngon lành suốt ba ngày liên tục trước khi âm thầm sai đúng
+              một lần. Không có breakpoint nào bắt được nó vì bấm dừng CPU để xem là chính hành động đó đã phá vỡ điều
+              kiện gây ra bug. Đó là <strong>race condition</strong> — hai "người" cùng chạm vào một biến, và thứ tự
+              chạm đúng khoảnh khắc quyết định kết quả đúng hay sai.
+            </p>
+            <p>
+              Bài 7 vừa cho ngắt (ISR) "chen ngang" main loom bất cứ lúc nào — sức mạnh đó có mặt trái: nếu main và ISR
+              cùng đụng vào một biến chia sẻ, việc chen ngang có thể xảy ra <em>giữa chừng</em> một phép toán tưởng
+              chừng đơn giản như <code>counter++</code>. Bài này mổ xẻ chính xác race condition xảy ra ở đâu, tại sao
+              <code>volatile</code> KHÔNG cứu được bạn, và giới thiệu 2 công cụ giải quyết triệt để: critical section
+              cho biến đơn, và ring buffer SPSC — cấu trúc dữ liệu quan trọng nhất của cả series — cho luồng dữ liệu.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-interrupts-nvic">Bài 7</a> (ISR chạy thế nào, khi nào chen
+                ngang), <a href="embedded-registers-mmio">Bài 2</a> (read-modify-write không nguyên tử — bài này cho RMW
+                một thủ phạm cụ thể: ISR).
+              </div>
+            </div>
+
+            <h2>1. Race condition đầu tiên của bạn</h2>
+            <p>
+              Nhìn một dòng C tưởng chừng vô hại: <code>counter++;</code>. Với CPU, đây KHÔNG phải một thao tác — nó là
+              ba lệnh máy riêng biệt:
+            </p>
+            <ol>
+              <li>
+                <strong>LDR</strong> — nạp giá trị hiện tại của <code>counter</code> từ RAM vào một thanh ghi CPU.
+              </li>
+              <li><strong>ADD</strong> — cộng 1 vào thanh ghi đó.</li>
+              <li><strong>STR</strong> — ghi giá trị thanh ghi trở lại RAM.</li>
+            </ol>
+            <p>
+              Giờ tưởng tượng một ISR CŨNG tăng <code>counter</code>, và nó chen vào đúng giữa LDR và STR của main: main
+              đã đọc giá trị cũ (giả sử 5) vào thanh ghi; ISR chạy trọn vẹn, tăng RAM lên 6; main tiếp tục ADD (5+1=6
+              trong thanh ghi, không hề biết RAM đã đổi) rồi STR — ghi đè RAM thành 6. Công tăng của ISR
+              <strong>biến mất hoàn toàn</strong>, dù cả hai bên đều "đã chạy". Đây gọi là <strong>lost update</strong>.
+            </p>
+            <p>
+              Điều khiến bug này đắt giá: nó không xảy ra MỌI lần. Muốn ISR chen đúng vào cửa sổ 1 lệnh máy giữa LDR và
+              STR cần đúng thời điểm — hiếm, nhưng không phải zero. VMCU tái hiện kịch bản XẤU NHẤT (ISR luôn chen đúng
+              lúc, mọi vòng) để bạn thấy hậu quả tối đa một cách tất định, thay vì chờ may rủi:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">race_concept.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">volatile uint32_t counter = 0;
+
+// ISR co the chen vao GIUA 3 lenh may cua dong duoi day
+void TIM1_UP_IRQHandler(void) {
+    counter++;   // ISR cung tang - cung la LDR/ADD/STR
+}
+
+void main_loop(void) {
+    counter++;   // 3 lenh may: LDR (doc cu) - ADD (+1) - STR (ghi lai)
+    // Neu ISR chen dung giua LDR va STR: cong tang cua ISR bi STR nay GHI DE mat
+}</code></pre>
+            </div>
+
+            <h2>2. <code>volatile</code> KHÔNG phải khoá</h2>
+            <p>
+              Hiểu nhầm phổ biến nhất khi phỏng vấn nhúng: "thêm <code>volatile</code> là hết race". Sai.
+              <code>volatile</code> (Bài 2) chỉ ép compiler <strong>luôn đọc/ghi bộ nhớ thật</strong> thay vì giữ giá
+              trị cũ trong thanh ghi CPU qua nhiều dòng code — nó ngăn compiler tối ưu sai, KHÔNG ngăn CPU thực thi các
+              lệnh máy đó bị ISR chen vào giữa chừng. Chuỗi LDR-ADD-STR vẫn là ba lệnh riêng biệt dù biến có
+              <code>volatile</code> hay không.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: "thêm volatile là hết race" — hiểu nhầm số một</div>
+              <div class="callout__content">
+                <code>volatile uint32_t counter;</code> vẫn bị mất update y hệt <code>uint32_t counter;</code> thường —
+                verify trực tiếp ở demo Mục 6: bật/tắt bảo vệ không liên quan gì tới từ khoá <code>volatile</code>, chỉ
+                liên quan tới việc ISR có được phép chen vào giữa LDR và STR hay không. <code>volatile</code> giải quyết
+                đúng một vấn đề khác (compiler cache giá trị cũ trong thanh ghi qua nhiều dòng) — không giải quyết vấn
+                đề "hai bên cùng đọc-sửa-ghi không nguyên tử" của bài này.
+              </div>
+            </div>
+
+            <h2>3. Critical section — tắt ngắt có kỷ luật</h2>
+            <p>
+              Giải pháp thật của phần cứng ARM Cortex-M: tạm thời <strong>tắt hết ngắt</strong> đúng trong lúc thực hiện
+              chuỗi thao tác nhạy cảm, bằng thanh ghi
+              <abbr
+                title="Priority Mask Register — thanh ghi 1-bit của lõi ARM, bật lên là tắt hết ngắt có thể che được"
+                >PRIMASK</abbr
+              >
+              và 2 chỉ thị CPU <code>__disable_irq()</code>/<code>__enable_irq()</code>. Trong khoảng đó, NVIC (Bài 7)
+              không phục vụ bất kỳ ISR nào — main hoàn tất trọn vẹn LDR-ADD-STR rồi mới "mở cửa" lại cho ngắt.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">critical_section.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">volatile uint32_t counter = 0;
+
+void main_loop_safe(void) {
+    __disable_irq();   // PRIMASK = 1 - tam thoi KHONG ISR nao chen duoc
+    counter++;          // LDR-ADD-STR chay TRON VEN, khong ai xen vao
+    __enable_irq();     // PRIMASK = 0 - mo cua lai cho ngat
+}</code></pre>
+            </div>
+            <p>
+              Quy tắc vàng: critical section phải <strong>NGẮN nhất có thể</strong>, và cái giá phải trả đo được chính
+              xác — mọi ngắt (kể cả ưu tiên cao nhất) bị trễ đúng bằng độ dài khoảng tắt ngắt đó. Tắt ngắt 2 vi giây để
+              bảo vệ 1 dòng <code>counter++</code> gần như miễn phí; tắt ngắt 50ms để "cho chắc" bảo vệ cả một hàm dài
+              là thảm hoạ — verified ở demo Mục 6.
+            </p>
+            <p>
+              <strong>Khi nào cần:</strong> mọi read-modify-write hoặc truy cập một struct nhiều trường mà cả main lẫn
+              ISR cùng đụng vào. <strong>Khi nào KHÔNG cần:</strong> đọc một biến đơn giản <em>một chiều</em>
+              (chỉ ISR ghi, main chỉ đọc) trên kiến trúc 32-bit — một lệnh LDR/STR 32-bit là nguyên tử tự nhiên trên
+              Cortex-M, không cần khoá gì thêm.
+            </p>
+
+            <h2>4. Đọc "xé đôi" (torn read)</h2>
+            <p>
+              Race condition không chỉ mất cập nhật — nó còn có thể tạo ra dữ liệu <strong>chưa từng tồn tại</strong>.
+              Tưởng tượng một cặp trường liên quan, ví dụ đồng hồ giờ/phút, mà ISR cập nhật CẢ HAI cùng lúc (giờ:phút
+              chuyển từ 23:59 sang 00:00). Nếu main đọc <code>hour</code> trước, ISR chen vào đổi cả hai trường, rồi
+              main mới đọc <code>minute</code> — kết quả main thấy là <strong>giờ MỚI ghép với phút CŨ</strong> (hoặc
+              ngược lại), một tổ hợp không hề tồn tại ở bất kỳ thời điểm thật nào.
+            </p>
+            <div class="callout callout--warning">
+              <div class="callout__title">🕐 Ví dụ cụ thể: đồng hồ xé đôi lúc nửa đêm</div>
+              <div class="callout__content">
+                Trạng thái thật chỉ có hai khả năng: 23:59 (trước khi ISR chạy) hoặc 00:00 (sau khi ISR chạy xong).
+                Verified ở demo: đọc không bảo vệ giữa hai lần đọc <code>hour</code>/<code>minute</code> riêng lẻ cho ra
+                <strong>23:00</strong> — một thời điểm KHÔNG BAO GIỜ xảy ra thật trên đồng hồ này. Giải pháp giống hệt
+                Mục 3: bọc cả hai lần đọc trong 1 critical section để ISR không thể chen vào giữa.
+              </div>
+            </div>
+
+            <h2>5. Ring buffer SPSC — chia sẻ mà không cần khoá</h2>
+            <p>
+              Critical section tốt cho một biến đơn, nhưng khi cần chuyển cả một <strong>luồng</strong> dữ liệu giữa ISR
+              và main (ví dụ byte nhận UART ở Bài 9), tắt ngắt liên tục sẽ quá tốn. Lời giải kinh điển:
+              <strong>ring buffer SPSC</strong> (single-producer single-consumer) — một mảng vòng tròn với 2 con trỏ
+              <code>head</code> (vị trí ghi tiếp theo) và <code>tail</code> (vị trí đọc tiếp theo).
+            </p>
+            <p>
+              Điểm mấu chốt làm cấu trúc này AN TOÀN <strong>mà không cần khoá gì cả</strong>: ISR (producer) CHỈ bao
+              giờ đọc/ghi <code>head</code>; main (consumer) CHỈ bao giờ đọc/ghi <code>tail</code>. Mỗi bên chỉ sở hữu
+              đúng một biến của riêng mình — không ai ghi vào biến của bên kia, nên không có read-modify-write nào bị
+              chia sẻ để mà race. Điều kiện nền: việc ghi một chỉ số (biến kiểu <code>uint8_t</code> hoặc
+              <code>uint16_t</code> căn chỉnh đúng) là nguyên tử tự nhiên trên Cortex-M — không cần
+              <code>volatile</code> làm gì thêm ngoài việc ngăn compiler cache sai.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ring_buffer_spsc.c</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">#define RB_CAP 8
+volatile uint8_t rb_buf[RB_CAP];
+volatile uint8_t rb_head = 0;  // CHI ISR (producer) dung vao
+volatile uint8_t rb_tail = 0;  // CHI main (consumer) dung vao
+
+// Goi tu ISR - khong bao gio khoa gi ca
+void rb_push(uint8_t b) {
+    uint8_t next = (rb_head + 1) % RB_CAP;
+    if (next == rb_tail) return; // day - mat du lieu, khong duoc "cho"
+    rb_buf[rb_head] = b;
+    rb_head = next;
+}
+
+// Goi tu main - khong bao gio khoa gi ca
+int rb_pop(uint8_t *out) {
+    if (rb_head == rb_tail) return 0; // rong
+    *out = rb_buf[rb_tail];
+    rb_tail = (rb_tail + 1) % RB_CAP;
+    return 1;
+}</code></pre>
+            </div>
+            <p>Đây là cấu trúc dữ liệu quan trọng nhất toàn series — Bài 9 (UART) dùng nguyên xi cho cả TX lẫn RX.</p>
+
+            <h2>6. Thực hành: demo race + ring buffer trên VMCU thật</h2>
+            <p>
+              Demo dưới đây chạy đúng logic vừa học trên VMCU thật — không giả lập bằng số cố định. Bật/tắt "Bảo vệ
+              (critical section)" rồi chạy 10.000 vòng để tận mắt thấy số đếm sai lệch, và thử push/pop ring buffer để
+              xem 2 con trỏ head/tail đuổi nhau:
+            </p>
+
+            <div class="code-tabs" id="race-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🏁 Race condition &amp; Ring buffer — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">1. Race condition (counter++)</p>
+                  <div class="mux-demo__inputs" style="margin-bottom: 10px; flex-wrap: wrap">
+                    <button class="mux-input-btn" type="button" id="race-protect-btn">
+                      🔓 Không bảo vệ (bấm để bật critical section)
+                    </button>
+                    <button class="mux-input-btn" type="button" id="race-run-btn">▶️ Chạy 10.000 vòng</button>
+                  </div>
+                  <div id="race-result" class="mux-demo__output" style="margin-bottom: 18px">
+                    Bấm "Chạy 10.000 vòng" để bắt đầu.
+                  </div>
+
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">2. Ring buffer SPSC (capacity 8)</p>
+                  <div class="mux-demo__inputs" style="margin-bottom: 10px; flex-wrap: wrap">
+                    <button class="mux-input-btn" type="button" id="rb-push-btn">➕ ISR push()</button>
+                    <button class="mux-input-btn" type="button" id="rb-pop-btn">➖ main pop()</button>
+                    <button class="mux-input-btn" type="button" id="rb-reset-btn">🔄 Reset</button>
+                  </div>
+                  <div
+                    id="rb-slots"
+                    style="display: flex; gap: 4px; margin-bottom: 8px; font-family: Menlo, Monaco, monospace"
+                  ></div>
+                  <div id="rb-status" class="mux-demo__output">Đang tải…</div>
+                  <p class="mux-demo__hint">
+                    Gợi ý: bật "🔒 Có bảo vệ" rồi chạy lại 10.000 vòng — số đếm phải đủ 20.000 (không mất update nào).
+                    Với ring buffer: push liên tục tới khi đầy (head đuổi kịp gần tail) rồi thử push tiếp — bị từ chối
+                    có kiểm soát, không mất dữ liệu ngoài ý muốn.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">race_and_ringbuffer.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// Xem code day du o Muc 1 (race_concept.c), Muc 3 (critical_section.c),
+// va Muc 5 (ring_buffer_spsc.c) - demo nay chay dung 3 doan do, khong gia lap.</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">race_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { raceDemo, RingBufferSPSC } from './vmcu.js';
+
+// Khong bao ve: moi vong chi net +1 (mat dung 1 update/vong)
+const noProtect = raceDemo(10000, false);
+console.log(noProtect); // { finalValue: 10000, expected: 20000, lost: 10000 }
+
+// Co critical section: moi vong net +2 (khong mat gi)
+const protectedRun = raceDemo(10000, true);
+console.log(protectedRun); // { finalValue: 20000, expected: 20000, lost: 0 }
+
+// Ring buffer SPSC
+const rb = new RingBufferSPSC(8);
+rb.push(0x10);      // goi tu "ISR"
+const byte = rb.pop(); // goi tu "main" - 0x10, dung thu tu FIFO</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ <code>counter++</code> là <strong>BA lệnh máy</strong> (LDR/ADD/STR) — ISR chen đúng giữa chừng làm
+                mất cập nhật (verified: 10.000 vòng không bảo vệ mất sạch 10.000 update).
+              </li>
+              <li>
+                ✅ <code>volatile</code> <strong>KHÔNG phải khoá</strong> — chỉ ngăn compiler cache sai, không ngăn ISR
+                chen vào giữa một chuỗi đọc-sửa-ghi.
+              </li>
+              <li>
+                ✅ <strong>Critical section</strong> (<code>__disable_irq()</code>/<code>__enable_irq()</code>) bảo vệ
+                biến đơn — verified bật lên thì 10.000 vòng đủ đúng 20.000, không mất gì; cái giá là mọi ngắt bị trễ
+                đúng bằng độ dài khoảng tắt ngắt.
+              </li>
+              <li>
+                ✅ <strong>Torn read</strong>: cặp trường liên quan (giờ/phút) bị ISR đổi giữa 2 lần đọc → tổ hợp CHƯA
+                BAO GIỜ tồn tại thật (verified: 23:00 — không phải giờ thật nào cả).
+              </li>
+              <li>
+                ✅ <strong>Ring buffer SPSC</strong> — ISR chỉ đụng <code>head</code>, main chỉ đụng <code>tail</code> —
+                chia sẻ luồng dữ liệu mà KHÔNG cần khoá gì cả. Bài 9 dùng nguyên xi.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao <code>counter++;</code> trong C không an toàn khi có ISR cùng đụng vào biến đó?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! counter++ la 3 lenh may rieng biet (LDR doc - ADD cong 1 - STR ghi lai). Neu ISR chen vao dung giua LDR va STR va cung tang bien do, cong tang cua ISR se bi buoc STR cua main GHI DE mat - lost update.'
+                    )
+                  "
+                >
+                  A. Nó là 3 lệnh máy riêng biệt (LDR/ADD/STR) — ISR có thể chen vào giữa và làm mất cập nhật của một
+                  trong hai bên
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Toan tu ++ hoan toan hop le va bien dich binh thuong tren moi kien truc - van de khong nam o cu phap C ma o viec no bi bien dich thanh NHIEU lenh may co the bi ngat chen vao giua.'
+                    )
+                  "
+                >
+                  B. Vì toán tử <code>++</code> không hợp lệ trên biến toàn cục trong C
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'ISR khong lam hong gia tri kieu du lieu - van de la ve THU TU THUC THI (interleaving) giua nhieu lenh may, khong phai kieu du lieu sai.'
+                    )
+                  "
+                >
+                  C. Vì kiểu <code>uint32_t</code> không tương thích với ISR
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Thêm từ khoá <code>volatile</code> vào biến chia sẻ giữa ISR và main có giải quyết được race condition
+                (lost update) không?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Day la hieu nham so mot khi phong van nhung - volatile KHONG lam cho LDR-ADD-STR tro thanh 1 thao tac nguyen tu duy nhat. ISR van co the chen vao giua 3 lenh may do du bien co volatile hay khong.'
+                    )
+                  "
+                >
+                  A. Có — <code>volatile</code> khiến phép đọc-sửa-ghi trở thành một thao tác nguyên tử, không thể bị
+                  chen vào giữa
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! volatile chi ep compiler luon doc/ghi bo nho that thay vi cache gia tri cu trong thanh ghi CPU qua nhieu dong code - no KHONG ngan ISR chen vao giua chuoi LDR-ADD-STR. Verified o demo: bat/tat bao ve khong lien quan gi toi tu khoa volatile, chi lien quan toi critical section.'
+                    )
+                  "
+                >
+                  B. Không — <code>volatile</code> chỉ ngăn compiler cache giá trị cũ trong thanh ghi, không ngăn ISR
+                  chen vào giữa chuỗi đọc-sửa-ghi; cần critical section mới giải quyết được lost update
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'volatile khong lam cham CPU theo cach lien quan den race condition - va du co lam cham di nua, van de cot loi van la ISR co the chen vao giua chuoi lenh, khong phai toc do.'
+                    )
+                  "
+                >
+                  C. Có, nhưng chỉ khi CPU chạy chậm hơn tốc độ ngắt xảy ra
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Ring buffer SPSC (ISR chỉ đụng <code>head</code>, main chỉ đụng <code>tail</code>) an toàn mà KHÔNG cần
+                tắt ngắt hay khoá gì cả. Vì sao?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ring buffer SPSC KHONG can toc do CPU nhanh - no an toan bang thiet ke (moi ben chi so huu 1 bien), khong phai nho toc do phan cung.'
+                    )
+                  "
+                >
+                  A. Vì phần cứng ARM Cortex-M đủ nhanh để không bao giờ xảy ra race condition
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Diem mau chot: moi ben CHI ghi vao BIEN CUA MINH (ISR chi dung head, main chi dung tail) - khong ai ghi vao bien cua ben kia, nen khong co read-modify-write nao bi CHIA SE de ma race. Ghi 1 chi so don le la nguyen tu tu nhien tren kien truc 32-bit.'
+                    )
+                  "
+                >
+                  B. Mỗi bên chỉ ghi vào biến của riêng mình (không bên nào ghi vào biến của bên kia) — không có
+                  read-modify-write nào bị chia sẻ để race, và ghi một chỉ số đơn lẻ là nguyên tử tự nhiên
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ring buffer SPSC (single-producer single-consumer) trong bai nay KHONG dung critical section an trong ham push/pop - do chinh la diem hay cua no: an toan MA KHONG can tat ngat gi ca.'
+                    )
+                  "
+                >
+                  C. Vì hàm <code>push()</code> và <code>pop()</code> tự động bọc critical section bên trong
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Demo torn read: main đọc cặp giờ/phút khi ISR đang đổi từ 23:59 sang 00:00 giữa hai lần đọc, và thấy kết
+                quả 23:00. Vì sao đây là một "tổ hợp không có thật"?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Trang thai THAT chi co dung 2 kha nang: 23:59 (truoc khi ISR chay) hoac 00:00 (sau khi ISR chay xong) - khong bao gio ton tai mot khoanh khac ma dong ho THAT hien 23:00. Do la hau qua cua viec doc gio (cu) va doc phut (moi, sau khi ISR da chay) o 2 thoi diem khac nhau.'
+                    )
+                  "
+                >
+                  A. Đồng hồ thật không bao giờ ở trạng thái 23:00 vào đúng thời điểm chuyển từ 23:59 sang 00:00 — main
+                  đã đọc "giờ" và "phút" ở hai thời điểm khác nhau, ghép nhầm giờ cũ với phút mới (hoặc ngược lại)
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Day khong phai loi lam tron so hoc - ca hour va minute deu la gia tri hop le rieng le (23 va 0 deu la so hop le). Van de la SU KET HOP cua chung khong tung xay ra that.'
+                    )
+                  "
+                >
+                  B. Vì phép tính 23:59 + 1 phút bị làm tròn sai trong VMCU
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'ISR trong vi du nay cap nhat CA HAI truong CUNG LUC mot cach dung dan (isrUpdate ghi ca hour lan minute) - van de hoan toan nam o phia MAIN doc 2 truong do RIENG LE o 2 thoi diem khac nhau, khong phai ISR ghi sai.'
+                    )
+                  "
+                >
+                  C. Vì ISR ghi sai giá trị của trường <code>minute</code>
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 8 vừa thêm
+                <code>RacyCounter</code>/<code>raceDemo</code> (race condition tất định),
+                <code>TornReadPair</code> (torn read) và <code>RingBufferSPSC</code>, kèm self-test đối chiếu đúng mọi
+                hành vi trong bài (chạy <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Race_condition" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Race condition
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Circular_buffer" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Circular buffer (ring buffer)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://developer.arm.com/documentation/dui0552/latest/cortex-m3-peripherals/optional-system-timer--systick/system-control-block/primask-register"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    ARM — PRIMASK Register (Cortex-M Technical Reference)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-interrupts-nvic" class="article-related__link article-related__link--prev">
+                  Bài 7: Ngắt (Interrupt) &amp; NVIC
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 9: UART &amp; giao tiếp nối tiếp — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { raceDemo, RingBufferSPSC } from './vmcu.js';
+
+      // ==== Demo 1: Race condition ====
+      let useCriticalSection = false;
+
+      document.getElementById('race-protect-btn').addEventListener('click', () => {
+        useCriticalSection = !useCriticalSection;
+        const btn = document.getElementById('race-protect-btn');
+        btn.textContent = useCriticalSection
+          ? '🔒 Có bảo vệ (bấm để tắt critical section)'
+          : '🔓 Không bảo vệ (bấm để bật critical section)';
+        btn.classList.toggle('is-on', useCriticalSection);
+      });
+
+      document.getElementById('race-run-btn').addEventListener('click', () => {
+        const result = raceDemo(10000, useCriticalSection);
+        const el = document.getElementById('race-result');
+        const tone = result.lost === 0 ? '#16a34a' : '#dc2626';
+        el.innerHTML =
+          (useCriticalSection ? '🔒 Có bảo vệ' : '🔓 Không bảo vệ') +
+          ' — final value = <strong>' +
+          result.finalValue +
+          '</strong> / kỳ vọng ' +
+          result.expected +
+          ' — <strong>mất ' +
+          result.lost +
+          ' update</strong>';
+        el.style.color = tone;
+      });
+
+      // ==== Demo 2: Ring buffer SPSC ====
+      const RB_CAPACITY = 8;
+      let rb = new RingBufferSPSC(RB_CAPACITY);
+      let pushCounter = 0;
+
+      function renderRingBuffer() {
+        const slotsEl = document.getElementById('rb-slots');
+        slotsEl.innerHTML = '';
+        for (let i = 0; i < RB_CAPACITY; i++) {
+          const span = document.createElement('span');
+          const isHead = i === rb.head;
+          const isTail = i === rb.tail;
+          const hasData = (() => {
+            // Xac dinh o nay co dang chua du lieu hop le hay khong (giua tail va head)
+            let idx = rb.tail;
+            while (idx !== rb.head) {
+              if (idx === i) return true;
+              idx = (idx + 1) % RB_CAPACITY;
+            }
+            return false;
+          })();
+          span.textContent = hasData ? '0x' + rb.buffer[i].toString(16).padStart(2, '0').toUpperCase() : '··';
+          span.style.cssText =
+            'display:inline-flex;align-items:center;justify-content:center;width:40px;height:32px;border-radius:4px;font-size:12px;border:2px solid ' +
+            (isHead && isTail ? '#a855f7' : isHead ? '#16a34a' : isTail ? '#ca8a04' : '#cbd5e1') +
+            ';background:' +
+            (hasData ? 'rgba(20,184,166,0.12)' : 'transparent');
+          slotsEl.appendChild(span);
+        }
+        const statusEl = document.getElementById('rb-status');
+        statusEl.textContent =
+          'head=' +
+          rb.head +
+          ' (xanh lá) · tail=' +
+          rb.tail +
+          ' (vàng) · count=' +
+          rb.count +
+          '/' +
+          (RB_CAPACITY - 1) +
+          (rb.isFull() ? ' · ĐẦY' : rb.isEmpty() ? ' · RỖNG' : '');
+      }
+
+      document.getElementById('rb-push-btn').addEventListener('click', () => {
+        const ok = rb.push(pushCounter++ & 0xff);
+        const statusEl = document.getElementById('rb-status');
+        if (!ok) statusEl.style.color = '#dc2626';
+        else statusEl.style.color = '';
+        renderRingBuffer();
+      });
+
+      document.getElementById('rb-pop-btn').addEventListener('click', () => {
+        rb.pop();
+        document.getElementById('rb-status').style.color = '';
+        renderRingBuffer();
+      });
+
+      document.getElementById('rb-reset-btn').addEventListener('click', () => {
+        rb = new RingBufferSPSC(RB_CAPACITY);
+        pushCounter = 0;
+        document.getElementById('rb-status').style.color = '';
+        renderRingBuffer();
+      });
+
+      renderRingBuffer();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

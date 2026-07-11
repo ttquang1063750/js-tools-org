@@ -3,8 +3,10 @@
 // vi nào được nối). Bài 2 thêm GPIO OUTPUT (MODER/ODR); Bài 3 thêm GPIO INPUT
 // (IDR + cấu hình pull-up/down PUPDR, mô phỏng cả chân floating đọc nhiễu
 // ngẫu nhiên) — đúng build-out table của từng bài. Bài 4 thêm SysTick; Bài 6
-// thêm Timer/PWM; Bài 7 thêm NVIC/EXTI; Bài 9 thêm UART; Bài 10 thêm ADC; Bài
-// 11 thêm DMA; Bài 14-15 thêm mini-RTOS. Import trực tiếp từ các bài sau,
+// thêm Timer/PWM; Bài 7 thêm NVIC/EXTI; Bài 8 thêm race condition/critical
+// section/ring buffer SPSC (logic firmware thuần, không phải thanh ghi mới);
+// Bài 9 thêm UART; Bài 10 thêm ADC; Bài 11 thêm DMA; Bài 14-15 thêm mini-RTOS.
+// Import trực tiếp từ các bài sau,
 // KHÔNG copy-paste lại logic (tiền lệ vlsi-verilite.js Series 11 / ai-neuro.js
 // Series 12).
 //
@@ -762,6 +764,137 @@ function countRawRisingEdges(rawSamples) {
   return count;
 }
 
+// ---------------------------------------------------------------------------
+// Race condition, critical section & ring buffer SPSC (Bài 8) — cũng là logic
+// FIRMWARE thuần (như ButtonFSM Bài 5), KHÔNG phải thanh ghi phần cứng, nên
+// sống bên ngoài class VMCU.
+// ---------------------------------------------------------------------------
+
+// Mô phỏng ĐÚNG 3 bước máy của `counter++` (LDR nạp giá trị cũ vào thanh ghi,
+// ADD cộng 1, STR ghi lại) và cách một ISR "chen" vào giữa chuỗi đó làm mất
+// cập nhật (lost update) — chính là Mục 8.1-8.2. Để mô phỏng TIẾT ĐỊNH (không
+// phải random timing), mỗi "vòng" giả định LUÔN có đúng 1 yêu cầu ngắt muốn
+// tăng biến đang chờ; roundNoCriticalSection() cho ISR đó chen vào ĐÚNG giữa
+// LDR và STR (kịch bản XẤU NHẤT, tái hiện được ổn định thay vì "thảng hoặc");
+// roundWithCriticalSection() hoãn ISR lại tới SAU khi main hoàn tất STR —
+// đúng ý nghĩa PRIMASK/`__disable_irq()` của Mục 8.3.
+class RacyCounter {
+  constructor() {
+    this.value = 0;
+  }
+
+  // KHÔNG có bảo vệ: ISR chen giữa LDR và STR của main -> cập nhật của ISR bị
+  // STR (dùng giá trị LDR cũ) ghi đè mất. Mỗi vòng chỉ net +1 thay vì +2.
+  roundNoCriticalSection() {
+    const ldr = this.value; // LDR — main đọc giá trị hiện tại vào "thanh ghi"
+    this.value = this.value + 1; // ISR chen vào giữa, tăng thật lên bộ nhớ
+    const added = ldr + 1; // ADD — main cộng 1 vào giá trị ĐÃ CŨ (không biết ISR vừa đổi)
+    this.value = added; // STR — GHI ĐÈ, xoá mất công tăng của ISR
+  }
+
+  // Critical section: main hoàn tất TRỌN VẸN LDR-ADD-STR trước, ISR bị hoãn
+  // chạy NỐI ĐUÔI sau đó (không chen giữa) -> cả 2 cập nhật đều được giữ.
+  roundWithCriticalSection() {
+    const ldr = this.value; // LDR
+    const added = ldr + 1; // ADD
+    this.value = added; // STR — main xong TRỌN VẸN, không ai chen vào được
+    this.value = this.value + 1; // ISR chạy SAU, an toàn vì main đã xong
+  }
+}
+
+// Chạy `iterations` vòng — mỗi vòng có đúng 1 lần main tăng + 1 lần ISR muốn
+// tăng. Không bảo vệ: mỗi vòng chỉ net +1 (mất đúng 1 cập nhật/vòng, tổng mất
+// = iterations). Có bảo vệ: mỗi vòng net +2 (không mất gì).
+function raceDemo(iterations, useCriticalSection) {
+  const rc = new RacyCounter();
+  for (let i = 0; i < iterations; i++) {
+    if (useCriticalSection) rc.roundWithCriticalSection();
+    else rc.roundNoCriticalSection();
+  }
+  const expected = iterations * 2;
+  return { finalValue: rc.value, expected, lost: expected - rc.value };
+}
+
+// Đọc "xé đôi" (torn read, Mục 8.4): cặp trường liên quan (giờ/phút) bị ISR
+// cập nhật GIỮA hai lần đọc riêng lẻ của main -> main thấy tổ hợp CHƯA BAO
+// GIỜ tồn tại thật (vd giờ MỚI ghép với phút CŨ). Ví dụ kinh điển: đồng hồ lúc
+// 23:59 sang 00:00 — ISR cập nhật cả 2 trường cùng lúc thật (không thể tách).
+class TornReadPair {
+  constructor(hour, minute) {
+    this.hour = hour;
+    this.minute = minute;
+  }
+
+  // ISR cập nhật CẢ HAI trường "cùng một lúc" (đại diện 1 lần ghi nguyên tử
+  // đối với chính ISR — chỉ main đọc xen giữa mới thấy vấn đề).
+  isrUpdate(hour, minute) {
+    this.hour = hour;
+    this.minute = minute;
+  }
+
+  // KHÔNG bảo vệ: đọc `hour` xong, NHƯỜNG chỗ cho ISR chen vào cập nhật cả 2
+  // trường, rồi mới đọc `minute` — kết quả là tổ hợp {hour cũ, minute mới}.
+  mainReadTorn(isrFn) {
+    const hour = this.hour;
+    if (isrFn) isrFn(this);
+    const minute = this.minute;
+    return { hour, minute };
+  }
+
+  // Critical section: đọc CẢ HAI trường liên tục, ISR chỉ được chạy SAU khi
+  // đã đọc xong — luôn thấy đúng 1 trong 2 tổ hợp thật, không bao giờ bị xé.
+  mainReadProtected(isrFn) {
+    const hour = this.hour;
+    const minute = this.minute;
+    if (isrFn) isrFn(this);
+    return { hour, minute };
+  }
+}
+
+// Ring buffer SPSC (single-producer single-consumer, Mục 8.5) — cấu trúc dữ
+// liệu quan trọng nhất toàn series: ISR (producer) chỉ đụng `head`, main
+// (consumer) chỉ đụng `tail` — mỗi bên CHỈ ghi chỉ số CỦA MÌNH nên không cần
+// tắt ngắt/khoá gì cả. Dùng đúng 1 ô trống để phân biệt đầy/rỗng (capacity-1
+// chỗ dùng được — kỹ thuật chuẩn, tránh nhập nhằng head===tail vừa là "rỗng"
+// vừa là "đầy" nếu dùng hết trọn capacity).
+class RingBufferSPSC {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.buffer = new Uint8Array(capacity);
+    this.head = 0; // vị trí GHI tiếp theo — CHỈ producer (ISR) đụng vào
+    this.tail = 0; // vị trí ĐỌC tiếp theo — CHỈ consumer (main) đụng vào
+  }
+
+  get count() {
+    return (this.head - this.tail + this.capacity) % this.capacity;
+  }
+
+  isEmpty() {
+    return this.head === this.tail;
+  }
+
+  isFull() {
+    return this.count === this.capacity - 1;
+  }
+
+  // Gọi từ ISR (producer). Trả về false nếu đầy — mất dữ liệu, không throw
+  // (ISR không được phép "kẹt" chờ chỗ trống).
+  push(byte) {
+    if (this.isFull()) return false;
+    this.buffer[this.head] = byte & 0xff;
+    this.head = (this.head + 1) % this.capacity;
+    return true;
+  }
+
+  // Gọi từ main (consumer). Trả về null nếu rỗng.
+  pop() {
+    if (this.isEmpty()) return null;
+    const v = this.buffer[this.tail];
+    this.tail = (this.tail + 1) % this.capacity;
+    return v;
+  }
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -806,6 +939,10 @@ export {
   EXTI_FTSR_ADDR,
   EXTI_PR_ADDR,
   EXTI_LINE1_BIT,
+  RacyCounter,
+  raceDemo,
+  TornReadPair,
+  RingBufferSPSC,
 };
 
 // ---------------------------------------------------------------------------
@@ -1251,6 +1388,71 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       cpu11.extiPr,
       1 << EXTI_LINE1_BIT
     );
+  }
+
+  // --- Race condition & critical section (Bài 8) ---
+  {
+    const noProtect = raceDemo(10000, false);
+    check(
+      'Không bảo vệ: final value = 10000 (mỗi vòng chỉ net +1, mất đúng 1 update/vòng)',
+      noProtect.finalValue,
+      10000
+    );
+    check('Không bảo vệ: kỳ vọng đúng ra phải là 20000 nếu không mất gì', noProtect.expected, 20000);
+    check('Không bảo vệ: mất đúng 10000 update (100% lost, kịch bản xấu nhất tái hiện được)', noProtect.lost, 10000);
+
+    const protected_ = raceDemo(10000, true);
+    check('Có critical section: final value = 20000 (không mất update nào)', protected_.finalValue, 20000);
+    check('Có critical section: lost = 0', protected_.lost, 0);
+  }
+
+  // --- Torn read (Bài 8 Mục 8.4) ---
+  {
+    const pair = new TornReadPair(23, 59);
+    const isrMidnight = (p) => p.isrUpdate(0, 0); // ISR: 23:59 -> 00:00 giữa 2 lần đọc
+
+    const torn = pair.mainReadTorn(isrMidnight);
+    checkTrue(
+      'Đọc không bảo vệ: thấy tổ hợp XÉ ĐÔI {hour cũ=23, minute mới=0} — CHƯA BAO GIỜ tồn tại thật',
+      torn.hour === 23 && torn.minute === 0
+    );
+
+    const pair2 = new TornReadPair(23, 59);
+    const protectedRead = pair2.mainReadProtected(isrMidnight);
+    checkTrue(
+      'Đọc có bảo vệ: luôn thấy 1 trong 2 tổ hợp THẬT (23:59 trước ISR), không bị xé',
+      protectedRead.hour === 23 && protectedRead.minute === 59
+    );
+  }
+
+  // --- Ring buffer SPSC (Bài 8 Mục 8.5) ---
+  {
+    const rb = new RingBufferSPSC(4); // 4 o, nhung chi dung duoc 3 (1 o de phan biet day/rong)
+    checkTrue('Ring buffer mới: rỗng', rb.isEmpty() === true);
+    checkTrue('Ring buffer mới: chưa đầy', rb.isFull() === false);
+    check('pop() khi rỗng trả về null', rb.pop(), null);
+
+    checkTrue('push 3 byte đầu tiên: đều thành công', rb.push(0x10) && rb.push(0x20) && rb.push(0x30));
+    checkTrue('Sau khi push đủ capacity-1: buffer ĐẦY', rb.isFull() === true);
+    checkTrue('push khi đầy: bị từ chối (trả về false), không throw', rb.push(0x40) === false);
+
+    check('pop() đầu tiên: đúng thứ tự FIFO — 0x10 ra trước', rb.pop(), 0x10);
+    checkTrue('Sau khi pop 1: không còn đầy nữa', rb.isFull() === false);
+    check('pop() thứ hai: 0x20', rb.pop(), 0x20);
+    check('pop() thứ ba: 0x30', rb.pop(), 0x30);
+    checkTrue('Pop hết: rỗng trở lại', rb.isEmpty() === true);
+
+    // Lấp đầy/rút cạn nhiều vòng (wrap-around head/tail qua lại) — đúng đắn
+    // không suy giảm dù con trỏ quay vòng qua vòng nhiều lần.
+    let allCorrect = true;
+    for (let round = 0; round < 10; round++) {
+      rb.push(round);
+      rb.push(round + 100);
+      const a = rb.pop();
+      const b = rb.pop();
+      if (a !== round || b !== round + 100) allCorrect = false;
+    }
+    checkTrue('Push/pop xen kẽ nhiều vòng (head/tail quay vòng qua lại): luôn đúng thứ tự FIFO', allCorrect);
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---
