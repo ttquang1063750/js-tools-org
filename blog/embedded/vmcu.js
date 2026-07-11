@@ -216,6 +216,38 @@ const USART1_CR1_TXEIE_BIT = 7;
 const USART1_CR1_RXNEIE_BIT = 5;
 const USART1_CLK_HZ = 72000000; // 72MHz - xung nhip APB2 tren STM32F103 (giong TIM1)
 
+// ---------------------------------------------------------------------------
+// ADC1 (Bài 10) — địa chỉ base + offset SR/CR1/CR2/DR lấy đúng theo STM32F103
+// thật (bus APB2), giữ đúng cam kết "địa chỉ thật khi khả thi" của series.
+// VMCU đơn giản hoá: KHÔNG mô phỏng thời gian chuyển đổi SAR thật (vài
+// micro-giây trên chip thật) — ghi bit SWSTART là có kết quả NGAY trong DR,
+// đúng Ý NGHĨA tầng thanh ghi (main/ISR đọc thấy gì) dù bỏ qua độ trễ vật lý.
+//   - SR: bit EOC (1) báo "chuyển đổi xong, DR có dữ liệu mới" — đọc DR tự
+//     động xoá EOC (giống RXNE của USART1 Bài 9).
+//   - CR1: bit EOCIE (5) bật ngắt khi EOC set.
+//   - CR2: bit ADON (0) bật khối ADC; bit SWSTART (22) — ghi 1 để bắt đầu
+//     chuyển đổi, phần cứng thật TỰ xoá bit này ngay khi bắt đầu (VMCU không
+//     lưu lại SWSTART, chỉ dùng làm "cạnh kích hoạt" tức thời).
+//   - DR: kết quả 10-bit (0-1023), quy đổi từ adcAnalogInputMv qua đúng công
+//     thức Mục 10.2: code = round(V_in / V_ref * (2^N - 1)).
+// ---------------------------------------------------------------------------
+const ADC1_BASE = 0x40012400;
+const ADC1_SR_OFFSET = 0x00;
+const ADC1_CR1_OFFSET = 0x04;
+const ADC1_CR2_OFFSET = 0x08;
+const ADC1_DR_OFFSET = 0x4c;
+const ADC1_SR_ADDR = ADC1_BASE + ADC1_SR_OFFSET;
+const ADC1_CR1_ADDR = ADC1_BASE + ADC1_CR1_OFFSET;
+const ADC1_CR2_ADDR = ADC1_BASE + ADC1_CR2_OFFSET;
+const ADC1_DR_ADDR = ADC1_BASE + ADC1_DR_OFFSET;
+const ADC1_SR_EOC_BIT = 1;
+const ADC1_CR1_EOCIE_BIT = 5;
+const ADC1_CR2_ADON_BIT = 0;
+const ADC1_CR2_SWSTART_BIT = 22;
+const ADC_RESOLUTION_BITS = 10; // 10-bit = 1024 mức (0-1023), dung STM32F103 that
+const ADC_VREF_MV = 3300; // 3.3V tinh bang mV - Vref pho bien tren board STM32F103
+const IRQ_ADC1 = 18; // vi tri vector that cua ADC1_2 tren STM32F103 (nam trong ISER0, <32)
+
 // An toan tu test/demo: gioi han so lan _serviceInterrupts lap lai trong 1
 // lan goi de tranh treo that (vong lap vo han khi ISR quen xoa pending) -
 // tren phan cung that, mot watchdog timer se cuoi cung reset board; VMCU
@@ -312,6 +344,16 @@ class VMCU {
     this.usart1Dr = 0;
     this.usart1Brr = 0;
     this.uartTxLog = [];
+    // ADC1 (Bài 10): reset đúng thật — SR=0 (chưa có kết quả), CR1=0 (ngắt
+    // tắt), CR2=0 (khối tắt, ADON=0), DR=0. adcAnalogInputMv KHÔNG phải thanh
+    // ghi thật — mô phỏng điện áp analog thật đang có mặt ở chân vào ADC (vd
+    // vị trí biến trở demo Mục 10.5), MCU thật không có cách nào "biết"
+    // giá trị này ngoài việc tự đo qua ADC.
+    this.adc1Sr = 0;
+    this.adc1Cr1 = 0;
+    this.adc1Cr2 = 0;
+    this.adc1Dr = 0;
+    this.adcAnalogInputMv = 0;
   }
 
   // Đọc 1 byte trong 1 thanh ghi 32-bit lưu dạng số JS thường (little-endian,
@@ -514,6 +556,27 @@ class VMCU {
     if (addr >= USART1_CR1_ADDR && addr < USART1_CR1_ADDR + 4) {
       return this._readRegByte(this.usart1Cr1, addr - USART1_CR1_ADDR);
     }
+    if (addr >= ADC1_SR_ADDR && addr < ADC1_SR_ADDR + 4) {
+      return this._readRegByte(this.adc1Sr, addr - ADC1_SR_ADDR);
+    }
+    if (addr >= ADC1_CR1_ADDR && addr < ADC1_CR1_ADDR + 4) {
+      return this._readRegByte(this.adc1Cr1, addr - ADC1_CR1_ADDR);
+    }
+    if (addr >= ADC1_CR2_ADDR && addr < ADC1_CR2_ADDR + 4) {
+      return this._readRegByte(this.adc1Cr2, addr - ADC1_CR2_ADDR);
+    }
+    if (addr >= ADC1_DR_ADDR && addr < ADC1_DR_ADDR + 4) {
+      // Đọc DR: lấy kết quả 10-bit vừa chuyển đổi, TỰ ĐỘNG xoá EOC (đúng hành
+      // vi thật — đọc DR là cách phần cứng biết "main đã lấy kết quả").
+      if (addr - ADC1_DR_ADDR === 0) {
+        this.adc1Sr = (this.adc1Sr & ~(1 << ADC1_SR_EOC_BIT)) >>> 0;
+        return this.adc1Dr & 0xff;
+      }
+      if (addr - ADC1_DR_ADDR === 1) {
+        return (this.adc1Dr >>> 8) & 0xff;
+      }
+      return 0;
+    }
     return 0;
   }
 
@@ -590,7 +653,36 @@ class VMCU {
       this.usart1Cr1 = this._writeRegByte(this.usart1Cr1, addr - USART1_CR1_ADDR, v);
       return;
     }
+    if (addr >= ADC1_CR1_ADDR && addr < ADC1_CR1_ADDR + 4) {
+      this.adc1Cr1 = this._writeRegByte(this.adc1Cr1, addr - ADC1_CR1_ADDR, v);
+      return;
+    }
+    if (addr >= ADC1_CR2_ADDR && addr < ADC1_CR2_ADDR + 4) {
+      const before = this.adc1Cr2;
+      this.adc1Cr2 = this._writeRegByte(this.adc1Cr2, addr - ADC1_CR2_ADDR, v);
+      const swstartNow = ((this.adc1Cr2 >>> ADC1_CR2_SWSTART_BIT) & 1) === 1;
+      const swstartBefore = ((before >>> ADC1_CR2_SWSTART_BIT) & 1) === 1;
+      if (swstartNow && !swstartBefore) {
+        this._adcRunConversion();
+        // Phần cứng thật tự xoá SWSTART ngay khi bắt đầu — VMCU không lưu
+        // lại bit này để tránh kích hoạt lại một chuyển đổi nữa khi đọc lại.
+        this.adc1Cr2 = (this.adc1Cr2 & ~(1 << ADC1_CR2_SWSTART_BIT)) >>> 0;
+      }
+      return;
+    }
     // peripheral khác chưa nối — ghi không có tác dụng gì
+  }
+
+  // Thực hiện 1 lần chuyển đổi SAR (Mục 10.1) — VMCU bỏ qua thời gian chuyển
+  // đổi thật, chỉ giữ đúng Ý NGHĨA: lượng tử hoá adcAnalogInputMv thành mã
+  // 10-bit đúng công thức Mục 10.2, ghi vào DR, bật EOC, báo ngắt nếu EOCIE.
+  _adcRunConversion() {
+    const code = adcVoltageToCode(this.adcAnalogInputMv, ADC_VREF_MV, ADC_RESOLUTION_BITS);
+    this.adc1Dr = code;
+    this.adc1Sr = (this.adc1Sr | (1 << ADC1_SR_EOC_BIT)) >>> 0;
+    if (((this.adc1Cr1 >>> ADC1_CR1_EOCIE_BIT) & 1) === 1) {
+      this.triggerInterrupt(IRQ_ADC1);
+    }
   }
 
   // TIM1 co dang chay hay khong (bit CEN cua CR1).
@@ -647,6 +739,18 @@ class VMCU {
     if (((this.usart1Cr1 >>> USART1_CR1_RXNEIE_BIT) & 1) === 1) {
       this.triggerInterrupt(IRQ_USART1);
     }
+  }
+
+  // ADC1 co dang bat hay khong (bit ADON cua CR2).
+  adcEnabled() {
+    return ((this.adc1Cr2 >>> ADC1_CR2_ADON_BIT) & 1) === 1;
+  }
+
+  // Dat dien ap analog mo phong dang co mat o chan vao ADC (mV) - vd vi tri
+  // bien tro trong demo Muc 10.5. Gia tri nay KHONG tu dong "chay" vao DR -
+  // firmware van phai tu kich hoat mot lan chuyen doi qua SWSTART.
+  adcSetAnalogInputMv(mv) {
+    this.adcAnalogInputMv = mv;
   }
 
   // "Vector table" mô phỏng (Bài 7 Mục 2): trên phần cứng thật đây là 1 mảng
@@ -1097,6 +1201,53 @@ function uartSampleWithBaudError(byte, errorFrac) {
   return { bits, sampled, correctPerBit, allCorrect: correctPerBit.every(Boolean) };
 }
 
+// Công thức Mục 10.2: quy đổi điện áp (mV) sang mã ADC N-bit — làm tròn về
+// mức gần nhất, kẹp (clamp) trong khoảng hợp lệ [0, 2^N - 1] nếu điện áp vượt
+// ngưỡng (vd nhiễu đẩy dưới 0 hoặc vượt Vref).
+function adcVoltageToCode(voltageMv, vrefMv, bits) {
+  const maxCode = (1 << bits) - 1;
+  const code = Math.round((voltageMv / vrefMv) * maxCode);
+  return Math.max(0, Math.min(maxCode, code));
+}
+
+// Chiều ngược lại: mã ADC → điện áp (mV) — dùng để "đọc lại" kết quả đã lượng
+// tử hoá, minh hoạ sai số lượng tử ±½LSB của Mục 10.2.
+function adcCodeToVoltage(code, vrefMv, bits) {
+  const maxCode = (1 << bits) - 1;
+  return (code / maxCode) * vrefMv;
+}
+
+// V_LSB = Vref / 2^N (Mục 10.2) — CHÚ Ý: dùng 2^N (không phải 2^N - 1) vì đây
+// là kích thước MỖI bậc lượng tử, khác với maxCode dùng để quy đổi mã.
+function adcLsbMv(vrefMv, bits) {
+  return vrefMv / Math.pow(2, bits);
+}
+
+// Trung bình trượt (Mục 10.4) — cửa sổ kích thước windowSize, tại mỗi điểm i
+// lấy trung bình của tối đa windowSize mẫu GẦN NHẤT (ít hơn ở đầu dãy khi
+// chưa đủ mẫu) — chính là FIR filter đơn giản nhất (nhắc lại ở Series 14
+// Bài 9).
+function movingAverage(samples, windowSize) {
+  const out = [];
+  for (let i = 0; i < samples.length; i++) {
+    const start = Math.max(0, i - windowSize + 1);
+    let sum = 0;
+    for (let j = start; j <= i; j++) sum += samples[j];
+    out.push(sum / (i - start + 1));
+  }
+  return out;
+}
+
+// Nguồn "nhiễu môi trường" TẤT ĐỊNH (deterministic) cho demo/self-test —
+// KHÔNG dùng Math.random() để kết quả lặp lại được giữa các lần chạy. Dùng
+// một hàm băm sin quen thuộc (sin(i * hằng số lớn) lấy phần thập phân) để tạo
+// chuỗi giả-ngẫu-nhiên ổn định, biên độ ±amplitudeMv quanh 0.
+function deterministicNoiseMv(index, amplitudeMv) {
+  const x = Math.sin(index * 12.9898) * 43758.5453;
+  const frac = x - Math.floor(x); // luôn trong [0, 1)
+  return (frac * 2 - 1) * amplitudeMv; // trải đều ra [-amplitudeMv, +amplitudeMv]
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -1164,6 +1315,22 @@ export {
   uartActualBaud,
   uartFrameBits,
   uartSampleWithBaudError,
+  ADC1_SR_ADDR,
+  ADC1_CR1_ADDR,
+  ADC1_CR2_ADDR,
+  ADC1_DR_ADDR,
+  ADC1_SR_EOC_BIT,
+  ADC1_CR1_EOCIE_BIT,
+  ADC1_CR2_ADON_BIT,
+  ADC1_CR2_SWSTART_BIT,
+  ADC_RESOLUTION_BITS,
+  ADC_VREF_MV,
+  IRQ_ADC1,
+  adcVoltageToCode,
+  adcCodeToVoltage,
+  adcLsbMv,
+  movingAverage,
+  deterministicNoiseMv,
 };
 
 // ---------------------------------------------------------------------------
@@ -1766,6 +1933,105 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       r8.correctPerBit.filter(Boolean).length,
       6
     );
+  }
+
+  // --- ADC1: quy đổi mã & LSB (Bài 10 Mục 10.2) ---
+  {
+    checkTrue('V_LSB 10-bit @ 3300mV ≈ 3.2226mV', Math.abs(adcLsbMv(3300, 10) - 3.22265625) < 1e-9);
+    checkTrue('V_LSB 4-bit @ 3300mV = 206.25mV (bậc lượng tử THÔ hơn 10-bit rất nhiều)', adcLsbMv(3300, 4) === 206.25);
+    check('code(0mV, 10-bit) = 0 (đáy thang)', adcVoltageToCode(0, 3300, 10), 0);
+    check('code(3300mV, 10-bit) = 1023 (đỉnh thang, 2^10 - 1)', adcVoltageToCode(3300, 3300, 10), 1023);
+    check('code(1650mV, 10-bit) = 512 (giữa thang)', adcVoltageToCode(1650, 3300, 10), 512);
+    check('code(1650mV, 4-bit) = 8 (chỉ 16 mức — thô hơn nhiều)', adcVoltageToCode(1650, 3300, 4), 8);
+    checkTrue(
+      'codeToVoltage(512, 10-bit) khớp lại rất sát 1650mV (sai số lượng tử nhỏ)',
+      Math.abs(adcCodeToVoltage(512, 3300, 10) - 1650) < 2
+    );
+    check(
+      'codeToVoltage(8, 4-bit) = 1760mV — sai 110mV so với 1650mV gốc (bậc thang quá thô)',
+      adcCodeToVoltage(8, 3300, 4),
+      1760
+    );
+    checkTrue('code âm (nhiễu kéo dưới 0) bị kẹp về 0', adcVoltageToCode(-50, 3300, 10) === 0);
+    checkTrue('code vượt Vref bị kẹp về mã tối đa', adcVoltageToCode(4000, 3300, 10) === 1023);
+  }
+
+  // --- ADC1: thanh ghi SR/CR1/CR2/DR + ngắt EOC (Bài 10 Mục 10.1, 10.3) ---
+  {
+    const cpuA = new VMCU();
+    check('Reset: CR2 = 0 (ADC tắt, ADON=0)', cpuA.read32(ADC1_CR2_ADDR), 0);
+    checkTrue('Reset: adcEnabled() = false', cpuA.adcEnabled() === false);
+    check('Reset: SR = 0 (chưa có kết quả nào, EOC=0)', cpuA.read32(ADC1_SR_ADDR), 0);
+
+    cpuA.adcSetAnalogInputMv(1650);
+    cpuA.write32(ADC1_CR2_ADDR, 1 << ADC1_CR2_ADON_BIT);
+    checkTrue('Bật ADON: adcEnabled() = true', cpuA.adcEnabled() === true);
+    check('Chưa SWSTART: DR vẫn = 0 (chưa chuyển đổi lần nào)', cpuA.read32(ADC1_DR_ADDR), 0);
+
+    cpuA.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_SWSTART_BIT));
+    checkTrue(
+      'Ghi SWSTART: EOC bật lên 1 NGAY (VMCU bỏ qua độ trễ SAR thật)',
+      ((cpuA.read32(ADC1_SR_ADDR) >>> ADC1_SR_EOC_BIT) & 1) === 1
+    );
+    check('DR sau chuyển đổi = 512 (1650mV → mã 10-bit)', cpuA.read32(ADC1_DR_ADDR), 512);
+    checkTrue('Đọc DR xong: EOC tự động xoá về 0', ((cpuA.read32(ADC1_SR_ADDR) >>> ADC1_SR_EOC_BIT) & 1) === 0);
+    checkTrue(
+      'SWSTART không tự lưu lại (phần cứng thật tự xoá bit này ngay khi bắt đầu)',
+      ((cpuA.read32(ADC1_CR2_ADDR) >>> ADC1_CR2_SWSTART_BIT) & 1) === 0
+    );
+
+    // Ngat EOC (EOCIE) qua IRQ_ADC1
+    const cpuB = new VMCU();
+    const isrLogB = [];
+    cpuB.write32(NVIC_ISER0_ADDR, 1 << IRQ_ADC1);
+    cpuB.installIrqHandler(IRQ_ADC1, () => isrLogB.push('adc-eoc'));
+    cpuB.write32(ADC1_CR1_ADDR, 1 << ADC1_CR1_EOCIE_BIT);
+    cpuB.adcSetAnalogInputMv(3300);
+    cpuB.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_SWSTART_BIT));
+    check('EOCIE bật: 1 lần SWSTART kích hoạt đúng 1 lần ngắt IRQ_ADC1', isrLogB.length, 1);
+    check('DR ở 3300mV (full-scale) = 1023', cpuB.read32(ADC1_DR_ADDR), 1023);
+
+    // EOCIE tat -> khong bao ngat du van chuyen doi binh thuong
+    const cpuC = new VMCU();
+    const isrLogC = [];
+    cpuC.write32(NVIC_ISER0_ADDR, 1 << IRQ_ADC1);
+    cpuC.installIrqHandler(IRQ_ADC1, () => isrLogC.push('adc-eoc'));
+    cpuC.adcSetAnalogInputMv(1650);
+    cpuC.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_SWSTART_BIT));
+    check('EOCIE tắt: không ngắt nào được báo dù chuyển đổi vẫn chạy', isrLogC.length, 0);
+    check('...nhưng DR vẫn cập nhật đúng (polling vẫn đọc được)', cpuC.read32(ADC1_DR_ADDR), 512);
+  }
+
+  // --- ADC1: trung bình trượt / oversampling (Bài 10 Mục 10.4) ---
+  {
+    check(
+      'movingAverage([10,20,30,40], window=2) = [10,15,25,35]',
+      movingAverage([10, 20, 30, 40], 2).join(','),
+      [10, 15, 25, 35].join(',')
+    );
+    check(
+      'movingAverage cửa sổ=1 trả về nguyên mẫu gốc (không lọc gì)',
+      movingAverage([5, 9, 2], 1).join(','),
+      [5, 9, 2].join(',')
+    );
+
+    // Nhieu tat dinh +-50mV quanh 1650mV, 20 mau, cua so 8 -> phuong sai giam manh
+    const N = 20;
+    const raw = [];
+    for (let i = 0; i < N; i++) raw.push(1650 + deterministicNoiseMv(i, 50));
+    const smoothed = movingAverage(raw, 8);
+    function variance(arr) {
+      const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+      return arr.reduce((a, b) => a + (b - mean) ** 2, 0) / arr.length;
+    }
+    const rawVar = variance(raw);
+    const smoothedVar = variance(smoothed);
+    checkTrue('Nhiễu ±50mV verified: phương sai mẫu thô ≈ 901 (dao động mạnh)', Math.abs(rawVar - 901.48) < 1);
+    checkTrue(
+      'Sau trung bình trượt cửa sổ=8: phương sai giảm còn ≈ 250 (mượt hơn rõ rệt, ~3,6 lần)',
+      Math.abs(smoothedVar - 250.25) < 1
+    );
+    checkTrue('Trung bình trượt LUÔN giảm phương sai so với tín hiệu thô ở demo này', smoothedVar < rawVar);
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---

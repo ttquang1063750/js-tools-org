@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 10: ADC &amp; thế giới tương tự — js-tools</title>
+    <meta
+      name="description"
+      content="Cầu nối analog→digital: nguyên lý SAR ADC 'cân nhị phân', mạch sample &amp; hold. Độ phân giải &amp; LSB verified: 10-bit @3.3V cho V_LSB≈3,22mV (1024 mức), 4-bit chỉ 206,25mV/mức — bậc thang thô gấp 64 lần. Đọc ADC đúng cách qua cờ EOC (polling vs ngắt) trên thanh ghi SR/CR1/CR2/DR thật của STM32F103. Trung bình trượt/oversampling verified: nhiễu ±50mV giảm phương sai từ ≈901 xuống ≈250 (~3,6 lần mượt hơn). Kèm demo xoay biến trở trên VMCU thật: đồ thị raw vs mượt song song, bật/tắt nhiễu môi trường, kéo số bit ADC xem bậc thang lượng tử."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-adc" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-adc" />
+    <meta property="og:title" content="Bài 10: ADC &amp; thế giới tương tự — js-tools" />
+    <meta
+      property="og:description"
+      content="Cầu nối analog→digital: nguyên lý SAR ADC 'cân nhị phân'. Độ phân giải &amp; LSB verified: 10-bit @3.3V cho V_LSB≈3,22mV, 4-bit chỉ 206,25mV/mức. Đọc ADC đúng cách qua cờ EOC (polling vs ngắt). Trung bình trượt verified: nhiễu ±50mV giảm phương sai từ ≈901 xuống ≈250. Kèm demo xoay biến trở trên VMCU thật: raw vs mượt, bật/tắt nhiễu, kéo số bit ADC xem bậc thang lượng tử."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 10: ADC &amp; thế giới tương tự — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Cầu nối analog→digital: nguyên lý SAR ADC 'cân nhị phân'. Độ phân giải &amp; LSB verified: 10-bit @3.3V cho V_LSB≈3,22mV, 4-bit chỉ 206,25mV/mức. Đọc ADC đúng cách qua cờ EOC (polling vs ngắt). Trung bình trượt verified: nhiễu ±50mV giảm phương sai từ ≈901 xuống ≈250. Kèm demo xoay biến trở trên VMCU thật: raw vs mượt, bật/tắt nhiễu, kéo số bit ADC xem bậc thang lượng tử."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "ADC & thế giới tương tự",
+        "description": "Cầu nối analog→digital: nguyên lý SAR ADC 'cân nhị phân'. Độ phân giải & LSB verified: 10-bit @3.3V cho V_LSB≈3,22mV, 4-bit chỉ 206,25mV/mức. Đọc ADC đúng cách qua cờ EOC (polling vs ngắt). Trung bình trượt verified: nhiễu ±50mV giảm phương sai từ ≈901 xuống ≈250. Kèm demo xoay biến trở trên VMCU thật: raw vs mượt, bật/tắt nhiễu, kéo số bit ADC xem bậc thang lượng tử.",
+        "url": "https://js-tools.org/blog/embedded/embedded-adc",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-20"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 10 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">ADC &amp; thế giới tương tự</h1>
+          <div class="article-hero__meta">20 tháng 7, 2026 · 21 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: thế giới là analog, MCU chỉ nói được bằng số</h2>
+            <p>
+              Nhiệt độ, ánh sáng, âm thanh, vị trí một biến trở xoay tay — tất cả đều là điện áp biến thiên
+              <strong>liên tục</strong>, có thể nhận vô số giá trị giữa 0V và điện áp nguồn. Nhưng bộ nhớ và thanh ghi
+              của MCU chỉ lưu được số nguyên rời rạc. <strong>ADC</strong> (Analog-to-Digital Converter) là cây cầu bắt
+              buộc phải bắc qua hố sâu đó — và giống mọi phép đo rời rạc hoá, nó luôn đánh đổi: biến điện áp thật thành
+              một con số gần đúng, không bao giờ chính xác tuyệt đối.
+            </p>
+            <p>
+              Bài này mổ xẻ đúng 1 con chip ADC 10-bit kiểu STM32F103: nguyên lý SAR bên trong, công thức lượng tử hoá
+              verify bằng số thật, cách đọc đúng qua cờ EOC, và kỹ thuật kinh điển nhất để "cứu" một tín hiệu nhiễu —
+              trung bình trượt. Đây cũng là bài mở khoá 2 hướng: Series 14 (DSP Âm thanh) Bài 3 sẽ mổ xẻ lượng tử hoá
+              đến tận gốc rễ toán học, còn Bài 9 Series 14 dạy đàng hoàng vì sao trung bình trượt chính là một bộ lọc
+              FIR.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-interrupts-nvic">Bài 7</a> (ngắt — cờ EOC hoạt động giống
+                hệt cơ chế ngắt đã học), <a href="embedded-registers-mmio">Bài 2</a> (thanh ghi, memory-mapped I/O).
+                <strong>Nên biết thêm:</strong> Series 10 Điện Tử (điện áp, biến trở) giúp trực giác phần "thế giới
+                analog" dễ hình dung hơn.
+              </div>
+            </div>
+
+            <h2>1. Cầu nối analog → digital: nguyên lý SAR</h2>
+            <p>
+              Kiểu ADC phổ biến nhất trong MCU giá rẻ là <strong>SAR</strong> (Successive Approximation Register — thanh
+              ghi xấp xỉ liên tiếp). Trực giác dễ nhớ nhất: <strong>một cái cân nhị phân</strong>. Thay vì dò từng nấc
+              điện áp một (chậm không chịu nổi), SAR đoán từng <em>bit</em> một, từ bit quan trọng nhất (MSB) xuống bit
+              thấp nhất (LSB):
+            </p>
+            <ol>
+              <li>
+                Đoán bit cao nhất = 1 (thử "nửa thang đo trở lên"). So sánh với điện áp thật: đúng hướng thì giữ, sai
+                thì đổi lại 0.
+              </li>
+              <li>
+                Chuyển sang bit kế tiếp, lặp lại phép so sánh nhị phân — mỗi lần thu hẹp khoảng nghi ngờ còn một nửa.
+              </li>
+              <li>
+                Lặp đúng N lần cho ADC N-bit — N phép so sánh cho ra N bit kết quả, nhanh hơn dò tuần tự tới
+                <span class="katex-inline">$2^N$</span> lần.
+              </li>
+            </ol>
+            <p>
+              Vấn đề: việc "đoán dần" này cần một khoảng thời gian ngắn nhưng khác 0 — nếu điện áp đầu vào cứ đổi liên
+              tục trong lúc SAR đang so sánh, kết quả sẽ bị lẫn lộn. Giải pháp là mạch
+              <strong>sample &amp; hold</strong> (lấy mẫu &amp; giữ): một tụ điện nhỏ "chụp" đúng điện áp tại một thời
+              điểm và giữ nguyên trong suốt quá trình SAR làm việc — giống chụp ảnh một vật đang chuyển động thay vì cố
+              nhìn trực tiếp trong lúc nó đang di chuyển.
+            </p>
+
+            <h2>2. Độ phân giải &amp; LSB</h2>
+            <p>
+              ADC 10-bit của STM32F103 chia toàn bộ dải điện áp <span class="katex-inline">$[0, V_{ref}]$</span> thành
+              <span class="katex-inline">$2^{10} = 1024$</span> mức rời rạc, đánh số từ 0 đến 1023. Kích thước mỗi bậc —
+              gọi là <strong>LSB</strong> (Least Significant Bit, ở đây dùng làm đơn vị điện áp) — tính bằng:
+            </p>
+            <p>$$V_{LSB} = \frac{V_{ref}}{2^N}$$</p>
+            <p>
+              Verify: với <span class="katex-inline">$V_{ref} = 3300mV$</span> (3,3V, phổ biến trên board STM32), 10-bit
+              cho <code>V_LSB = 3300 / 1024 ≈ 3,2226mV</code> — mỗi bậc chưa tới 3,3mV, khá mịn. Công thức đổi mã ADC
+              (số nguyên đọc từ DR) sang điện áp thật:
+            </p>
+            <p>$$V = \frac{code}{2^N - 1} \times V_{ref}$$</p>
+            <p>
+              Verify vài điểm mốc: <code>code(0mV) = 0</code> (đáy thang), <code>code(3300mV) = 1023</code> (đỉnh
+              thang), và điểm giữa thang <code>code(1650mV) = 512</code> — đổi ngược lại <code>512 → 1651,6mV</code>,
+              chỉ lệch <strong>1,6mV</strong> so với 1650mV gốc. Đây chính là <strong>sai số lượng tử</strong>: không
+              thể tránh, nhưng bị chặn trong khoảng <span class="katex-inline">$\pm\tfrac{1}{2}LSB$</span> — với 10-bit,
+              biên độ sai số này nhỏ tới mức hầu như vô hại.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Verify: số bit càng ít, bậc thang càng thô — kịch tính hơn tưởng tượng
+              </div>
+              <div class="callout__content">
+                Hạ độ phân giải xuống <strong>4-bit</strong> (chỉ 16 mức): <code>V_LSB = 3300/16 = 206,25mV</code> — thô
+                gấp <strong>64 lần</strong> so với 10-bit. Verify cụ thể: cùng điện áp 1650mV, 4-bit chỉ đọc được mã
+                <code>8</code>, đổi ngược lại ra <code>1760mV</code> — lệch tới <strong>110mV</strong> so với giá trị
+                thật, so với chỉ 1,6mV của 10-bit. Đây chính là "bậc thang lượng tử" bạn sẽ THẤY trực tiếp ở demo Mục 5
+                khi kéo thanh trượt số bit xuống thấp.
+              </div>
+            </div>
+
+            <h2>3. Đọc ADC đúng cách</h2>
+            <p>
+              Sau khi kích hoạt một lần chuyển đổi (ghi bit <strong>SWSTART</strong> vào thanh ghi CR2), MCU cần biết
+              khi nào kết quả đã sẵn sàng trong DR. Cờ <strong>EOC</strong> (End Of Conversion, bit trong thanh ghi SR)
+              đảm nhiệm việc đó — và cách dùng nó gợi nhớ lại chính xác bài học Polling vs Interrupt của
+              <a href="embedded-interrupts-nvic">Bài 7</a>:
+            </p>
+            <ul>
+              <li>
+                <strong>Polling:</strong> main tự hỏi liên tục "EOC = 1 chưa?" trong một vòng lặp bận rộn — đơn giản,
+                nhưng CPU bị khoá chờ, đúng cạm bẫy quen thuộc.
+              </li>
+              <li>
+                <strong>Ngắt (EOCIE):</strong> bật bit EOCIE trong CR1, CPU được rảnh tay làm việc khác, phần cứng tự
+                báo ngắt <strong>IRQ_ADC1</strong> đúng lúc EOC lên 1 — verify: 1 lần SWSTART kích hoạt đúng 1 lần ngắt.
+              </li>
+              <li>
+                <strong>DMA (xem trước):</strong> với dòng dữ liệu ADC liên tục tốc độ cao, ngay cả ngắt-từng-mẫu cũng
+                tốn CPU đáng kể — Bài 11 sẽ giới thiệu cách để phần cứng tự chuyển dữ liệu mà CPU không cần đụng tay vào
+                từng mẫu.
+              </li>
+            </ul>
+            <p>
+              Đọc DR sẽ <strong>tự động xoá EOC</strong> về 0 — đúng cơ chế "đọc là báo đã nhận" đã gặp ở RXNE của UART
+              (Bài 9).
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: nguồn trở kháng cao + thời gian lấy mẫu ngắn = giá trị "mềm"</div>
+              <div class="callout__content">
+                Tụ sample &amp; hold cần một khoảng thời gian đủ để <strong>nạp điện</strong> tới đúng mức điện áp đầu
+                vào — nếu nguồn tín hiệu có trở kháng cao (ví dụ một cảm biến yếu, dây dẫn dài) và thời gian lấy mẫu cấu
+                hình quá ngắn, tụ chưa kịp nạp đầy đã bị "chốt" lại — kết quả đọc được trôi nổi, không ổn định giữa các
+                lần đo dù điện áp thật không đổi. Đây là lỗi phần cứng quen thuộc dễ bị nhầm là "ADC bị lỗi" hoặc "nhiễu
+                điện" khi thực ra là thời gian lấy mẫu cấu hình sai.
+              </div>
+            </div>
+
+            <h2>4. Làm mượt tín hiệu: trung bình trượt &amp; oversampling</h2>
+            <p>
+              Tín hiệu analog thật hiếm khi "sạch" — nhiễu điện, rung tay khi xoay biến trở, nhiễu từ nguồn cấp đều làm
+              giá trị ADC nhảy lung tung quanh giá trị thật. Kỹ thuật đơn giản và hiệu quả nhất:
+              <strong>trung bình trượt</strong> (moving average) — lấy trung bình cộng của N mẫu gần nhất thay vì dùng
+              riêng mẫu mới nhất.
+            </p>
+            <p>
+              Verify bằng số thật: với nhiễu ngẫu nhiên biên độ ±50mV quanh 1650mV (20 mẫu), phương sai của tín hiệu thô
+              đo được là <strong>≈901</strong>; sau khi áp trung bình trượt cửa sổ 8 mẫu, phương sai giảm còn
+              <strong>≈250</strong> — mượt hơn khoảng <strong>3,6 lần</strong>. Nhưng cái giá phải trả luôn tồn tại:
+              <strong>độ trễ</strong> — cửa sổ càng lớn càng mượt nhưng phản ứng càng chậm với thay đổi đột ngột (biến
+              trở xoay nhanh sẽ "trễ nhịp" theo tay). Đây chính xác là trade-off oversampling: lấy mẫu nhanh hơn cần
+              thiết rồi trung bình lại, đổi tốc độ lấy mẫu thô lấy độ chính xác cao hơn.
+            </p>
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Gọi đúng tên: trung bình trượt CHÍNH LÀ một bộ lọc FIR</div>
+              <div class="callout__content">
+                Trung bình trượt không phải một "mẹo vặt" riêng của lập trình nhúng — nó là bộ lọc số
+                <strong>FIR</strong> (Finite Impulse Response) đơn giản nhất tồn tại, với mọi hệ số bằng nhau. Series 14
+                (DSP Âm thanh) Bài 9 sẽ mổ xẻ đàng hoàng: vì sao đáp ứng tần số của nó có hình sinc lởm chởm, và những
+                bộ lọc FIR thiết kế tốt hơn trông như thế nào.
+              </div>
+            </div>
+
+            <h2>5. Thực hành: xoay biến trở trên VMCU thật</h2>
+            <p>
+              Demo dưới đây chạy trên VMCU thật với ADC1 vừa "sống": kéo biến trở, xem đồ thị raw vs mượt chạy song
+              song, bật/tắt nhiễu môi trường, và kéo số bit ADC xuống thấp để THẤY bậc thang lượng tử rõ ràng bằng mắt:
+            </p>
+
+            <div class="code-tabs" id="adc-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🎛️ Biến trở ảo &amp; ADC Explorer — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">1. Biến trở &amp; nhiễu môi trường</p>
+                  <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 6px; flex-wrap: wrap">
+                    <label style="font-size: 13px">Vị trí: <span id="adc-pot-label">1650 mV</span></label>
+                    <input
+                      type="range"
+                      id="adc-pot-slider"
+                      min="0"
+                      max="3300"
+                      step="10"
+                      value="1650"
+                      style="flex: 1; min-width: 160px"
+                    />
+                  </div>
+                  <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px">
+                    <label style="font-size: 13px; display: flex; align-items: center; gap: 6px">
+                      <input type="checkbox" id="adc-noise-toggle" />
+                      Bật nhiễu môi trường (±50mV)
+                    </label>
+                    <button class="mux-input-btn" type="button" id="adc-run-btn">▶️ Chạy 30 mẫu</button>
+                  </div>
+                  <svg
+                    id="adc-chart"
+                    viewBox="0 0 600 160"
+                    style="width: 100%; height: 160px; background: rgba(0, 0, 0, 0.15); border-radius: 6px"
+                  ></svg>
+                  <p style="font-size: 11px; margin: 4px 0 18px; opacity: 0.7">
+                    <span style="color: #ef4444">●</span> Raw (thô, từng lần đọc DR trực tiếp) &nbsp;
+                    <span style="color: #22c55e">●</span> Mượt (trung bình trượt cửa sổ 8 mẫu)
+                  </p>
+
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    2. Độ phân giải ADC — kéo số bit xem bậc thang
+                  </p>
+                  <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap">
+                    <label style="font-size: 13px"
+                      >Số bit: <span id="adc-bits-label">10</span>-bit (<span id="adc-levels-label">1024</span>
+                      mức)</label
+                    >
+                    <input
+                      type="range"
+                      id="adc-bits-slider"
+                      min="2"
+                      max="10"
+                      step="1"
+                      value="10"
+                      style="flex: 1; min-width: 160px"
+                    />
+                  </div>
+                  <div id="adc-quant-output" class="mux-demo__output">Đang tải…</div>
+                  <p class="mux-demo__hint">
+                    Kéo xuống 4-bit ở vị trí 1650mV: mã đọc được chỉ còn 8, đổi ngược ra 1760mV — lệch 110mV so với giá
+                    trị thật (verified). Ở 10-bit, sai số chỉ còn ~1,6mV.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">adc_read.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// Polling: cho don gian, cho ngat xem Muc 3.
+void adc_init(void) {
+    ADC1_CR2 |= (1 << 0);   // ADON = 1: bat khoi ADC
+}
+
+uint16_t adc_read_polling(void) {
+    ADC1_CR2 |= (1 << 22);          // SWSTART: bat dau 1 lan chuyen doi
+    while (!(ADC1_SR & (1 << 1))) ; // cho EOC = 1 (BAN RON - dung cach nay khi don gian)
+    return ADC1_DR;                  // doc DR TU DONG xoa EOC
+}
+
+// Ngat: xem adc_isr.c trong tab JavaScript de thay tuong duong tren VMCU.
+// Trung binh truot don gian:
+#define WINDOW 8
+uint16_t buf[WINDOW];
+uint8_t idx = 0;
+
+uint16_t moving_average_push(uint16_t sample) {
+    buf[idx] = sample;
+    idx = (idx + 1) % WINDOW;
+    uint32_t sum = 0;
+    for (uint8_t i = 0; i < WINDOW; i++) sum += buf[i];
+    return sum / WINDOW;
+}</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">adc_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import {
+  VMCU, ADC1_CR2_ADDR, ADC1_DR_ADDR, ADC1_CR2_ADON_BIT, ADC1_CR2_SWSTART_BIT,
+  ADC_VREF_MV, adcVoltageToCode, adcCodeToVoltage, adcLsbMv, movingAverage,
+  deterministicNoiseMv,
+} from './vmcu.js';
+
+const cpu = new VMCU();
+cpu.write32(ADC1_CR2_ADDR, 1 << ADC1_CR2_ADON_BIT); // bat ADON mot lan
+
+function readOneSample(potMv, noiseOn, sampleIndex) {
+  const noisy = potMv + (noiseOn ? deterministicNoiseMv(sampleIndex, 50) : 0);
+  cpu.adcSetAnalogInputMv(noisy);
+  cpu.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_SWSTART_BIT));
+  const code = cpu.read32(ADC1_DR_ADDR); // doc DR - tu dong xoa EOC
+  return adcCodeToVoltage(code, ADC_VREF_MV, 10);
+}
+
+const raw = [];
+for (let i = 0; i < 30; i++) raw.push(readOneSample(1650, true, i));
+const smoothed = movingAverage(raw, 8);
+
+// Do phan giai: minh hoa cong thuc chung, doc lap voi thanh ghi 10-bit that
+console.log(adcVoltageToCode(1650, 3300, 4), adcCodeToVoltage(8, 3300, 4)); // 8, 1760</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ <strong>SAR ADC</strong>: đoán từng bit theo kiểu "cân nhị phân" — N phép so sánh cho N bit kết quả;
+                mạch <strong>sample &amp; hold</strong> giữ điện áp đứng yên trong lúc cân.
+              </li>
+              <li>
+                ✅ <strong>Độ phân giải &amp; LSB</strong>: $V_{LSB} = V_{ref}/2^N$ — verify: 10-bit @3,3V cho
+                V_LSB≈3,22mV (1024 mức); 4-bit chỉ 206,25mV/mức (thô gấp 64 lần) — sai số verify cụ thể 1,6mV vs 110mV
+                cùng một điện áp 1650mV.
+              </li>
+              <li>
+                ✅ Đọc ADC qua cờ <strong>EOC</strong>: polling (đơn giản, tốn CPU) vs ngắt <strong>EOCIE</strong>
+                (rảnh CPU) — DMA (Bài 11) cho dòng dữ liệu tốc độ cao. Đọc DR tự động xoá EOC.
+              </li>
+              <li>
+                ✅ Pitfall: nguồn trở kháng cao + thời gian lấy mẫu ngắn → giá trị đọc "mềm", trôi nổi dù điện áp thật
+                ổn định.
+              </li>
+              <li>
+                ✅ <strong>Trung bình trượt</strong> verified: nhiễu ±50mV giảm phương sai từ ≈901 xuống ≈250 (~3,6 lần)
+                — cái giá là độ trễ; về bản chất đây là bộ lọc FIR đơn giản nhất.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">Vì sao ADC kiểu SAR cần một mạch sample &amp; hold đi kèm?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sample and hold khong lien quan gi den tieu thu dien nang - no giai quyet van de THOI GIAN, khong phai nang luong.'
+                    )
+                  "
+                >
+                  A. Vì sample &amp; hold giúp ADC tiêu thụ ít điện năng hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! SAR can mot khoang thoi gian ngan de &quot;can&quot; tuan tu tung bit - neu dien ap dau vao doi lien tuc trong luc do, ket qua se bi lan lon. Tu S&H &quot;chup&quot; dung dien ap tai mot thoi diem va giu nguyen trong suot qua trinh SAR lam viec.'
+                    )
+                  "
+                >
+                  B. Vì SAR cần một khoảng thời gian ngắn để so sánh dần từng bit — S&amp;H giữ điện áp đứng yên trong
+                  suốt quá trình đó, tránh kết quả bị lẫn lộn nếu điện áp đổi giữa chừng
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'ADC hoan toan co the doc dung mot dien ap co dinh (khong doi theo thoi gian) ma khong can S&H theo nghia &quot;chong doi&quot; gi ca - nhung van can S&H vi ban than qua trinh SAR CAN THOI GIAN de hoan tat, khong phai vi dien ap khong doi.'
+                    )
+                  "
+                >
+                  C. Vì ADC không thể đọc được điện áp đứng yên (không thay đổi theo thời gian)
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: cùng một điện áp 1650mV, ADC 10-bit đọc lại chỉ lệch ~1,6mV nhưng ADC 4-bit lệch tới 110mV. Vì
+                sao giảm số bit lại làm sai số tăng mạnh đến vậy?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! V_LSB = V_ref / 2^N - giam N (so bit) lam mau so 2^N nho di RAT nhanh (10-bit: 1024 muc; 4-bit: chi con 16 muc), khien moi bac thang (V_LSB) to ra tuong ung: 3,3V/1024 ~ 3,2mV nhung 3,3V/16 = 206,25mV - to hon 64 lan. Bac thang cang to, dien ap thuc bi &quot;lam tron&quot; ve muc gan nhat cang sai nhieu.'
+                    )
+                  "
+                >
+                  A. Số mức lượng tử giảm rất nhanh theo hàm mũ ($2^N$) khi N giảm — mỗi bậc thang (LSB) vì thế to ra
+                  tương ứng, và điện áp thật bị "làm tròn" về mức gần nhất với sai số lớn hơn nhiều
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Toc do chuyen doi (thoi gian SAR can) khong phai nguyen nhan gay sai so lon o day - van de la SO MUC luong tu hoa co san de chon, khong phai toc do.'
+                    )
+                  "
+                >
+                  B. Vì ADC ít bit hơn luôn chuyển đổi chậm hơn, gây trễ tích luỹ thành sai số
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'V_ref (dien ap tham chieu) khong doi theo so bit - cong thuc V_LSB = V_ref/2^N cho thay chinh 2^N (so muc luong tu) moi la thu thay doi, khong phai V_ref.'
+                    )
+                  "
+                >
+                  C. Vì ADC ít bit hơn luôn dùng điện áp tham chiếu ($V_{ref}$) thấp hơn
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Đọc ADC bằng polling ("chờ EOC=1 trong vòng lặp bận rộn") và đọc bằng ngắt EOCIE khác nhau ở điểm mấu
+                chốt nào?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Ca hai deu cho ket qua giong het nhau (cung doc dung DR sau khi chuyen doi xong) - khac biet DUY NHAT la CPU co bi khoa cho hay khong. Day chinh xac la bai hoc Polling vs Interrupt cua Bai 7, ap dung lai cho ADC.'
+                    )
+                  "
+                >
+                  A. Kết quả đọc được giống hệt nhau — khác biệt duy nhất là polling khoá CPU chờ trong vòng lặp bận
+                  rộn, còn ngắt để CPU rảnh tay làm việc khác trong lúc chờ
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca hai cach deu doc CUNG mot gia tri tu DR sau khi EOC len 1 - khong co su khac biet nao ve DO CHINH XAC ket qua, chi khac ve CACH CHO.'
+                    )
+                  "
+                >
+                  B. Polling cho kết quả chính xác hơn vì CPU liên tục theo dõi sát sao
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca hai deu doc dung DUNG 1 gia tri moi cho mot lan SWSTART - EOCIE khong lam ADC &quot;chay nhanh hon&quot;, no chi thay doi CACH CPU biet khi nao ket qua san sang.'
+                    )
+                  "
+                >
+                  C. Ngắt EOCIE khiến ADC tự động chuyển đổi nhanh hơn so với polling
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Verified: nhiễu ngẫu nhiên ±50mV làm phương sai tín hiệu thô ≈901; sau trung bình trượt cửa sổ 8 mẫu,
+                phương sai giảm còn ≈250. Cái giá phải trả cho việc "mượt hơn" này là gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Cua so trung binh cang lon thi cang mUOT nhung cang CHAM phan ung voi thay doi that su (vd bien tro xoay nhanh) - ket qua hien tai la trung binh cua CA cac mau CU, nen no luon &quot;tre nhip&quot; mot chut so voi gia tri thuc te NGAY LUC NAY.'
+                    )
+                  "
+                >
+                  A. Độ trễ — kết quả hiện tại là trung bình của cả các mẫu cũ, nên nó phản ứng chậm hơn với thay đổi
+                  đột ngột của tín hiệu thật
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Trung binh truot khong lam giam do phan giai ADC (van 10-bit nhu cu) - no chi tinh trung binh cua cac gia tri DA doc duoc, khong doi cach ADC luong tu hoa tung mau.'
+                    )
+                  "
+                >
+                  B. Độ phân giải ADC bị giảm xuống (mất bớt bit)
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Trung binh truot la mot phep tinh RAT don gian (cong roi chia) - chi phi CPU khong dang ke so voi cai gia THAT SU phai tra la DO TRE phan ung.'
+                    )
+                  "
+                >
+                  C. CPU phải tính toán phức tạp hơn nhiều, tốn tài nguyên đáng kể
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 10 vừa thêm ADC1
+                (SR/CR1/CR2/DR), công thức lượng tử hoá (<code>adcVoltageToCode</code>, <code>adcCodeToVoltage</code>,
+                <code>adcLsbMv</code>), và trung bình trượt (<code>movingAverage</code>), kèm self-test đối chiếu đúng
+                mọi hành vi trong bài (chạy <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Successive-approximation_ADC"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Successive-approximation ADC
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.st.com/resource/en/reference_manual/rm0008-stm32f101xx-stm32f102xx-stm32f103xx-stm32f105xx-and-stm32f107xx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    STMicroelectronics — RM0008 Reference Manual (chương ADC)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Moving_average" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Moving average
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-uart" class="article-related__link article-related__link--prev">
+                  Bài 9: UART &amp; giao tiếp nối tiếp
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 11: DMA — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        VMCU,
+        ADC1_CR2_ADDR,
+        ADC1_DR_ADDR,
+        ADC1_CR2_ADON_BIT,
+        ADC1_CR2_SWSTART_BIT,
+        ADC_VREF_MV,
+        adcVoltageToCode,
+        adcCodeToVoltage,
+        adcLsbMv,
+        movingAverage,
+        deterministicNoiseMv,
+      } from './vmcu.js';
+
+      // ==== Demo 1: biến trở + nhiễu + đồ thị raw vs mượt (ADC1 thật) ====
+      const cpu = new VMCU();
+      cpu.write32(ADC1_CR2_ADDR, 1 << ADC1_CR2_ADON_BIT);
+
+      function readOneSample(potMv, noiseOn, sampleIndex) {
+        const noisy = potMv + (noiseOn ? deterministicNoiseMv(sampleIndex, 50) : 0);
+        cpu.adcSetAnalogInputMv(noisy);
+        cpu.write32(ADC1_CR2_ADDR, (1 << ADC1_CR2_ADON_BIT) | (1 << ADC1_CR2_SWSTART_BIT));
+        const code = cpu.read32(ADC1_DR_ADDR);
+        return adcCodeToVoltage(code, ADC_VREF_MV, 10);
+      }
+
+      function drawChart(raw, smoothed) {
+        const svg = document.getElementById('adc-chart');
+        const w = 600;
+        const h = 160;
+        const pad = 10;
+        const minV = 0;
+        const maxV = 3300;
+        function toXY(arr, i, v) {
+          const x = pad + (i / (arr.length - 1)) * (w - 2 * pad);
+          const y = h - pad - ((v - minV) / (maxV - minV)) * (h - 2 * pad);
+          return [x, y];
+        }
+        function toPoints(arr) {
+          return arr.map((v, i) => toXY(arr, i, v).join(',')).join(' ');
+        }
+        svg.innerHTML =
+          '<polyline points="' +
+          toPoints(raw) +
+          '" fill="none" stroke="#ef4444" stroke-width="1.5" opacity="0.7" />' +
+          '<polyline points="' +
+          toPoints(smoothed) +
+          '" fill="none" stroke="#22c55e" stroke-width="2.5" />';
+      }
+
+      function runSamples() {
+        const potMv = Number.parseInt(document.getElementById('adc-pot-slider').value, 10);
+        const noiseOn = document.getElementById('adc-noise-toggle').checked;
+        const raw = [];
+        for (let i = 0; i < 30; i++) raw.push(readOneSample(potMv, noiseOn, i));
+        const smoothed = movingAverage(raw, 8);
+        drawChart(raw, smoothed);
+      }
+
+      document.getElementById('adc-pot-slider').addEventListener('input', () => {
+        document.getElementById('adc-pot-label').textContent = document.getElementById('adc-pot-slider').value + ' mV';
+        runSamples();
+        renderQuantization();
+      });
+      document.getElementById('adc-noise-toggle').addEventListener('change', runSamples);
+      document.getElementById('adc-run-btn').addEventListener('click', runSamples);
+      runSamples();
+
+      // ==== Demo 2: độ phân giải ADC — bậc thang lượng tử ====
+      function renderQuantization() {
+        const bits = Number.parseInt(document.getElementById('adc-bits-slider').value, 10);
+        const potMv = Number.parseInt(document.getElementById('adc-pot-slider').value, 10);
+        document.getElementById('adc-bits-label').textContent = bits;
+        document.getElementById('adc-levels-label').textContent = Math.pow(2, bits);
+
+        const code = adcVoltageToCode(potMv, 3300, bits);
+        const reconstructed = adcCodeToVoltage(code, 3300, bits);
+        const lsb = adcLsbMv(3300, bits);
+        const error = reconstructed - potMv;
+
+        const out = document.getElementById('adc-quant-output');
+        out.innerHTML =
+          'V_LSB = ' +
+          lsb.toFixed(2) +
+          'mV/bậc &nbsp;·&nbsp; Mã đọc được: <strong>' +
+          code +
+          '</strong> &nbsp;·&nbsp; Đổi ngược lại: <strong>' +
+          reconstructed.toFixed(1) +
+          'mV</strong> &nbsp;·&nbsp; Sai số: <strong style="color:' +
+          (Math.abs(error) > 20 ? '#ef4444' : '#22c55e') +
+          '">' +
+          (error >= 0 ? '+' : '') +
+          error.toFixed(1) +
+          'mV</strong>';
+      }
+
+      document.getElementById('adc-bits-slider').addEventListener('input', renderQuantization);
+      renderQuantization();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
