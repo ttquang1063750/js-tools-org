@@ -1,21 +1,25 @@
 const TRANSLATIONS = {
   en: {
     'nav.imageOptimizer': 'Image Optimizer',
-    'nav.snapcast': 'Snapcast',
+    'nav.snapcast': 'SnapCast',
     'nav.qr': 'QR Generator',
     'nav.cq': 'ColorQuarium',
-    'hero.badge': '✅ Unlimited &nbsp;·&nbsp; No ads &nbsp;·&nbsp; No redirects',
+    'hero.badge': '✅ No ads in tools &nbsp;·&nbsp; No redirects &nbsp;·&nbsp; Privacy-first',
     'hero.h1.line1': 'Tired of tools that',
     'hero.h1.line2': 'limit, nag, or redirect you?',
     'hero.sub':
-      'Everything runs in your browser. Unlimited. No sign-up. No ads. Your QR codes link directly to you — not through us.',
+      'Utility tools — image compression, background removal, QR codes — run 100% in your browser: free, unlimited, no sign-up, and your files never leave your device. For live events, SnapCast and ColorQuarium deliver real-time photo walls and ambient displays as cloud services.',
     'hero.cta.explore': 'Explore tools ↓',
     'hero.cta.github': 'GitHub →',
-    'stats.tools': 'No limits',
-    'stats.bytes': 'Bytes uploaded',
-    'stats.inbrowser': 'Free forever',
+    'stats.tools': 'Tools & services',
+    'stats.bytes': 'Ads inside tools',
+    'stats.inbrowser': 'Free learning series',
+    'footer.tools': 'Tools & services',
+    'footer.explore': 'Explore',
+    'footer.legal': 'Legal',
     'tools.title': 'Our Tools',
     'io.name': 'Image Optimizer',
+    'io.badge': '✓ Free · Unlimited · No sign-up',
     'io.tagline': 'Compress & convert images — 100% in-browser',
     'io.desc':
       'Drag and drop images to compress them with zero quality loss. Supports JPEG, PNG, WebP, and HEIC from iPhone. Add watermarks, resize in bulk, compare before/after — all without uploading a single byte to any server.',
@@ -25,7 +29,8 @@ const TRANSLATIONS = {
     'io.f4': 'Before/after comparison slider',
     'io.f5': 'HEIC/HEIF support (iPhone photos)',
     'io.open': 'Open tool →',
-    'sc.name': 'Snapcast',
+    'sc.name': 'SnapCast',
+    'sc.badge': '☁️ Cloud service · Sign-up · Paid event plans',
     'sc.tagline': 'Real-time photo slideshow for live events',
     'sc.desc':
       'Host a live photo wall at weddings, parties, and conferences. Guests scan a QR code, snap a photo on their phone, and it appears on the big screen within seconds. Includes animated effects, remote control, and post-event gallery.',
@@ -36,6 +41,7 @@ const TRANSLATIONS = {
     'sc.f5': 'Post-event photo gallery',
     'sc.open': 'Open tool →',
     'qr.name': 'QR Code Generator',
+    'qr.badge': '✓ Free · Unlimited · No sign-up',
     'qr.tagline': 'Generate & customize QR codes — 100% in-browser',
     'qr.desc':
       'Create fully customizable QR codes with logo insertion, custom colors, gradient styles, and variable dot shapes. Perfect for links, Wi-Fi access, contact cards, and text — processed entirely locally on your device with zero data tracking.',
@@ -46,6 +52,7 @@ const TRANSLATIONS = {
     'qr.f5': 'High-res SVG, PNG & PDF exports',
     'qr.open': 'Open tool →',
     'rmbg.name': 'Remove BG',
+    'rmbg.badge': '✓ Free · Unlimited · No sign-up',
     'rmbg.tagline': 'Remove image backgrounds automatically — 100% in-browser',
     'rmbg.desc':
       'Erase backgrounds from your photos instantly using local AI neural networks. Supports JPEG, PNG, WebP, and HEIC. The entire process runs 100% locally in your browser sandbox with zero server uploads, keeping your data secure.',
@@ -57,15 +64,18 @@ const TRANSLATIONS = {
     'rmbg.open': 'Open tool →',
     'sc.demo.label': '🎉 Live demo — photos update in real time',
     'sc.demo.title': 'See it in action — right now',
+    'sc.demo.load': 'Load live slideshow',
+    'sc.demo.load.note': 'Streams a real event running right now',
     'sc.demo.desc':
-      'This is a real, live Snapcast event. Scan the QR code with your phone, take a photo, and watch it appear on the slideshow within seconds. No sign-up needed.',
+      'This is a real, live SnapCast event. Scan the QR code with your phone, take a photo, and watch it appear on the slideshow within seconds. No sign-up needed for the demo.',
     'sc.demo.qr.hint': 'Scan with your phone to send a photo to the demo slideshow',
     'sc.demo.qr.btn': '📱 View QR code →',
     'sc.demo.qr.note': 'Opens the guest upload screen on your phone',
     'sc.demo.contact.label': '📸 Photo slots are limited. Want a private demo for your event?',
     'why.title': 'Why js-tools?',
-    'why.privacy.title': 'Experience',
-    'why.privacy.desc': 'Intuitive, powerful, delightful. Every tool is crafted for maximum impact and ease of use.',
+    'why.privacy.title': 'Privacy First',
+    'why.privacy.desc':
+      'Utility tools process everything locally in your browser — your files never leave your device, and we could not see them even if we wanted to.',
     'why.free.title': 'Lightning Fast',
     'why.free.desc':
       'No installation, no uploads. Open a tool and start working instantly. Processing happens right on your device.',
@@ -124,7 +134,7 @@ const TRANSLATIONS = {
       'Our tools utilize cutting-edge web technologies like WebAssembly, HTML5 APIs, and Canvas. When you import an image, your browser processes it directly on your computer using local computing resources. No files are uploaded to any external server, ensuring maximum privacy and speed.',
     'faq.q2.title': 'Are my files safe and private?',
     'faq.q2.desc':
-      'Yes, absolutely. Because all file processing happens locally in your browser sandbox, your files never leave your device. We do not (and cannot) see, store, or collect any of your files or personal data.',
+      'Yes. In our utility tools (Image Optimizer, Remove BG, QR Generator), all processing happens locally in your browser sandbox — your files never leave your device and we cannot see or store them. Event services like SnapCast and ColorQuarium do store the photos and settings you choose to share, handled under their own terms.',
     'faq.q3.title': 'What image formats does the Image Optimizer support?',
     'faq.q3.desc':
       'The Image Optimizer supports standard web formats including JPEG, PNG, WebP, SVG, and even HEIC/HEIF files directly from iPhones, making it easy to convert and compress iPhone photos for web use.',
@@ -133,9 +143,10 @@ const TRANSLATIONS = {
       'SnapCast uses a real-time database connection to instantly synchronize photo uploads. Guests scan a dynamically generated QR code using their smartphone, snap a photo, and the image is cast to the active live slideshow within seconds without requiring any app installations.',
     'faq.q5.title': 'Is there a limit on file size or bulk processing count?',
     'faq.q5.desc':
-      'There are no artificial limits imposed by js-tools. You can process as many files as your device memory can handle. Large batch sizes are processed sequentially to prevent browser tabs from freezing.',
+      'There are no artificial limits in our free utility tools. You can process as many files as your device memory can handle. Large batch sizes are processed sequentially to prevent browser tabs from freezing.',
 
     'cq.name': 'ColorQuarium',
+    'cq.badge': '☁️ Cloud service · Sign-up · Paid plans',
     'cq.tagline': 'A living, generative aquarium of color and motion',
     'cq.desc':
       'ColorQuarium turns your screen into a calming, generative art display — and your phone into a remote control. Open the live view on a TV or monitor, then use your phone to change colors, themes, and motion in real time.',
@@ -147,6 +158,8 @@ const TRANSLATIONS = {
     'cq.open': 'Open tool →',
     'cq.demo.label': '🐠 Live demo — control the display from your phone',
     'cq.demo.title': 'See it in action — right now',
+    'cq.demo.load': 'Load live display',
+    'cq.demo.load.note': 'Streams a real display running right now',
     'cq.demo.desc':
       'This is a real, live ColorQuarium display. Scan the QR code with your phone to open the remote control and change what appears on screen in real time.',
     'cq.demo.qr.note': 'Opens the remote control screen on your phone',
@@ -245,21 +258,25 @@ const TRANSLATIONS = {
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
-    'nav.snapcast': 'Snapcast',
+    'nav.snapcast': 'SnapCast',
     'nav.qr': 'Tạo mã QR',
     'nav.cq': 'ColorQuarium',
-    'hero.badge': '✅ Không giới hạn &nbsp;·&nbsp; Không quảng cáo &nbsp;·&nbsp; Không redirect',
+    'hero.badge': '✅ Công cụ không quảng cáo &nbsp;·&nbsp; Không redirect &nbsp;·&nbsp; Riêng tư trước tiên',
     'hero.h1.line1': 'Chán mấy công cụ',
     'hero.h1.line2': 'giới hạn, chèn quảng cáo, hay redirect?',
     'hero.sub':
-      'Mọi thứ chạy ngay trên trình duyệt. Không giới hạn. Không cần đăng ký. Không quảng cáo. QR của bạn dẫn thẳng đến đích — không qua domain của chúng tôi.',
+      'Công cụ tiện ích — nén ảnh, xoá nền, tạo mã QR — chạy 100% trong trình duyệt: miễn phí, không giới hạn, không cần tài khoản, và tệp của bạn không rời khỏi máy. Cho sự kiện trực tiếp, SnapCast và ColorQuarium là dịch vụ cloud với tường ảnh và màn hình trình diễn thời gian thực.',
     'hero.cta.explore': 'Khám phá công cụ ↓',
     'hero.cta.github': 'GitHub →',
-    'stats.tools': 'Không giới hạn',
-    'stats.bytes': 'Byte tải lên',
-    'stats.inbrowser': 'Miễn phí mãi mãi',
+    'stats.tools': 'Công cụ & dịch vụ',
+    'stats.bytes': 'Quảng cáo trong công cụ',
+    'stats.inbrowser': 'Series học miễn phí',
+    'footer.tools': 'Công cụ & dịch vụ',
+    'footer.explore': 'Khám phá',
+    'footer.legal': 'Pháp lý',
     'tools.title': 'Công cụ của chúng tôi',
     'io.name': 'Tối ưu ảnh',
+    'io.badge': '✓ Miễn phí · Không giới hạn · Không cần tài khoản',
     'io.tagline': 'Nén & chuyển đổi ảnh — 100% trên trình duyệt',
     'io.desc':
       'Kéo thả ảnh để nén mà không giảm chất lượng. Hỗ trợ JPEG, PNG, WebP và HEIC từ iPhone. Thêm watermark, thay đổi kích thước hàng loạt, so sánh trước/sau — tất cả mà không cần tải lên bất kỳ server nào.',
@@ -269,7 +286,8 @@ const TRANSLATIONS = {
     'io.f4': 'Slider so sánh trước/sau',
     'io.f5': 'Hỗ trợ HEIC/HEIF (ảnh iPhone)',
     'io.open': 'Mở công cụ →',
-    'sc.name': 'Snapcast',
+    'sc.name': 'SnapCast',
+    'sc.badge': '☁️ Dịch vụ cloud · Cần tài khoản · Gói trả phí theo sự kiện',
     'sc.tagline': 'Trình chiếu ảnh trực tiếp cho sự kiện',
     'sc.desc':
       'Tạo bức tường ảnh trực tiếp tại đám cưới, tiệc tùng và hội nghị. Khách quét mã QR, chụp ảnh trên điện thoại và ảnh xuất hiện trên màn hình lớn trong vài giây. Có hiệu ứng động, điều khiển từ xa và thư viện ảnh sau sự kiện.',
@@ -280,6 +298,7 @@ const TRANSLATIONS = {
     'sc.f5': 'Thư viện ảnh sau sự kiện',
     'sc.open': 'Mở công cụ →',
     'qr.name': 'Tạo mã QR',
+    'qr.badge': '✓ Miễn phí · Không giới hạn · Không cần tài khoản',
     'qr.tagline': 'Tạo & tùy chỉnh mã QR — 100% trên trình duyệt',
     'qr.desc':
       'Tạo mã QR có thể tùy chỉnh hoàn toàn với logo, màu sắc tùy chọn, kiểu màu gradient và hình dáng điểm quét đa dạng. Hoàn hảo cho liên kết, Wi-Fi, danh thiếp và văn bản — tất cả được xử lý cục bộ trên thiết bị của bạn, bảo mật tuyệt đối.',
@@ -290,6 +309,7 @@ const TRANSLATIONS = {
     'qr.f5': 'Xuất file SVG, PNG & PDF độ phân giải cao',
     'qr.open': 'Mở công cụ →',
     'rmbg.name': 'Xóa nền ảnh',
+    'rmbg.badge': '✓ Miễn phí · Không giới hạn · Không cần tài khoản',
     'rmbg.tagline': 'Xóa nền phông ảnh tự động — 100% trên trình duyệt',
     'rmbg.desc':
       'Xóa phông nền hình ảnh của bạn ngay lập tức bằng mạng nơ-ron AI cục bộ. Hỗ trợ JPEG, PNG, WebP và HEIC. Toàn bộ quy trình diễn ra 100% trên thiết bị của bạn, bảo mật dữ liệu tuyệt đối.',
@@ -300,17 +320,19 @@ const TRANSLATIONS = {
     'rmbg.f5': 'Hoàn toàn miễn phí, không watermark hay giới hạn',
     'rmbg.open': 'Mở công cụ →',
     'sc.demo.label': '🎉 Demo trực tiếp — ảnh cập nhật theo thời gian thực',
-    'sc.demo.title': 'Trải nghiệm ngay — không cần đăng ký',
+    'sc.demo.title': 'Trải nghiệm ngay — demo không cần đăng ký',
+    'sc.demo.load': 'Tải slideshow trực tiếp',
+    'sc.demo.load.note': 'Phát một sự kiện thật đang chạy ngay lúc này',
     'sc.demo.desc':
-      'Đây là một sự kiện Snapcast thật, đang chạy trực tiếp. Quét mã QR bằng điện thoại, chụp ảnh và xem ảnh xuất hiện trên slideshow trong vài giây.',
+      'Đây là một sự kiện SnapCast thật, đang chạy trực tiếp. Quét mã QR bằng điện thoại, chụp ảnh và xem ảnh xuất hiện trên slideshow trong vài giây.',
     'sc.demo.qr.hint': 'Quét bằng điện thoại để gửi ảnh lên demo slideshow',
     'sc.demo.qr.btn': '📱 Xem QR code →',
     'sc.demo.qr.note': 'Mở màn hình upload ảnh dành cho khách',
     'sc.demo.contact.label': '📸 Lượt gửi ảnh có giới hạn. Muốn demo riêng cho sự kiện của bạn?',
     'why.title': 'Tại sao chọn js-tools?',
-    'why.privacy.title': 'Trải nghiệm',
+    'why.privacy.title': 'Riêng tư trước tiên',
     'why.privacy.desc':
-      'Trực quan, mạnh mẽ, tuyệt vời. Mỗi công cụ được thiết kế để tối đa hóa hiệu suất và dễ sử dụng.',
+      'Công cụ tiện ích xử lý mọi thứ ngay trong trình duyệt — tệp của bạn không rời khỏi thiết bị, và chúng tôi có muốn xem cũng không thể.',
     'why.free.title': 'Tốc độ cực nhanh',
     'why.free.desc':
       'Không cần cài đặt, không tải lên server. Mở công cụ và bắt đầu ngay lập tức. Mọi thứ xử lý trên thiết bị của bạn.',
@@ -369,7 +391,7 @@ const TRANSLATIONS = {
       'Các công cụ của chúng tôi sử dụng công nghệ web tiên tiến như WebAssembly, HTML5 API và Canvas. Khi bạn tải ảnh lên, trình duyệt sẽ xử lý ảnh trực tiếp trên máy tính của bạn bằng tài nguyên hệ thống cục bộ. Không có tệp tin nào được tải lên máy chủ ngoài, đảm bảo quyền riêng tư và tốc độ tối đa.',
     'faq.q2.title': 'Tệp tin của tôi có an toàn và riêng tư không?',
     'faq.q2.desc':
-      'Có, hoàn toàn tuyệt đối. Vì tất cả quá trình xử lý tệp diễn ra cục bộ trong môi trường trình duyệt an toàn (sandbox), tệp của bạn không bao giờ rời khỏi thiết bị. Chúng tôi không (và không thể) xem, lưu trữ hoặc thu thập bất kỳ tệp tin hay dữ liệu cá nhân nào của bạn.',
+      'Có. Với các công cụ tiện ích (Tối ưu ảnh, Xóa nền, Tạo mã QR), toàn bộ quá trình xử lý diễn ra cục bộ trong trình duyệt — tệp của bạn không rời khỏi thiết bị và chúng tôi không thể xem hay lưu trữ chúng. Riêng dịch vụ sự kiện như SnapCast và ColorQuarium có lưu trữ ảnh và thiết lập bạn chủ động chia sẻ, theo điều khoản riêng của các dịch vụ đó.',
     'faq.q3.title': 'Công cụ Tối ưu ảnh hỗ trợ những định dạng ảnh nào?',
     'faq.q3.desc':
       'Công cụ Tối ưu ảnh hỗ trợ các định dạng web tiêu chuẩn bao gồm JPEG, PNG, WebP, SVG và cả các tệp HEIC/HEIF trực tiếp từ iPhone, giúp bạn dễ dàng chuyển đổi và nén ảnh iPhone để sử dụng trên web.',
@@ -378,9 +400,10 @@ const TRANSLATIONS = {
       'SnapCast sử dụng kết nối cơ sở dữ liệu thời gian thực để đồng bộ hóa ảnh tải lên ngay lập tức. Khách mời chỉ cần quét mã QR được tạo tự động bằng điện thoại thông minh, chụp ảnh và ảnh sẽ được chiếu lên màn hình trình chiếu trực tiếp đang chạy trong vài giây mà không cần cài đặt ứng dụng.',
     'faq.q5.title': 'Có giới hạn nào về kích thước tệp hoặc số lượng xử lý hàng loạt không?',
     'faq.q5.desc':
-      'Không có giới hạn nhân tạo nào được thiết lập bởi js-tools. Bạn có thể xử lý bao nhiêu tệp tùy ý tùy thuộc vào dung lượng bộ nhớ thiết bị của bạn. Các lô hàng lớn sẽ được xử lý tuần tự để tránh tab trình duyệt bị đóng băng.',
+      'Các công cụ tiện ích miễn phí không đặt giới hạn nhân tạo nào. Bạn có thể xử lý bao nhiêu tệp tùy ý tùy thuộc vào dung lượng bộ nhớ thiết bị của bạn. Các lô hàng lớn sẽ được xử lý tuần tự để tránh tab trình duyệt bị đóng băng.',
 
     'cq.name': 'ColorQuarium',
+    'cq.badge': '☁️ Dịch vụ cloud · Cần tài khoản · Có gói trả phí',
     'cq.tagline': 'Bể cá nghệ thuật sinh động với màu sắc và chuyển động',
     'cq.desc':
       'ColorQuarium biến màn hình của bạn thành một màn hình nghệ thuật sinh động, thư giãn — và biến điện thoại của bạn thành remote điều khiển. Mở màn hình hiển thị trên TV hoặc monitor, sau đó dùng điện thoại để thay đổi màu sắc, chủ đề và chuyển động theo thời gian thực.',
@@ -391,7 +414,9 @@ const TRANSLATIONS = {
     'cq.f5': 'Không cần cài đặt — chạy ngay trên trình duyệt',
     'cq.open': 'Mở công cụ →',
     'cq.demo.label': '🐠 Demo trực tiếp — điều khiển màn hình từ điện thoại',
-    'cq.demo.title': 'Trải nghiệm ngay — không cần đăng ký',
+    'cq.demo.title': 'Trải nghiệm ngay — demo không cần đăng ký',
+    'cq.demo.load': 'Tải màn hình trực tiếp',
+    'cq.demo.load.note': 'Phát một màn hình thật đang chạy ngay lúc này',
     'cq.demo.desc':
       'Đây là một màn hình ColorQuarium thật, đang chạy trực tiếp. Quét mã QR bằng điện thoại để mở remote điều khiển và thay đổi nội dung hiển thị theo thời gian thực.',
     'cq.demo.qr.note': 'Mở màn hình remote điều khiển dành cho điện thoại',

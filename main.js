@@ -433,41 +433,31 @@ document.getElementById('year').textContent = new Date().getFullYear();
   init();
 })();
 
-// ── Lazy Load Iframes ──────────────────────────────────────────
+// ── Demo Iframes: click-to-load posters ────────────────────────
 (function () {
-  const iframes = document.querySelectorAll('.sc-demo iframe');
-  if ('IntersectionObserver' in window) {
-    const iframeObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const iframe = entry.target;
-            const src = iframe.dataset.src;
-            if (src) {
-              iframe.src = src;
-              iframe.removeAttribute('data-src');
-            }
-            iframeObserver.unobserve(iframe);
-          }
-        });
-      },
-      { rootMargin: '200px' }
-    );
-
-    iframes.forEach((iframe) => {
-      if (iframe.dataset.src) {
-        iframeObserver.observe(iframe);
-      }
-    });
-  } else {
-    iframes.forEach((iframe) => {
-      const src = iframe.dataset.src;
-      if (src) {
-        iframe.src = src;
+  document.querySelectorAll('.sc-demo__poster').forEach((poster) => {
+    poster.addEventListener('click', () => {
+      const iframe = poster.closest('.sc-demo__screen')?.querySelector('iframe');
+      if (iframe?.dataset.src) {
+        iframe.src = iframe.dataset.src;
         iframe.removeAttribute('data-src');
       }
+      poster.classList.add('is-hidden');
     });
-  }
+  });
+})();
+
+// ── Mode switcher: only relevant while the hero is on screen ──
+(function () {
+  const hero = document.querySelector('.hero');
+  const switcher = document.getElementById('modeSwitcher');
+  if (!hero || !switcher) return;
+  const update = () => {
+    switcher.classList.toggle('is-hidden', hero.getBoundingClientRect().bottom <= 0);
+  };
+  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update, { passive: true });
+  update();
 })();
 
 // ── Dynamic Google AdSense Loader ─────────────────────────────
