@@ -7,6 +7,10 @@
 // Bài 1 — Tín hiệu là gì: từ liên tục đến số. Build-out: bộ sinh tín hiệu cơ
 // bản (xung đơn vị, bậc thang, sine, sóng vuông, chirp, nhiễu trắng), năng
 // lượng/công suất, và chu kỳ của sine rời rạc.
+//
+// Bài 5 — DFT: cửa sổ nhìn sang miền tần số. Build-out: dft() trực tiếp
+// (O(N²), so khớp với sinusoid dò từng bin) + complex helpers (biên độ/pha)
+// + binFrequency/frequencyResolution.
 
 // ---------------------------------------------------------------------------
 // Tín hiệu cơ bản — mọi hàm nhận chỉ số MẪU nguyên n (miền rời rạc x[n]),
@@ -243,6 +247,83 @@ function synthesizeRoomIR(durationSec, sampleRateHz, decayTau = 0.3, seed = 1) {
   return ir;
 }
 
+// ---------------------------------------------------------------------------
+// Bài 5 — DFT: cửa sổ nhìn sang miền tần số.
+// ---------------------------------------------------------------------------
+
+// DFT trực tiếp (định nghĩa, O(N²) — cliffhanger sang FFT ở Bài 6): với mỗi
+// bin tần số k, "so khớp" (correlation) tín hiệu với sinusoid dò tần số
+// k·fs/N bằng công thức $X[k] = \sum_n x[n] e^{-j2\pi kn/N}$. Trả về mảng N
+// số phức {re, im} — biên độ VÀ pha đều đóng gói trong 1 số phức mỗi bin.
+function dft(x) {
+  const N = x.length;
+  const X = new Array(N);
+  for (let k = 0; k < N; k++) {
+    let re = 0;
+    let im = 0;
+    for (let n = 0; n < N; n++) {
+      const angle = (-2 * Math.PI * k * n) / N;
+      re += x[n] * Math.cos(angle);
+      im += x[n] * Math.sin(angle);
+    }
+    X[k] = { re, im };
+  }
+  return X;
+}
+
+// Biên độ của 1 số phức {re, im} — $|X[k]| = \sqrt{re^2+im^2}$.
+function complexMagnitude(c) {
+  return Math.sqrt(c.re * c.re + c.im * c.im);
+}
+
+// Pha của 1 số phức {re, im}, tính bằng radian — $\angle X[k] = \mathrm{atan2}(im, re)$.
+// Pitfall Mục 5.4: vứt pha đi (chỉ giữ biên độ) là MẤT dạng sóng gốc.
+function complexPhase(c) {
+  return Math.atan2(c.im, c.re);
+}
+
+// Phổ biên độ trọn vẹn (Mục 5.4) — áp complexMagnitude() lên từng bin của
+// kết quả dft().
+function dftMagnitude(X) {
+  return X.map(complexMagnitude);
+}
+
+// Phổ pha trọn vẹn — áp complexPhase() lên từng bin của kết quả dft().
+function dftPhase(X) {
+  return X.map(complexPhase);
+}
+
+// Tần số thật (Hz) mà bin thứ k đại diện — $f_k = k \cdot f_s / N$ (Mục 5.2).
+function binFrequency(k, numSamples, sampleRateHz) {
+  return (k * sampleRateHz) / numSamples;
+}
+
+// IDFT trực tiếp (nghịch đảo dft(), không thuộc build-out gốc của Bài 5 theo
+// plan.md nhưng cần thiết để tự verify idft(dft(x)) = x VÀ dựng thí nghiệm
+// tráo pha Mục 5.4 (đóng lại phổ biên độ+pha thành tín hiệu thật để nghe) —
+// $x[n] = \tfrac{1}{N}\sum_k X[k] e^{+j2\pi kn/N}$, chỉ lấy phần thực vì tín
+// hiệu gốc luôn là số thực.
+function idft(X) {
+  const N = X.length;
+  const x = new Array(N);
+  for (let n = 0; n < N; n++) {
+    let sum = 0;
+    for (let k = 0; k < N; k++) {
+      const angle = (2 * Math.PI * k * n) / N;
+      sum += X[k].re * Math.cos(angle) - X[k].im * Math.sin(angle);
+    }
+    x[n] = sum / N;
+  }
+  return x;
+}
+
+// Độ phân giải tần số (Hz/bin, Mục 5.3) — khoảng cách tần số giữa 2 bin liền
+// kề, $\Delta f = f_s/N$: muốn phân biệt 2 tone cách nhau 1Hz phải quan sát
+// (lấy N mẫu) trong ít nhất 1 giây ở BẤT KỲ fs nào — không có bữa trưa miễn phí.
+function frequencyResolution(sampleRateHz, numSamples) {
+  return sampleRateHz / numSamples;
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -265,6 +346,14 @@ export {
   hardClip,
   convolve,
   synthesizeRoomIR,
+  dft,
+  complexMagnitude,
+  complexPhase,
+  dftMagnitude,
+  dftPhase,
+  binFrequency,
+  frequencyResolution,
+  idft,
 };
 
 // ---------------------------------------------------------------------------
@@ -502,6 +591,111 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Đáp ứng xung phòng TẮT DẦN theo thời gian (biên độ trung bình nửa sau nhỏ hơn hẳn nửa đầu)',
       signalPower(roomIR.slice(0, 200)) > signalPower(roomIR.slice(200))
     );
+  }
+
+  // --- Bài 5: dft, complex helpers, binFrequency, frequencyResolution ---
+  {
+    // Sine 1000Hz @ 8000Hz, N=8 mau (dung 1 chu ky tron ven, k=1 -> 1000Hz).
+    const N = 8;
+    const fs = 8000;
+    const sig = Array.from({ length: N }, (_, n) => sine(n, 1000, fs));
+    const X = dft(sig);
+
+    check('dft() tra ve dung so bin = do dai tin hieu (N=8)', X.length, N);
+    checkTrue(
+      'Bin k=1 (1000Hz) co bien do dinh = N/2 = 4 (dung ly thuyet cho sine bien do 1)',
+      Math.abs(complexMagnitude(X[1]) - 4) < 1e-9
+    );
+    checkTrue(
+      'Bin k=7 (bin doi xung lien hop, N-1) CUNG co bien do = 4 (doi xung lien hop cua tin hieu thuc)',
+      Math.abs(complexMagnitude(X[7]) - 4) < 1e-9
+    );
+    checkTrue(
+      'Cac bin con lai (k=0,2,3,4,5,6) gan bang 0 (khong nang luong ngoai dung tan so 1000Hz)',
+      [0, 2, 3, 4, 5, 6].every((k) => complexMagnitude(X[k]) < 1e-9)
+    );
+    checkTrue(
+      'Pha bin k=1 = -pi/2 (dung cho sine thuan, pha ban dau = 0)',
+      Math.abs(complexPhase(X[1]) - -Math.PI / 2) < 1e-9
+    );
+    checkTrue(
+      'Pha bin k=7 = +pi/2 (doi dau so voi k=1 - doi xung lien hop)',
+      Math.abs(complexPhase(X[7]) - Math.PI / 2) < 1e-9
+    );
+
+    // Tin hieu DC (hang so) - X[0] phai dung bang tong tat ca mau = N * DC.
+    const dc = Array.from({ length: N }, () => 2);
+    const Xdc = dft(dc);
+    checkTrue('DFT tin hieu DC=2: X[0] = N*DC = 16 (dung tong Sigma x[n])', Math.abs(Xdc[0].re - 16) < 1e-9);
+    check('DFT tin hieu DC: phan ao X[0] = 0 (tin hieu thuc, doi xung)', Math.round(Xdc[0].im), 0);
+
+    // binFrequency & frequencyResolution - dung cong thuc f_k = k*fs/N.
+    check('binFrequency(1, 8, 8000) = 1000Hz (khop dung bin dinh o tren)', binFrequency(1, N, fs), 1000);
+    check('binFrequency(0, 8, 8000) = 0Hz (bin DC)', binFrequency(0, N, fs), 0);
+    check('frequencyResolution(8000, 8) = 1000Hz/bin (fs/N)', frequencyResolution(fs, N), 1000);
+    checkTrue(
+      'Muon do phan giai 1Hz phai lay N=fs mau (vd fs=8000 -> N=8000 mau, dung Muc 5.3)',
+      frequencyResolution(8000, 8000) === 1
+    );
+
+    // dftMagnitude/dftPhase phai khop tung phan tu voi goi complexMagnitude/complexPhase truc tiep.
+    checkTrue(
+      'dftMagnitude() khop tung bin voi complexMagnitude() goi truc tiep',
+      dftMagnitude(X).every((m, k) => m === complexMagnitude(X[k]))
+    );
+    checkTrue(
+      'dftPhase() khop tung bin voi complexPhase() goi truc tiep',
+      dftPhase(X).every((p, k) => p === complexPhase(X[k]))
+    );
+
+    // idft(dft(x)) phai khop lai dung tin hieu goc (verify nghich dao).
+    const N2 = 16;
+    const fs2 = 16;
+    const sig2 = Array.from({ length: N2 }, (_, n) => sine(n, 3, fs2, 0.7) + sine(n, 5, fs2, 0.3));
+    const reconstructed = idft(dft(sig2));
+    checkTrue(
+      'idft(dft(x)) khop lai dung tin hieu goc, sai so < 1e-9 (verify nghich dao dung)',
+      reconstructed.every((v, n) => Math.abs(v - sig2[n]) < 1e-9)
+    );
+
+    // Thi nghiem trao pha (Muc 5.4 pitfall): 2 chirp bang thong rong quet
+    // nguoc chieu nhau - ghep BIEN DO cua A voi PHA cua B, dung lai tin hieu
+    // GIONG HET tin hieu PHA (B), gan nhu KHONG lien quan tin hieu BIEN DO (A)
+    // - verify bang so that pha moi la thu mang "dang song"/cau truc, khong
+    // phai bien do.
+    {
+      const N3 = 400;
+      const fs3 = 400;
+      const sigA = Array.from({ length: N3 }, (_, n) => chirp(n, 10, 150, N3, fs3, 0.9));
+      const sigB = Array.from({ length: N3 }, (_, n) => chirp(n, 150, 10, N3, fs3, 0.9));
+      const XA = dft(sigA);
+      const XB = dft(sigB);
+      const magA = dftMagnitude(XA);
+      const phaseB = dftPhase(XB);
+      const hybrid = magA.map((m, k) => ({ re: m * Math.cos(phaseB[k]), im: m * Math.sin(phaseB[k]) }));
+      const hybridSignal = idft(hybrid);
+
+      function correlate(a, b) {
+        let dot = 0;
+        let normA = 0;
+        let normB = 0;
+        for (let i = 0; i < a.length; i++) {
+          dot += a[i] * b[i];
+          normA += a[i] * a[i];
+          normB += b[i] * b[i];
+        }
+        return dot / Math.sqrt(normA * normB);
+      }
+
+      checkTrue(
+        'Trao pha: hybrid (bien do A + pha B) trung KHOP GAN TUYET DOI voi tin hieu CHO PHA (B), tuong quan > 0,999',
+        correlate(hybridSignal, sigB) > 0.999
+      );
+      checkTrue(
+        'Trao pha: hybrid GAN NHU KHONG lien quan tin hieu CHO BIEN DO (A), tuong quan < 0,1 — pha moi la thu mang cau truc/dang song, khong phai bien do',
+        Math.abs(correlate(hybridSignal, sigA)) < 0.1
+      );
+    }
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
