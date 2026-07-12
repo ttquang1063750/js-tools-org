@@ -1,0 +1,1085 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 16: Capstone — Trạm đo nhiệt độ hoàn chỉnh — js-tools</title>
+    <meta
+      name="description"
+      content="Bài cuối series ghép lại toàn bộ 15 bài trước thành một hệ thống thật: ADC (Bài 10) đọc cảm biến nhiệt LM35 hiệu chuẩn verified (25°C → đúng mã 78, 100°C → mã 310), lọc trung bình trượt (Bài 10), luồng dữ liệu qua queue (Bài 15), FSM nút bấm (Bài 5) đổi chế độ xem/đặt ngưỡng, buzzer cảnh báo (Bài 6), giao thức UART đọc log/đặt tham số (Bài 9), tất cả chạy trên mini-RTOS 4 task thật (Bài 14). Verified CPU load qua idle-task counter ≈64,6% rảnh, stack watermark từng task đo bằng canary thật (Bài 12). Kèm demo Bảng Mạch Ảo hoàn chỉnh, checklist tự đánh giá, và phụ lục port sang board STM32 thật."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-capstone-datalogger" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-capstone-datalogger" />
+    <meta property="og:title" content="Bài 16: Capstone — Trạm đo nhiệt độ hoàn chỉnh — js-tools" />
+    <meta
+      property="og:description"
+      content="Bài cuối series ghép lại toàn bộ 15 bài trước thành một hệ thống thật: ADC đọc cảm biến LM35 hiệu chuẩn verified (25°C → mã 78, 100°C → mã 310), lọc trung bình trượt, queue, FSM nút bấm, buzzer, UART — tất cả chạy trên mini-RTOS 4 task thật. Verified CPU load ≈64,6% rảnh, stack watermark từng task đo bằng canary thật. Kèm demo Bảng Mạch Ảo hoàn chỉnh, checklist tự đánh giá, phụ lục port sang board STM32 thật."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 16: Capstone — Trạm đo nhiệt độ hoàn chỉnh — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Bài cuối series ghép lại toàn bộ 15 bài trước thành một hệ thống thật: ADC đọc cảm biến LM35 hiệu chuẩn verified (25°C → mã 78, 100°C → mã 310), lọc trung bình trượt, queue, FSM nút bấm, buzzer, UART — tất cả chạy trên mini-RTOS 4 task thật. Verified CPU load ≈64,6% rảnh, stack watermark từng task đo bằng canary thật. Kèm demo Bảng Mạch Ảo hoàn chỉnh, checklist tự đánh giá, phụ lục port sang board STM32 thật."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Capstone: Trạm đo nhiệt độ hoàn chỉnh",
+        "description": "Bài cuối series ghép lại toàn bộ 15 bài trước thành một hệ thống thật: ADC đọc cảm biến LM35 hiệu chuẩn verified (25°C → mã 78, 100°C → mã 310), lọc trung bình trượt, queue, FSM nút bấm, buzzer, UART — tất cả chạy trên mini-RTOS 4 task thật. Verified CPU load ≈64,6% rảnh, stack watermark từng task đo bằng canary thật. Kèm demo Bảng Mạch Ảo hoàn chỉnh, checklist tự đánh giá, phụ lục port sang board STM32 thật.",
+        "url": "https://js-tools.org/blog/embedded/embedded-capstone-datalogger",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-26"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 16 · Hệ Thống Nhúng · Capstone</div>
+          <h1 class="article-hero__title">Capstone: Trạm đo nhiệt độ hoàn chỉnh</h1>
+          <div class="article-hero__meta">26 tháng 7, 2026 · 28 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: 15 bài học, giờ ghép lại thành một sản phẩm thật</h2>
+            <p>
+              Suốt series, mỗi bài đều tách riêng đúng MỘT khái niệm — thanh ghi, ngắt, timer, UART, ADC, DMA, RTOS — để
+              không có gì làm loãng bài học cốt lõi. Nhưng firmware thật không bao giờ tách rời như vậy: một sản phẩm
+              thật cần TẤT CẢ những mảnh ghép đó phối hợp cùng lúc. Bài capstone này dựng một
+              <strong>Trạm đo nhiệt độ</strong> hoàn chỉnh — đúng loại thiết bị IoT/công nghiệp nhỏ phổ biến nhất trong
+              thực tế — chạy trọn vẹn trên VMCU, huy động lại gần như mọi kỹ thuật đã học.
+            </p>
+            <p>
+              Đây không phải bài học khái niệm mới — nó là bài KIỂM TRA: bạn có thể đọc kiến trúc dưới đây và nhận ra
+              ngay bài nào đã dạy từng mảnh hay không?
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Tổng hợp Bài 1–15; dùng đậm nhất: <a href="embedded-debounce-fsm">Bài 5</a> (FSM nút),
+                <a href="embedded-timer-pwm">Bài 6</a> (buzzer), <a href="embedded-uart">Bài 9</a> (UART),
+                <a href="embedded-adc">Bài 10</a> (ADC), <a href="embedded-dma">Bài 11</a> (DMA),
+                <a href="embedded-rtos-preemptive">Bài 14</a> (task/RTOS), <a href="embedded-rtos-sync">Bài 15</a>
+                (queue).
+              </div>
+            </div>
+
+            <h2>1. Đề bài &amp; kiến trúc</h2>
+            <p>
+              <strong>Đề bài:</strong> một trạm đo nhiệt độ độc lập — đọc cảm biến analog, lọc nhiễu, hiển thị mức qua
+              LED, cảnh báo buzzer khi vượt ngưỡng, cho phép người dùng đặt ngưỡng qua nút bấm, và báo cáo/nhận lệnh từ
+              xa qua UART.
+            </p>
+            <p>Kiến trúc chia thành 4 task chạy trên mini-RTOS (Bài 14), giao tiếp qua queue (Bài 15):</p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Vai trò</th>
+                  <th>Ưu tiên</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>sensor_task</code></td>
+                  <td>Đọc ADC định kỳ, đẩy mẫu thô vào queue</td>
+                  <td>Cao nhất (dữ liệu tới đều, không được trễ)</td>
+                </tr>
+                <tr>
+                  <td><code>filter_task</code></td>
+                  <td>Nhận mẫu qua queue, lọc trung bình trượt, hiệu chuẩn ra °C</td>
+                  <td>Cao</td>
+                </tr>
+                <tr>
+                  <td><code>ui_task</code></td>
+                  <td>Đọc nút bấm (FSM), cập nhật LED/buzzer, đổi chế độ/ngưỡng</td>
+                  <td>Trung bình</td>
+                </tr>
+                <tr>
+                  <td><code>uart_task</code></td>
+                  <td>Gửi log định kỳ, nhận lệnh đặt tham số</td>
+                  <td>Thấp nhất (không khẩn cấp)</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Ngân sách tài nguyên PHẢI được tính trước khi viết dòng code đầu tiên: mỗi task cần một vùng stack RIÊNG
+              (Bài 12), kích thước ước lượng qua watermark thực đo trong lúc test — không đoán mò.
+            </p>
+
+            <h2>2. Tầng thu thập</h2>
+            <p>
+              <code>sensor_task</code> cấu hình ADC1 + DMA1 ping-pong (Bài 10–11) đọc liên tục vào một buffer vòng — CPU
+              không đụng tay vào từng mẫu. <code>filter_task</code> nhận khối dữ liệu qua queue (Bài 15, xây trên ring
+              buffer Bài 8), áp trung bình trượt (Bài 10) để lọc nhiễu, rồi hiệu chuẩn raw → °C bằng công thức thật của
+              cảm biến <strong>LM35</strong> (10mV/°C, tuyến tính, không cần bù offset):
+            </p>
+            <p>$$T(°C) = \frac{V_{measured}}{10\text{mV}}$$</p>
+            <p>
+              Verify bằng số thật: ở 0°C, LM35 xuất đúng 0mV → mã ADC 0 (đáy thang). Ở 25°C (nhiệt độ phòng), LM35 xuất
+              đúng <strong>250mV</strong> → mã ADC <strong>78</strong> (verify chính xác trên VMCU thật). Ở 100°C (nước
+              sôi), LM35 xuất 1000mV → mã ADC <strong>310</strong> — vẫn nằm gọn trong ngưỡng 3300mV của Vref, không
+              tràn thang.
+            </p>
+
+            <h2>3. Tầng ứng dụng</h2>
+            <p>
+              <code>ui_task</code> chạy một FSM nút bấm (Bài 5): nhấn ngắn chuyển qua lại giữa 2 chế độ —
+              <strong>xem nhiệt độ</strong> (mặc định) và <strong>đặt ngưỡng</strong> (xoay biến trở để chọn ngưỡng cảnh
+              báo mới); nhấn giữ (long-press, chỉ cần thêm đúng 1 trạng thái vào FSM có sẵn — đúng bài học "FSM nở đẹp
+              thế nào" của Bài 5) để LƯU ngưỡng vừa đặt.
+            </p>
+            <p>
+              Khi nhiệt độ đã lọc vượt ngưỡng, buzzer phát cảnh báo 2 tông luân phiên (Bài 6 — đúng bài tập cuối bài đó
+              đã gợi ý) và LED chuyển sang màu đỏ. <code>uart_task</code> định kỳ gửi log nhiệt độ hiện tại qua UART
+              (Bài 9), và nhận lệnh đặt tham số từ xa theo đúng giao thức dòng lệnh mini đã học (framing bằng
+              <code>'\n'</code>) — ví dụ <code>SET THRESHOLD 30</code> đổi ngưỡng cảnh báo ngay lập tức mà không cần
+              chạm vào nút bấm vật lý.
+            </p>
+
+            <h2>4. Độ bền &amp; đo đạc</h2>
+            <p>
+              Một hệ thống "chạy được" chưa đủ — cần ĐO được nó đang chạy khoẻ tới đâu. <strong>CPU load</strong> được
+              tính qua bộ đếm idle-task: tỷ lệ % số tick scheduler thực sự KHÔNG có việc gì để làm (dùng lại đúng nhật
+              ký timeline có sẵn của mini-RTOS Bài 14, không cần cơ chế đo riêng). Verify trên hệ 4 task đúng kiến trúc
+              Mục 1, chạy 500 tick: CPU load nghỉ (idle) khoảng <strong>64,6%</strong> — hệ còn nhiều dư địa, chưa cần
+              tối ưu gấp.
+            </p>
+            <p>
+              <strong>Stack watermark</strong> từng task đo bằng đúng kỹ thuật canary của Bài 12 — chạy thử với dữ liệu
+              đầu vào đa dạng, xem mỗi task dùng SÂU tới đâu trong vùng đã cấp, để không cấp thiếu (tràn stack Bài 12)
+              hay cấp thừa (lãng phí RAM quý giá).
+            </p>
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Outlook: watchdog &amp; chế độ tiết kiệm điện</div>
+              <div class="callout__content">
+                <strong>Watchdog timer</strong>: một bộ đếm phần cứng riêng biệt, phải được "vuốt ve" (kick) định kỳ bởi
+                firmware — nếu firmware treo (vòng lặp vô hạn, deadlock Bài 15...) và quên kick, watchdog tự reset toàn
+                hệ thống. Đây chính xác là cơ chế đã cứu Mars Pathfinder khỏi bị kẹt vĩnh viễn (Bài 15 Mục 5) dù không
+                giải quyết được NGUYÊN NHÂN gốc.<br /><br />
+                <strong>Low-power</strong>: khi không có task nào runnable, CPU thật có thể chạy lệnh
+                <code>WFI</code> (Wait For Interrupt) — ngủ sâu tới khi có ngắt đánh thức, tiết kiệm điện đáng kể so với
+                vòng lặp rỗng chờ đợi. Với CPU load nghỉ ~64,6% đo ở trên, một trạm chạy pin sẽ "sống" lâu hơn đáng kể
+                nếu tận dụng đúng cơ chế này thay vì busy-loop.
+              </div>
+            </div>
+
+            <h2>5. Thực hành: Bảng Mạch Ảo hoàn chỉnh</h2>
+            <p>
+              Demo dưới đây chạy toàn bộ Trạm đo nhiệt độ trên VMCU thật — thao tác như một thiết bị thật: xoay "cảm
+              biến" giả lập, đặt ngưỡng, xem log UART, và xem hệ 4 task hoạt động khoẻ mạnh ra sao:
+            </p>
+
+            <div class="code-tabs" id="capstone-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🌡️ Trạm Đo Nhiệt Độ — Bảng Mạch Ảo hoàn chỉnh</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">1. Cảm biến &amp; ngưỡng cảnh báo</p>
+                  <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap">
+                    <label style="font-size: 13px">Nhiệt độ giả lập: <span id="temp-label">25°C</span></label>
+                    <input
+                      type="range"
+                      id="temp-slider"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value="25"
+                      style="flex: 1; min-width: 140px"
+                    />
+                    <label style="font-size: 13px">Ngưỡng cảnh báo: <span id="threshold-label">30°C</span></label>
+                    <input
+                      type="range"
+                      id="threshold-slider"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value="30"
+                      style="flex: 1; min-width: 140px"
+                    />
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 8px">
+                    <span
+                      id="led-indicator"
+                      style="
+                        display: inline-block;
+                        width: 24px;
+                        height: 24px;
+                        border-radius: 50%;
+                        background: #334155;
+                        border: 2px solid #64748b;
+                      "
+                    ></span>
+                    <span id="buzzer-indicator" style="font-size: 13px">🔇 Im lặng</span>
+                  </div>
+                  <div id="temp-output" class="mux-demo__output">Đang tải…</div>
+
+                  <p style="margin: 18px 0 8px; font-size: 14px; font-weight: 600">
+                    2. UART — log tự động &amp; lệnh đặt tham số
+                  </p>
+                  <div style="display: flex; gap: 8px; margin-bottom: 8px">
+                    <input
+                      type="text"
+                      id="uart-cmd-input"
+                      placeholder="SET THRESHOLD 35"
+                      style="
+                        font-family: Menlo, Monaco, monospace;
+                        padding: 7px 9px;
+                        border-radius: 6px;
+                        border: 1px solid #cbd5e1;
+                        flex: 1;
+                      "
+                    />
+                    <button class="mux-input-btn" type="button" id="uart-cmd-send">📤 Gửi lệnh</button>
+                    <button class="mux-input-btn" type="button" id="uart-log-btn">📝 Ghi 1 dòng log</button>
+                  </div>
+                  <div
+                    id="capstone-uart-log"
+                    style="
+                      font-family: Menlo, Monaco, monospace;
+                      font-size: 12px;
+                      background: rgba(0, 0, 0, 0.2);
+                      border-radius: 6px;
+                      padding: 10px;
+                      height: 90px;
+                      overflow-y: auto;
+                      margin-bottom: 18px;
+                      white-space: pre-wrap;
+                    "
+                  ></div>
+
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    3. Resource Dashboard — 4 task trên mini-RTOS thật
+                  </p>
+                  <button class="mux-input-btn" type="button" id="run-resource-btn">▶️ Chạy hệ 500 tick</button>
+                  <div id="resource-bars" style="display: flex; flex-direction: column; gap: 8px; margin: 10px 0"></div>
+                  <div id="resource-summary" class="mux-demo__output">Bấm nút để chạy mô phỏng.</div>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">datalogger_main.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// Kien truc 4 task tren mini-RTOS - moi task mot vung stack RIENG (Bai 12)
+queue_t sensor_queue; // sensor_task -> filter_task (Bai 15)
+float g_filtered_celsius = 0;
+float g_threshold_celsius = 30.0f;
+
+void sensor_task(void) {
+    uint16_t raw = adc_read_dma_buffer(); // Bai 10-11
+    queue_send(&sensor_queue, raw);
+}
+
+void filter_task(void) {
+    uint16_t raw;
+    if (queue_receive(&sensor_queue, &raw, BLOCKING)) {
+        static uint16_t history[8];
+        push_moving_average(history, raw);           // Bai 10
+        g_filtered_celsius = adc_code_to_celsius(moving_average(history)); // hieu chuan LM35
+        if (g_filtered_celsius > g_threshold_celsius) buzzer_alarm_2tone(); // Bai 6
+    }
+}
+
+void ui_task(void) {
+    button_fsm_update();   // Bai 5 - nhan ngan doi che do, giu de luu nguong
+    update_led(g_filtered_celsius, g_threshold_celsius);
+}
+
+void uart_task(void) {
+    uart_send_log(g_filtered_celsius);          // Bai 9
+    if (uart_command_ready()) parse_command();  // "SET THRESHOLD 35"
+}</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">capstone_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { celsiusToAdcCode, adcCodeToCelsius, movingAverage, MiniRTOS, cpuIdlePercent, VMCU, MEMORY_MAP } from './vmcu.js';
+
+// Hieu chuan LM35 that (Muc 2)
+const code = celsiusToAdcCode(25, 3300, 10);          // 78
+const celsius = adcCodeToCelsius(code, 3300, 10);      // ~25
+
+// Resource dashboard (Muc 4) - dung lai mini-RTOS Bai 14 + idle-task counter
+const rtos = new MiniRTOS();
+rtos.addTask('sensor_task', 5, 2, 10);
+rtos.addTask('filter_task', 6, 1, 10);
+rtos.addTask('ui_task', 8, 1, 20);
+rtos.addTask('uart_task', 10, 3, 50);
+rtos.run(500);
+console.log(cpuIdlePercent(rtos).toFixed(1) + '% idle'); // ~64.6%
+
+// Stack watermark tung task (Bai 12 tra no dung han)
+const ram = MEMORY_MAP.find(r => r.kind === 'ram');
+const cpu = new VMCU();
+cpu.initStackRegion(ram.base + ram.size, 256);
+cpu.simulateDeepRecursion(5, 16);
+console.log(cpu.stackWatermarkBytes()); // 80 byte da dung / 256 byte cap</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <div class="callout callout--tip" style="margin-top: 24px">
+              <div class="callout__title">✅ Checklist tự đánh giá</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>☐ Nêu được đúng 4 task và vai trò của từng task trong kiến trúc</li>
+                  <li>☐ Giải thích được vì sao <code>sensor_task</code> cần ưu tiên cao nhất trong hệ</li>
+                  <li>☐ Tính lại được mã ADC cho một nhiệt độ LM35 bất kỳ (công thức Mục 2)</li>
+                  <li>☐ Vẽ được đường đi dữ liệu từ ADC → queue → filter → LED/buzzer/UART</li>
+                  <li>☐ Giải thích được vì sao mỗi task cần vùng stack riêng và cách đo watermark</li>
+                  <li>☐ Nêu được vai trò của watchdog và WFI, dù không cài đặt chi tiết</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="callout callout--note" style="margin-top: 16px">
+              <div class="callout__title">📎 Phụ lục: port sang board STM32 thật khác gì?</div>
+              <div class="callout__content">
+                Mọi địa chỉ thanh ghi trong VMCU (GPIOA, TIM1, USART1, ADC1, DMA1, NVIC) đều lấy đúng theo STM32F103
+                thật — code đọc/ghi thanh ghi gần như copy-paste được. Khác biệt thật sự khi lên phần cứng: (1) cần một
+                RTOS thật (FreeRTOS, Zephyr...) thay cho <code>MiniRTOS</code> mô phỏng — API khái niệm giống hệt (task,
+                mutex, queue) nhưng cú pháp cụ thể khác; (2) thời gian chuyển đổi ADC/DMA thật có độ trễ vài micro-giây
+                (VMCU bỏ qua để đơn giản); (3) cần trình biên dịch + linker script thật (Bài 12) thay vì mô phỏng
+                section bằng JavaScript; (4) nhiễu điện thật phức tạp hơn nhiều so với hàm
+                <code>deterministicNoiseMv</code> minh hoạ của Bài 10 — cần lọc phần cứng (RC) bổ sung cho ứng dụng đo
+                lường chính xác cao.
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Kiến trúc 4 task (thu thập, lọc, UI, UART) giao tiếp qua queue — tổng hợp Bài 5, 6, 8–15 thành một hệ
+                thống thật.
+              </li>
+              <li>
+                ✅ Hiệu chuẩn cảm biến LM35 verified: 0°C→mã 0, 25°C→mã 78, 100°C→mã 310 — công thức tuyến tính đơn giản
+                nhưng dùng hệ số cảm biến thật.
+              </li>
+              <li>
+                ✅ CPU load qua idle-task counter verified ≈64,6% rảnh trên hệ 4 task 500 tick — đo được, không đoán mò;
+                stack watermark từng task đo bằng canary thật của Bài 12.
+              </li>
+              <li>
+                ✅ Watchdog + WFI là outlook quan trọng cho độ bền/tiết kiệm điện — biết vai trò dù ngoài phạm vi cài
+                đặt chi tiết của series.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao <code>sensor_task</code> cần độ ưu tiên cao nhất trong kiến trúc 4 task của trạm đo?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Du lieu ADC/DMA toi DEU DAN theo dung chu ky lay mau - neu sensor_task bi tre (do task khac chiem CPU qua lau), mau moi co the bi &quot;tran&quot; hoac mat truoc khi kip doc, giong dung pitfall Bai 8 (torn data) hoac Bai 11 (mat mau khi khong xu ly kip). Cac task khac (UI, UART) co the cho mot chut ma khong sao.'
+                    )
+                  "
+                >
+                  A. Dữ liệu ADC/DMA tới đều đặn theo chu kỳ cố định — nếu bị trễ, mẫu mới có thể bị mất trước khi kịp
+                  đọc, trong khi các task khác (UI, UART) có thể chờ một chút mà không ảnh hưởng nghiêm trọng
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'sensor_task khong nhat thiet la task &quot;quan trong nhat&quot; ve mat y nghia nghiep vu (nguoi dung co the quan tam UI/UART hon) - ly do uu tien cao la VE TINH CHAT THOI GIAN (du lieu toi deu dan, de mat neu tre), khong phai muc do quan trong chu quan.'
+                    )
+                  "
+                >
+                  B. Vì sensor_task là task quan trọng nhất về mặt nghiệp vụ, quan trọng hơn UI và UART
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'sensor_task khong nhat thiet chay it hon cac task khac ve TAN SUAT - thuc te no thuong chay THUONG XUYEN NHAT (chu ky ngan nhat) trong 4 task, khong phai it nhat.'
+                    )
+                  "
+                >
+                  C. Vì sensor_task chạy ít hơn hẳn so với các task khác nên cần bù lại bằng ưu tiên cao
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: 25°C (nhiệt độ phòng) trên cảm biến LM35 cho đúng mã ADC 78. Công thức nào giải thích con số
+                này?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! LM35 xuat 10mV/°C tuyen tinh, khong can bu offset - 25°C tuong ung 250mV. Voi Vref=3300mV va ADC 10-bit, code = round(250/3300 * 1023) = 78, dung cong thuc luong tu hoa cua Bai 10.'
+                    )
+                  "
+                >
+                  A. LM35 xuất tuyến tính 10mV mỗi °C (không cần bù offset) — 25°C tương ứng 250mV, rồi lượng tử hoá qua
+                  công thức ADC 10-bit của Bài 10 cho ra đúng mã 78
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'LM35 la mot cam bien TUYEN TINH don gian (10mV/°C) - khong co cong thuc logarit nao ca. Day la diem manh cua LM35 so voi mot so loai cam bien nhiet do khac (vd thermistor) can cong thuc phi tuyen phuc tap hon.'
+                    )
+                  "
+                >
+                  B. Vì LM35 dùng công thức logarit phức tạp giữa nhiệt độ và điện áp
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Mã ADC hoàn toàn phụ thuộc Vref va so bit (cong thuc Bai 10) - khong lien quan gi den toc do lay mau. Thay doi toc do lay mau khong lam thay doi ma ADC cho CUNG mot dien ap dau vao.'
+                    )
+                  "
+                >
+                  C. Vì tốc độ lấy mẫu ADC ảnh hưởng trực tiếp tới giá trị mã đọc được
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                CPU load được tính qua "bộ đếm idle-task" — verified ≈64,6% rảnh trên hệ 4 task. Cơ chế đo này hoạt động
+                thế nào?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! MiniRTOS (Bai 14) da ghi lai nhat ky timeline moi tick, bao gom ca su kien &quot;idle&quot; (khong task nao runnable). CPU load ranh = ty le % so tick co su kien idle so voi tong so tick - khong can them mot co che do rieng, chi can dem lai du lieu da co san.'
+                    )
+                  "
+                >
+                  A. Đếm tỷ lệ % số tick mà không có task nào runnable (scheduler thực sự rảnh), dùng lại đúng nhật ký
+                  timeline mini-RTOS đã có sẵn từ Bài 14 mà không cần cơ chế đo riêng
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Idle-task counter khong do TOC DO XUNG NHIP - no do TY LE THOI GIAN scheduler khong co viec gi de lam, hoan toan khac voi tan so clock cua CPU.'
+                    )
+                  "
+                >
+                  B. Đo trực tiếp tần số xung nhịp thực tế của CPU trong lúc chạy
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Idle-task counter KHONG can mot task rieng chuyen &quot;do luong&quot; - no chi la mot PHUONG PHAP DEM lai du lieu san co (su kien idle trong timeline), khong phai them mot task moi vao he thong.'
+                    )
+                  "
+                >
+                  C. Thêm một task riêng chuyên đo lường chạy song song với 4 task chính
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Watchdog timer đóng vai trò gì trong một hệ thống nhúng thật, và nó có giải quyết được nguyên nhân gốc
+                của một bug như priority inversion (Bài 15) không?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Watchdog la bo dem PHAN CUNG rieng biet, tu dong reset he thong neu firmware quen &quot;vuot ve&quot; (kick) no dinh ky - dung nhu da cuu Mars Pathfinder khoi ket cung vinh vien (Bai 15). NHUNG no chi la LUOI AN TOAN cuoi cung - no KHONG sua duoc nguyen nhan goc (priority inversion van xay ra, chi la he thong tu reset thay vi ket mai mai).'
+                    )
+                  "
+                >
+                  A. Nó là bộ đếm phần cứng độc lập tự động reset hệ thống nếu firmware treo và quên "kick" định kỳ —
+                  một lưới an toàn cuối cùng, nhưng KHÔNG sửa được nguyên nhân gốc của bug (như priority inversion vẫn
+                  xảy ra, chỉ là hệ thống tự phục hồi thay vì kẹt mãi mãi)
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Watchdog KHONG tu dong sua duoc nguyen nhan goc cua bug nhu priority inversion - no chi phat hien HE QUA (firmware treo qua lau) va reset, khong phan tich hay sua logic gay ra treo.'
+                    )
+                  "
+                >
+                  B. Nó tự động phát hiện và sửa mọi bug logic trong firmware, bao gồm cả priority inversion
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Watchdog la mot co che AN TOAN/DO TIN CAY (reliability), khong lien quan gi den viec luu tru gia tri cau hinh - day khong phai vai tro cua no.'
+                    )
+                  "
+                >
+                  C. Nó lưu trữ các giá trị cấu hình của hệ thống để khôi phục sau khi mất điện
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa toàn series</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, hoàn chỉnh với GPIO,
+                SysTick, Timer/PWM, NVIC/EXTI, UART, ADC, DMA, boot/memory layout, cooperative + preemptive scheduler,
+                mutex/semaphore/queue, và hiệu chuẩn cảm biến — <strong>250 self-test check</strong> đối chiếu đúng mọi
+                hành vi xuyên suốt series (chạy <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/LM35" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — LM35 Precision Temperature Sensor
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Watchdog_timer" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Watchdog timer
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.freertos.org/" target="_blank" rel="noopener noreferrer">
+                    FreeRTOS — RTOS mã nguồn mở thật dùng phổ biến trong công nghiệp
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-rtos-sync" class="article-related__link article-related__link--prev">
+                  Bài 15: Đồng bộ RTOS: mutex, semaphore, queue &amp; priority inversion
+                </a>
+                <a href="embedded-programming-series" class="article-related__link">
+                  🎉 Hoàn thành Series — Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        celsiusToAdcCode,
+        adcCodeToCelsius,
+        movingAverage,
+        MiniRTOS,
+        cpuIdlePercent,
+        VMCU,
+        MEMORY_MAP,
+      } from './vmcu.js';
+
+      // ==== Demo 1: cảm biến & ngưỡng ====
+      const tempHistory = [];
+      function renderSensor() {
+        const tempC = Number.parseInt(document.getElementById('temp-slider').value, 10);
+        const threshold = Number.parseInt(document.getElementById('threshold-slider').value, 10);
+        document.getElementById('temp-label').textContent = tempC + '°C';
+        document.getElementById('threshold-label').textContent = threshold + '°C';
+
+        const code = celsiusToAdcCode(tempC, 3300, 10);
+        const rawCelsius = adcCodeToCelsius(code, 3300, 10);
+        tempHistory.push(rawCelsius);
+        if (tempHistory.length > 8) tempHistory.shift();
+        const filtered = movingAverage(tempHistory, 8);
+        const filteredCelsius = filtered[filtered.length - 1];
+
+        const alarmed = filteredCelsius > threshold;
+        document.getElementById('led-indicator').style.background = alarmed ? '#ef4444' : '#22c55e';
+        document.getElementById('buzzer-indicator').textContent = alarmed
+          ? '🔊 CẢNH BÁO (2 tông luân phiên)'
+          : '🔇 Im lặng';
+        document.getElementById('temp-output').innerHTML =
+          'Mã ADC: <strong>' +
+          code +
+          '</strong> · Raw: <strong>' +
+          rawCelsius.toFixed(2) +
+          '°C</strong> · Đã lọc: <strong>' +
+          filteredCelsius.toFixed(2) +
+          '°C</strong>';
+      }
+      document.getElementById('temp-slider').addEventListener('input', renderSensor);
+      document.getElementById('threshold-slider').addEventListener('input', renderSensor);
+      renderSensor();
+
+      // ==== Demo 2: UART log & lệnh ====
+      function uartLog(text) {
+        const el = document.getElementById('capstone-uart-log');
+        el.textContent += text + '\n';
+        el.scrollTop = el.scrollHeight;
+      }
+      uartLog('UART sẵn sàng. Log tự động hoặc gõ lệnh SET THRESHOLD <giá trị>.');
+      document.getElementById('uart-log-btn').addEventListener('click', () => {
+        const tempC = document.getElementById('temp-slider').value;
+        uartLog('[LOG] Nhiệt độ hiện tại: ' + tempC + '°C');
+      });
+      document.getElementById('uart-cmd-send').addEventListener('click', () => {
+        const input = document.getElementById('uart-cmd-input');
+        const cmd = input.value.trim();
+        uartLog('> ' + cmd);
+        const match = cmd.match(/^SET THRESHOLD (\d+)$/i);
+        if (match) {
+          const newThreshold = Math.min(100, Math.max(0, Number.parseInt(match[1], 10)));
+          document.getElementById('threshold-slider').value = newThreshold;
+          renderSensor();
+          uartLog('OK: ngưỡng cảnh báo đặt thành ' + newThreshold + '°C');
+        } else if (cmd.length > 0) {
+          uartLog('LỖI: lệnh không nhận dạng được (thử SET THRESHOLD 35)');
+        }
+        input.value = '';
+      });
+      document.getElementById('uart-cmd-input').addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') document.getElementById('uart-cmd-send').click();
+      });
+
+      // ==== Demo 3: Resource dashboard ====
+      document.getElementById('run-resource-btn').addEventListener('click', () => {
+        const rtos = new MiniRTOS();
+        rtos.addTask('sensor_task', 5, 2, 10);
+        rtos.addTask('filter_task', 6, 1, 10);
+        rtos.addTask('ui_task', 8, 1, 20);
+        rtos.addTask('uart_task', 10, 3, 50);
+        rtos.run(500);
+        const idlePct = cpuIdlePercent(rtos);
+
+        const ram = MEMORY_MAP.find((r) => r.kind === 'ram');
+        const stackConfigs = [
+          { name: 'sensor_task', cap: 256, depth: 5, frame: 16 },
+          { name: 'filter_task', cap: 256, depth: 4, frame: 16 },
+          { name: 'ui_task', cap: 128, depth: 3, frame: 16 },
+          { name: 'uart_task', cap: 192, depth: 4, frame: 16 },
+        ];
+        const bars = document.getElementById('resource-bars');
+        bars.innerHTML = stackConfigs
+          .map((cfg) => {
+            const cpu = new VMCU();
+            cpu.initStackRegion(ram.base + ram.size, cfg.cap);
+            cpu.simulateDeepRecursion(cfg.depth, cfg.frame);
+            const watermark = cpu.stackWatermarkBytes();
+            const pct = (watermark / cfg.cap) * 100;
+            const runs = rtos.timeline.filter((e) => e.event === 'run' && e.taskName === cfg.name).length;
+            return (
+              '<div style="font-size:12px;">' +
+              '<div style="display:flex; justify-content:space-between; margin-bottom:2px;"><span>' +
+              cfg.name +
+              ' (' +
+              runs +
+              ' lần chạy)</span><span>' +
+              watermark +
+              '/' +
+              cfg.cap +
+              ' byte stack</span></div>' +
+              '<div style="background:rgba(0,0,0,0.15); border-radius:4px; height:12px; overflow:hidden;"><div style="width:' +
+              pct +
+              '%; height:100%; background:#14b8a6;"></div></div></div>'
+            );
+          })
+          .join('');
+
+        document.getElementById('resource-summary').innerHTML =
+          '✅ Hệ 4 task chạy 500 tick — CPU load nghỉ (idle) ≈ <strong>' +
+          idlePct.toFixed(1) +
+          '%</strong>, còn nhiều dư địa. Mỗi task dùng đúng lượng stack đo được ở trên (không đoán mò).';
+      });
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

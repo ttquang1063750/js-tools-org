@@ -1769,6 +1769,31 @@ class MiniRTOS {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Capstone (Bài 16) — hiệu chuẩn cảm biến nhiệt kiểu LM35 THẬT: 10mV/°C,
+// 0V ứng với 0°C (không cần bù offset) — công thức tuyến tính đơn giản nhất
+// có thể, nhưng dùng đúng hệ số của một cảm biến analog phổ biến thật, không
+// phải số bịa. Dùng lại nguyên xi adcCodeToVoltage của Bài 10.
+// ---------------------------------------------------------------------------
+function adcCodeToCelsius(code, vrefMv, bits, mvPerCelsius = 10) {
+  const voltageMv = adcCodeToVoltage(code, vrefMv, bits);
+  return voltageMv / mvPerCelsius;
+}
+
+function celsiusToAdcCode(celsius, vrefMv, bits, mvPerCelsius = 10) {
+  return adcVoltageToCode(celsius * mvPerCelsius, vrefMv, bits);
+}
+
+// Bài 16 Mục 16.4 — CPU load qua bộ đếm idle-task: tỷ lệ % số tick KHÔNG có
+// task nào runnable (scheduler thật sự rảnh) so với tổng số tick đã chạy —
+// dùng lại đúng nhật ký timeline có sẵn của MiniRTOS (Bài 14), không cần
+// thêm cơ chế đo nào khác.
+function cpuIdlePercent(rtos) {
+  if (rtos.currentTick === 0) return 0;
+  const idleCount = rtos.timeline.filter((e) => e.event === 'idle').length;
+  return (idleCount / rtos.currentTick) * 100;
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -1875,6 +1900,9 @@ export {
   jitterStats,
   RtosTask,
   MiniRTOS,
+  adcCodeToCelsius,
+  celsiusToAdcCode,
+  cpuIdlePercent,
 };
 
 // ---------------------------------------------------------------------------
@@ -2981,6 +3009,43 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     check('Task chờ dữ liệu đang BLOCKED', receiver.state, 'BLOCKED');
     checkTrue('send(): đẩy dữ liệu thành công vào queue', rtosQ.queueSend(q, 42) === true);
     check('send() đánh thức NGAY task đang chờ nhận dữ liệu', receiver.state, 'READY');
+  }
+
+  // --- Capstone (Bài 16): hiệu chuẩn cảm biến LM35 & CPU load qua idle-task ---
+  {
+    check('Hiệu chuẩn LM35 verified: 0°C → mã ADC 0 (0mV, đáy thang)', celsiusToAdcCode(0, 3300, 10), 0);
+    check(
+      'Hiệu chuẩn LM35 verified: 25°C → mã ADC 78 (250mV thật của LM35 ở 25°C)',
+      celsiusToAdcCode(25, 3300, 10),
+      78
+    );
+    check(
+      'Hiệu chuẩn LM35 verified: 100°C (nước sôi) → mã ADC 310 (1000mV, vẫn trong ngưỡng 3300mV)',
+      celsiusToAdcCode(100, 3300, 10),
+      310
+    );
+    checkTrue(
+      'Đổi ngược mã 78 ra nhiệt độ khớp rất sát 25°C (sai số lượng tử nhỏ, đúng bài học Bài 10)',
+      Math.abs(adcCodeToCelsius(78, 3300, 10) - 25) < 1
+    );
+
+    // CPU load qua idle-task counter (Bai 16 Muc 16.4) - dung lai nguyen xi
+    // nhat ky timeline cua MiniRTOS (Bai 14), khong can co che do rieng.
+    const rtosCapstone = new MiniRTOS();
+    rtosCapstone.addTask('sensor_task', 5, 2, 10);
+    rtosCapstone.addTask('filter_task', 6, 1, 10);
+    rtosCapstone.addTask('ui_task', 8, 1, 20);
+    rtosCapstone.addTask('uart_task', 10, 3, 50);
+    rtosCapstone.run(500);
+    checkTrue(
+      'Hệ 4 task capstone verified: CPU load qua idle-task ≈ 64,6% rảnh sau 500 tick (hệ nhẹ, còn nhiều dư địa)',
+      Math.abs(cpuIdlePercent(rtosCapstone) - 64.6) < 0.5
+    );
+    check(
+      'sensor_task (chu kỳ ngắn nhất) chạy nhiều lần nhất trong 4 task',
+      rtosCapstone.timeline.filter((e) => e.event === 'run' && e.taskName === 'sensor_task').length,
+      84
+    );
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---
