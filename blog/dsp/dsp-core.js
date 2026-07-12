@@ -428,6 +428,75 @@ function complexityRatio(N) {
   return N / Math.log2(N);
 }
 
+// ---------------------------------------------------------------------------
+// Bài 7 — Rò rỉ phổ & hàm cửa sổ. Build-out: 4 cửa sổ chuẩn (rect/Hann/
+// Hamming/Blackman), coherent gain (Mục 7.4 — cửa sổ "ăn" mất năng lượng,
+// phải bù lại), và đo main-lobe/side-lobe bằng chính FFT của cửa sổ (Mục 7.3).
+// ---------------------------------------------------------------------------
+
+// Cửa sổ chữ nhật (rect) — KHÔNG sửa gì cả (nhân với 1 mọi nơi), chính là
+// "cửa sổ" DFT/FFT trực tiếp NGẦM áp dụng khi cắt 1 khung hữu hạn (Mục 7.2:
+// cắt khung = nhân với rect = chập phổ với sinc, nguồn gốc TOÀN BỘ leakage).
+function rectWindow(N) {
+  return new Array(N).fill(1);
+}
+
+// Cửa sổ Hann — main lobe rộng vừa phải, side lobe thấp, lựa chọn "đa dụng
+// hằng ngày" (Mục 7.3).
+function hannWindow(N) {
+  return Array.from({ length: N }, (_, n) => 0.5 - 0.5 * Math.cos((2 * Math.PI * n) / (N - 1)));
+}
+
+// Cửa sổ Hamming — main lobe hẹp hơn Hann (tách 2 tone gần nhau tốt hơn)
+// nhưng side lobe đầu tiên cao hơn — đánh đổi ngược lại Hann.
+function hammingWindow(N) {
+  return Array.from({ length: N }, (_, n) => 0.54 - 0.46 * Math.cos((2 * Math.PI * n) / (N - 1)));
+}
+
+// Cửa sổ Blackman — side lobe thấp nhất trong 4 loại (tốt nhất để tìm tone
+// yếu cạnh tone mạnh) nhưng main lobe rộng nhất (phân giải tần số kém nhất).
+function blackmanWindow(N) {
+  return Array.from(
+    { length: N },
+    (_, n) => 0.42 - 0.5 * Math.cos((2 * Math.PI * n) / (N - 1)) + 0.08 * Math.cos((4 * Math.PI * n) / (N - 1))
+  );
+}
+
+// Áp 1 cửa sổ lên tín hiệu — nhân từng mẫu, đúng phép toán Mục 7.2.
+function applyWindow(x, window) {
+  return x.map((v, i) => v * window[i]);
+}
+
+// Coherent gain — giá trị TRUNG BÌNH của cửa sổ, đo "cửa sổ ăn mất bao nhiêu
+// năng lượng trung bình" (Mục 7.4): rect=1,0 (không ăn gì), Hann≈0,5,
+// Hamming≈0,54, Blackman≈0,42 — số càng nhỏ, cửa sổ càng "cắt" mạnh.
+function coherentGain(window) {
+  return window.reduce((sum, w) => sum + w, 0) / window.length;
+}
+
+// Biên độ đã bù coherent gain (Mục 7.4 pitfall): quên bù → MỌI phép đo biên
+// độ qua cửa sổ khác rect đều sai một hằng số hệ thống (thấp hơn thực tế).
+function compensatedMagnitude(magnitude, window) {
+  const cg = coherentGain(window);
+  return magnitude.map((m) => m / cg);
+}
+
+// Đo mức side lobe cao nhất (dB, so với đỉnh main lobe) của chính 1 cửa sổ,
+// bằng cách FFT cửa sổ đó (zero-pad để có độ phân giải mượt) rồi quét: main
+// lobe là đoạn biên độ giảm dần liên tục từ đỉnh k=0, side lobe đầu tiên là
+// đỉnh cục bộ CAO NHẤT ngay sau khi main lobe kết thúc giảm (Mục 7.3).
+function sideLobeLevelDb(window, paddedLength = 4096) {
+  const padded = zeroPad(window, paddedLength);
+  const spectrum = dftMagnitude(fft(padded));
+  const half = spectrum.slice(0, paddedLength / 2);
+  const peak = half[0];
+  let i = 1;
+  while (i < half.length - 1 && half[i] >= half[i + 1]) i++;
+  let sideLobePeak = 0;
+  for (; i < half.length; i++) sideLobePeak = Math.max(sideLobePeak, half[i]);
+  return 20 * Math.log10(sideLobePeak / peak);
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -465,6 +534,14 @@ export {
   dftMultiplyCount,
   fftMultiplyCount,
   complexityRatio,
+  rectWindow,
+  hannWindow,
+  hammingWindow,
+  blackmanWindow,
+  applyWindow,
+  coherentGain,
+  compensatedMagnitude,
+  sideLobeLevelDb,
 };
 
 // ---------------------------------------------------------------------------
@@ -874,6 +951,73 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'zeroPad giu nguyen 4 mau dau, 4 mau sau la 0',
       padded[0] === 1 && padded[1] === 2 && padded[2] === 3 && padded[3] === 4 && padded[4] === 0 && padded[7] === 0
+    );
+  }
+
+  // --- Bài 7: Rò rỉ phổ & hàm cửa sổ ---
+  {
+    const N = 64;
+    const rw = rectWindow(N);
+    const hw = hannWindow(N);
+    const hmw = hammingWindow(N);
+    const bw = blackmanWindow(N);
+
+    // Hinh dang co ban: rect toan 1; Hann/Blackman = 0 tai 2 dau mut
+    checkTrue(
+      'rectWindow: toàn bộ đều = 1 (không sửa gì)',
+      rw.every((v) => v === 1)
+    );
+    checkTrue('hannWindow: 2 đầu mút = 0 (mượt về 0)', Math.abs(hw[0]) < 1e-9 && Math.abs(hw[N - 1]) < 1e-9);
+    checkTrue('blackmanWindow: 2 đầu mút ≈ 0', Math.abs(bw[0]) < 1e-6 && Math.abs(bw[N - 1]) < 1e-6);
+    checkTrue(
+      'hammingWindow: 2 đầu mút ≈ 0,08 (KHÔNG về 0 hẳn - khác Hann)',
+      Math.abs(hmw[0] - 0.08) < 1e-9 && Math.abs(hmw[N - 1] - 0.08) < 1e-9
+    );
+
+    // Coherent gain (Muc 7.4) - so voi so lieu kinh dien cua tung loai cua so
+    checkTrue('coherentGain(rect) = 1,0 (không ăn gì)', Math.abs(coherentGain(rw) - 1.0) < 1e-9);
+    checkTrue('coherentGain(hann) ≈ 0,5 (verified thật)', Math.abs(coherentGain(hw) - 0.5) < 0.02);
+    checkTrue('coherentGain(hamming) ≈ 0,53-0,54 (verified thật)', Math.abs(coherentGain(hmw) - 0.53) < 0.02);
+    checkTrue('coherentGain(blackman) ≈ 0,41-0,42 (verified thật)', Math.abs(coherentGain(bw) - 0.42) < 0.02);
+
+    // Side lobe level (dB, Muc 7.3) - do bang chinh FFT cua cua so, so sanh
+    // dung thu tu kinh dien: rect > Hann > Hamming > Blackman (cang am cang tot)
+    const sideLobeRect = sideLobeLevelDb(rw);
+    const sideLobeHann = sideLobeLevelDb(hw);
+    const sideLobeHamming = sideLobeLevelDb(hmw);
+    const sideLobeBlackman = sideLobeLevelDb(bw);
+    checkTrue('Side lobe rect ≈ -13dB (verified thật)', Math.abs(sideLobeRect - -13.3) < 1);
+    checkTrue('Side lobe Hann ≈ -31dB (verified thật, thấp hơn hẳn rect)', Math.abs(sideLobeHann - -31.5) < 1);
+    checkTrue('Side lobe Hamming ≈ -42dB (verified thật)', Math.abs(sideLobeHamming - -42) < 1.5);
+    checkTrue('Side lobe Blackman ≈ -58dB (thấp NHẤT trong 4 loại)', Math.abs(sideLobeBlackman - -58) < 1.5);
+    checkTrue(
+      'Đúng thứ tự kinh điển: rect > Hann > Hamming > Blackman (số càng âm càng ít rò rỉ)',
+      sideLobeRect > sideLobeHann && sideLobeHann > sideLobeHamming && sideLobeHamming > sideLobeBlackman
+    );
+
+    // Leakage that: sine KHONG roi dung vao 1 bin (10.5 chu ky trong N mau)
+    // - do nang luong "ro ri" toi 1 bin XA, chung minh Hann ro ri IT HON rect
+    const N2 = 256;
+    const leakySignal = Array.from({ length: N2 }, (_, n) => Math.sin((2 * Math.PI * 10.5 * n) / N2));
+    const rectMag = dftMagnitude(dft(applyWindow(leakySignal, rectWindow(N2))));
+    const hannMag = dftMagnitude(dft(applyWindow(leakySignal, hannWindow(N2))));
+    const farBin = 40; // xa hon nhieu so voi vi tri tin hieu (bin ~10-11)
+    checkTrue(
+      'Rò rỉ tại bin XA (bin 40, tín hiệu ở bin ~10.5): cửa sổ Hann rò rỉ ÍT HƠN cửa sổ rect',
+      hannMag[farBin] < rectMag[farBin]
+    );
+
+    // compensatedMagnitude: bu dung coherent gain, khoi phuc bien do gan dung
+    // gia tri KHONG cua so (rect) cho tin hieu sine RƠI ĐÚNG VÀO 1 bin.
+    const N3 = 64;
+    const binAlignedSignal = Array.from({ length: N3 }, (_, n) => Math.sin((2 * Math.PI * 4 * n) / N3));
+    const rectPeak = dftMagnitude(dft(applyWindow(binAlignedSignal, rectWindow(N3))))[4];
+    const hannWin = hannWindow(N3);
+    const hannRawPeak = dftMagnitude(dft(applyWindow(binAlignedSignal, hannWin)))[4];
+    const hannCompensatedPeak = compensatedMagnitude([hannRawPeak], hannWin)[0];
+    checkTrue(
+      'compensatedMagnitude: sau khi bù coherent gain, đỉnh Hann gần với đỉnh rect hơn RẤT NHIỀU so với trước khi bù',
+      Math.abs(hannCompensatedPeak - rectPeak) < Math.abs(hannRawPeak - rectPeak)
     );
   }
 
