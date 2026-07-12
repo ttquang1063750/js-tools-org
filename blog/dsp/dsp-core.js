@@ -192,6 +192,21 @@ function quantizeWithDither(x, bits, fullScale, n, seed = 1) {
   return quantize(x + ditherNoise, bits, fullScale);
 }
 
+// Đổi biên độ tuyến tính sang thang dBFS (decibel Full Scale, Mục 3.3) —
+// fullScale (biên độ 1.0) tương ứng ĐÚNG 0dBFS, mọi giá trị nhỏ hơn cho ra số
+// âm. Verify: 0,5 → -6,02dBFS, khớp đúng quy tắc 6dB/lần giảm biên độ một nửa
+// đã gặp ở SQNR.
+function amplitudeToDbfs(amplitude, fullScale = 1) {
+  return 20 * Math.log10(Math.abs(amplitude) / fullScale);
+}
+
+// Clipping cứng (hard clip, Mục 3.3): cắt phẳng mọi giá trị vượt fullScale —
+// mô phỏng đúng lỗi tràn thang xảy ra khi thiếu headroom, tạo méo dạng sóng
+// (khác hẳn — và tệ hơn nhiều tai người nghe — so với sàn nhiễu lượng tử).
+function hardClip(x, fullScale = 1) {
+  return Math.max(-fullScale, Math.min(fullScale, x));
+}
+
 // ---------------------------------------------------------------------------
 // Bài 4 — Hệ LTI, tích chập & đáp ứng xung.
 // ---------------------------------------------------------------------------
@@ -246,6 +261,8 @@ export {
   sqnrDbTheoretical,
   measuredSqnrDb,
   quantizeWithDither,
+  amplitudeToDbfs,
+  hardClip,
   convolve,
   synthesizeRoomIR,
 };
@@ -382,6 +399,16 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     check('quantize(0.3, 2-bit) = 0.5 (levels=2, 0.3*2=0.6 → làm tròn 1 → 1/2)', quantize(0.3, 2), 0.5);
     check('quantize(1.5, 8-bit) bị kẹp về 1 (vượt fullScale=1 mặc định)', quantize(1.5, 8), 1);
 
+    checkTrue('dBFS(1.0) = 0dBFS (full scale luôn là mốc 0dB tham chiếu)', Math.abs(amplitudeToDbfs(1) - 0) < 1e-9);
+    checkTrue(
+      'dBFS(0.5) = -6,02dBFS (đúng quy tắc 6dB/lần giảm biên độ một nửa)',
+      Math.abs(amplitudeToDbfs(0.5) - -6.02) < 0.01
+    );
+    checkTrue('dBFS(0.25) = -12,04dBFS (giảm thêm 6dB nữa)', Math.abs(amplitudeToDbfs(0.25) - -12.04) < 0.01);
+    check('hardClip(1.5) bị cắt phẳng về 1 (tràn thang dương)', hardClip(1.5), 1);
+    check('hardClip(-1.5) bị cắt phẳng về -1 (tràn thang âm)', hardClip(-1.5), -1);
+    check('hardClip(0.5) giữ nguyên (chưa vượt ngưỡng)', hardClip(0.5), 0.5);
+
     checkTrue('SQNR lý thuyết 16-bit ≈ 98,08dB (quy tắc 6,02B+1,76)', Math.abs(sqnrDbTheoretical(16) - 98.08) < 0.01);
     checkTrue('SQNR lý thuyết 8-bit ≈ 49,92dB', Math.abs(sqnrDbTheoretical(8) - 49.92) < 0.01);
     checkTrue('SQNR lý thuyết 4-bit ≈ 25,84dB', Math.abs(sqnrDbTheoretical(4) - 25.84) < 0.01);
@@ -411,6 +438,27 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Dither làm sai số lượng tử THAY ĐỔI theo từng mẫu (phá tương quan) thay vì lặp lại y hệt như không dither',
       new Set(Array.from({ length: 50 }, (_, n) => quantizeWithDither(0.3, 4, 1, n).toFixed(6))).size > 1
     );
+
+    // Verify loi ich THAT cua dither: mot gia tri DC dung o giua 2 muc luong
+    // tu (4-bit, buoc=0.125, x=0.1875 = 1 buoc + nua buoc - truong hop TE
+    // NHAT cho quantize thuong). Khong dither: luon ra CUNG 1 muc co dinh,
+    // sai so co dinh = nua buoc. Co dither: trung binh qua nhieu mau xap xi
+    // gia tri that GAN HON HAN nho "trai deu" giua 2 muc ke nhau.
+    {
+      const worstCaseX = 0.1875;
+      const plainError = Math.abs(quantize(worstCaseX, 4) - worstCaseX);
+      const ditherSamples = Array.from({ length: 200 }, (_, n) => quantizeWithDither(worstCaseX, 4, 1, n));
+      const ditherAvg = ditherSamples.reduce((a, b) => a + b, 0) / ditherSamples.length;
+      const ditherAvgError = Math.abs(ditherAvg - worstCaseX);
+      checkTrue(
+        'Verified lợi ích dither: KHÔNG dither luôn cho đúng 1 mức cố định (sai số cố định = nửa LSB = 0,0625)',
+        Math.abs(plainError - 0.0625) < 1e-9
+      );
+      checkTrue(
+        'Verified lợi ích dither: trung bình 200 mẫu CÓ dither xấp xỉ giá trị thật gần hơn HẲN (sai số giảm >10 lần)',
+        ditherAvgError < plainError / 10
+      );
+    }
   }
 
   // --- Bài 4: convolve, tính chất hệ LTI ---

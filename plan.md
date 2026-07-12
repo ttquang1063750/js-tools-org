@@ -26,7 +26,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 11: VLSI**           | **Thiết Kế Vi Mạch Số & FPGA (VLSI)**   | **14/14**      | **14**   | **100%** ✅ |
 | 🎉 **Series 12: AI**             | **Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM** | **19/19**      | **19**   | **100%** ✅ |
 | Series 13                        | Hệ Thống Nhúng: Từ Thanh Ghi Đến RTOS   | 16/16          | 16       | 100%        |
-| Series 14                        | Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ       | 2/15           | 15       | 13%         |
+| Series 14                        | Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ       | 3/15           | 15       | 20%         |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
