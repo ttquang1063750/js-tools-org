@@ -1554,6 +1554,106 @@ function jitterStats(events, taskName) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Mini-RTOS preemptive (Bài 14) — KHÁC HẲN cooperative scheduler Bài 13: ở
+// đây scheduler có quyền CƯỚP CPU của một task đang chạy nếu một task ưu
+// tiên cao hơn trở nên READY giữa chừng — không cần chờ task hiện tại tự
+// nguyện chạy xong. Mỗi "tick" mô phỏng đúng 1 đơn vị thời gian rời rạc (KHÔNG
+// phải 1ms thật — chỉ là đơn vị mô phỏng cho demo/self-test dễ theo dõi từng
+// bước). Priority: số NHỎ HƠN = ưu tiên CAO HƠN, đúng quy ước NVIC đã học ở
+// Bài 7 (pitfall ngược trực giác tái xuất ở tầng RTOS).
+class RtosTask {
+  constructor(name, priority, workUnitsPerRun, periodTicks) {
+    this.name = name;
+    this.priority = priority;
+    this.workUnitsPerRun = workUnitsPerRun;
+    this.periodTicks = periodTicks; // ngu bao nhieu tick sau khi chay xong 1 lan
+    this.state = 'READY'; // READY | RUNNING | BLOCKED
+    this.remainingUnits = workUnitsPerRun;
+    this.wakeAtTick = 0;
+  }
+}
+
+class MiniRTOS {
+  constructor() {
+    this.tasks = [];
+    this.timeline = []; // {tick, taskName, event: 'run'|'block'|'idle'}
+    this.currentTick = 0;
+    this._rrIndex = {}; // vi tri round-robin rieng cho tung muc priority
+  }
+
+  // startBlocked = true: task bắt đầu ở trạng thái BLOCKED, chỉ được đánh
+  // thức bằng wakeTask() gọi tay (mô phỏng một sự kiện/ngắt bên ngoài xảy ra
+  // đúng lúc — dùng cho thí nghiệm preemption Mục 14.2/14.5).
+  addTask(name, priority, workUnitsPerRun, periodTicks, startBlocked = false) {
+    const t = new RtosTask(name, priority, workUnitsPerRun, periodTicks);
+    if (startBlocked) {
+      t.state = 'BLOCKED';
+      t.wakeAtTick = Infinity; // khong bao gio tu dong thuc day - phai goi wakeTask()
+    }
+    this.tasks.push(t);
+    return t;
+  }
+
+  // Đánh thức tay 1 task đang BLOCKED NGAY LẬP TỨC — mô phỏng một sự kiện bên
+  // ngoài (ngắt, dữ liệu tới) khiến nó READY đúng vào tick hiện tại, bất kể
+  // task nào khác đang RUNNING.
+  wakeTask(name) {
+    const t = this.tasks.find((x) => x.name === name);
+    if (t && t.state === 'BLOCKED') {
+      t.state = 'READY';
+      t.remainingUnits = t.workUnitsPerRun;
+    }
+  }
+
+  // Chạy đúng 1 tick: thức dậy task đến hạn, chọn task READY/RUNNING ưu tiên
+  // cao nhất (preemption thật sự — task đang RUNNING bị đổi về READY NGAY nếu
+  // có task ưu tiên cao hơn giành CPU), round-robin giữa các task CÙNG mức ưu
+  // tiên để tránh 1 task cùng mức "ăn hết" CPU của các task ngang hàng.
+  tick() {
+    for (const t of this.tasks) {
+      if (t.state === 'BLOCKED' && this.currentTick >= t.wakeAtTick) {
+        t.state = 'READY';
+        t.remainingUnits = t.workUnitsPerRun;
+      }
+    }
+    const runnable = this.tasks.filter((t) => t.state === 'READY' || t.state === 'RUNNING');
+    if (runnable.length === 0) {
+      this.timeline.push({ tick: this.currentTick, taskName: null, event: 'idle' });
+      this.currentTick++;
+      return;
+    }
+    const minPriority = Math.min(...runnable.map((t) => t.priority));
+    const candidates = runnable.filter((t) => t.priority === minPriority);
+    let chosen;
+    if (candidates.length === 1) {
+      chosen = candidates[0];
+    } else {
+      const idx = (this._rrIndex[minPriority] || 0) % candidates.length;
+      chosen = candidates[idx];
+      this._rrIndex[minPriority] = idx + 1;
+    }
+    // Bat ky task nao khac dang RUNNING nhung KHONG duoc chon lan nay -> vua bi
+    // CUOP CPU (preempt), quay ve READY (van con viec do dang, chua mat gi ca).
+    for (const t of runnable) {
+      if (t !== chosen && t.state === 'RUNNING') t.state = 'READY';
+    }
+    chosen.state = 'RUNNING';
+    chosen.remainingUnits -= 1;
+    this.timeline.push({ tick: this.currentTick, taskName: chosen.name, event: 'run' });
+    if (chosen.remainingUnits <= 0) {
+      chosen.state = 'BLOCKED';
+      chosen.wakeAtTick = this.currentTick + 1 + chosen.periodTicks;
+      this.timeline.push({ tick: this.currentTick, taskName: chosen.name, event: 'block' });
+    }
+    this.currentTick++;
+  }
+
+  run(ticks) {
+    for (let i = 0; i < ticks; i++) this.tick();
+  }
+}
+
 export {
   MEMORY_MAP,
   HardFaultError,
@@ -1658,6 +1758,8 @@ export {
   buildMemoryLayout,
   simulateSuperLoop,
   jitterStats,
+  RtosTask,
+  MiniRTOS,
 };
 
 // ---------------------------------------------------------------------------
@@ -2600,6 +2702,59 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Chẻ thành FSM: jitter button_scan về lại đúng 2ms — pitfall Mục 13.4 đã được chữa',
       jButtonSplit.maxJitter,
       2
+    );
+  }
+
+  // --- Mini-RTOS preemptive: task states, preemption, round-robin, starvation (Bài 14) ---
+  {
+    // Preemption giua chung: task uu tien thap dang chay bi CUOP CPU ngay khi task uu tien cao tro nen READY
+    const rtosPreempt = new MiniRTOS();
+    rtosPreempt.addTask('task_L', 5, 10, 1000);
+    rtosPreempt.addTask('task_H', 0, 2, 1000, true); // bat dau BLOCKED
+    for (let i = 0; i < 3; i++) rtosPreempt.tick();
+    rtosPreempt.wakeTask('task_H'); // "ngat" xay ra dung luc nay
+    for (let i = 0; i < 7; i++) rtosPreempt.tick();
+    const runOrder = rtosPreempt.timeline.filter((e) => e.event === 'run').map((e) => e.taskName);
+    check(
+      'Preemption verified: L chạy 3 tick đầu (0,1,2), H cướp CPU ngay 2 tick tiếp (3,4), L chạy lại 5 tick cuối',
+      runOrder.join(','),
+      ['task_L', 'task_L', 'task_L', 'task_H', 'task_H', 'task_L', 'task_L', 'task_L', 'task_L', 'task_L'].join(',')
+    );
+
+    // Round-robin: 2 task CUNG uu tien, khong bao gio ngu -> phai xen ke tung tick
+    const rtosRR = new MiniRTOS();
+    rtosRR.addTask('A', 3, 1, 0);
+    rtosRR.addTask('B', 3, 1, 0);
+    rtosRR.run(6);
+    check(
+      'Round-robin verified: 2 task cùng priority xen kẽ đúng thứ tự A,B,A,B,A,B',
+      rtosRR.timeline
+        .filter((e) => e.event === 'run')
+        .map((e) => e.taskName)
+        .join(','),
+      'A,B,A,B,A,B'
+    );
+
+    // Starvation: task uu tien cao KHONG BAO GIO ngu (periodTicks=0) -> task uu tien thap CHET DOI
+    const rtosStarve = new MiniRTOS();
+    const taskLStarve = rtosStarve.addTask('task_L', 5, 3, 10);
+    rtosStarve.addTask('task_H', 0, 1, 0);
+    rtosStarve.run(50);
+    check(
+      'Pitfall verified: starvation — task ưu tiên thấp KHÔNG được chạy một lần nào trong 50 tick',
+      rtosStarve.timeline.filter((e) => e.event === 'run' && e.taskName === 'task_L').length,
+      0
+    );
+    check('Starvation: remainingUnits của task thấp KHÔNG hề giảm — hoàn toàn chết đói', taskLStarve.remainingUnits, 3);
+
+    // Chua starvation: task cao PHAI ngu (periodTicks > 0) de nhuong cho task thap
+    const rtosFixed = new MiniRTOS();
+    rtosFixed.addTask('task_L', 5, 3, 10);
+    rtosFixed.addTask('task_H', 0, 1, 5);
+    rtosFixed.run(50);
+    checkTrue(
+      'Chữa starvation verified: task cao chịu ngủ (periodTicks=5) → task thấp được chạy nhiều lần trong 50 tick',
+      rtosFixed.timeline.filter((e) => e.event === 'run' && e.taskName === 'task_L').length > 0
     );
   }
 

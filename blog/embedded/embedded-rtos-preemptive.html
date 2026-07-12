@@ -1,0 +1,974 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 14: RTOS preemptive — context switch &amp; task states — js-tools</title>
+    <meta
+      name="description"
+      content="Preemptive nghĩa là scheduler được phép CƯỚP CPU của một task đang chạy bất kỳ lúc nào — verified trên mini-RTOS thật: task ưu tiên thấp đang chạy 3 tick, một 'ngắt' làm task ưu tiên cao READY giữa chừng, bị cướp CPU ngay lập tức, rồi task thấp tự động chạy tiếp đúng chỗ dang dở. Task states Ready/Running/Blocked — Blocked KHÔNG tốn CPU. Round-robin verified giữa 2 task cùng mức ưu tiên xen kẽ tuyệt đối. Pitfall starvation verified: task ưu tiên cao không bao giờ ngủ khiến task thấp KHÔNG được chạy một lần nào trong 50 tick — chữa bằng cách bắt buộc task cao phải ngủ. Kèm demo mini-RTOS visualizer thật: kéo priority, kích hoạt preemption, thí nghiệm starvation."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-rtos-preemptive" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-rtos-preemptive" />
+    <meta property="og:title" content="Bài 14: RTOS preemptive — context switch &amp; task states — js-tools" />
+    <meta
+      property="og:description"
+      content="Preemptive nghĩa là scheduler được phép CƯỚP CPU bất kỳ lúc nào — verified: task thấp chạy 3 tick, ngắt làm task cao READY giữa chừng, bị cướp CPU ngay, rồi tự chạy tiếp đúng chỗ dang dở. Round-robin verified giữa 2 task cùng ưu tiên. Pitfall starvation verified: task cao không bao giờ ngủ khiến task thấp không chạy lần nào trong 50 tick. Kèm demo mini-RTOS visualizer thật: kéo priority, kích hoạt preemption, thí nghiệm starvation."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 14: RTOS preemptive — context switch &amp; task states — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Preemptive nghĩa là scheduler được phép CƯỚP CPU bất kỳ lúc nào — verified: task thấp chạy 3 tick, ngắt làm task cao READY giữa chừng, bị cướp CPU ngay, rồi tự chạy tiếp đúng chỗ dang dở. Round-robin verified giữa 2 task cùng ưu tiên. Pitfall starvation verified: task cao không bao giờ ngủ khiến task thấp không chạy lần nào trong 50 tick. Kèm demo mini-RTOS visualizer thật: kéo priority, kích hoạt preemption, thí nghiệm starvation."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "RTOS preemptive: context switch & task states",
+        "description": "Preemptive nghĩa là scheduler được phép CƯỚP CPU bất kỳ lúc nào — verified: task thấp chạy 3 tick, ngắt làm task cao READY giữa chừng, bị cướp CPU ngay, rồi tự chạy tiếp đúng chỗ dang dở. Round-robin verified giữa 2 task cùng ưu tiên. Pitfall starvation verified: task cao không bao giờ ngủ khiến task thấp không chạy lần nào trong 50 tick. Kèm demo mini-RTOS visualizer thật: kéo priority, kích hoạt preemption, thí nghiệm starvation.",
+        "url": "https://js-tools.org/blog/embedded/embedded-rtos-preemptive",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-24"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 14 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">RTOS preemptive: context switch &amp; task states</h1>
+          <div class="article-hero__meta">24 tháng 7, 2026 · 24 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: khi "hợp tác" không còn đủ nhanh</h2>
+            <p>
+              Cooperative scheduler của <a href="embedded-cooperative-scheduler">Bài 13</a> có một giả định ngầm: mọi
+              task đều TỰ GIÁC chạy nhanh rồi trả CPU lại. Điều đó đủ tốt cho phần lớn sản phẩm — nhưng một số tình
+              huống không chấp nhận được sự chờ đợi đó: một sự kiện khẩn cấp (cảm biến báo nguy, lệnh dừng khẩn) cần
+              được xử lý NGAY, dù task đang chạy có "tham" tới đâu. Đây là lúc <strong>preemption</strong> bước vào:
+              thay vì tin tưởng task tự nhường, scheduler được trao quyền <strong>CƯỚP CPU bất kỳ lúc nào</strong> nếu
+              có việc quan trọng hơn xuất hiện.
+            </p>
+            <p>
+              Sức mạnh này đi kèm một cái giá thẳng thắn: độ phức tạp tăng vọt. Race condition của
+              <a href="embedded-isr-race-critical-section">Bài 8</a> — trước đây chỉ xảy ra giữa ISR và main — giờ có
+              thể xảy ra giữa BẤT KỲ 2 task nào, bất kỳ lúc nào. Bài này mổ xẻ cơ chế context switch đứng sau
+              preemption, các trạng thái một task có thể ở, và 2 pitfall kinh điển của lập lịch ưu tiên: đặt sai ưu tiên
+              gây round-robin vô nghĩa, và tệ hơn — starvation (chết đói).
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-boot-memory-layout">Bài 12</a> (stack — mỗi task một stack
+                riêng dùng lại đúng kỹ thuật canary/watermark),
+                <a href="embedded-cooperative-scheduler">Bài 13</a> (khái niệm task/scheduler),
+                <a href="embedded-isr-race-critical-section">Bài 8</a> (race condition — tái vũ trang ở quy mô
+                task↔task).
+              </div>
+            </div>
+
+            <h2>1. Vì sao cần preemption</h2>
+            <p>
+              Với cooperative scheduler, một task dài (dù đã chẻ thành FSM ở Bài 13) vẫn phải đợi tới LƯỢT của nó trong
+              vòng quét mới được kiểm tra lại — không có gì đảm bảo một sự kiện khẩn cấp được xử lý trong một khung thời
+              gian CỐ ĐỊNH. <strong>Preemptive scheduler</strong> giải quyết bằng nguyên tắc đơn giản: tại bất kỳ thời
+              điểm nào, CPU luôn thuộc về task READY có độ ưu tiên cao nhất — nếu một task ưu tiên cao hơn vừa trở nên
+              sẵn sàng trong khi task ưu tiên thấp hơn đang chạy, task thấp bị cướp CPU NGAY LẬP TỨC, không cần đợi nó
+              tự nguyện.
+            </p>
+            <p>
+              Đánh đổi: giờ đây HAI task bất kỳ có thể "chen" vào giữa lượt của nhau — chính xác kịch bản race condition
+              ISR↔main của Bài 8, nhưng KHÔNG còn giới hạn ở "ISR chen main" nữa mà là "bất kỳ task nào chen bất kỳ task
+              nào". Công cụ tắt ngắt của Bài 8 (critical section) vẫn dùng được nhưng ngày càng thô bạo hơn ở quy mô lớn
+              — <a href="#muc5">Bài 15</a> sẽ giới thiệu công cụ mịn hơn: mutex và semaphore.
+            </p>
+
+            <h2>2. Context switch mổ xẻ</h2>
+            <p>
+              Để "cướp CPU" của một task rồi sau đó CHO NÓ CHẠY TIẾP đúng chỗ dang dở, RTOS phải lưu lại toàn bộ "ngữ
+              cảnh" (context) của task đó trước khi chuyển sang task khác. Hai thành phần cốt lõi:
+            </p>
+            <ul>
+              <li>
+                <strong>Mỗi task một stack RIÊNG</strong> — không như cooperative scheduler (mọi task dùng chung 1 stack
+                vì chạy tuần tự, không bao giờ chồng lên nhau), preemptive scheduler có thể dừng task A giữa chừng một
+                hàm đang gọi lồng sâu — ngữ cảnh đó (địa chỉ trở về, biến cục bộ) chỉ có thể được bảo toàn nếu MỖI task
+                có vùng stack của riêng nó. Đây chính là lúc kỹ thuật cấp phát tĩnh + canary/watermark của Bài 12 "trả
+                nợ đúng hạn".
+              </li>
+              <li>
+                <strong>TCB</strong> (Task Control Block) — một struct nhỏ lưu mọi thứ cần để "nhớ" một task: con trỏ
+                ngăn xếp hiện tại (nơi ngữ cảnh vừa được lưu), độ ưu tiên, trạng thái.
+              </li>
+            </ul>
+            <p>
+              Trình tự context switch tóm gọn: lưu các thanh ghi CPU hiện tại vào ĐỈNH stack của task đang chạy → cập
+              nhật con trỏ stack lưu trong TCB của nó → nạp con trỏ stack từ TCB của task SẮP chạy → khôi phục thanh ghi
+              từ đỉnh stack của task đó → tiếp tục chạy đúng chỗ nó dừng lại lần trước.
+            </p>
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Outlook: PendSV trên Cortex-M thật</div>
+              <div class="callout__content">
+                Trên phần cứng Cortex-M thật, trình tự lưu/khôi phục thanh ghi ở trên không chạy tuỳ tiện — nó chạy bên
+                trong một ngắt đặc biệt tên <strong>PendSV</strong>, được thiết kế RIÊNG cho việc context switch (ưu
+                tiên thấp nhất có thể để không chen vào giữa các ISR quan trọng khác). Chi tiết triển khai nằm ngoài
+                phạm vi series này — biết tên và vai trò của nó là đủ để không bỡ ngỡ khi đọc mã nguồn RTOS thật
+                (FreeRTOS, Zephyr...).
+              </div>
+            </div>
+
+            <h2>3. Task states</h2>
+            <p>Một task trong hệ preemptive luôn ở đúng MỘT trong các trạng thái sau tại mọi thời điểm:</p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Trạng thái</th>
+                  <th>Ý nghĩa</th>
+                  <th>Tốn CPU?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Ready</strong></td>
+                  <td>Sẵn sàng chạy, đang chờ tới lượt (có task ưu tiên cao hơn đang chiếm CPU)</td>
+                  <td>Không</td>
+                </tr>
+                <tr>
+                  <td><strong>Running</strong></td>
+                  <td>Đang thực sự chiếm CPU ngay lúc này</td>
+                  <td>Có (đây chính là task đang dùng CPU)</td>
+                </tr>
+                <tr>
+                  <td><strong>Blocked</strong></td>
+                  <td>Đang chờ một sự kiện/thời gian, KHÔNG cần kiểm tra liên tục</td>
+                  <td>Không — điểm mấu chốt của cả mục này</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Điểm mấu chốt cần khắc sâu: <strong>Blocked hoàn toàn khác busy-wait</strong> của Bài 4. Một task blocked
+              "ngủ chờ sự kiện" — CPU được giao hẳn cho task khác trong lúc đó, không có gì bị lãng phí. Đây là lý do
+              RTOS xử lý được nhiều task hơn hẳn một vòng lặp liên tục kiểm tra cờ.
+            </p>
+
+            <h2>4. Chính sách lập lịch</h2>
+            <p>
+              Chính sách chuẩn của RTOS nhúng: <strong>priority preemptive</strong> kết hợp
+              <strong>round-robin</strong> giữa các task CÙNG mức ưu tiên (để không task nào ở cùng mức "ăn hết" CPU của
+              các task ngang hàng). Verify trên mini-RTOS thật: 2 task cùng ưu tiên, không bao giờ ngủ → chạy xen kẽ
+              tuyệt đối <code>A, B, A, B, A, B, ...</code> — mỗi task được nhường đúng 1 lượt trước khi tới lượt bên
+              kia.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: starvation (chết đói)</div>
+              <div class="callout__content">
+                Nếu một task ưu tiên CAO không bao giờ blocked (không bao giờ "ngủ", luôn có việc để làm ngay), mọi task
+                ưu tiên THẤP hơn sẽ KHÔNG BAO GIỜ được chạy — dù chúng có việc cần làm cấp bách tới đâu. Verify trên
+                mini-RTOS: task thấp chờ suốt <strong>50 tick</strong> mà KHÔNG được chạy một lần nào khi task cao không
+                hề ngủ. Cách chữa: buộc task cao phải blocked định kỳ (chờ dữ liệu/sự kiện thay vì busy-loop) — verify:
+                chỉ cần cho nó ngủ 5 tick sau mỗi lần chạy, task thấp lập tức có cơ hội chạy trở lại nhiều lần trong
+                cùng 50 tick đó.
+              </div>
+            </div>
+            <p>
+              Pitfall liên quan: đặt <strong>MỌI</strong> task ưu tiên cao "cho chắc ăn" — nếu tất cả task đều cùng một
+              mức ưu tiên tối đa, hệ thống tự động rơi về round-robin thuần, VÔ HIỆU HOÁ toàn bộ mục đích thiết kế phân
+              cấp ưu tiên. Ưu tiên chỉ có ý nghĩa khi nó THỰC SỰ phản ánh mức độ khẩn cấp tương đối giữa các task.
+            </p>
+
+            <h2 id="muc5">5. Thực hành: mini-RTOS visualizer</h2>
+            <p>
+              Demo dưới đây chạy mini-RTOS preemptive thật: xem preemption xảy ra ngay khi một "ngắt" kích hoạt task ưu
+              tiên cao, và tự tay tái hiện + chữa starvation:
+            </p>
+
+            <div class="code-tabs" id="rtos-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🧵 Mini-RTOS Preemptive Visualizer — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    1. Preemption Timeline — task_L (ưu tiên thấp, 10 đơn vị việc) vs task_H (ưu tiên cao, bắt đầu ngủ)
+                  </p>
+                  <div style="display: flex; gap: 8px; margin-bottom: 10px">
+                    <button class="mux-input-btn" type="button" id="preempt-run-btn">▶️ Chạy 3 tick đầu</button>
+                    <button class="mux-input-btn" type="button" id="preempt-wake-btn" disabled>
+                      ⚡ Kích hoạt "ngắt" → task_H READY
+                    </button>
+                    <button class="mux-input-btn" type="button" id="preempt-reset-btn">↺ Reset</button>
+                  </div>
+                  <div id="preempt-timeline" style="display: flex; gap: 2px; margin-bottom: 6px"></div>
+                  <div id="preempt-legend" style="font-size: 11px; display: flex; gap: 14px; margin-bottom: 18px"></div>
+
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">2. Thí nghiệm Starvation (50 tick)</p>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px">
+                    <button class="mux-input-btn is-active" type="button" data-starve-scenario="starve">
+                      😱 task_H KHÔNG bao giờ ngủ
+                    </button>
+                    <button class="mux-input-btn" type="button" data-starve-scenario="fixed">
+                      ✅ task_H chịu ngủ (5 tick/lần)
+                    </button>
+                  </div>
+                  <div id="starvation-result" class="mux-demo__output">Đang tải…</div>
+                  <p class="mux-demo__hint">
+                    Task thấp luôn ưu tiên 5, task cao luôn ưu tiên 0. Bấm 2 kịch bản để so sánh số lần task thấp được
+                    chạy trong đúng 50 tick.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">tcb_context_switch.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">typedef enum { READY, RUNNING, BLOCKED } task_state_t;
+
+typedef struct {
+    uint32_t *sp;          // con tro ngan xep HIEN TAI cua task nay (Bai 12)
+    uint8_t priority;      // so nho hon = uu tien cao hon (giong NVIC Bai 7)
+    task_state_t state;
+    uint32_t wake_at_tick; // chi dung khi state == BLOCKED
+} tcb_t;
+
+// Goi tu ben trong PendSV_Handler (outlook Muc 2) - KHONG goi truc tiep tu C thuong
+void context_switch(tcb_t *from, tcb_t *to) {
+    save_registers_to_stack(from->sp);   // luu thanh ghi vao DINH stack cua task cu
+    from->sp = get_current_sp();
+    from->state = READY;                 // bi cuop CPU, van con READY (chua mat gi)
+
+    to->state = RUNNING;
+    set_current_sp(to->sp);
+    restore_registers_from_stack(to->sp); // khoi phuc dung ngu canh da luu lan truoc
+}</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">rtos_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { MiniRTOS } from './vmcu.js';
+
+const rtos = new MiniRTOS();
+rtos.addTask('task_L', 5, 10, 1000);          // uu tien THAP, 10 don vi viec
+rtos.addTask('task_H', 0, 2, 1000, true);     // uu tien CAO, bat dau BLOCKED
+
+for (let i = 0; i < 3; i++) rtos.tick();       // task_L chay 3 tick dau
+rtos.wakeTask('task_H');                        // mo phong 1 "ngat" xay ra dung luc nay
+for (let i = 0; i < 7; i++) rtos.tick();       // task_H CUOP CPU ngay, roi task_L chay tiep
+
+console.log(rtos.timeline.filter(e => e.event === 'run').map(e => e.taskName));
+// ['task_L','task_L','task_L','task_H','task_H','task_L','task_L','task_L','task_L','task_L']</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ <strong>Preemptive</strong>: scheduler được phép cướp CPU của task đang chạy bất kỳ lúc nào một task
+                ưu tiên cao hơn trở nên READY — verified: task thấp bị cướp CPU ngay khi "ngắt" xảy ra giữa chừng, rồi
+                tự động tiếp tục đúng chỗ dang dở.
+              </li>
+              <li>
+                ✅ Context switch cần <strong>mỗi task một stack riêng</strong> (Bài 12 trả nợ) +
+                <strong>TCB</strong> lưu con trỏ stack/priority/state; trên Cortex-M thật chạy trong ngắt
+                <strong>PendSV</strong>.
+              </li>
+              <li>
+                ✅ 3 task states: Ready/Running/Blocked — <strong>Blocked KHÔNG tốn CPU</strong>, khác hẳn busy-wait.
+              </li>
+              <li>
+                ✅ Priority preemptive + round-robin cùng mức — verified xen kẽ tuyệt đối
+                <code>A,B,A,B,A,B</code>. Pitfall <strong>starvation</strong> verified: task cao không ngủ khiến task
+                thấp không chạy lần nào trong 50 tick; chữa bằng cách buộc task cao phải blocked định kỳ.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Khác biệt cốt lõi giữa cooperative scheduler (Bài 13) và preemptive scheduler (bài này) là gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Cooperative: task PHAI tu nguyen chay xong roi tra CPU, scheduler khong co quyen can thiep giua chung. Preemptive: scheduler co the CUOP CPU cua mot task dang chay NGAY LAP TUC neu mot task uu tien cao hon tro nen READY - khong can doi task hien tai tu nguyen nhuong.'
+                    )
+                  "
+                >
+                  A. Cooperative scheduler phải đợi task tự nguyện chạy xong mới chuyển sang task khác; preemptive
+                  scheduler có thể cướp CPU của một task đang chạy ngay lập tức nếu có task ưu tiên cao hơn cần chạy
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca hai kieu scheduler deu chi chay tren 1 CPU/loi duy nhat trong pham vi bai hoc nay - khong lien quan gi den so luong loi CPU.'
+                    )
+                  "
+                >
+                  B. Cooperative scheduler chạy trên 1 lõi CPU, preemptive scheduler chạy trên nhiều lõi
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca hai deu co the quan ly nhieu task (Bai 13 da co 3 task tren cooperative scheduler) - so luong task toi da khong phai khac biet cot loi giua 2 kieu nay.'
+                    )
+                  "
+                >
+                  C. Cooperative scheduler chỉ quản lý được 1 task, preemptive quản lý được nhiều task
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Vì sao preemptive scheduler cần MỖI task có một stack RIÊNG, không thể dùng chung 1 stack như
+                cooperative scheduler?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Preemptive scheduler co the dung mot task GIUA CHUNG mot ham dang goi long sau - ngu canh do (dia chi tro ve, bien cuc bo cua tung tang ham) chi co the duoc bao toan neu MOI task co vung stack cua RIENG no. Cooperative scheduler khong can vi task luon chay TUAN TU tu dau den cuoi, khong bao gio bi dung giua chung.'
+                    )
+                  "
+                >
+                  A. Preemptive scheduler có thể dừng một task giữa chừng một hàm đang gọi lồng sâu — ngữ cảnh đó chỉ
+                  bảo toàn được nếu mỗi task có vùng stack riêng để lưu lại đúng trạng thái dang dở của nó
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'RAM khong tu nhien it di vi kieu scheduler - viec chia stack rieng cho tung task thuc ra TON RAM hon (moi task can mot vung rieng), khong phai tiet kiem RAM.'
+                    )
+                  "
+                >
+                  B. Vì preemptive scheduler làm RAM ít đi nên cần chia nhỏ ra nhiều vùng
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Toc do chay cua tung task khong lien quan gi den so luong stack - day la van de VE BAO TOAN NGU CANH khi mot task bi dung giua chung, khong phai toc do.'
+                    )
+                  "
+                >
+                  C. Vì mỗi task chạy ở tốc độ khác nhau nên cần bộ nhớ riêng để đồng bộ tốc độ
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Vì sao trạng thái Blocked được coi là "KHÔNG tốn CPU", trong khi busy-wait (Bài 4) lại tốn CPU liên tục
+                dù về bản chất cả hai đều là "chờ"?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Busy-wait la mot vong lap LIEN TUC kiem tra dieu kien - CPU van dang &quot;lam viec&quot; (chay lenh kiem tra) suot thoi gian cho, du khong lam gi huu ich. Blocked la task duoc scheduler GAT hoan toan sang mot ben, CPU duoc giao HAN cho task khac chay - khong co lenh nao cua task blocked duoc thuc thi cho toi khi no duoc danh thuc.'
+                    )
+                  "
+                >
+                  A. Busy-wait là một vòng lặp liên tục kiểm tra điều kiện, CPU vẫn đang thực thi lệnh suốt thời gian
+                  chờ; Blocked là task được scheduler gạt hẳn sang một bên, CPU được giao hoàn toàn cho task khác
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca busy-wait va Blocked deu co the cho cung mot khoang thoi gian - khac biet KHONG nam o thoi gian cho ma o VIEC CPU CO THUC THI LENH GI HAY KHONG trong luc cho.'
+                    )
+                  "
+                >
+                  B. Vì Blocked luôn chờ trong thời gian ngắn hơn busy-wait rất nhiều
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Blocked task van CO THE thuc day lai khi su kien xay ra (khong &quot;vinh vien&quot; tat) - diem khac biet la NO KHONG CHIEM CPU trong luc cho, khong phai no bi tat nguon vinh vien.'
+                    )
+                  "
+                >
+                  C. Vì task Blocked được tắt nguồn hoàn toàn cho tới khi khởi động lại cả hệ thống
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Verified: task ưu tiên cao không bao giờ ngủ khiến task ưu tiên thấp không được chạy MỘT LẦN NÀO trong
+                50 tick (starvation). Cách chữa nào ĐÚNG theo bài học, không cần đổi kiến trúc RTOS?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Verified: chi can cho task cao ngu dinh ky (vd 5 tick sau moi lan chay) thay vi busy-loop lien tuc, task thap lap tuc co &quot;khe ho&quot; de duoc chay - khong can doi kien truc scheduler hay them co che gi phuc tap.'
+                    )
+                  "
+                >
+                  A. Buộc task ưu tiên cao phải chuyển sang Blocked định kỳ (chờ dữ liệu/sự kiện thay vì busy-loop liên
+                  tục) — verified: chỉ cần ngủ 5 tick sau mỗi lần chạy là đủ để task thấp có cơ hội chạy
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Nang cao priority cua task DA CAO NHAT thi khong con muc nao cao hon de nang len nua, va van khong giai quyet duoc goc re: task do van khong bao gio ngu.'
+                    )
+                  "
+                >
+                  B. Nâng priority của task thấp lên cao HƠN task cao để nó luôn được ưu tiên tuyệt đối
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tang workUnitsPerRun (lam task thap CAN NHIEU DON VI VIEC HON moi lan) khong giup no DUOC CHON de chay - van de la no chua bao gio duoc scheduler chon toi mot lan nao ca, khong lien quan gi den so luong viec no can lam moi lan.'
+                    )
+                  "
+                >
+                  C. Tăng workUnitsPerRun của task thấp để nó hoàn thành nhanh hơn
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 14 vừa thêm mini-RTOS
+                preemptive (<code>MiniRTOS</code>, <code>RtosTask</code>) với priority scheduling, round-robin, và
+                preemption thật, kèm self-test đối chiếu đúng mọi hành vi trong bài (chạy <code>node vmcu.js</code>,
+                không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Preemption_(computing)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Preemption (computing)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.freertos.org/implementation/a00013.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    FreeRTOS — Task states &amp; scheduling (tài liệu chính thức)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Starvation_(computer_science)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Starvation (computer science)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-cooperative-scheduler" class="article-related__link article-related__link--prev">
+                  Bài 13: Super-loop vs Cooperative Scheduler
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 15: Đồng bộ RTOS: mutex, semaphore, queue &amp; priority inversion — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { MiniRTOS } from './vmcu.js';
+
+      // ==== Demo 1: Preemption Timeline ====
+      let preemptRtos;
+      const PREEMPT_COLORS = { task_L: '#f59e0b', task_H: '#ef4444', idle: 'rgba(255,255,255,0.08)' };
+
+      function resetPreempt() {
+        preemptRtos = new MiniRTOS();
+        preemptRtos.addTask('task_L', 5, 10, 1000);
+        preemptRtos.addTask('task_H', 0, 2, 1000, true);
+        document.getElementById('preempt-wake-btn').disabled = true;
+        document.getElementById('preempt-run-btn').disabled = false;
+        renderPreemptTimeline();
+      }
+
+      function renderPreemptTimeline() {
+        const runs = preemptRtos.timeline.filter((e) => e.event === 'run');
+        const container = document.getElementById('preempt-timeline');
+        container.innerHTML = runs
+          .map(
+            (e) =>
+              '<div style="flex:1; height:32px; border-radius:3px; background:' +
+              (PREEMPT_COLORS[e.taskName] || PREEMPT_COLORS.idle) +
+              ';"></div>'
+          )
+          .join('');
+        const legend = document.getElementById('preempt-legend');
+        legend.innerHTML =
+          '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' +
+          PREEMPT_COLORS.task_L +
+          ';margin-right:4px;"></span>task_L (ưu tiên thấp)</span>' +
+          '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' +
+          PREEMPT_COLORS.task_H +
+          ';margin-right:4px;"></span>task_H (ưu tiên cao)</span>';
+      }
+
+      document.getElementById('preempt-run-btn').addEventListener('click', () => {
+        for (let i = 0; i < 3; i++) preemptRtos.tick();
+        renderPreemptTimeline();
+        document.getElementById('preempt-run-btn').disabled = true;
+        document.getElementById('preempt-wake-btn').disabled = false;
+      });
+      document.getElementById('preempt-wake-btn').addEventListener('click', () => {
+        preemptRtos.wakeTask('task_H');
+        for (let i = 0; i < 7; i++) preemptRtos.tick();
+        renderPreemptTimeline();
+        document.getElementById('preempt-wake-btn').disabled = true;
+      });
+      document.getElementById('preempt-reset-btn').addEventListener('click', resetPreempt);
+      resetPreempt();
+
+      // ==== Demo 2: Starvation experiment ====
+      function runStarvationScenario(scenario) {
+        const rtos = new MiniRTOS();
+        rtos.addTask('task_L', 5, 3, 10);
+        rtos.addTask('task_H', 0, 1, scenario === 'starve' ? 0 : 5);
+        rtos.run(50);
+        const lRuns = rtos.timeline.filter((e) => e.event === 'run' && e.taskName === 'task_L').length;
+        const resultEl = document.getElementById('starvation-result');
+        if (scenario === 'starve') {
+          resultEl.innerHTML =
+            '😱 task_H KHÔNG bao giờ ngủ (periodTicks=0) — task_L được chạy đúng <strong>' +
+            lRuns +
+            ' lần</strong> trong 50 tick (chết đói hoàn toàn nếu = 0).';
+          resultEl.style.color = lRuns === 0 ? '#ef4444' : '#22c55e';
+        } else {
+          resultEl.innerHTML =
+            '✅ task_H chịu ngủ 5 tick sau mỗi lần chạy — task_L được chạy <strong>' +
+            lRuns +
+            ' lần</strong> trong 50 tick, đã thoát starvation.';
+          resultEl.style.color = '#22c55e';
+        }
+      }
+      document.querySelectorAll('[data-starve-scenario]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('[data-starve-scenario]').forEach((b) => b.classList.remove('is-active'));
+          btn.classList.add('is-active');
+          runStarvationScenario(btn.dataset.starveScenario);
+        });
+      });
+      runStarvationScenario('starve');
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
