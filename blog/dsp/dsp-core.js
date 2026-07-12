@@ -544,6 +544,72 @@ function dbToColor(db, minDb = -100, maxDb = 0) {
   return [r, g, b];
 }
 
+// ---------------------------------------------------------------------------
+// Bài 9 — Filter FIR: từ trung bình trượt đến windowed-sinc. Build-out:
+// firDesign (lowpass/highpass/bandpass windowed-sinc — tái sử dụng TRỰC TIẾP
+// hàm cửa sổ của Bài 7, không viết lại), và firGroupDelay/firFrequencyResponse
+// hỗ trợ minh hoạ linear phase (Mục 9.3) trên chính bộ lọc vừa thiết kế.
+// ---------------------------------------------------------------------------
+
+// Hàm sinc chuẩn hoá: sinc(x) = sin(πx)/(πx), sinc(0) = 1 (giới hạn, tránh
+// chia 0). Đây là biến đổi Fourier ngược của một xung chữ nhật lý tưởng
+// trong miền tần số — chính là đáp ứng xung của low-pass "trong mơ" Mục 9.2.
+function sinc(x) {
+  if (x === 0) return 1;
+  return Math.sin(Math.PI * x) / (Math.PI * x);
+}
+
+// Thiết kế FIR low-pass windowed-sinc: numTaps hệ số, cutoffNorm là tần số
+// cắt CHUẨN HOÁ theo fs (0..0.5 — vd 0.1 nghĩa là cắt tại 0.1×fs Hz). Đáp
+// ứng xung LÝ TƯỞNG (sinc vô hạn 2 chiều, KHÔNG nhân quả) bị CẮT NGẮN + DỊCH
+// về giữa (M = (numTaps-1)/2, để nhân quả) + NHÂN VỚI CỬA SỔ (Bài 7, chống
+// "gãy" đột ngột khi cắt — đúng windowed-sinc Mục 9.2).
+function firLowpassDesign(numTaps, cutoffNorm, windowFn) {
+  const M = (numTaps - 1) / 2;
+  const win = windowFn(numTaps);
+  const h = new Array(numTaps);
+  for (let n = 0; n < numTaps; n++) {
+    const k = n - M;
+    const ideal = 2 * cutoffNorm * sinc(2 * cutoffNorm * k);
+    h[n] = ideal * win[n];
+  }
+  return h;
+}
+
+// High-pass qua "spectral inversion" (Mục 9.4): đảo phổ của low-pass CÙNG
+// cutoff — trừ xung đơn vị (đặt đúng tại tâm M, để bù trễ nhóm) cho đi
+// low-pass. Trực giác: "tất cả" (xung đơn vị = phổ phẳng toàn dải) trừ đi
+// "phần thấp" = phần cao còn lại.
+function firHighpassDesign(numTaps, cutoffNorm, windowFn) {
+  const M = (numTaps - 1) / 2;
+  const lp = firLowpassDesign(numTaps, cutoffNorm, windowFn);
+  return lp.map((v, n) => (n === M ? 1 - v : -v));
+}
+
+// Band-pass qua DỊCH TẦN (Mục 9.4): thiết kế 1 low-pass với băng thông bằng
+// bandwidthNorm, rồi NHÂN với cosin tại tần số trung tâm centerNorm — dịch
+// phổ low-pass (đang quanh 0Hz) lên quanh centerNorm (điều chế biên độ).
+function firBandpassDesign(numTaps, centerNorm, bandwidthNorm, windowFn) {
+  const M = (numTaps - 1) / 2;
+  const lp = firLowpassDesign(numTaps, bandwidthNorm / 2, windowFn);
+  return lp.map((v, n) => v * 2 * Math.cos(2 * Math.PI * centerNorm * (n - M)));
+}
+
+// Trễ nhóm (group delay, tính bằng SỐ MẪU) của 1 FIR đối xứng — HẰNG SỐ với
+// MỌI tần số (Mục 9.3: "món quà" của đối xứng — mọi tần số bị trễ ĐỀU nhau,
+// dạng sóng không méo, chỉ trễ). Với FIR đối xứng chẵn/lẻ tap, luôn đúng
+// bằng (numTaps-1)/2 mẫu.
+function firGroupDelay(numTaps) {
+  return (numTaps - 1) / 2;
+}
+
+// Đáp ứng tần số của 1 FIR h[n]: zero-pad cho đủ fftSize (độ phân giải mượt
+// hơn, Bài 6) rồi FFT — trả về mảng số phức, dùng dftMagnitude()/dftPhase()
+// để đọc biên độ/pha tại từng bin.
+function firFrequencyResponse(h, fftSize) {
+  return fft(zeroPad(h, fftSize));
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -593,6 +659,12 @@ export {
   magnitudeToDb,
   stftMagnitudeDb,
   dbToColor,
+  sinc,
+  firLowpassDesign,
+  firHighpassDesign,
+  firBandpassDesign,
+  firGroupDelay,
+  firFrequencyResponse,
 };
 
 // ---------------------------------------------------------------------------
@@ -1116,6 +1188,76 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue('dbToColor(dưới sàn xa) vẫn clamp về giống hệt sàn, không âm', dbToColor(-999, -100, 0)[0] === 0);
     const peakColor = dbToColor(0, -100, 0);
     checkTrue('dbToColor(đỉnh 0dB) cho màu sáng nhất (r và g đều cao)', peakColor[0] >= 250 && peakColor[1] >= 250);
+  }
+
+  // --- Bài 9: Filter FIR windowed-sinc ---
+  {
+    check('sinc(0) = 1 (giới hạn, không chia 0)', sinc(0), 1);
+    checkTrue('sinc(1) ≈ 0 (điểm không đầu tiên của sinc)', Math.abs(sinc(1)) < 1e-9);
+    checkTrue('sinc(0.5) = 2/π ≈ 0,6366', Math.abs(sinc(0.5) - 2 / Math.PI) < 1e-9);
+
+    const numTaps = 51;
+    const cutoff = 0.1;
+    const lp = firLowpassDesign(numTaps, cutoff, hannWindow);
+    check('firLowpassDesign: đúng số tap yêu cầu', lp.length, numTaps);
+
+    // Doi xung (linear phase, Muc 9.3) - CHINH LA dieu kien toan hoc dam bao
+    // group delay hang so voi MOI tan so, khong chi mot tuyen bo suong.
+    let maxAsymmetry = 0;
+    for (let i = 0; i < numTaps; i++) maxAsymmetry = Math.max(maxAsymmetry, Math.abs(lp[i] - lp[numTaps - 1 - i]));
+    checkTrue(
+      'firLowpassDesign: đối xứng hoàn hảo h[i] = h[N-1-i] (sai số < 1e-9) — đảm bảo linear phase',
+      maxAsymmetry < 1e-9
+    );
+
+    check('firGroupDelay(51) = 25 mẫu ((51-1)/2)', firGroupDelay(51), 25);
+
+    // Dap ung tan so that: DC ~1 (thong dai), cutoff ~0.5 (diem -6dB kinh
+    // dien cua windowed-sinc), stopband gan 0 (chan tot)
+    const H = firFrequencyResponse(lp, 4096);
+    const mag = dftMagnitude(H);
+    const binAt = (f) => Math.round(f * 4096);
+    checkTrue('Lowpass: đáp ứng tại DC ≈ 1 (dải thông không suy hao)', Math.abs(mag[0] - 1) < 0.01);
+    checkTrue('Lowpass: đáp ứng tại tần số cắt ≈ 0,5 (điểm -6dB kinh điển)', Math.abs(mag[binAt(0.1)] - 0.5) < 0.02);
+    checkTrue('Lowpass: đáp ứng ở dải chặn (f=0,2, xa cutoff) rất nhỏ (<0,001 — chặn tốt)', mag[binAt(0.2)] < 0.001);
+    checkTrue('Lowpass: đáp ứng gần Nyquist (f=0,4) gần như triệt tiêu (<0,0001)', mag[binAt(0.4)] < 0.0001);
+
+    // Highpass qua spectral inversion: DC ~0 (chan), gan Nyquist ~1 (thong)
+    const hp = firHighpassDesign(numTaps, cutoff, hannWindow);
+    checkTrue(
+      'firHighpassDesign: cũng đối xứng hoàn hảo (spectral inversion không phá vỡ linear phase)',
+      (() => {
+        let m = 0;
+        for (let i = 0; i < numTaps; i++) m = Math.max(m, Math.abs(hp[i] - hp[numTaps - 1 - i]));
+        return m < 1e-9;
+      })()
+    );
+    const Hhp = firFrequencyResponse(hp, 4096);
+    const maghp = dftMagnitude(Hhp);
+    checkTrue('Highpass: đáp ứng tại DC ≈ 0 (chặn tần số thấp)', maghp[0] < 0.01);
+    checkTrue('Highpass: đáp ứng gần Nyquist (f=0,45) ≈ 1 (thông tần số cao)', Math.abs(maghp[binAt(0.45)] - 1) < 0.01);
+
+    // Bandpass qua dich tan: thong o tan so trung tam, chan ca 2 dau
+    const bp = firBandpassDesign(numTaps, 0.25, 0.1, hannWindow);
+    const Hbp = firFrequencyResponse(bp, 4096);
+    const magbp = dftMagnitude(Hbp);
+    checkTrue('Bandpass: đáp ứng tại DC nhỏ (chặn)', magbp[0] < 0.01);
+    checkTrue('Bandpass: đáp ứng tại tần số trung tâm (f=0,25) ≈ 1 (thông)', Math.abs(magbp[binAt(0.25)] - 1) < 0.02);
+    checkTrue('Bandpass: đáp ứng gần Nyquist (f=0,45) nhỏ (chặn)', magbp[binAt(0.45)] < 0.001);
+
+    // Ket noi Muc 9.1: trung binh truot (moving average) la 1 truong hop FIR
+    // dac biet - lam min tin hieu nhieu, giam phuong sai ro ret
+    function variance(x) {
+      const mean = x.reduce((a, b) => a + b, 0) / x.length;
+      return x.reduce((sum, v) => sum + (v - mean) * (v - mean), 0) / x.length;
+    }
+    const noisy = Array.from({ length: 200 }, (_, n) => whiteNoise(n, 1, 7));
+    const movingAvgH = new Array(8).fill(1 / 8);
+    const smoothed = convolve(noisy, movingAvgH);
+    checkTrue(
+      'Trung bình trượt (FIR đặc biệt): làm GIẢM phương sai rõ rệt so với tín hiệu nhiễu gốc',
+      variance(smoothed) < variance(noisy)
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
