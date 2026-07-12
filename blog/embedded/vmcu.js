@@ -1571,6 +1571,10 @@ class RtosTask {
     this.state = 'READY'; // READY | RUNNING | BLOCKED
     this.remainingUnits = workUnitsPerRun;
     this.wakeAtTick = 0;
+    // Bài 15: mutex (nếu có) mà task này ĐANG GIỮ — KHÔNG phải thanh ghi thật,
+    // chỉ để tick() tự động nhả khoá khi task chạy xong lượt của nó (mô phỏng
+    // "thoát khỏi vùng critical section rồi tiếp tục việc khác").
+    this.heldMutex = null;
   }
 }
 
@@ -1642,6 +1646,12 @@ class MiniRTOS {
     chosen.remainingUnits -= 1;
     this.timeline.push({ tick: this.currentTick, taskName: chosen.name, event: 'run' });
     if (chosen.remainingUnits <= 0) {
+      // Chay xong lugt nay: neu dang giu mutex, tu dong nha ra (thoat critical
+      // section) TRUOC khi vao BLOCKED - dung hanh vi thuc te cua mot task.
+      if (chosen.heldMutex) {
+        this.mutexUnlock(chosen.heldMutex);
+        chosen.heldMutex = null;
+      }
       chosen.state = 'BLOCKED';
       chosen.wakeAtTick = this.currentTick + 1 + chosen.periodTicks;
       this.timeline.push({ tick: this.currentTick, taskName: chosen.name, event: 'block' });
@@ -1651,6 +1661,111 @@ class MiniRTOS {
 
   run(ticks) {
     for (let i = 0; i < ticks; i++) this.tick();
+  }
+
+  // --- Bài 15: Mutex — quyền SỞ HỮU, chỉ kẻ khoá được mở ---
+  // priorityInheritance bật/tắt được (Mục 15.3/15.5): khi bật, nếu 1 task ưu
+  // tiên CAO hơn bị chặn bởi mutex này, chủ khoá được "MƯỢN" tạm độ ưu tiên
+  // cao đó — đúng cơ chế cứu Mars Pathfinder 1997 (Mục 15.5).
+  createMutex(name, priorityInheritance = false) {
+    return { name, priorityInheritance, ownerTask: null, originalOwnerPriority: null, waitingTasks: [] };
+  }
+
+  // task đang RUNNING xin khoá. Trả về true nếu lấy được NGAY; false nếu bị
+  // chặn (task tự chuyển sang BLOCKED, chỉ mutexUnlock() mới đánh thức lại).
+  mutexLock(mutex, task) {
+    if (!mutex.ownerTask) {
+      mutex.ownerTask = task;
+      mutex.originalOwnerPriority = task.priority;
+      task.heldMutex = mutex;
+      return true;
+    }
+    if (mutex.ownerTask === task) return true; // da giu san (khong xu ly reentrant lock kep further)
+    task.state = 'BLOCKED';
+    task.wakeAtTick = Infinity; // chi mutexUnlock() moi danh thuc duoc
+    mutex.waitingTasks.push(task);
+    if (mutex.priorityInheritance && task.priority < mutex.ownerTask.priority) {
+      // "Cho muon" uu tien cao hon cho chu khoa - CHINH XAC co che cuu Mars
+      // Pathfinder: chu khoa gio chay voi uu tien cua task dang cho no.
+      mutex.ownerTask.priority = task.priority;
+    }
+    return false;
+  }
+
+  // Nhả khoá — trả owner về priority GỐC (hết "mượn"), trao khoá cho task
+  // đang chờ có ưu tiên cao nhất (nếu có) và đánh thức nó NGAY.
+  mutexUnlock(mutex) {
+    const owner = mutex.ownerTask;
+    if (!owner) return;
+    owner.priority = mutex.originalOwnerPriority;
+    mutex.ownerTask = null;
+    if (mutex.waitingTasks.length > 0) {
+      mutex.waitingTasks.sort((a, b) => a.priority - b.priority);
+      const next = mutex.waitingTasks.shift();
+      mutex.ownerTask = next;
+      mutex.originalOwnerPriority = next.priority;
+      next.heldMutex = mutex;
+      next.state = 'READY';
+      next.remainingUnits = next.workUnitsPerRun;
+    }
+  }
+
+  // --- Bài 15: Semaphore — bộ đếm tài nguyên & còi báo sự kiện (KHÔNG có
+  // khái niệm sở hữu, khác mutex) ---
+  createSemaphore(name, initialCount, maxCount = Infinity) {
+    return { name, count: initialCount, maxCount, waitingTasks: [] };
+  }
+
+  // "give" (vd ISR báo 1 sự kiện xảy ra): nếu có task đang chờ, đánh thức
+  // NGAY (giao thẳng, không cộng dồn count) - đúng pattern "ISR give — task
+  // blocked take" của Mục 15.2, task thức dậy ĐÚNG LÚC không cần poll.
+  semaphoreGive(sem) {
+    if (sem.waitingTasks.length > 0) {
+      const next = sem.waitingTasks.shift();
+      next.state = 'READY';
+      next.remainingUnits = next.workUnitsPerRun;
+    } else {
+      sem.count = Math.min(sem.maxCount, sem.count + 1);
+    }
+  }
+
+  semaphoreTake(sem, task) {
+    if (sem.count > 0) {
+      sem.count -= 1;
+      return true;
+    }
+    task.state = 'BLOCKED';
+    task.wakeAtTick = Infinity;
+    sem.waitingTasks.push(task);
+    return false;
+  }
+
+  // --- Bài 15: Queue — gửi DỮ LIỆU (không chỉ tín hiệu như semaphore) ---
+  // So với ring buffer SPSC của Bài 8: queue = ring buffer + BLOCKING + an
+  // toàn nhiều task (Mục 15.4) — dùng lại đúng RingBufferSPSC làm kho chứa.
+  createQueue(name, capacity) {
+    return { name, buffer: new RingBufferSPSC(capacity), waitingReceivers: [] };
+  }
+
+  queueSend(queue, value) {
+    const ok = queue.buffer.push(value);
+    if (ok && queue.waitingReceivers.length > 0) {
+      const next = queue.waitingReceivers.shift();
+      next.state = 'READY';
+      next.remainingUnits = next.workUnitsPerRun;
+    }
+    return ok;
+  }
+
+  // Trả về giá trị NGAY nếu queue có dữ liệu sẵn; nếu rỗng, task tự chuyển
+  // BLOCKED (chỉ queueSend() mới đánh thức lại) và trả về null.
+  queueReceive(queue, task) {
+    const v = queue.buffer.pop();
+    if (v !== null) return v;
+    task.state = 'BLOCKED';
+    task.wakeAtTick = Infinity;
+    queue.waitingReceivers.push(task);
+    return null;
   }
 }
 
@@ -2756,6 +2871,116 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Chữa starvation verified: task cao chịu ngủ (periodTicks=5) → task thấp được chạy nhiều lần trong 50 tick',
       rtosFixed.timeline.filter((e) => e.event === 'run' && e.taskName === 'task_L').length > 0
     );
+  }
+
+  // --- Bài 15: Mutex, ownership, Semaphore, Queue ---
+  {
+    const rtosMutex = new MiniRTOS();
+    const taskA = rtosMutex.addTask('task_A', 5, 5, 1000);
+    const taskB = rtosMutex.addTask('task_B', 5, 5, 1000, true);
+    const mutex = rtosMutex.createMutex('m');
+    checkTrue('Mutex rảnh: lock() lần đầu trả về true (lấy khoá ngay)', rtosMutex.mutexLock(mutex, taskA) === true);
+    checkTrue('Ownership: mutex.ownerTask đúng là task vừa lấy khoá', mutex.ownerTask === taskA);
+    rtosMutex.wakeTask('task_B');
+    checkTrue('Mutex đã có chủ: task khác lock() trả về false (bị chặn)', rtosMutex.mutexLock(mutex, taskB) === false);
+    check('Task bị chặn chuyển sang BLOCKED ngay', taskB.state, 'BLOCKED');
+    rtosMutex.mutexUnlock(mutex);
+    checkTrue('unlock(): khoá được TRAO NGAY cho task đang chờ', mutex.ownerTask === taskB);
+    check('Task vừa được trao khoá chuyển về READY', taskB.state, 'READY');
+  }
+
+  // --- Bài 15 Mục 15.5: Priority Inversion & Mars Pathfinder 1997 (verified trên mini-RTOS thật) ---
+  {
+    // Kich ban dung lich su that: task_L (uu tien 10, thap nhat) giu 1 mutex chia
+    // se voi task_H (uu tien 0, cao nhat). task_M (uu tien 5, trung, KHONG lien
+    // quan gi mutex) danh thuc cung luc va co viec dai (50 don vi, mo phong tac
+    // vu truyen thong nang cua tau Pathfinder that).
+    function runInversionScenario(priorityInheritance) {
+      const rtos = new MiniRTOS();
+      rtos.addTask('task_L', 10, 20, 1000);
+      rtos.addTask('task_M', 5, 50, 1000, true);
+      rtos.addTask('task_H', 0, 2, 1000, true);
+      const mutex = rtos.createMutex('bus_mutex', priorityInheritance);
+      const L = rtos.tasks[0];
+      const H = rtos.tasks[2];
+      rtos.mutexLock(mutex, L);
+      rtos.tick();
+      rtos.tick();
+      rtos.wakeTask('task_H');
+      rtos.mutexLock(mutex, H); // H xin mutex cua L -> bi chan
+      rtos.wakeTask('task_M');
+      let hRunTick = null;
+      for (let i = 0; i < 60 && hRunTick === null; i++) {
+        rtos.tick();
+        const ev = rtos.timeline.find(
+          (e) => e.tick === rtos.currentTick - 1 && e.taskName === 'task_H' && e.event === 'run'
+        );
+        if (ev) hRunTick = ev.tick;
+      }
+      return hRunTick;
+    }
+
+    const withoutInheritance = runInversionScenario(false);
+    checkTrue(
+      'Pitfall verified: KHÔNG priority inheritance — task_H (ưu tiên CAO NHẤT) không chạy được lần nào trong 60 tick (bị task_M chặn gián tiếp qua task_L)',
+      withoutInheritance === null
+    );
+    const withInheritance = runInversionScenario(true);
+    check(
+      'Cứu Mars Pathfinder verified: BẬT priority inheritance — task_H chạy được đúng tại tick 20 (task_L "mượn" ưu tiên, đánh bại task_M, xong việc, nhả khoá)',
+      withInheritance,
+      20
+    );
+  }
+
+  // --- Bài 15 Mục 15.6: Deadlock 2 mutex khoá chéo (demo bonus) ---
+  {
+    const rtos = new MiniRTOS();
+    const taskA = rtos.addTask('task_A', 5, 10, 1000);
+    const taskB = rtos.addTask('task_B', 5, 10, 1000, true);
+    const mutexX = rtos.createMutex('mutex_X');
+    const mutexY = rtos.createMutex('mutex_Y');
+    rtos.mutexLock(mutexX, taskA);
+    rtos.wakeTask('task_B');
+    rtos.mutexLock(mutexY, taskB);
+    checkTrue('Deadlock verified: A xin Y (B đang giữ) → bị chặn', rtos.mutexLock(mutexY, taskA) === false);
+    checkTrue(
+      'Deadlock verified: B xin X (A đang giữ) → bị chặn — khoá CHÉO khép kín',
+      rtos.mutexLock(mutexX, taskB) === false
+    );
+    rtos.run(30);
+    check(
+      'Deadlock verified: task_A không chạy được lần nào trong 30 tick (kẹt vĩnh viễn)',
+      rtos.timeline.filter((e) => e.event === 'run' && e.taskName === 'task_A').length,
+      0
+    );
+    check(
+      'Deadlock verified: task_B cũng không chạy được lần nào — cả hai cùng chờ nhau mãi mãi',
+      rtos.timeline.filter((e) => e.event === 'run' && e.taskName === 'task_B').length,
+      0
+    );
+  }
+
+  // --- Bài 15 Mục 15.2, 15.4: Semaphore & Queue ---
+  {
+    const rtosSem = new MiniRTOS();
+    const consumer = rtosSem.addTask('consumer', 5, 3, 1000, true);
+    const sem = rtosSem.createSemaphore('data_ready', 0);
+    checkTrue(
+      'Semaphore rỗng: take() trả về false, task chuyển BLOCKED ngay',
+      rtosSem.semaphoreTake(sem, consumer) === false
+    );
+    check('Task chờ semaphore đang ở trạng thái BLOCKED', consumer.state, 'BLOCKED');
+    rtosSem.semaphoreGive(sem); // mo phong ISR "give"
+    check('ISR give(): task đang chờ được đánh thức NGAY (READY) — không cần poll', consumer.state, 'READY');
+
+    const rtosQ = new MiniRTOS();
+    const receiver = rtosQ.addTask('receiver', 5, 1, 1000, true);
+    const q = rtosQ.createQueue('sensor_q', 4);
+    checkTrue('Queue rỗng: receive() trả về null, task chuyển BLOCKED', rtosQ.queueReceive(q, receiver) === null);
+    check('Task chờ dữ liệu đang BLOCKED', receiver.state, 'BLOCKED');
+    checkTrue('send(): đẩy dữ liệu thành công vào queue', rtosQ.queueSend(q, 42) === true);
+    check('send() đánh thức NGAY task đang chờ nhận dữ liệu', receiver.state, 'READY');
   }
 
   // --- VMCU: địa chỉ ngoài mọi vùng -> HardFault ---

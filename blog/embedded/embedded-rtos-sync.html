@@ -1,0 +1,1017 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 15: Đồng bộ RTOS — mutex, semaphore, queue &amp; priority inversion — js-tools</title>
+    <meta
+      name="description"
+      content="Hai task + preemption = race condition ở BẤT KỲ dòng nào — tắt ngắt kiểu Bài 8 giờ quá thô bạo, giết luôn cả lập lịch. Semaphore (còi báo sự kiện, ISR give — task blocked take) và mutex (quyền SỞ HỮU, khác semaphore ở ownership + priority inheritance) và queue (ring buffer + blocking + an toàn đa task) là 3 công cụ mịn thay thế. Dựng lại CHÍNH XÁC sự cố Mars Pathfinder 1997 trên VMCU thật: verified — KHÔNG priority inheritance, task ưu tiên CAO NHẤT không chạy được lần nào trong 60 tick (bị chặn gián tiếp qua một task trung gian không liên quan); BẬT priority inheritance, task đó chạy đúng tại tick 20 — con tàu được cứu bằng đúng 1 dòng code. Kèm demo bonus deadlock 2 mutex khoá chéo."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/embedded/embedded-rtos-sync" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/embedded/embedded-rtos-sync" />
+    <meta
+      property="og:title"
+      content="Bài 15: Đồng bộ RTOS — mutex, semaphore, queue &amp; priority inversion — js-tools"
+    />
+    <meta
+      property="og:description"
+      content="Hai task + preemption = race condition ở BẤT KỲ dòng nào. Semaphore, mutex (ownership + priority inheritance), queue là 3 công cụ mịn thay thế tắt ngắt thô bạo. Dựng lại CHÍNH XÁC sự cố Mars Pathfinder 1997 trên VMCU thật: verified — không inheritance, task ưu tiên cao nhất không chạy lần nào trong 60 tick; bật inheritance, chạy đúng tại tick 20. Kèm demo bonus deadlock 2 mutex khoá chéo."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Bài 15: Đồng bộ RTOS — mutex, semaphore, queue &amp; priority inversion — js-tools"
+    />
+    <meta
+      name="twitter:description"
+      content="Hai task + preemption = race condition ở BẤT KỲ dòng nào. Semaphore, mutex (ownership + priority inheritance), queue là 3 công cụ mịn thay thế tắt ngắt thô bạo. Dựng lại CHÍNH XÁC sự cố Mars Pathfinder 1997 trên VMCU thật: verified — không inheritance, task ưu tiên cao nhất không chạy lần nào trong 60 tick; bật inheritance, chạy đúng tại tick 20. Kèm demo bonus deadlock 2 mutex khoá chéo."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Đồng bộ RTOS: mutex, semaphore, queue & priority inversion",
+        "description": "Hai task + preemption = race condition ở BẤT KỲ dòng nào. Semaphore, mutex (ownership + priority inheritance), queue là 3 công cụ mịn thay thế tắt ngắt thô bạo. Dựng lại CHÍNH XÁC sự cố Mars Pathfinder 1997 trên VMCU thật: verified — không inheritance, task ưu tiên cao nhất không chạy lần nào trong 60 tick; bật inheritance, chạy đúng tại tick 20. Kèm demo bonus deadlock 2 mutex khoá chéo.",
+        "url": "https://js-tools.org/blog/embedded/embedded-rtos-sync",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-25"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--embedded">
+        <div class="container">
+          <a href="embedded-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--embedded">Bài 15 · Hệ Thống Nhúng</div>
+          <h1 class="article-hero__title">Đồng bộ RTOS: mutex, semaphore, queue &amp; priority inversion</h1>
+          <div class="article-hero__meta">25 tháng 7, 2026 · 26 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: một con tàu trên sao Hoả suýt bị mất vì đúng bug này</h2>
+            <p>
+              Tháng 7 năm 1997, tàu thám hiểm <strong>Mars Pathfinder</strong> của NASA hạ cánh thành công xuống sao Hoả
+              — rồi vài ngày sau bắt đầu tự động reset liên tục, mất dữ liệu khoa học quý giá. Nguyên nhân không phải
+              một thiên thạch hay lỗi phần cứng, mà là một dạng bug đồng bộ hoá kinh điển:
+              <strong>priority inversion</strong> — một task ưu tiên THẤP vô tình khiến một task ưu tiên CAO bị trễ gần
+              như vô thời hạn. Bài này không chỉ giải thích khái niệm — nó DỰNG LẠI chính xác cơ chế đó trên VMCU,
+              verify bằng số thật, rồi sửa nó bằng đúng kỹ thuật NASA đã dùng để cứu con tàu từ xa qua radio.
+            </p>
+            <p>
+              Trước khi tới đó, bài học lắp ráp 3 công cụ đồng bộ hoá chuẩn của mọi RTOS nhúng — semaphore, mutex, queue
+              — thay thế cho cách tắt ngắt thô bạo của <a href="embedded-isr-race-critical-section">Bài 8</a>, giờ đã
+              không còn đủ mịn khi có nhiều task cùng chạy preemptive.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="embedded-rtos-preemptive">Bài 14</a> (task, preemption, priority —
+                nền tảng bắt buộc để hiểu priority inversion), <a href="embedded-isr-race-critical-section">Bài 8</a>
+                (race condition, critical section — công cụ cũ cần thay thế).
+              </div>
+            </div>
+
+            <h2>1. Race trở lại, to hơn</h2>
+            <p>
+              Với preemption của Bài 14, MỘT read-modify-write (Bài 2) có thể vỡ ở BẤT KỲ dòng nào — không chỉ giữa ISR
+              và main như Bài 8, mà giữa bất kỳ 2 task nào, tại bất kỳ thời điểm nào. Công cụ tắt ngắt
+              (<code>__disable_irq()</code>) của Bài 8 về mặt kỹ thuật vẫn hoạt động, nhưng giờ quá thô bạo: tắt ngắt
+              nghĩa là <strong>giết luôn cả bộ lập lịch</strong> — không task nào khác được chạy, kể cả những task hoàn
+              toàn không liên quan tới tài nguyên đang cần bảo vệ. Cần công cụ mịn hơn, bảo vệ ĐÚNG tài nguyên đang
+              tranh chấp mà không chặn đứng toàn hệ thống.
+            </p>
+
+            <h2>2. Semaphore</h2>
+            <p>
+              <strong>Semaphore</strong> về bản chất là một bộ đếm tài nguyên kèm cơ chế đánh thức:
+              <code>give()</code> tăng bộ đếm (hoặc đánh thức thẳng 1 task đang chờ nếu có), <code>take()</code> giảm bộ
+              đếm nếu còn (>0) hoặc khiến task gọi nó chuyển sang <strong>Blocked</strong> nếu hết.
+            </p>
+            <p>
+              Pattern đẹp nhất và phổ biến nhất: <strong>ISR give — task blocked take</strong>. Một ISR (vd dữ liệu cảm
+              biến vừa tới) gọi <code>give()</code>, một task đang <code>take()</code> và ở trạng thái Blocked THỨC DẬY
+              ĐÚNG LÚC — không cần vòng lặp poll liên tục kiểu cờ <code>volatile</code> của Bài 8. Verify: task gọi
+              <code>take()</code> khi bộ đếm = 0 lập tức chuyển Blocked; ngay khi <code>give()</code> được gọi, task đó
+              chuyển thẳng về Ready — không có độ trễ poll nào.
+            </p>
+            <p>
+              Có 2 biến thể: <strong>binary semaphore</strong> (đếm chỉ 0 hoặc 1, dùng làm tín hiệu đơn — "đã xảy ra"
+              hay chưa) và <strong>counting semaphore</strong> (đếm nhiều đơn vị — vd số ô trống trong một bể tài nguyên
+              dùng chung).
+            </p>
+
+            <h2>3. Mutex</h2>
+            <p>
+              <strong>Mutex</strong> (Mutual Exclusion) trông giống binary semaphore nhưng có một khác biệt SỐNG CÒN:
+              khái niệm <strong>quyền sở hữu</strong> (ownership) — chỉ đúng task đã khoá được phép mở khoá lại. Verify:
+              một task khác gọi <code>lock()</code> khi mutex đã có chủ sẽ bị chặn (Blocked) ngay lập tức; khi chủ cũ
+              <code>unlock()</code>, khoá được trao THẲNG cho task đang chờ có ưu tiên cao nhất (không phải theo thứ tự
+              tới trước) và task đó Ready ngay lập tức.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: dùng semaphore làm mutex</div>
+              <div class="callout__content">
+                Semaphore KHÔNG có khái niệm sở hữu — về lý thuyết, task A có thể "give" một semaphore mà task B chưa
+                từng "take", hoặc ngược lại, không có gì kiểm tra ai là chủ hợp lệ. Semaphore cũng KHÔNG hỗ trợ
+                <strong>priority inheritance</strong> (Mục 5) — dùng nó thay cho mutex để bảo vệ tài nguyên dùng chung
+                là mở toang cửa cho chính bug priority inversion mà Mục 5 sắp mổ xẻ.
+              </div>
+            </div>
+
+            <h2>4. Queue</h2>
+            <p>
+              <strong>Queue</strong> gửi DỮ LIỆU thật, không chỉ một tín hiệu như semaphore — đây là công cụ chuẩn cho
+              mô hình producer-consumer trong RTOS. So với ring buffer SPSC của Bài 8:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Đặc điểm</th>
+                  <th>Ring buffer SPSC (Bài 8)</th>
+                  <th>Queue (RTOS)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Dùng khi nào</td>
+                  <td>Chia sẻ ISR ↔ main, không RTOS</td>
+                  <td>Chia sẻ giữa nhiều task, có RTOS</td>
+                </tr>
+                <tr>
+                  <td>Đầy/rỗng</td>
+                  <td>Bên gọi tự kiểm tra, tự xử lý</td>
+                  <td>Task tự động Blocked, đánh thức khi có dữ liệu/chỗ trống</td>
+                </tr>
+                <tr>
+                  <td>An toàn với</td>
+                  <td>Đúng 1 producer, đúng 1 consumer</td>
+                  <td>Nhiều producer/consumer (RTOS lo đồng bộ hoá)</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Verify: nhận dữ liệu (<code>receive()</code>) khi queue rỗng khiến task Blocked ngay; ngay khi
+              <code>send()</code> đẩy dữ liệu vào, task đang chờ Ready lập tức — cùng pattern "đánh thức đúng lúc" như
+              semaphore, nhưng mang theo DỮ LIỆU thay vì chỉ một tín hiệu.
+            </p>
+
+            <h2>5. Priority inversion &amp; Mars Pathfinder 1997</h2>
+            <p>Kịch bản chính xác đã xảy ra trên tàu Pathfinder, dựng lại với 3 task:</p>
+            <ol>
+              <li>
+                <strong>task_L</strong> (ưu tiên THẤP nhất) — cần một tài nguyên chia sẻ (bus dữ liệu), khoá mutex bảo
+                vệ nó trong lúc dùng.
+              </li>
+              <li>
+                <strong>task_H</strong> (ưu tiên CAO nhất) — cũng cần đúng tài nguyên đó, xin khoá NGAY SAU khi task_L
+                đã khoá → bị chặn (Blocked), chờ task_L nhả ra.
+              </li>
+              <li>
+                <strong>task_M</strong> (ưu tiên TRUNG bình) — hoàn toàn KHÔNG liên quan tới mutex đó, nhưng có một việc
+                dài (mô phỏng tác vụ truyền thông nặng của tàu thật).
+              </li>
+            </ol>
+            <p>
+              Vấn đề: ngay khi task_M trở nên sẵn sàng, nó có ưu tiên CAO HƠN task_L (đang giữ mutex) nên
+              <strong>preempt task_L</strong> — dù task_L chỉ đang giữ một tài nguyên mà task_H cần, KHÔNG liên quan gì
+              tới task_M. Task_L không được chạy tiếp (bị task_M chiếm CPU), nên không bao giờ nhả được mutex, nên
+              task_H — dù có ưu tiên CAO NHẤT hệ thống — vẫn kẹt cứng chờ đợi.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Verify: priority inversion không có giới hạn thời gian</div>
+              <div class="callout__content">
+                Chạy mô phỏng 60 tick: <strong>task_H (ưu tiên cao nhất hệ thống) không chạy được một lần nào</strong>
+                — hoàn toàn bị "khoá" gián tiếp bởi task_M, một task nó chưa từng tương tác trực tiếp. Trên tàu
+                Pathfinder thật, hệ quả là một watchdog timer phát hiện task cao không "báo cáo còn sống" đúng hạn → tự
+                động reset toàn hệ thống, lặp lại nhiều lần liên tiếp trước khi kỹ sư NASA xác định đúng nguyên nhân từ
+                xa qua radio.
+              </div>
+            </div>
+            <p>
+              Lời giải: <strong>priority inheritance</strong>. Ngay khi task_H bị chặn bởi mutex của task_L, task_L được
+              "MƯỢN" tạm độ ưu tiên CAO của task_H — đủ để đánh bại task_M khi nó xuất hiện. Task_L chạy hết phần việc
+              còn lại (giờ với ưu tiên vay mượn), nhả mutex, TRẢ LẠI độ ưu tiên gốc của mình, và task_H lập tức được
+              chạy. Verify chính xác: với cùng kịch bản (task_L cần 20 đơn vị việc, đã chạy 2 trước khi bị task_H chặn),
+              bật priority inheritance khiến task_H chạy được đúng <strong>tại tick 20</strong> — thay vì không bao giờ.
+            </p>
+            <p>
+              Một góc nhìn khác đáng nhớ: deadlock (bế tắc) là một dạng lỗi đồng bộ hoá khác — xảy ra khi 2 task khoá
+              CHÉO nhau (A giữ khoá 1 và xin khoá 2, B giữ khoá 2 và xin khoá 1), cả hai kẹt cứng vĩnh viễn, không ai
+              chịu nhường. Quy tắc phòng tránh kinh điển: LUÔN khoá theo một thứ tự CỐ ĐỊNH toàn hệ thống (vd luôn khoá
+              theo alphabet tên mutex) — nếu mọi task tuân thủ, deadlock kiểu này không thể xảy ra.
+            </p>
+
+            <h2>6. Thực hành: dựng lại Mars Pathfinder</h2>
+            <p>
+              Demo dưới đây chạy đúng kịch bản lịch sử trên mini-RTOS thật (Bài 14): bật/tắt priority inheritance và xem
+              task ưu tiên cao nhất có được "cứu" hay không:
+            </p>
+
+            <div class="code-tabs" id="pathfinder-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🚀 Mars Pathfinder Recreation — VMCU thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="c">C</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600">
+                    1. Priority Inversion — 3 task: task_L (thấp, giữ mutex), task_M (trung, không liên quan mutex, việc
+                    dài), task_H (cao nhất, cần mutex)
+                  </p>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px">
+                    <button class="mux-input-btn is-active" type="button" data-inheritance="off">
+                      😱 Priority inheritance TẮT (bug thật)
+                    </button>
+                    <button class="mux-input-btn" type="button" data-inheritance="on">
+                      ✅ Priority inheritance BẬT (đã sửa)
+                    </button>
+                  </div>
+                  <div
+                    id="pathfinder-timeline"
+                    style="
+                      display: flex;
+                      gap: 1px;
+                      height: 32px;
+                      margin-bottom: 6px;
+                      overflow: hidden;
+                      border-radius: 4px;
+                    "
+                  ></div>
+                  <div
+                    id="pathfinder-legend"
+                    style="font-size: 11px; display: flex; gap: 14px; margin-bottom: 8px"
+                  ></div>
+                  <div id="pathfinder-result" class="mux-demo__output">Đang tải…</div>
+
+                  <p style="margin: 18px 0 8px; font-size: 14px; font-weight: 600">
+                    2. Demo bonus: Deadlock 2 mutex khoá chéo
+                  </p>
+                  <button class="mux-input-btn" type="button" id="deadlock-run-btn">▶️ Chạy thí nghiệm deadlock</button>
+                  <div id="deadlock-result" class="mux-demo__output" style="margin-top: 8px">
+                    Bấm nút để chạy thí nghiệm.
+                  </div>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="c">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">priority_inheritance_mutex.c</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-c">// Mo phong dung 3 task cua Mars Pathfinder that (RTOS nhung thuc te co san co che nay)
+mutex_t bus_mutex; // tao voi priority_inheritance = true
+
+void task_L_low_priority(void) {
+    mutex_lock(&bus_mutex);   // giu bus - neu task_H dang cho, task_L MUON tam uu tien cao cua no
+    read_write_bus();          // viec can bao ve
+    mutex_unlock(&bus_mutex); // nha khoa, TRA LAI uu tien goc, trao khoa cho task dang cho uu tien cao nhat
+}
+
+void task_H_high_priority(void) {
+    mutex_lock(&bus_mutex);   // neu task_L dang giu -> Blocked, NHUNG kich hoat "cho muon" uu tien
+    read_write_bus();
+    mutex_unlock(&bus_mutex);
+}
+
+void task_M_medium_priority(void) {
+    do_long_communication_task(); // KHONG dung bus_mutex - nhung van co the preempt task_L neu khong co inheritance
+}</code></pre>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">pathfinder_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { MiniRTOS } from './vmcu.js';
+
+function runScenario(priorityInheritance) {
+  const rtos = new MiniRTOS();
+  rtos.addTask('task_L', 10, 20, 1000);           // uu tien THAP, viec 20 don vi (giu mutex)
+  rtos.addTask('task_M', 5, 50, 1000, true);      // uu tien TRUNG, bat dau BLOCKED, viec DAI 50 don vi
+  rtos.addTask('task_H', 0, 2, 1000, true);       // uu tien CAO NHAT, bat dau BLOCKED
+  const mutex = rtos.createMutex('bus_mutex', priorityInheritance);
+  const [L, , H] = rtos.tasks;
+
+  rtos.mutexLock(mutex, L);  // L lay mutex ngay tu dau
+  rtos.tick(); rtos.tick();
+  rtos.wakeTask('task_H');
+  rtos.mutexLock(mutex, H);  // H xin mutex -> bi chan boi L
+  rtos.wakeTask('task_M');   // M cung san sang, KHONG lien quan mutex
+
+  rtos.run(58);
+  return rtos.timeline.filter(e => e.event === 'run');
+}
+
+// KHONG inheritance: task_H khong bao gio chay trong 60 tick
+// CO inheritance: task_H chay dung tai tick 20</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Preemption khiến race condition có thể xảy ra giữa BẤT KỲ 2 task nào — tắt ngắt (Bài 8) giờ quá thô
+                bạo vì giết luôn cả lập lịch.
+              </li>
+              <li>
+                ✅ <strong>Semaphore</strong>: bộ đếm + đánh thức, pattern ISR give — task blocked take, không cần poll.
+                <strong>Mutex</strong>: thêm ownership + priority inheritance — pitfall dùng semaphore thay mutex mất cả
+                hai. <strong>Queue</strong>: gửi dữ liệu thật, ring buffer Bài 8 + blocking + an toàn đa task.
+              </li>
+              <li>
+                ✅ <strong>Priority inversion &amp; Mars Pathfinder 1997</strong> verified trên VMCU thật: KHÔNG
+                inheritance — task ưu tiên cao nhất không chạy được lần nào trong 60 tick; BẬT inheritance — chạy đúng
+                tại tick 20. Đúng cơ chế đã cứu con tàu thật ngoài không gian.
+              </li>
+              <li>
+                ✅ Deadlock (khoá chéo) verified: cả 2 task kẹt vĩnh viễn, 0 lần chạy trong 30 tick — phòng tránh bằng
+                cách luôn khoá theo thứ tự cố định.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">Khác biệt cốt lõi giữa mutex và semaphore là gì?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Mutex co khai niem SO HUU - chi dung task da khoa moi duoc mo khoa lai, va ho tro priority inheritance. Semaphore la mot bo dem/coi bao KHONG co khai niem so huu - bat ky task nao cung co the give() du chua tung take(), va KHONG ho tro inheritance.'
+                    )
+                  "
+                >
+                  A. Mutex có khái niệm SỞ HỮU (chỉ đúng task đã khoá mới được mở) và hỗ trợ priority inheritance;
+                  semaphore là bộ đếm/còi báo không có sở hữu, không hỗ trợ inheritance
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca hai deu co the dung trong ISR theo cach nao do (semaphore thuong dung pattern ISR give truc tiep) - day khong phai su khac biet CHINH giua 2 khai niem.'
+                    )
+                  "
+                >
+                  B. Mutex chỉ dùng được trong ISR, semaphore chỉ dùng được trong task thường
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca 2 deu co the mo hinh hoa binary (chi 0/1) - mutex ban chat la mot dang binary VOI THEM khai niem so huu, khong phai mutex &quot;luon nhieu muc&quot; con semaphore &quot;luon nhi phan&quot;.'
+                    )
+                  "
+                >
+                  C. Mutex luôn có nhiều mức đếm, semaphore luôn chỉ nhị phân
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: task_M — hoàn toàn KHÔNG tương tác trực tiếp với mutex mà task_H cần — vẫn khiến task_H (ưu
+                tiên cao nhất) không chạy được lần nào trong 60 tick khi priority inheritance tắt. Vì sao một task không
+                liên quan lại gây ra hậu quả này?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! task_M co uu tien CAO HON task_L nen preempt task_L ngay khi san sang - task_L vi the khong duoc chay tiep de HOAN THANH va NHA mutex ra. task_H bi chan boi mutex cua task_L, nen GIAN TIEP bi &quot;khoa&quot; boi task_M du chua bao gio tuong tac truc tiep voi nhau.'
+                    )
+                  "
+                >
+                  A. task_M có ưu tiên cao hơn task_L nên preempt nó ngay khi sẵn sàng — task_L vì thế không được chạy
+                  tiếp để hoàn thành và nhả mutex ra, khiến task_H bị chặn gián tiếp qua chuỗi phụ thuộc đó
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Kich ban khong he gia dinh task_M co loi hay bug rieng cua no - no chi don gian la mot task binh thuong co uu tien trung binh va mot viec dai, hoan toan dung dan ve mat logic rieng.'
+                    )
+                  "
+                >
+                  B. Vì task_M có một lỗi logic khiến nó vô tình chiếm luôn mutex của task_L
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'task_H bi Blocked do XIN MUTEX ma task_L dang giu (dung thiet ke) - khong phai loi tu scheduler nham lan uu tien.'
+                    )
+                  "
+                >
+                  C. Vì scheduler nhầm lẫn độ ưu tiên của task_H với task_M
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">Priority inheritance sửa priority inversion bằng cơ chế nào?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Verified: ngay khi task_H bi chan boi mutex cua task_L, task_L duoc &quot;muon&quot; tam do uu tien CAO cua task_H - du de danh bai task_M khi no xuat hien. task_L chay het viec con lai voi uu tien vay muon, nha mutex, TRA LAI uu tien goc, va task_H duoc chay ngay.'
+                    )
+                  "
+                >
+                  A. Task đang giữ mutex mà một task ưu tiên cao hơn đang chờ sẽ được "mượn" tạm độ ưu tiên cao đó — đủ
+                  để không bị các task ưu tiên trung gian preempt cho tới khi nó xong việc và nhả khoá
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Priority inheritance khong lien quan gi den THOI GIAN task can de hoan thanh - no thay doi DO UU TIEN cua task dang giu khoa, khong lam viec do nhanh hon.'
+                    )
+                  "
+                >
+                  B. Nó làm task_L hoàn thành công việc nhanh hơn về mặt thời gian thực thi
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Priority inheritance KHONG huy bo yeu cau mutex cua task_H - task_H van phai doi task_L nha khoa, chi la thoi gian cho gio NGAN HON NHIEU vi task_L khong con bi task_M chen ngang.'
+                    )
+                  "
+                >
+                  C. Nó huỷ bỏ yêu cầu mutex của task_H để nó chạy ngay không cần chờ
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Verified: 2 task khoá chéo (A giữ mutex X xin mutex Y, B giữ mutex Y xin mutex X) khiến cả hai kẹt vĩnh
+                viễn (0 lần chạy trong 30 tick). Quy tắc phòng tránh kinh điển cho loại deadlock này là gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Neu MOI task trong he thong luon xin khoa theo DUNG MOT THU TU co dinh (vd luon X truoc Y, khong bao gio nguoc lai), khong bao gio co the xay ra tinh huong &quot;khoa cheo&quot; nhu kich ban deadlock verified - day la quy tac phong tranh pho bien va don gian nhat.'
+                    )
+                  "
+                >
+                  A. Luôn khoá các mutex theo một thứ tự CỐ ĐỊNH toàn hệ thống — nếu mọi task tuân thủ, tình huống khoá
+                  chéo không thể xảy ra
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Priority inheritance giai quyet PRIORITY INVERSION (Muc 5) - day la mot loai loi KHAC voi deadlock (khoa cheo). Bat inheritance khong lam 2 task tu dong nha khoa cheo cho nhau.'
+                    )
+                  "
+                >
+                  B. Bật priority inheritance cho tất cả các mutex trong hệ thống
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Deadlock khong lien quan gi den TOC DO chay cua task - van de la 2 task cho NHAU VINH VIEN theo mot vong tron phu thuoc, du chay nhanh hay cham thi ket cuc van la ket dung mai mai.'
+                    )
+                  "
+                >
+                  C. Tăng tốc độ chạy của cả hai task để chúng hoàn thành trước khi kịp deadlock
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>VMCU</code> — engine MCU ảo dùng xuyên suốt cả 16 bài, Bài 15 vừa thêm mutex (có
+                priority inheritance bật/tắt được), semaphore, và queue vào <code>MiniRTOS</code>, kèm self-test đối
+                chiếu đúng mọi hành vi trong bài, bao gồm dựng lại chính xác Mars Pathfinder 1997 (chạy
+                <code>node vmcu.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="vmcu.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về vmcu.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Priority_inversion" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Priority inversion (bao gồm chi tiết sự cố Mars Pathfinder 1997)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Priority_inheritance"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Priority inheritance
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Deadlock" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Deadlock (4 điều kiện cần thiết)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="embedded-rtos-preemptive" class="article-related__link article-related__link--prev">
+                  Bài 14: RTOS preemptive: context switch &amp; task states
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 16: Capstone: Trạm đo nhiệt độ hoàn chỉnh — sắp ra mắt
+                </span>
+                <a href="embedded-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Hệ Thống Nhúng
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { MiniRTOS } from './vmcu.js';
+
+      // ==== Demo 1: Mars Pathfinder recreation ====
+      const PF_COLORS = { task_L: '#f59e0b', task_M: '#8b5cf6', task_H: '#ef4444', idle: 'rgba(255,255,255,0.08)' };
+
+      function runPathfinderScenario(priorityInheritance) {
+        const rtos = new MiniRTOS();
+        rtos.addTask('task_L', 10, 20, 1000);
+        rtos.addTask('task_M', 5, 50, 1000, true);
+        rtos.addTask('task_H', 0, 2, 1000, true);
+        const mutex = rtos.createMutex('bus_mutex', priorityInheritance);
+        const [L, , H] = rtos.tasks;
+
+        rtos.mutexLock(mutex, L);
+        rtos.tick();
+        rtos.tick();
+        rtos.wakeTask('task_H');
+        rtos.mutexLock(mutex, H);
+        rtos.wakeTask('task_M');
+        rtos.run(58);
+        return rtos.timeline.filter((e) => e.event === 'run');
+      }
+
+      function renderPathfinder(scenario) {
+        const events = runPathfinderScenario(scenario === 'on');
+        const container = document.getElementById('pathfinder-timeline');
+        container.innerHTML = events
+          .map((e) => '<div style="flex:1; background:' + (PF_COLORS[e.taskName] || PF_COLORS.idle) + ';"></div>')
+          .join('');
+        const legend = document.getElementById('pathfinder-legend');
+        legend.innerHTML = [
+          'task_L (thấp, giữ mutex)',
+          'task_M (trung, không liên quan)',
+          'task_H (cao nhất, cần mutex)',
+        ]
+          .map((label, i) => {
+            const key = ['task_L', 'task_M', 'task_H'][i];
+            return (
+              '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' +
+              PF_COLORS[key] +
+              ';margin-right:4px;"></span>' +
+              label +
+              '</span>'
+            );
+          })
+          .join('');
+
+        const hFirstRun = events.find((e) => e.taskName === 'task_H');
+        const resultEl = document.getElementById('pathfinder-result');
+        if (hFirstRun) {
+          resultEl.innerHTML =
+            '✅ task_H (ưu tiên CAO NHẤT) chạy lần đầu tại tick <strong>' +
+            hFirstRun.tick +
+            '</strong> — priority inheritance đã "cứu" nó khỏi bị task_M chặn gián tiếp.';
+          resultEl.style.color = '#22c55e';
+        } else {
+          resultEl.innerHTML =
+            '💥 task_H (ưu tiên CAO NHẤT hệ thống) KHÔNG chạy được một lần nào trong 60 tick — bị task_M chặn gián tiếp qua task_L, dù chưa từng tương tác trực tiếp. Đây chính xác là bug đã khiến Mars Pathfinder tự reset liên tục năm 1997.';
+          resultEl.style.color = '#ef4444';
+        }
+      }
+
+      document.querySelectorAll('[data-inheritance]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('[data-inheritance]').forEach((b) => b.classList.remove('is-active'));
+          btn.classList.add('is-active');
+          renderPathfinder(btn.dataset.inheritance);
+        });
+      });
+      renderPathfinder('off');
+
+      // ==== Demo 2: Deadlock bonus ====
+      document.getElementById('deadlock-run-btn').addEventListener('click', () => {
+        const rtos = new MiniRTOS();
+        const taskA = rtos.addTask('task_A', 5, 10, 1000);
+        const taskB = rtos.addTask('task_B', 5, 10, 1000, true);
+        const mutexX = rtos.createMutex('mutex_X');
+        const mutexY = rtos.createMutex('mutex_Y');
+        rtos.mutexLock(mutexX, taskA);
+        rtos.wakeTask('task_B');
+        rtos.mutexLock(mutexY, taskB);
+        rtos.mutexLock(mutexY, taskA); // A xin Y (B giữ) -> chặn
+        rtos.mutexLock(mutexX, taskB); // B xin X (A giữ) -> chặn
+        rtos.run(30);
+        const runsA = rtos.timeline.filter((e) => e.event === 'run' && e.taskName === 'task_A').length;
+        const runsB = rtos.timeline.filter((e) => e.event === 'run' && e.taskName === 'task_B').length;
+        const el = document.getElementById('deadlock-result');
+        el.innerHTML =
+          '💀 task_A giữ mutex_X, xin mutex_Y (bị chặn vì task_B đang giữ). task_B giữ mutex_Y, xin mutex_X (bị chặn vì task_A đang giữ) — khoá CHÉO khép kín.<br/>Sau 30 tick: task_A chạy <strong>' +
+          runsA +
+          ' lần</strong>, task_B chạy <strong>' +
+          runsB +
+          ' lần</strong> — cả hai kẹt vĩnh viễn, không ai nhường ai.';
+        el.style.color = runsA === 0 && runsB === 0 ? '#ef4444' : '#22c55e';
+      });
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
