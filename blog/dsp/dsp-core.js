@@ -497,6 +497,53 @@ function sideLobeLevelDb(window, paddedLength = 4096) {
   return 20 * Math.log10(sideLobePeak / peak);
 }
 
+// ---------------------------------------------------------------------------
+// Bài 8 — STFT & Spectrogram. Build-out: stft() (cắt khung chồng lấp, áp cửa
+// sổ, FFT từng khung — đúng ý tưởng "cắt lát thời gian" Mục 8.1), chuyển phổ
+// biên độ sang dB (Mục 8.4 pitfall: quên đổi dB nhìn "toàn đen"), và colormap
+// đơn giản để vẽ ảnh nhiệt spectrogram lên canvas.
+// ---------------------------------------------------------------------------
+
+// STFT: cắt tín hiệu thành các khung chồng lấp (hopSize < frameSize để không
+// rơi tín hiệu ở mép, Mục 8.3), áp cửa sổ từng khung, FFT từng khung, xếp
+// thành mảng các cột phổ theo thời gian. frameSize BẮT BUỘC luỹ thừa 2 (dùng
+// chung pitfall fft() đã biết từ Bài 6).
+function stft(x, windowFn, frameSize, hopSize) {
+  const win = windowFn(frameSize);
+  const numFrames = Math.floor((x.length - frameSize) / hopSize) + 1;
+  const frames = [];
+  for (let i = 0; i < numFrames; i++) {
+    const start = i * hopSize;
+    const frame = x.slice(start, start + frameSize);
+    frames.push(fft(applyWindow(frame, win)));
+  }
+  return frames;
+}
+
+// Chuyển 1 khung phổ phức (kết quả fft) sang biên độ dB, CHẶN SÀN ở floorDb
+// (Mục 8.4 pitfall: không chặn sàn, log10(0) = -Infinity làm hỏng cả colormap
+// lẫn hiển thị — mọi giá trị quá nhỏ bị "ép" về đúng floorDb).
+function magnitudeToDb(magnitude, floorDb = -100) {
+  return magnitude.map((m) => Math.max(20 * Math.log10(m + 1e-12), floorDb));
+}
+
+// Toàn bộ spectrogram ở dạng dB — áp dftMagnitude + magnitudeToDb lên MỖI cột
+// (khung) trả về từ stft().
+function stftMagnitudeDb(frames, floorDb = -100) {
+  return frames.map((frame) => magnitudeToDb(dftMagnitude(frame), floorDb));
+}
+
+// Colormap tối giản (dB -> [r,g,b]) dùng để vẽ ảnh nhiệt spectrogram: tối
+// (gần đen) ở sàn floorDb, sáng dần lên vàng/trắng ở đỉnh 0dB — clamp cả 2
+// đầu để giá trị ngoài khoảng [minDb, maxDb] không tràn ra màu vô nghĩa.
+function dbToColor(db, minDb = -100, maxDb = 0) {
+  const t = Math.max(0, Math.min(1, (db - minDb) / (maxDb - minDb)));
+  const r = Math.round(255 * Math.min(1, t * 2));
+  const g = Math.round(255 * Math.max(0, Math.min(1, (t - 0.3) * 1.4)));
+  const b = Math.round(255 * Math.max(0, 1 - t * 2));
+  return [r, g, b];
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -542,6 +589,10 @@ export {
   coherentGain,
   compensatedMagnitude,
   sideLobeLevelDb,
+  stft,
+  magnitudeToDb,
+  stftMagnitudeDb,
+  dbToColor,
 };
 
 // ---------------------------------------------------------------------------
@@ -1019,6 +1070,52 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'compensatedMagnitude: sau khi bù coherent gain, đỉnh Hann gần với đỉnh rect hơn RẤT NHIỀU so với trước khi bù',
       Math.abs(hannCompensatedPeak - rectPeak) < Math.abs(hannRawPeak - rectPeak)
     );
+  }
+
+  // --- Bài 8: STFT & Spectrogram ---
+  {
+    const frameSize = 64;
+    const hopSize = 32;
+    const totalLen = 256;
+    const testSignal = Array.from({ length: totalLen }, (_, n) => sine(n, 1000, 8000));
+
+    const frames = stft(testSignal, hannWindow, frameSize, hopSize);
+    const expectedNumFrames = Math.floor((totalLen - frameSize) / hopSize) + 1;
+    check('stft: số khung đúng công thức floor((len-frameSize)/hopSize)+1', frames.length, expectedNumFrames);
+    check('stft: mỗi khung có đúng frameSize bin phổ', frames[0].length, frameSize);
+
+    // Xac nhan tung khung DUNG BANG fft(applyWindow(...)) tinh thu cong -
+    // stft() khong duoc "bay dat" logic rieng khac voi cac ham da verify
+    const win = hannWindow(frameSize);
+    const manualFrame1 = fft(applyWindow(testSignal.slice(0, frameSize), win));
+    checkTrue(
+      'stft: khung đầu tiên khớp CHÍNH XÁC với fft(applyWindow(...)) tính thủ công',
+      manualFrame1.every((c, i) => Math.abs(c.re - frames[0][i].re) < 1e-9 && Math.abs(c.im - frames[0][i].im) < 1e-9)
+    );
+    const frameIdx2 = 2;
+    const manualFrame3 = fft(applyWindow(testSignal.slice(frameIdx2 * hopSize, frameIdx2 * hopSize + frameSize), win));
+    checkTrue(
+      'stft: khung thứ 3 (chồng lấp) cũng khớp chính xác — xác nhận hopSize dùng đúng',
+      manualFrame3.every(
+        (c, i) => Math.abs(c.re - frames[frameIdx2][i].re) < 1e-9 && Math.abs(c.im - frames[frameIdx2][i].im) < 1e-9
+      )
+    );
+
+    // magnitudeToDb: chan san dung floorDb, khong bao gio ra -Infinity
+    const dbZero = magnitudeToDb([0, 1], -100);
+    check('magnitudeToDb(0) bị chặn sàn đúng floorDb=-100 (KHÔNG ra -Infinity)', dbZero[0], -100);
+    checkTrue('magnitudeToDb(1) = 20*log10(1) ≈ 0dB', Math.abs(dbZero[1] - 0) < 1e-6);
+
+    // stftMagnitudeDb: so cot = so khung, so hang = frameSize (chua cat nua pho)
+    const spectrogramDb = stftMagnitudeDb(frames);
+    check('stftMagnitudeDb: số cột = số khung', spectrogramDb.length, frames.length);
+    check('stftMagnitudeDb: số hàng mỗi cột = frameSize', spectrogramDb[0].length, frameSize);
+
+    // dbToColor: clamp dung 2 dau, khong tran ra ngoai [0,255]
+    checkTrue('dbToColor(sàn hoặc thấp hơn) toàn màu tối (r=0)', dbToColor(-100, -100, 0)[0] === 0);
+    checkTrue('dbToColor(dưới sàn xa) vẫn clamp về giống hệt sàn, không âm', dbToColor(-999, -100, 0)[0] === 0);
+    const peakColor = dbToColor(0, -100, 0);
+    checkTrue('dbToColor(đỉnh 0dB) cho màu sáng nhất (r và g đều cao)', peakColor[0] >= 250 && peakColor[1] >= 250);
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
