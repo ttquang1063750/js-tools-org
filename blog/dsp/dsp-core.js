@@ -324,6 +324,110 @@ function frequencyResolution(sampleRateHz, numSamples) {
   return sampleRateHz / numSamples;
 }
 
+// ---------------------------------------------------------------------------
+// Bài 6 — FFT: thuật toán thay đổi thế giới. Build-out: fft()/ifft() radix-2
+// decimation-in-time CÀI ĐẶT LẶP (iterative in-place — đúng tinh thần Mục
+// 6.3 "từ đệ quy sang 3 vòng lặp"), bit-reversal, và các hàm đếm phép nhân
+// dùng để MINH HOẠ tốc độ O(N log N) so O(N²) bằng số thật (Mục 6.1/6.4).
+// ---------------------------------------------------------------------------
+
+// Đảo bit của n trong đúng numBits bit — nền tảng của bước sắp xếp lại đầu
+// vào trước khi chạy 3 vòng lặp butterfly (Mục 6.2): đây KHÔNG phải phép
+// thuật, mà là hệ quả trực tiếp của việc đệ quy tách chẵn/lẻ liên tục — mỗi
+// lần tách là 1 bit quyết định "đi trái hay phải", làm log2(N) lần liên tiếp
+// từ bit thấp nhất tạo ra đúng thứ tự đảo bit.
+function bitReverse(n, numBits) {
+  let result = 0;
+  let value = n;
+  for (let i = 0; i < numBits; i++) {
+    result = (result << 1) | (value & 1);
+    value >>= 1;
+  }
+  return result;
+}
+
+// FFT radix-2 decimation-in-time, cài đặt LẶP tại chỗ (in-place): bước 1 sắp
+// xếp lại mảng vào theo bit-reversal, bước 2 chạy đúng 3 vòng lặp lồng nhau
+// (stage → nhóm butterfly → twiddle factor) thay cho đệ quy — cùng kết quả
+// nhưng không tốn ngăn xếp gọi hàm đệ quy. Nhận vào mảng số thực HOẶC số
+// phức {re,im}; N BẮT BUỘC là luỹ thừa của 2 (pitfall Mục 6.3 — dùng
+// zeroPad() nếu tín hiệu thật không tự nhiên có độ dài luỹ thừa 2).
+function fft(x) {
+  const N = x.length;
+  if (N === 0 || (N & (N - 1)) !== 0) {
+    throw new Error('FFT radix-2 yeu cau N la luy thua cua 2, N=' + N);
+  }
+  const numBits = Math.log2(N);
+  const re = new Array(N);
+  const im = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const j = bitReverse(i, numBits);
+    const sample = x[i];
+    re[j] = typeof sample === 'number' ? sample : sample.re;
+    im[j] = typeof sample === 'number' ? 0 : sample.im;
+  }
+  for (let stage = 1; stage <= numBits; stage++) {
+    const m = 1 << stage; // kich thuoc nhom butterfly o stage nay
+    const halfM = m >> 1;
+    const angleStep = (-2 * Math.PI) / m;
+    for (let start = 0; start < N; start += m) {
+      for (let k = 0; k < halfM; k++) {
+        const angle = angleStep * k; // goc xoay cua twiddle factor
+        const wRe = Math.cos(angle);
+        const wIm = Math.sin(angle);
+        const idxEven = start + k;
+        const idxOdd = start + k + halfM;
+        const oddRe = re[idxOdd] * wRe - im[idxOdd] * wIm;
+        const oddIm = re[idxOdd] * wIm + im[idxOdd] * wRe;
+        const evenRe = re[idxEven];
+        const evenIm = im[idxEven];
+        re[idxEven] = evenRe + oddRe;
+        im[idxEven] = evenIm + oddIm;
+        re[idxOdd] = evenRe - oddRe;
+        im[idxOdd] = evenIm - oddIm;
+      }
+    }
+  }
+  const X = new Array(N);
+  for (let i = 0; i < N; i++) X[i] = { re: re[i], im: im[i] };
+  return X;
+}
+
+// IFFT — dùng đúng mẹo kinh điển "liên hợp phức 2 lần": conj(fft(conj(X)))/N
+// cho đúng biến đổi ngược mà không cần viết lại thuật toán butterfly riêng.
+function ifft(X) {
+  const N = X.length;
+  const conjInput = X.map((c) => ({ re: c.re, im: -c.im }));
+  const Y = fft(conjInput);
+  return Y.map((c) => ({ re: c.re / N, im: -c.im / N }));
+}
+
+// Thêm số 0 vào cuối tín hiệu cho đủ targetLength (BẮT BUỘC là luỹ thừa 2 để
+// dùng với fft()) — Mục 6.3 pitfall: nội suy phổ MƯỢT hơn (nhiều bin hơn)
+// nhưng KHÔNG thêm bất kỳ thông tin tần số mới nào, vì không có mẫu thật mới.
+function zeroPad(x, targetLength) {
+  const padded = new Array(targetLength).fill(0);
+  for (let i = 0; i < x.length; i++) padded[i] = x[i];
+  return padded;
+}
+
+// Số phép nhân phức của DFT trực tiếp: N bin, mỗi bin N phép nhân — O(N²).
+function dftMultiplyCount(N) {
+  return N * N;
+}
+
+// Số phép nhân phức của FFT radix-2: log2(N) stage, mỗi stage N/2 phép nhân
+// twiddle (butterfly cộng/trừ không tốn phép nhân nào thêm) — O(N log N).
+function fftMultiplyCount(N) {
+  return (N / 2) * Math.log2(N);
+}
+
+// Tỷ lệ tăng tốc xấp xỉ giữa O(N²) và O(N log N) — chính là N/log2(N), dùng
+// để minh hoạ con số "N=1024: khoảng 100 lần nhanh hơn" ở Mục 6.1/6.4.
+function complexityRatio(N) {
+  return N / Math.log2(N);
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -354,6 +458,13 @@ export {
   binFrequency,
   frequencyResolution,
   idft,
+  bitReverse,
+  fft,
+  ifft,
+  zeroPad,
+  dftMultiplyCount,
+  fftMultiplyCount,
+  complexityRatio,
 };
 
 // ---------------------------------------------------------------------------
@@ -696,6 +807,74 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
         Math.abs(correlate(hybridSignal, sigA)) < 0.1
       );
     }
+  }
+
+  // --- Bài 6: FFT radix-2 (iterative in-place) ---
+  {
+    // bitReverse: N=8 (numBits=3) — vai gia tri kiem chung tay
+    check('bitReverse(0,3) = 0', bitReverse(0, 3), 0);
+    check('bitReverse(1,3) = 4 (001 -> 100)', bitReverse(1, 3), 4);
+    check('bitReverse(3,3) = 6 (011 -> 110)', bitReverse(3, 3), 6);
+    check('bitReverse(7,3) = 7 (111 -> 111, doi xung)', bitReverse(7, 3), 7);
+
+    // VERIFY bat buoc cua bai: FFT === DFT tung con so, sai so < 1e-10
+    function maxComplexDiff(A, B) {
+      let maxDiff = 0;
+      for (let i = 0; i < A.length; i++) {
+        const dRe = Math.abs(A[i].re - B[i].re);
+        const dIm = Math.abs(A[i].im - B[i].im);
+        maxDiff = Math.max(maxDiff, dRe, dIm);
+      }
+      return maxDiff;
+    }
+
+    const sigN8 = [1, 2, 3, 4, 5, 6, 7, 8];
+    const dftN8 = dft(sigN8);
+    const fftN8 = fft(sigN8);
+    checkTrue('FFT === DFT tung con so voi N=8 (sai so < 1e-10)', maxComplexDiff(dftN8, fftN8) < 1e-10);
+
+    const sigN16 = Array.from({ length: 16 }, (_, n) => sine(n, 2000, 16000));
+    const dftN16 = dft(sigN16);
+    const fftN16 = fft(sigN16);
+    checkTrue(
+      'FFT === DFT tung con so voi N=16, tin hieu sine that (sai so < 1e-10)',
+      maxComplexDiff(dftN16, fftN16) < 1e-10
+    );
+
+    checkTrue(
+      'FFT nem loi khi N khong phai luy thua 2 (N=6)',
+      (() => {
+        try {
+          fft([1, 2, 3, 4, 5, 6]);
+          return false;
+        } catch (e) {
+          return true;
+        }
+      })()
+    );
+
+    // IFFT: khu hoi dung tin hieu goc
+    const roundTrip = ifft(fft(sigN8));
+    checkTrue(
+      'ifft(fft(x)) khu hoi dung x ban dau (sai so < 1e-9)',
+      roundTrip.every((c, i) => Math.abs(c.re - sigN8[i]) < 1e-9 && Math.abs(c.im) < 1e-9)
+    );
+
+    // Dem phep nhan: N=1024, DFT ~1 trieu, FFT ~5 nghin, ty le ~100 lan
+    check('dftMultiplyCount(1024) = 1.048.576 (1024^2)', dftMultiplyCount(1024), 1048576);
+    check('fftMultiplyCount(1024) = 5120 ((1024/2)*log2(1024))', fftMultiplyCount(1024), 5120);
+    checkTrue(
+      'complexityRatio(1024) = 102,4 (~100 lan, dung so lam tron cua bai)',
+      Math.abs(complexityRatio(1024) - 102.4) < 1e-9
+    );
+
+    // zeroPad: noi suy pho muot hon, KHONG them thong tin
+    const padded = zeroPad([1, 2, 3, 4], 8);
+    check('zeroPad giu dung do dai targetLength', padded.length, 8);
+    checkTrue(
+      'zeroPad giu nguyen 4 mau dau, 4 mau sau la 0',
+      padded[0] === 1 && padded[1] === 2 && padded[2] === 3 && padded[3] === 4 && padded[4] === 0 && padded[7] === 0
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
