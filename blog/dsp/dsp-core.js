@@ -121,6 +121,113 @@ function discreteSinePeriod(freqHz, sampleRateHz) {
   return sampleRateHz / gcd(freqHz, sampleRateHz);
 }
 
+// Lấy mẫu một hàm liên tục thời gian continuousFn(t) tại numSamples mẫu, tần
+// số lấy mẫu sampleRateHz — cầu nối trực tiếp x(t) → x[n] = x(nT) của Bài 1,
+// dùng để minh hoạ Mục 2.1 (Bài 2): nhiều đường cong x(t) khác nhau có thể đi
+// qua ĐÚNG cùng một tập điểm mẫu x[n] — đó chính là gốc rễ của aliasing.
+function sampleContinuous(continuousFn, numSamples, sampleRateHz) {
+  const out = new Array(numSamples);
+  for (let n = 0; n < numSamples; n++) out[n] = continuousFn(n / sampleRateHz);
+  return out;
+}
+
+// Tần số gập (alias) CÓ DẤU khi lấy mẫu 1 sine tần số freqHz ở tốc độ
+// sampleRateHz: dương = tín hiệu "nhìn thấy" quay/dao động THUẬN chiều đúng
+// tần số đó; âm = quay NGƯỢC chiều (hiệu ứng "bánh xe quay ngược" kinh điển,
+// Mục 2.3) — biên độ tuyệt đối luôn nằm trong [0, fs/2]. Toán: coi f/fs là
+// một số chu kỳ/mẫu, gập số đó về khoảng (-0.5, 0.5] chu kỳ/mẫu rồi nhân lại
+// với fs.
+function aliasFrequencySigned(freqHz, sampleRateHz) {
+  let cycles = (freqHz / sampleRateHz) % 1;
+  if (cycles > 0.5) cycles -= 1;
+  else if (cycles <= -0.5) cycles += 1;
+  return cycles * sampleRateHz;
+}
+
+// Tần số gập (alias) dùng khi chỉ cần TRỊ TUYỆT ĐỐI (vd tai người nghe thấy
+// "một cao độ", không phân biệt chiều quay) — luôn nằm trong [0, fs/2].
+function aliasFrequency(freqHz, sampleRateHz) {
+  return Math.abs(aliasFrequencySigned(freqHz, sampleRateHz));
+}
+
+// ---------------------------------------------------------------------------
+// Bài 3 — Lượng tử hoá & dải động. Mô phỏng lượng tử hoá kiểu PCM có dấu
+// B-bit: tín hiệu float trong [-fullScale, fullScale] bị làm tròn về 1 trong
+// 2^(B-1) mức nguyên — đúng cách một ADC/DAC thật lượng tử hoá (nối Series
+// 13 Bài 10).
+// ---------------------------------------------------------------------------
+
+// Lượng tử hoá 1 mẫu về đúng B bit (mid-tread, có dấu): levels = 2^(B-1) mức
+// dương tối đa — vd 16-bit cho 32768 mức, khớp PCM 16-bit thật.
+function quantize(x, bits, fullScale = 1) {
+  const levels = Math.pow(2, bits - 1);
+  const clamped = Math.max(-fullScale, Math.min(fullScale, x));
+  const scaled = clamped * levels;
+  const rounded = Math.round(scaled);
+  return rounded / levels;
+}
+
+// SQNR lý thuyết (dB) theo quy tắc ~6dB/bit: mỗi bit thêm vào giảm sàn nhiễu
+// lượng tử đúng một nửa (biên độ), tương đương +6,02dB tỷ số tín hiệu/nhiễu.
+function sqnrDbTheoretical(bits) {
+  return 6.02 * bits + 1.76;
+}
+
+// SQNR ĐO THẬT trên 1 tín hiệu cụ thể — so sánh trực tiếp với công thức lý
+// thuyết ở trên (Mục 3.5: "đo thật đối chiếu công thức").
+function measuredSqnrDb(signal, bits, fullScale = 1) {
+  const quantized = signal.map((x) => quantize(x, bits, fullScale));
+  const noise = signal.map((x, i) => quantized[i] - x);
+  return 10 * Math.log10(signalPower(signal) / signalPower(noise));
+}
+
+// Lượng tử hoá CÓ DITHER (Mục 3.4): cộng thêm 1 chút nhiễu tất định biên độ
+// ±1/2 LSB TRƯỚC khi làm tròn — phá vỡ tương quan giữa sai số lượng tử và
+// tín hiệu gốc (nguồn gốc méo hài khó chịu ở mức tín hiệu nhỏ), đổi lấy một
+// sàn nhiễu đều dễ chịu hơn tai người.
+function quantizeWithDither(x, bits, fullScale, n, seed = 1) {
+  const levels = Math.pow(2, bits - 1);
+  const lsb = fullScale / levels;
+  const ditherNoise = whiteNoise(n, lsb / 2, seed);
+  return quantize(x + ditherNoise, bits, fullScale);
+}
+
+// ---------------------------------------------------------------------------
+// Bài 4 — Hệ LTI, tích chập & đáp ứng xung.
+// ---------------------------------------------------------------------------
+
+// Tích chập trực tiếp y[n] = Σ_k x[k]·h[n-k] — thuật toán "lật-dịch-nhân-
+// cộng" O(N·M): với mỗi mẫu x[n], cộng dồn MỘT BẢN SAO của h đã scale theo
+// x[n] vào đúng vị trí bắt đầu từ n (tương đương lật h rồi trượt qua x, cách
+// hiểu kinh điển). Độ dài kết quả LUÔN là N+M-1 (Mục 4.4) — cấp thiếu mảng
+// là cắt cụt đuôi tín hiệu (vd mất đuôi reverb).
+function convolve(x, h) {
+  const N = x.length;
+  const M = h.length;
+  const y = new Array(N + M - 1).fill(0);
+  for (let n = 0; n < N; n++) {
+    for (let k = 0; k < M; k++) {
+      y[n + k] += x[n] * h[k];
+    }
+  }
+  return y;
+}
+
+// Tổng hợp một đáp ứng xung "phòng" TẤT ĐỊNH (deterministic) — nhiễu trắng
+// tắt dần theo hàm mũ, mô phỏng tiếng vang dội lại yếu dần theo thời gian
+// của một căn phòng thật (không dùng file ghi âm thật để giữ demo tự chứa,
+// không cần asset ngoài — bản chất vật lý của một IR phòng thật CŨNG LÀ
+// nhiễu tắt dần theo hàm mũ, chỉ khác ở chi tiết phổ tần theo vật liệu).
+function synthesizeRoomIR(durationSec, sampleRateHz, decayTau = 0.3, seed = 1) {
+  const numSamples = Math.round(durationSec * sampleRateHz);
+  const ir = new Array(numSamples);
+  for (let n = 0; n < numSamples; n++) {
+    const t = n / sampleRateHz;
+    ir[n] = whiteNoise(n, 1, seed) * Math.exp(-t / decayTau);
+  }
+  return ir;
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -132,6 +239,15 @@ export {
   signalEnergy,
   signalPower,
   discreteSinePeriod,
+  sampleContinuous,
+  aliasFrequencySigned,
+  aliasFrequency,
+  quantize,
+  sqnrDbTheoretical,
+  measuredSqnrDb,
+  quantizeWithDither,
+  convolve,
+  synthesizeRoomIR,
 };
 
 // ---------------------------------------------------------------------------
@@ -229,6 +345,115 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     );
     const step = generateSignal('step', 5, { n0: 2 });
     check('generateSignal(step, n0=2) đúng dãy 0,0,1,1,1', step.join(','), '0,0,1,1,1');
+  }
+
+  // --- Bài 2: sampleContinuous, aliasFrequency (có dấu & trị tuyệt đối) ---
+  {
+    const sampled = sampleContinuous((t) => Math.sin(2 * Math.PI * 1000 * t), 8, 8000);
+    checkTrue(
+      'sampleContinuous khớp đúng công thức x[n] = x(nT) của Bài 1',
+      sampled.every((v, n) => Math.abs(v - sine(n, 1000, 8000)) < 1e-9)
+    );
+
+    check('alias(6000Hz @ 8000Hz) trị tuyệt đối = 2000Hz (gập qua Nyquist 4000Hz)', aliasFrequency(6000, 8000), 2000);
+    check('alias(6000Hz @ 8000Hz) CÓ DẤU = -2000 (quay/dao động NGƯỢC chiều)', aliasFrequencySigned(6000, 8000), -2000);
+    check('alias(9000Hz @ 8000Hz) = 1000Hz (không cần gập, chỉ cuộn vòng)', aliasFrequency(9000, 8000), 1000);
+    check('alias(9000Hz @ 8000Hz) CÓ DẤU = +1000 (vẫn THUẬN chiều)', aliasFrequencySigned(9000, 8000), 1000);
+    check('alias(3000Hz @ 8000Hz) = 3000Hz (dưới Nyquist, không đổi)', aliasFrequency(3000, 8000), 3000);
+
+    // Verify pitfall Mục 2.3: tan so GAP (khong phan xa qua Nyquist) cho mau
+    // KHOP TUYET DOI voi tan so goc thap hon - khong dao pha.
+    checkTrue(
+      'Trường hợp cuộn vòng (không phản xạ): mẫu 9000Hz KHỚP TUYỆT ĐỐI mẫu 1000Hz (không đảo pha)',
+      [1, 2, 3, 5].every((n) => Math.abs(sine(n, 9000, 8000) - sine(n, 1000, 8000)) < 1e-9)
+    );
+    // Verify truong hop PHAN XA qua Nyquist: mau BI DAO PHA (dau am) so voi
+    // tan so gap - dung mach "banh xe quay nguoc".
+    checkTrue(
+      'Trường hợp phản xạ qua Nyquist: mẫu 6000Hz = ÂM của mẫu 2000Hz (đảo pha — gốc "bánh xe quay ngược")',
+      [1, 2, 3, 5].every((n) => Math.abs(sine(n, 6000, 8000) - -sine(n, 2000, 8000)) < 1e-9)
+    );
+  }
+
+  // --- Bài 3: quantize, SQNR lý thuyết vs đo thật, dither ---
+  {
+    check('quantize(0.5, 16-bit) = 0.5 (bội số chẵn của LSB, không sai số)', quantize(0.5, 16), 0.5);
+    check('quantize(0.3, 4-bit) = 0.25 (levels=8, 0.3*8=2.4 → làm tròn 2 → 2/8)', quantize(0.3, 4), 0.25);
+    check('quantize(0.3, 2-bit) = 0.5 (levels=2, 0.3*2=0.6 → làm tròn 1 → 1/2)', quantize(0.3, 2), 0.5);
+    check('quantize(1.5, 8-bit) bị kẹp về 1 (vượt fullScale=1 mặc định)', quantize(1.5, 8), 1);
+
+    checkTrue('SQNR lý thuyết 16-bit ≈ 98,08dB (quy tắc 6,02B+1,76)', Math.abs(sqnrDbTheoretical(16) - 98.08) < 0.01);
+    checkTrue('SQNR lý thuyết 8-bit ≈ 49,92dB', Math.abs(sqnrDbTheoretical(8) - 49.92) < 0.01);
+    checkTrue('SQNR lý thuyết 4-bit ≈ 25,84dB', Math.abs(sqnrDbTheoretical(4) - 25.84) < 0.01);
+
+    // Do that tren tin hieu sine 440Hz bien do 0.9 (44100Hz, 4410 mau = 0.1s)
+    // - phai kham sat rat gan cong thuc ly thuyet cho ca 3 muc bit.
+    const testSignal = [];
+    for (let n = 0; n < 4410; n++) testSignal.push(sine(n, 440, 44100, 0.9));
+    checkTrue(
+      'SQNR đo thật 16-bit khớp lý thuyết trong sai số 1dB (verified: ~97,4dB vs ~98,1dB)',
+      Math.abs(measuredSqnrDb(testSignal, 16) - sqnrDbTheoretical(16)) < 1
+    );
+    checkTrue(
+      'SQNR đo thật 8-bit khớp lý thuyết trong sai số 1dB',
+      Math.abs(measuredSqnrDb(testSignal, 8) - sqnrDbTheoretical(8)) < 1
+    );
+    checkTrue(
+      'SQNR đo thật 4-bit khớp lý thuyết trong sai số 1dB — quy tắc 6dB/bit ĐÚNG với số liệu thật',
+      Math.abs(measuredSqnrDb(testSignal, 4) - sqnrDbTheoretical(4)) < 1
+    );
+
+    checkTrue(
+      'quantizeWithDither nằm trong đúng dải lượng tử hợp lệ [-1, 1]',
+      Array.from({ length: 50 }, (_, n) => quantizeWithDither(0.3, 4, 1, n)).every((v) => v >= -1 && v <= 1)
+    );
+    checkTrue(
+      'Dither làm sai số lượng tử THAY ĐỔI theo từng mẫu (phá tương quan) thay vì lặp lại y hệt như không dither',
+      new Set(Array.from({ length: 50 }, (_, n) => quantizeWithDither(0.3, 4, 1, n).toFixed(6))).size > 1
+    );
+  }
+
+  // --- Bài 4: convolve, tính chất hệ LTI ---
+  {
+    check(
+      'convolve([1,2,3],[1,1]) = [1,3,5,3] (lật-dịch-nhân-cộng làm tay)',
+      convolve([1, 2, 3], [1, 1]).join(','),
+      '1,3,5,3'
+    );
+    checkTrue(
+      'Tích chập GIAO HOÁN: convolve(x,h) = convolve(h,x)',
+      convolve([1, 2, 3], [1, 1]).join(',') === convolve([1, 1], [1, 2, 3]).join(',')
+    );
+    check('Độ dài kết quả tích chập = N+M-1 (3 mẫu * 2 mẫu = 4 mẫu)', convolve([1, 2, 3], [1, 1]).length, 4);
+
+    // Chap voi xung don vi = phep dong nhat (dich theo vi tri xung) - Muc 4.2
+    const x4 = [4, 7, 2, 9];
+    const delta = [0, 1, 0, 0, 0].map((_, i) => unitImpulse(i, 1));
+    check(
+      'Tích chập với xung đơn vị dịch (δ[n-1]) = tín hiệu gốc dịch đúng 1 mẫu',
+      convolve(x4, delta).join(','),
+      '0,4,7,2,9,0,0,0'
+    );
+
+    // Tinh ket hop (associativity) - dung cho tinh chat ghep noi tiep Muc 4.4:
+    // chap 2 tang loc = chap voi TICH CHAP cua 2 dap ung xung.
+    const h1 = [0.5, 0.3, 0.1];
+    const h2 = [1, -0.2];
+    const testSig2 = Array.from({ length: 20 }, (_, i) => whiteNoise(i, 1, 7));
+    const seriesStepByStep = convolve(convolve(testSig2, h1), h2);
+    const seriesCombinedH = convolve(testSig2, convolve(h1, h2));
+    checkTrue(
+      'Ghép nối tiếp 2 bộ lọc = chập với TÍCH CHẬP của 2 đáp ứng xung (tính kết hợp, Mục 4.4)',
+      seriesStepByStep.every((v, i) => Math.abs(v - seriesCombinedH[i]) < 1e-9)
+    );
+
+    // Tong hop dap ung xung phong - dung cho demo reverb Muc 4.5
+    const roomIR = synthesizeRoomIR(0.05, 8000, 0.02, 3);
+    check('synthesizeRoomIR trả về đúng số mẫu (0,05s @ 8000Hz = 400 mẫu)', roomIR.length, 400);
+    checkTrue(
+      'Đáp ứng xung phòng TẮT DẦN theo thời gian (biên độ trung bình nửa sau nhỏ hơn hẳn nửa đầu)',
+      signalPower(roomIR.slice(0, 200)) > signalPower(roomIR.slice(200))
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
