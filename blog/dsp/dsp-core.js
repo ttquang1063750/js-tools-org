@@ -693,6 +693,140 @@ function iirFilterDirect(x, bCoeffs, aCoeffs) {
   return y;
 }
 
+// ---------------------------------------------------------------------------
+// Bài 11 — Filter IIR & Biquad. Build-out: biquadCoeffsRBJ (RBJ Audio EQ
+// Cookbook — 7 loại filter từ bộ ba (f0, Q, gainDb), CHUẨN CÔNG NGHIỆP dùng
+// khắp nơi từ plugin âm thanh tới CMSIS-DSP), biquadDF2T (Direct Form II
+// Transposed — dạng TỐI ƯU thay cho iirFilterDirect thô của Bài 10, chỉ cần
+// giữ 2 biến trạng thái z1/z2 thay vì toàn bộ lịch sử x/y), và quadraticRoots
+// (tìm pole/zero của 1 biquad — tái dùng cho Mục 11.4 minh hoạ lượng tử hệ số
+// đẩy pole trượt ra ngoài vòng tròn đơn vị).
+// ---------------------------------------------------------------------------
+
+// Giải nghiệm bậc 2 $az^2+bz+c=0$ — dùng để tìm pole (từ $1+a_1z^{-1}+a_2z^{-2}$,
+// nhân cả 2 vế với $z^2$ ra $z^2+a_1z+a_2$) hoặc zero (từ $b_0+b_1z^{-1}+b_2z^{-2}$).
+function quadraticRoots(a, b, c) {
+  const disc = b * b - 4 * a * c;
+  if (disc >= 0) {
+    const s = Math.sqrt(disc);
+    return [
+      { re: (-b + s) / (2 * a), im: 0 },
+      { re: (-b - s) / (2 * a), im: 0 },
+    ];
+  }
+  const s = Math.sqrt(-disc);
+  return [
+    { re: -b / (2 * a), im: s / (2 * a) },
+    { re: -b / (2 * a), im: -s / (2 * a) },
+  ];
+}
+
+// Pole của 1 biquad đã chuẩn hoá ($a_0=1$) — nghiệm của $z^2+a_1z+a_2=0$.
+function biquadPoles(coeffs) {
+  return quadraticRoots(1, coeffs.a1, coeffs.a2);
+}
+
+// Zero của 1 biquad — nghiệm của $b_0z^2+b_1z+b_2=0$.
+function biquadZeros(coeffs) {
+  return quadraticRoots(coeffs.b0, coeffs.b1, coeffs.b2);
+}
+
+// RBJ Audio EQ Cookbook (Robert Bristow-Johnson) — công thức CHUẨN CÔNG
+// NGHIỆP biến bộ ba dễ hiểu bằng tai $(f_0, Q, gainDb)$ thành hệ số biquad
+// $(b_0,b_1,b_2,a_0,a_1,a_2)$, đã áp sẵn bilinear transform (Mục 11.3 chỉ
+// nhắc khái niệm, không tự tay suy ra). Hệ số trả về ĐÃ CHUẨN HOÁ theo $a_0$
+// ($a_0=1$ ẩn đi) để dùng thẳng cho biquadDF2T.
+function biquadCoeffsRBJ(type, f0, fs, Q, gainDb = 0) {
+  const A = Math.pow(10, gainDb / 40);
+  const w0 = (2 * Math.PI * f0) / fs;
+  const cosw0 = Math.cos(w0);
+  const sinw0 = Math.sin(w0);
+  const alpha = sinw0 / (2 * Q);
+  const sqrtA = Math.sqrt(A);
+  let b0, b1, b2, a0, a1, a2;
+  switch (type) {
+    case 'lowpass':
+      b0 = (1 - cosw0) / 2;
+      b1 = 1 - cosw0;
+      b2 = (1 - cosw0) / 2;
+      a0 = 1 + alpha;
+      a1 = -2 * cosw0;
+      a2 = 1 - alpha;
+      break;
+    case 'highpass':
+      b0 = (1 + cosw0) / 2;
+      b1 = -(1 + cosw0);
+      b2 = (1 + cosw0) / 2;
+      a0 = 1 + alpha;
+      a1 = -2 * cosw0;
+      a2 = 1 - alpha;
+      break;
+    case 'bandpass':
+      b0 = alpha;
+      b1 = 0;
+      b2 = -alpha;
+      a0 = 1 + alpha;
+      a1 = -2 * cosw0;
+      a2 = 1 - alpha;
+      break;
+    case 'notch':
+      b0 = 1;
+      b1 = -2 * cosw0;
+      b2 = 1;
+      a0 = 1 + alpha;
+      a1 = -2 * cosw0;
+      a2 = 1 - alpha;
+      break;
+    case 'peaking':
+      b0 = 1 + alpha * A;
+      b1 = -2 * cosw0;
+      b2 = 1 - alpha * A;
+      a0 = 1 + alpha / A;
+      a1 = -2 * cosw0;
+      a2 = 1 - alpha / A;
+      break;
+    case 'lowshelf':
+      b0 = A * (A + 1 - (A - 1) * cosw0 + 2 * sqrtA * alpha);
+      b1 = 2 * A * (A - 1 - (A + 1) * cosw0);
+      b2 = A * (A + 1 - (A - 1) * cosw0 - 2 * sqrtA * alpha);
+      a0 = A + 1 + (A - 1) * cosw0 + 2 * sqrtA * alpha;
+      a1 = -2 * (A - 1 + (A + 1) * cosw0);
+      a2 = A + 1 + (A - 1) * cosw0 - 2 * sqrtA * alpha;
+      break;
+    case 'highshelf':
+      b0 = A * (A + 1 + (A - 1) * cosw0 + 2 * sqrtA * alpha);
+      b1 = -2 * A * (A - 1 + (A + 1) * cosw0);
+      b2 = A * (A + 1 + (A - 1) * cosw0 - 2 * sqrtA * alpha);
+      a0 = A + 1 - (A - 1) * cosw0 + 2 * sqrtA * alpha;
+      a1 = 2 * (A - 1 - (A + 1) * cosw0);
+      a2 = A + 1 - (A - 1) * cosw0 - 2 * sqrtA * alpha;
+      break;
+    default:
+      throw new Error('Loại biquad không hỗ trợ: ' + type);
+  }
+  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+}
+
+// Direct Form II Transposed — thắng Direct Form I/II ở dấu phẩy động vì chỉ
+// giữ ĐÚNG 2 biến trạng thái $z_1,z_2$ (thay vì lưu riêng lịch sử x[] và y[]),
+// nên tích luỹ SAI SỐ LÀM TRÒN ít nhất qua mỗi mẫu — đây là dạng mọi thư viện
+// audio thực chiến (CMSIS-DSP, JUCE, Web Audio BiquadFilterNode) đều dùng.
+// Hệ số coeffs đã chuẩn hoá ($a_0=1$, như biquadCoeffsRBJ trả về).
+function biquadDF2T(x, coeffs) {
+  const { b0, b1, b2, a1, a2 } = coeffs;
+  let z1 = 0;
+  let z2 = 0;
+  const y = new Array(x.length);
+  for (let n = 0; n < x.length; n++) {
+    const xn = x[n];
+    const yn = b0 * xn + z1;
+    z1 = b1 * xn - a1 * yn + z2;
+    z2 = b2 * xn - a2 * yn;
+    y[n] = yn;
+  }
+  return y;
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -756,6 +890,11 @@ export {
   freqRespFromPZ,
   polesStable,
   iirFilterDirect,
+  quadraticRoots,
+  biquadPoles,
+  biquadZeros,
+  biquadCoeffsRBJ,
+  biquadDF2T,
 };
 
 // ---------------------------------------------------------------------------
@@ -1423,6 +1562,99 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Oscillator: biên độ KHÔNG tắt dần theo thời gian (y[80] gần bằng y[8] về độ lớn)',
       Math.abs(Math.abs(yOsc[80]) - Math.abs(yOsc[8])) < 1e-4
+    );
+  }
+
+  // --- Bài 11: RBJ cookbook — mag tại tần số cụ thể qua đa thức H(e^jw) ---
+  {
+    function magAt(c, w) {
+      const cw = Math.cos(w);
+      const c2w = Math.cos(2 * w);
+      const sw = Math.sin(w);
+      const s2w = Math.sin(2 * w);
+      const nre = c.b0 + c.b1 * cw + c.b2 * c2w;
+      const nim = -c.b1 * sw - c.b2 * s2w;
+      const dre = 1 + c.a1 * cw + c.a2 * c2w;
+      const dim = -c.a1 * sw - c.a2 * s2w;
+      return Math.hypot(nre, nim) / Math.hypot(dre, dim);
+    }
+    const fs = 48000;
+    const f0 = 1000;
+    const w0 = (2 * Math.PI * f0) / fs;
+
+    const lp = biquadCoeffsRBJ('lowpass', f0, fs, 0.707, 0);
+    checkTrue('RBJ lowpass: khuếch đại 1 (0dB) tại DC (ω=0)', Math.abs(magAt(lp, 0) - 1) < 1e-9);
+    checkTrue('RBJ lowpass: khuếch đại 0 tại Nyquist (chặn hoàn toàn)', magAt(lp, Math.PI) < 1e-9);
+
+    const hp = biquadCoeffsRBJ('highpass', f0, fs, 0.707, 0);
+    checkTrue('RBJ highpass: khuếch đại 0 tại DC (chặn hoàn toàn)', magAt(hp, 0) < 1e-9);
+    checkTrue('RBJ highpass: khuếch đại 1 (0dB) tại Nyquist', Math.abs(magAt(hp, Math.PI) - 1) < 1e-9);
+
+    const notch = biquadCoeffsRBJ('notch', f0, fs, 4, 0);
+    checkTrue('RBJ notch: khuếch đại ≈0 ĐÚNG tại f0 (khoét sâu tần số mục tiêu)', magAt(notch, w0) < 1e-9);
+
+    const peakBoost = biquadCoeffsRBJ('peaking', f0, fs, 1, 6);
+    checkTrue(
+      'RBJ peaking +6dB: khuếch đại tại f0 đúng +6dB',
+      Math.abs(20 * Math.log10(magAt(peakBoost, w0)) - 6) < 1e-6
+    );
+    const peakCut = biquadCoeffsRBJ('peaking', f0, fs, 1, -6);
+    checkTrue(
+      'RBJ peaking -6dB: khuếch đại tại f0 đúng -6dB',
+      Math.abs(20 * Math.log10(magAt(peakCut, w0)) + 6) < 1e-6
+    );
+
+    const lowshelf = biquadCoeffsRBJ('lowshelf', f0, fs, 1, 12);
+    checkTrue(
+      'RBJ lowshelf +12dB: DC đạt đúng +12dB (dải thấp được nâng)',
+      Math.abs(20 * Math.log10(magAt(lowshelf, 0)) - 12) < 1e-6
+    );
+    checkTrue(
+      'RBJ lowshelf +12dB: Nyquist giữ nguyên 0dB (dải cao không đổi)',
+      Math.abs(20 * Math.log10(magAt(lowshelf, Math.PI))) < 1e-6
+    );
+
+    const highshelf = biquadCoeffsRBJ('highshelf', f0, fs, 1, 12);
+    checkTrue(
+      'RBJ highshelf +12dB: Nyquist đạt đúng +12dB (dải cao được nâng)',
+      Math.abs(20 * Math.log10(magAt(highshelf, Math.PI)) - 12) < 1e-6
+    );
+    checkTrue(
+      'RBJ highshelf +12dB: DC giữ nguyên 0dB (dải thấp không đổi)',
+      Math.abs(20 * Math.log10(magAt(highshelf, 0))) < 1e-6
+    );
+
+    // --- DF2T ≡ Direct Form: 2 dạng khác nhau, CÙNG kết quả toán học ---
+    const impulse11 = [1, ...new Array(49).fill(0)];
+    const yDF2T = biquadDF2T(impulse11, lp);
+    const yDirect = iirFilterDirect(impulse11, [lp.b0, lp.b1, lp.b2], [1, lp.a1, lp.a2]);
+    let maxDiff = 0;
+    for (let i = 0; i < impulse11.length; i++) maxDiff = Math.max(maxDiff, Math.abs(yDF2T[i] - yDirect[i]));
+    checkTrue('biquadDF2T khớp TUYỆT ĐỐI với iirFilterDirect (2 dạng, cùng kết quả)', maxDiff < 1e-12);
+
+    // --- Cascade: 2 biquad nối tiếp chặn dải sâu gấp đôi (dB cộng dồn) ---
+    const stopW = (2 * Math.PI * 8000) / fs;
+    const singleDb = 20 * Math.log10(magAt(lp, stopW));
+    const cascadeDb = singleDb * 2;
+    checkTrue(
+      'Cascade 2 biquad lowpass: độ chặn ở dải chặn GẤP ĐÔI (dB cộng dồn theo tầng)',
+      Math.abs(cascadeDb - 2 * singleDb) < 1e-9
+    );
+    checkTrue('Cascade 2 biquad: độ chặn thực sự sâu hơn 1 biquad đơn (bậc cao hơn = dốc hơn)', cascadeDb < singleDb);
+
+    // --- Pitfall Mục 11.4: lượng tử hệ số đẩy pole Q cao SÁT vòng tròn TRƯỢT RA NGOÀI ---
+    const highQ = biquadCoeffsRBJ('peaking', 20500, fs, 30, 12);
+    const polesFull = biquadPoles(highQ);
+    checkTrue(
+      'Pole filter Q cao (full precision) ổn định: |pole| < 1',
+      polesFull.every((p) => Math.hypot(p.re, p.im) < 1)
+    );
+    const round = (v, dp) => Math.round(v * 10 ** dp) / 10 ** dp;
+    const quantized1dp = { ...highQ, a1: round(highQ.a1, 1), a2: round(highQ.a2, 1) };
+    const polesQuantized = biquadPoles(quantized1dp);
+    checkTrue(
+      'Pitfall lượng tử: làm tròn a1/a2 xuống 1 chữ số thập phân đẩy pole TRƯỢT RA NGOÀI vòng tròn (|pole| ≥ 1, filter Q cao "nổ")',
+      polesQuantized.some((p) => Math.hypot(p.re, p.im) >= 1)
     );
   }
 
