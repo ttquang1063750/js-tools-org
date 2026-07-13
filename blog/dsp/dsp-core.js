@@ -610,6 +610,89 @@ function firFrequencyResponse(h, fftSize) {
   return fft(zeroPad(h, fftSize));
 }
 
+// ---------------------------------------------------------------------------
+// Bài 10 — Z-transform & mặt phẳng z. Build-out: 4 hàm số phức cơ bản (cộng/
+// trừ/nhân/chia — DFT/FFT trước giờ chỉ cần cộng/trừ/nhân, giờ Mục 10.3 cần
+// CHIA để tính H(z)=B(z)/A(z)), polyFromRoots (nghiệm → đa thức, "tên gọi
+// thành hình ảnh" của pole/zero), freqRespFromPZ (đọc đáp ứng tần số bằng
+// HÌNH HỌC — khoảng cách tới pole/zero, đúng tinh thần Mục 10.3), và
+// iirFilterDirect (chạy phương trình sai phân trực tiếp — minh hoạ ổn định/
+// mất ổn định/oscillator ở Mục 10.4, CHƯA phải dạng tối ưu DF2T của Bài 11).
+// ---------------------------------------------------------------------------
+
+function complexAdd(a, b) {
+  return { re: a.re + b.re, im: a.im + b.im };
+}
+function complexSub(a, b) {
+  return { re: a.re - b.re, im: a.im - b.im };
+}
+function complexMul(a, b) {
+  return { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re };
+}
+function complexDiv(a, b) {
+  const denom = b.re * b.re + b.im * b.im;
+  return { re: (a.re * b.re + a.im * b.im) / denom, im: (a.im * b.re - a.re * b.im) / denom };
+}
+
+// Khai triển đa thức từ danh sách NGHIỆM (roots, mỗi nghiệm 1 số phức {re,im})
+// — tích các thừa số $(1 - r_k z^{-1})$, trả về mảng hệ số $[c_0, c_1, ...]$
+// (luôn $c_0=1$). Đây chính là "tên gọi thành hình ảnh" của Mục 10.2: cho
+// TRƯỚC vị trí pole/zero trên mặt phẳng z, ra NGAY hệ số $b$/$a$ của phương
+// trình sai phân — không cần giải ngược lại từ đầu.
+function polyFromRoots(roots) {
+  let coeffs = [{ re: 1, im: 0 }];
+  for (const r of roots) {
+    const next = new Array(coeffs.length + 1).fill(null).map(() => ({ re: 0, im: 0 }));
+    for (let i = 0; i < coeffs.length; i++) {
+      next[i] = complexAdd(next[i], coeffs[i]);
+      next[i + 1] = complexSub(next[i + 1], complexMul(coeffs[i], r));
+    }
+    coeffs = next;
+  }
+  return coeffs;
+}
+
+// Đáp ứng tần số $H(e^{j\omega})$ tính bằng HÌNH HỌC thuần tuý (Mục 10.3,
+// KHÔNG cần khai triển đa thức trước): $|H(e^{j\omega})|$ = tích khoảng
+// cách từ điểm $e^{j\omega}$ (đi bộ quanh vòng tròn đơn vị) tới từng zero,
+// chia cho tích khoảng cách tới từng pole. Trả về mảng {omega, magnitude,
+// phase} cho $\omega$ chạy từ 0 tới $\pi$ (Nyquist).
+function freqRespFromPZ(zeros, poles, gain, numPoints) {
+  const result = new Array(numPoints);
+  for (let i = 0; i < numPoints; i++) {
+    const omega = (Math.PI * i) / (numPoints - 1);
+    const point = { re: Math.cos(omega), im: Math.sin(omega) };
+    let num = { re: gain, im: 0 };
+    for (const z of zeros) num = complexMul(num, complexSub(point, z));
+    let den = { re: 1, im: 0 };
+    for (const p of poles) den = complexMul(den, complexSub(point, p));
+    const H = complexDiv(num, den);
+    result[i] = { omega, magnitude: complexMagnitude(H), phase: complexPhase(H) };
+  }
+  return result;
+}
+
+// Ổn định (Mục 10.4): MỌI pole phải nằm TRONG vòng tròn đơn vị (|pole| < 1).
+function polesStable(poles) {
+  return poles.every((p) => complexMagnitude(p) < 1);
+}
+
+// Chạy TRỰC TIẾP phương trình sai phân $y[n] = \frac{1}{a_0}\left(\sum_k b_k x[n-k] - \sum_{k \geq 1} a_k y[n-k]\right)$
+// — CHƯA tối ưu (đó là Direct Form II Transposed, Bài 11), nhưng đủ để minh
+// hoạ TRỰC TIẾP hành vi thật của hệ thống theo vị trí pole: ổn định (decay),
+// mất ổn định (tăng trưởng mũ), hay dao động tự duy trì (pole đúng trên
+// vòng tròn — Mục 10.4 "chế oscillator số").
+function iirFilterDirect(x, bCoeffs, aCoeffs) {
+  const y = new Array(x.length).fill(0);
+  for (let n = 0; n < x.length; n++) {
+    let acc = 0;
+    for (let k = 0; k < bCoeffs.length; k++) if (n - k >= 0) acc += bCoeffs[k] * x[n - k];
+    for (let k = 1; k < aCoeffs.length; k++) if (n - k >= 0) acc -= aCoeffs[k] * y[n - k];
+    y[n] = acc / aCoeffs[0];
+  }
+  return y;
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -665,6 +748,14 @@ export {
   firBandpassDesign,
   firGroupDelay,
   firFrequencyResponse,
+  complexAdd,
+  complexSub,
+  complexMul,
+  complexDiv,
+  polyFromRoots,
+  freqRespFromPZ,
+  polesStable,
+  iirFilterDirect,
 };
 
 // ---------------------------------------------------------------------------
@@ -1257,6 +1348,81 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Trung bình trượt (FIR đặc biệt): làm GIẢM phương sai rõ rệt so với tín hiệu nhiễu gốc',
       variance(smoothed) < variance(noisy)
+    );
+  }
+
+  // --- Bài 10: Z-transform & mặt phẳng z ---
+  {
+    // Da thuc tu nghiem: 1 nghiem thuc
+    const c1 = polyFromRoots([{ re: 0.5, im: 0 }]);
+    check('polyFromRoots([0.5]): c0 = 1', c1[0].re, 1);
+    checkTrue('polyFromRoots([0.5]): c1 = -0.5', Math.abs(c1[1].re - -0.5) < 1e-9);
+
+    // Da thuc tu nghiem: 1 cap lien hop phuc (r=0.7, theta=pi/3) - he so
+    // KET QUA phai la SO THUC (phan ao ~0), dung cong thuc kinh dien
+    // c1 = -2r*cos(theta), c2 = r^2
+    const r = 0.7;
+    const theta = Math.PI / 3;
+    const pPair = [
+      { re: r * Math.cos(theta), im: r * Math.sin(theta) },
+      { re: r * Math.cos(theta), im: -r * Math.sin(theta) },
+    ];
+    const c2 = polyFromRoots(pPair);
+    checkTrue(
+      'polyFromRoots(cặp liên hợp): phần ảo của MỌI hệ số ≈ 0 (kết quả là số thực)',
+      c2.every((c) => Math.abs(c.im) < 1e-9)
+    );
+    checkTrue('polyFromRoots(cặp liên hợp): c1 = -2r·cos(θ)', Math.abs(c2[1].re - -2 * r * Math.cos(theta)) < 1e-9);
+    checkTrue('polyFromRoots(cặp liên hợp): c2 = r²', Math.abs(c2[2].re - r * r) < 1e-9);
+
+    // Dap ung tan so bang HINH HOC (Muc 10.3) - doi chieu voi cong thuc dai
+    // so truc tiep cua he 1-pole don gian H(z) = 1/(1 - 0.5 z^-1)
+    const resp = freqRespFromPZ([], [{ re: 0.5, im: 0 }], 1, 5);
+    checkTrue('freqRespFromPZ: tại ω=0, |H|=1/(1-0,5)=2 (verified)', Math.abs(resp[0].magnitude - 2) < 1e-9);
+    checkTrue('freqRespFromPZ: tại ω=π, |H|=1/(1+0,5)=0,6667 (verified)', Math.abs(resp[4].magnitude - 2 / 3) < 1e-9);
+
+    // On dinh (Muc 10.4): pole TRONG vong tron => on dinh
+    checkTrue('polesStable: pole |0,9| < 1 → ổn định', polesStable([{ re: 0.9, im: 0 }]) === true);
+    checkTrue('polesStable: pole |1,1| > 1 → KHÔNG ổn định', polesStable([{ re: 1.1, im: 0 }]) === false);
+    checkTrue(
+      'polesStable: pole đúng trên vòng tròn |1,0| → coi là KHÔNG ổn định nghiêm ngặt',
+      polesStable([{ re: 1, im: 0 }]) === false
+    );
+
+    // Dap ung xung THAT (Muc 10.4): pole trong/ngoai/tren vong tron
+    const impulse = [1, ...new Array(99).fill(0)];
+    const yStable = iirFilterDirect(impulse, [1], [1, -0.9]);
+    checkTrue('Pole r=0,9 (TRONG vòng tròn): đáp ứng xung TẮT DẦN về gần 0 sau 100 mẫu', Math.abs(yStable[99]) < 0.001);
+
+    const yUnstable = iirFilterDirect(impulse, [1], [1, -1.1]);
+    checkTrue('Pole r=1,1 (NGOÀI vòng tròn): đáp ứng xung TĂNG TRƯỞNG MŨ, filter "nổ"', Math.abs(yUnstable[99]) > 1000);
+
+    const yMarginal = iirFilterDirect(impulse, [1], [1, -1.0]);
+    checkTrue(
+      'Pole r=1,0 (ĐÚNG trên vòng tròn, θ=0): đáp ứng xung ổn định KHÔNG đổi (không tắt, không nổ) = 1',
+      Math.abs(yMarginal[99] - 1) < 1e-9
+    );
+
+    // Oscillator so (Muc 10.5): cap pole DUNG tren vong tron, theta=pi/4
+    // (chu ky dung 8 mau) - dap ung xung dao dong khong tat dan, khong no
+    const thetaOsc = Math.PI / 4;
+    const poleOscPair = [
+      { re: Math.cos(thetaOsc), im: Math.sin(thetaOsc) },
+      { re: Math.cos(thetaOsc), im: -Math.sin(thetaOsc) },
+    ];
+    const aOsc = polyFromRoots(poleOscPair).map((c) => c.re);
+    checkTrue(
+      'Oscillator: cặp pole trên vòng tròn cho hệ số a THỰC (phần ảo ≈ 0)',
+      polyFromRoots(poleOscPair).every((c) => Math.abs(c.im) < 1e-9)
+    );
+    const yOsc = iirFilterDirect(impulse, [1], aOsc);
+    checkTrue(
+      'Oscillator: đáp ứng xung có CHU KỲ đúng 8 mẫu (θ=π/4 → chu kỳ 2π/θ=8) — y[8] = y[16]',
+      Math.abs(yOsc[8] - yOsc[16]) < 1e-6
+    );
+    checkTrue(
+      'Oscillator: biên độ KHÔNG tắt dần theo thời gian (y[80] gần bằng y[8] về độ lớn)',
+      Math.abs(Math.abs(yOsc[80]) - Math.abs(yOsc[8])) < 1e-4
     );
   }
 
