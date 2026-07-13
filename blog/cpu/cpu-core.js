@@ -76,8 +76,11 @@ const ALU_OPS = ['ADD', 'SUB', 'AND', 'OR', 'XOR'];
 //   V (Overflow) : tràn CÓ dấu (bù 2) — kết quả sai dấu lý thuyết.
 // Với AND/OR/XOR (phép luận lý) thì C và V luôn = false.
 function aluExecute(a, b, op, bits = 4) {
-  const mask = (1 << bits) - 1;
-  const signBit = 1 << (bits - 1);
+  // Luu y: "1 << 32" trong JS KHONG cho 2^32 - toan tu dich bit chi dung 32-bit
+  // va so bit dich duoc lay MOD 32, nen "1 << 32" === "1 << 0" === 1 (bug that
+  // neu viet mask = (1<<bits)-1 truc tiep cho bits=32). Tach truong hop bits=32.
+  const mask = bits >= 32 ? 0xffffffff : (1 << bits) - 1;
+  const signBit = bits >= 32 ? 0x80000000 : 1 << (bits - 1);
   const aM = a & mask;
   const bM = b & mask;
   let result = 0;
@@ -200,6 +203,171 @@ function runProgram(program, maxSteps = 1000) {
   return { state, steps };
 }
 
+// ---------------------------------------------------------------------------
+// Bài 3 — Hợp ngữ RISC-V (RV32I) & Đường đi dữ liệu đơn chu kỳ. Toy CPU của
+// Bài 2 dùng tập lệnh MINI tự bịa (object {op,...}) — bài này thay bằng tập
+// lệnh THẬT (RV32I), mã hoá đúng chuẩn thành số 32-bit, y hệt mọi chip RISC-V
+// thật ngoài đời (Mục 3.1-3.2). Bộ thực thi (Mục 3.3) TÁI DÙNG trực tiếp
+// aluExecute() của Bài 1 cho mọi phép ADD/SUB/AND/OR/XOR.
+// ---------------------------------------------------------------------------
+
+// 4 opcode 7-bit chuẩn RV32I dùng trong bài (giá trị THẬT theo đặc tả RISC-V,
+// không phải tự đặt): R-type (ADD/SUB/AND/OR/XOR), I-type ALU (ADDI/ANDI/
+// ORI/XORI), I-type LOAD (LW), S-type (SW).
+const RV32I_OPCODE = { R: 0b0110011, I_ALU: 0b0010011, I_LOAD: 0b0000011, S: 0b0100011 };
+
+// Bảng tra mnemonic -> {type, funct3, funct7} — funct3/funct7 là "mã phụ"
+// phân biệt các lệnh CÙNG opcode (vd ADD và SUB cùng opcode R nhưng khác
+// funct7: 0000000 vs 0100000 — bit thứ 30 của funct7 chính là "cờ trừ").
+const RV32I_MNEMONIC = {
+  ADD: { type: 'R', funct3: 0b000, funct7: 0b0000000 },
+  SUB: { type: 'R', funct3: 0b000, funct7: 0b0100000 },
+  AND: { type: 'R', funct3: 0b111, funct7: 0b0000000 },
+  OR: { type: 'R', funct3: 0b110, funct7: 0b0000000 },
+  XOR: { type: 'R', funct3: 0b100, funct7: 0b0000000 },
+  ADDI: { type: 'I', funct3: 0b000 },
+  ANDI: { type: 'I', funct3: 0b111 },
+  ORI: { type: 'I', funct3: 0b110 },
+  XORI: { type: 'I', funct3: 0b100 },
+  LW: { type: 'ILOAD', funct3: 0b010 },
+  SW: { type: 'S', funct3: 0b010 },
+};
+
+// Mnemonic ALU tương ứng gọi vào aluExecute() (Bài 1) — ADDI/ANDI/ORI/XORI chỉ
+// là ADD/AND/OR/XOR với toán hạng thứ 2 là HẰNG SỐ (immediate) thay vì thanh ghi.
+const RV32I_ALU_OP = {
+  ADD: 'ADD',
+  SUB: 'SUB',
+  AND: 'AND',
+  OR: 'OR',
+  XOR: 'XOR',
+  ADDI: 'ADD',
+  ANDI: 'AND',
+  ORI: 'OR',
+  XORI: 'XOR',
+};
+
+// Dịch (assemble) MỘT lệnh Assembly sang số máy 32-bit (Mục 3.2). `args` tuỳ
+// theo dạng: R-type {rd,rs1,rs2}; I-type ALU {rd,rs1,imm}; LW {rd,rs1,imm}
+// (rs1=thanh ghi gốc, imm=độ lệch); SW {rs1,rs2,imm} (rs1=gốc, rs2=thanh ghi
+// nguồn cần lưu — đúng cú pháp thật `sw rs2, imm(rs1)`).
+function assembleRV32I(mnemonic, args) {
+  const info = RV32I_MNEMONIC[mnemonic];
+  if (!info) throw new Error('Mnemonic RV32I khong ho tro: ' + mnemonic);
+  if (info.type === 'R') {
+    return (
+      (((info.funct7 & 0x7f) << 25) |
+        ((args.rs2 & 0x1f) << 20) |
+        ((args.rs1 & 0x1f) << 15) |
+        ((info.funct3 & 0x7) << 12) |
+        ((args.rd & 0x1f) << 7) |
+        RV32I_OPCODE.R) >>>
+      0
+    );
+  }
+  if (info.type === 'I') {
+    return (
+      (((args.imm & 0xfff) << 20) |
+        ((args.rs1 & 0x1f) << 15) |
+        ((info.funct3 & 0x7) << 12) |
+        ((args.rd & 0x1f) << 7) |
+        RV32I_OPCODE.I_ALU) >>>
+      0
+    );
+  }
+  if (info.type === 'ILOAD') {
+    return (
+      (((args.imm & 0xfff) << 20) |
+        ((args.rs1 & 0x1f) << 15) |
+        ((info.funct3 & 0x7) << 12) |
+        ((args.rd & 0x1f) << 7) |
+        RV32I_OPCODE.I_LOAD) >>>
+      0
+    );
+  }
+  if (info.type === 'S') {
+    const imm11_5 = (args.imm >> 5) & 0x7f;
+    const imm4_0 = args.imm & 0x1f;
+    return (
+      ((imm11_5 << 25) |
+        ((args.rs2 & 0x1f) << 20) |
+        ((args.rs1 & 0x1f) << 15) |
+        ((info.funct3 & 0x7) << 12) |
+        (imm4_0 << 7) |
+        RV32I_OPCODE.S) >>>
+      0
+    );
+  }
+  throw new Error('Dang lenh khong ho tro: ' + info.type);
+}
+
+// Giải mã (decode) một số máy 32-bit ngược lại thành mnemonic + toán hạng
+// (Mục 3.2, chiều ngược của assembleRV32I — "khứ hồi": assemble rồi decode
+// phải cho lại ĐÚNG input ban đầu).
+function decodeRV32I(word) {
+  const opcode = word & 0x7f;
+  const rd = (word >>> 7) & 0x1f;
+  const funct3 = (word >>> 12) & 0x7;
+  const rs1 = (word >>> 15) & 0x1f;
+  const rs2 = (word >>> 20) & 0x1f;
+  const funct7 = (word >>> 25) & 0x7f;
+
+  if (opcode === RV32I_OPCODE.R) {
+    const mnemonic = Object.keys(RV32I_MNEMONIC).find(
+      (m) =>
+        RV32I_MNEMONIC[m].type === 'R' && RV32I_MNEMONIC[m].funct3 === funct3 && RV32I_MNEMONIC[m].funct7 === funct7
+    );
+    return { mnemonic, type: 'R', rd, rs1, rs2 };
+  }
+  if (opcode === RV32I_OPCODE.I_ALU) {
+    const mnemonic = Object.keys(RV32I_MNEMONIC).find(
+      (m) => RV32I_MNEMONIC[m].type === 'I' && RV32I_MNEMONIC[m].funct3 === funct3
+    );
+    return { mnemonic, type: 'I', rd, rs1, imm: word >> 20 };
+  }
+  if (opcode === RV32I_OPCODE.I_LOAD) {
+    return { mnemonic: 'LW', type: 'ILOAD', rd, rs1, imm: word >> 20 };
+  }
+  if (opcode === RV32I_OPCODE.S) {
+    let imm = ((word >> 25) << 5) | ((word >>> 7) & 0x1f);
+    if (imm & 0x800) imm |= 0xfffff000; // mo rong dau (sign-extend) 12-bit
+    return { mnemonic: 'SW', type: 'S', rs1, rs2, imm };
+  }
+  throw new Error('Opcode khong hop le: 0x' + opcode.toString(16));
+}
+
+// Bộ thực thi đơn chu kỳ (Mục 3.3): decode MỘT lệnh 32-bit rồi thực thi ngay
+// trong CÙNG một chu kỳ xung nhịp — TÁI DÙNG aluExecute() của Bài 1 cho mọi
+// phép ADD/SUB/AND/OR/XOR (kể cả dạng immediate). x0 LUÔN đọc là 0 (thanh ghi
+// cứng, mọi lệnh ghi vào x0 đều bị bỏ qua — quy ước RISC-V thật).
+function executeRV32I(word, regs, mem) {
+  const d = decodeRV32I(word);
+  if (d.type === 'R') {
+    const r = aluExecute(regs[d.rs1], regs[d.rs2], RV32I_ALU_OP[d.mnemonic], 32);
+    if (d.rd !== 0) regs[d.rd] = r.result;
+  } else if (d.type === 'I') {
+    const r = aluExecute(regs[d.rs1], d.imm, RV32I_ALU_OP[d.mnemonic], 32);
+    if (d.rd !== 0) regs[d.rd] = r.result;
+  } else if (d.type === 'ILOAD') {
+    if (d.rd !== 0) regs[d.rd] = mem[regs[d.rs1] + d.imm] || 0;
+  } else if (d.type === 'S') {
+    mem[regs[d.rs1] + d.imm] = regs[d.rs2];
+  }
+  regs[0] = 0;
+  return d;
+}
+
+// Chạy trọn một chương trình RV32I THẲNG (chưa có lệnh nhảy — datapath đơn
+// chu kỳ Mục 3.3 chỉ xử lý luồng tuần tự) trên 32 thanh ghi x0-x31 + bộ nhớ
+// dữ liệu dạng object thưa (địa chỉ -> giá trị).
+function runRV32IProgram(words) {
+  const regs = new Array(32).fill(0);
+  const mem = {};
+  const trace = [];
+  for (const word of words) trace.push(executeRV32I(word, regs, mem));
+  return { regs, mem, trace };
+}
+
 export {
   toBinString,
   toSigned,
@@ -211,6 +379,12 @@ export {
   createCpuState,
   cpuStep,
   runProgram,
+  RV32I_OPCODE,
+  RV32I_MNEMONIC,
+  assembleRV32I,
+  decodeRV32I,
+  executeRV32I,
+  runRV32IProgram,
 };
 
 // ---------------------------------------------------------------------------
@@ -391,6 +565,61 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Pitfall self-modifying code: STORE ghi de len vung LỆNH khiến fetch kế tiếp đọc phải rác, ném lỗi (verified thật, không phải suy diễn)',
       selfModifyThrew
     );
+  }
+
+  // --- Bài 3: RV32I assembler/decoder + đường đi dữ liệu đơn chu kỳ ---
+  {
+    // Khop CHINH XAC voi ma may that (verified bang tinh tay theo dac ta RISC-V)
+    check(
+      'assembleRV32I ADD x3,x1,x2 = 0x2081b3 (dung dac ta RV32I)',
+      assembleRV32I('ADD', { rd: 3, rs1: 1, rs2: 2 }),
+      0x2081b3
+    );
+    check(
+      'assembleRV32I SUB x3,x1,x2 = 0x402081b3 (funct7 bit dau phan biet SUB voi ADD)',
+      assembleRV32I('SUB', { rd: 3, rs1: 1, rs2: 2 }),
+      0x402081b3
+    );
+    check('assembleRV32I ADDI x1,x0,5 = 0x500093', assembleRV32I('ADDI', { rd: 1, rs1: 0, imm: 5 }), 0x500093);
+    check('assembleRV32I LW x5,8(x2) = 0x812283', assembleRV32I('LW', { rd: 5, rs1: 2, imm: 8 }), 0x812283);
+    check('assembleRV32I SW x5,8(x2) = 0x512423', assembleRV32I('SW', { rs1: 2, rs2: 5, imm: 8 }), 0x512423);
+
+    // Khu hoi: assemble roi decode phai cho DUNG lai input ban dau
+    for (const [mnemonic, args] of [
+      ['ADD', { rd: 3, rs1: 1, rs2: 2 }],
+      ['SUB', { rd: 7, rs1: 4, rs2: 5 }],
+      ['AND', { rd: 1, rs1: 2, rs2: 3 }],
+      ['OR', { rd: 1, rs1: 2, rs2: 3 }],
+      ['XOR', { rd: 1, rs1: 2, rs2: 3 }],
+      ['ADDI', { rd: 1, rs1: 0, imm: 5 }],
+      ['LW', { rd: 5, rs1: 2, imm: 8 }],
+      ['SW', { rs1: 2, rs2: 5, imm: 8 }],
+    ]) {
+      const word = assembleRV32I(mnemonic, args);
+      const decoded = decodeRV32I(word);
+      checkTrue(`RV32I khứ hồi ${mnemonic}: decode(assemble(...)) khớp mnemonic`, decoded.mnemonic === mnemonic);
+    }
+
+    // Datapath don chu ky: chuong trinh THAT (5+3)-2, luu vao mem[100], doc lai
+    const program = [
+      assembleRV32I('ADDI', { rd: 1, rs1: 0, imm: 5 }),
+      assembleRV32I('ADDI', { rd: 2, rs1: 0, imm: 3 }),
+      assembleRV32I('ADD', { rd: 3, rs1: 1, rs2: 2 }),
+      assembleRV32I('ADDI', { rd: 4, rs1: 0, imm: 2 }),
+      assembleRV32I('SUB', { rd: 5, rs1: 3, rs2: 4 }),
+      assembleRV32I('SW', { rs1: 0, rs2: 5, imm: 100 }),
+      assembleRV32I('LW', { rd: 6, rs1: 0, imm: 100 }),
+    ];
+    const { regs, mem } = runRV32IProgram(program);
+    check('RV32I datapath: x3 = 5+3 = 8 (dung aluExecute cua Bai 1)', regs[3], 8);
+    check('RV32I datapath: x5 = (5+3)-2 = 6', regs[5], 6);
+    check('RV32I datapath: SW ghi dung mem[100] = 6', mem[100], 6);
+    check('RV32I datapath: LW doc lai dung x6 = 6', regs[6], 6);
+
+    // x0 la thanh ghi cung, MOI lenh ghi vao x0 deu bi bo qua
+    const programX0 = [assembleRV32I('ADDI', { rd: 0, rs1: 0, imm: 42 })];
+    const { regs: regsX0 } = runRV32IProgram(programX0);
+    check('RV32I x0 la hang so cung: ghi 42 vao x0 van doc ra 0', regsX0[0], 0);
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');

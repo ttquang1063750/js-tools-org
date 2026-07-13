@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 3: Hợp Ngữ RISC-V &amp; Đường Đi Của Dữ Liệu (Datapath) — js-tools</title>
+    <meta
+      name="description"
+      content="Tập lệnh RV32I R-type/I-type/S-type, dịch Assembly sang mã máy 32-bit đúng đặc tả thật, và thiết kế datapath đơn chu kỳ. Verified thật bằng engine tự viết: ADD x3,x1,x2 dịch đúng thành 0x2081b3, SUB (cùng opcode, khác funct7) thành 0x402081b3; khứ hồi assemble→decode khớp trên cả 8 mnemonic; chương trình RV32I thật (5+3)-2 chạy qua datapath cho đúng x5=6, lưu/đọc lại mem[100] chính xác. Demo: gõ lệnh Assembly, xem breakdown bit và đường đi dữ liệu phát sáng."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/cpu/cpu-riscv-datapath" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/cpu/cpu-riscv-datapath" />
+    <meta property="og:title" content="Bài 3: Hợp Ngữ RISC-V &amp; Đường Đi Của Dữ Liệu (Datapath) — js-tools" />
+    <meta
+      property="og:description"
+      content="RV32I R/I/S-type, dịch Assembly sang mã máy 32-bit, datapath đơn chu kỳ. Verified: ADD x3,x1,x2 = 0x2081b3, SUB = 0x402081b3, khứ hồi assemble/decode khớp trên 8 mnemonic, chương trình thật (5+3)-2 chạy đúng qua datapath. Demo gõ Assembly xem bit breakdown + đường đi dữ liệu."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 3: Hợp Ngữ RISC-V &amp; Đường Đi Của Dữ Liệu (Datapath) — js-tools" />
+    <meta
+      name="twitter:description"
+      content="RV32I R/I/S-type, dịch Assembly sang mã máy, datapath đơn chu kỳ. Verified: ADD=0x2081b3, SUB=0x402081b3, khứ hồi khớp trên 8 mnemonic, chương trình thật chạy đúng qua datapath."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .datapath-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 24px;
+        color: #242424;
+      }
+      @media (max-width: 768px) {
+        .datapath-container {
+          grid-template-columns: 1fr;
+        }
+      }
+      .datapath-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .datapath-controls input[type='text'] {
+        font-family: Consolas, Monaco, monospace;
+        font-size: 15px;
+        padding: 10px 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+      }
+      .datapath-btns {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .datapath-btn {
+        flex: 1;
+        min-width: 90px;
+        height: 38px;
+        background: #e2e8f0;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .datapath-btn:hover {
+        background: #ea580c;
+        color: #fff;
+        border-color: #c2410c;
+      }
+      .datapath-bits {
+        background: #1e293b;
+        color: #38bdf8;
+        border-radius: 6px;
+        padding: 12px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 12px;
+        word-break: break-all;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+      .datapath-regs {
+        font-family: Consolas, Monaco, monospace;
+        font-size: 13px;
+        color: #334155;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 10px;
+      }
+      .datapath-status {
+        font-size: 13px;
+        color: #475569;
+        font-style: italic;
+      }
+      .datapath-schematic {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #fff;
+        padding: 8px;
+      }
+      .dp-block {
+        fill: #f1f5f9;
+        stroke: #94a3b8;
+        stroke-width: 2;
+        transition: all 0.3s;
+      }
+      .dp-block.active {
+        fill: rgba(234, 88, 12, 0.15);
+        stroke: #ea580c;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 3: Hợp Ngữ RISC-V & Đường Đi Của Dữ Liệu (Datapath)",
+        "description": "RV32I R/I/S-type, dịch Assembly sang mã máy 32-bit, datapath đơn chu kỳ. Verified: ADD x3,x1,x2 = 0x2081b3, SUB = 0x402081b3, khứ hồi assemble/decode khớp trên 8 mnemonic, chương trình thật (5+3)-2 chạy đúng qua datapath. Demo gõ Assembly xem bit breakdown + đường đi dữ liệu.",
+        "url": "https://js-tools.org/blog/cpu/cpu-riscv-datapath",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-15"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--cpu">
+        <div class="container">
+          <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--cpu">Bài 3 · Kiến Trúc Máy Tính</div>
+          <h1 class="article-hero__title">Bài 3: Hợp Ngữ RISC-V &amp; Đường Đi Của Dữ Liệu (Datapath)</h1>
+          <div class="article-hero__meta">15 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: từ tập lệnh mini tự bịa sang tập lệnh THẬT</h2>
+            <p>
+              <a href="cpu-von-neumann-isa">Bài 2</a> xây một Toy CPU chạy tập lệnh MINI tự bịa — mỗi lệnh là một object
+              JavaScript tiện lợi như <code>{ op: 'ADD', rd: 2, rs1: 0, rs2: 1 }</code>. Dễ hiểu, nhưng KHÔNG CPU thật
+              nào chạy object JavaScript — mọi CPU thật chỉ hiểu SỐ NHỊ PHÂN. Bài này thay tập lệnh mini bằng
+              <strong>RV32I</strong> — tập lệnh RISC-V 32-bit thật, đang chạy trên hàng tỷ chip nhúng/laptop ngoài đời —
+              và xây một <strong>datapath đơn chu kỳ</strong> (single-cycle) để thực thi nó.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Bắt buộc đọc <a href="cpu-von-neumann-isa">Bài 2</a> (chu kỳ Fetch-Decode-Execute) và
+                <a href="cpu-logic-alu">Bài 1</a> (ALU — datapath bài này tái dùng thẳng <code>aluExecute()</code>).
+              </div>
+            </div>
+
+            <h2>1. Tập lệnh RISC-V (RV32I)</h2>
+            <p>
+              Mọi lệnh RV32I đều dài đúng <strong>32-bit cố định</strong> (đặc trưng RISC —
+              <a href="cpu-von-neumann-isa">Bài 2</a> đã so sánh với độ dài biến đổi của CISC), nhưng chia thành 6 bit
+              trường khác nhau tuỳ <strong>dạng lệnh</strong>. Bài này dùng 3 dạng phổ biến nhất:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Dạng</th>
+                  <th>Cấu trúc bit (31→0)</th>
+                  <th>Dùng cho</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>R-type</td>
+                  <td>funct7[7] rs2[5] rs1[5] funct3[3] rd[5] opcode[7]</td>
+                  <td>ADD, SUB, AND, OR, XOR — cả 2 toán hạng là thanh ghi</td>
+                </tr>
+                <tr>
+                  <td>I-type</td>
+                  <td>imm[12] rs1[5] funct3[3] rd[5] opcode[7]</td>
+                  <td>ADDI, ANDI, ORI, XORI, LW — toán hạng thứ 2 là hằng số (immediate)</td>
+                </tr>
+                <tr>
+                  <td>S-type</td>
+                  <td>imm[7] rs2[5] rs1[5] funct3[3] imm[5] opcode[7]</td>
+                  <td>SW — cần ĐỊA CHỈ (rs1+imm) và giá trị cần lưu (rs2), không có ô cho rd</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Vì sao ADD và SUB CÙNG opcode nhưng KHÔNG lẫn lộn? Chúng dùng đúng
+              <code>opcode</code> R-type (<code>0110011</code>) nhưng khác <strong><code>funct7</code></strong> — "mã
+              phụ" 7-bit đóng vai trò như một switch phân biệt các lệnh cùng họ. Bit cao nhất của
+              <code>funct7</code> chính là "cờ trừ": <code>0000000</code> cho ADD, <code>0100000</code> cho SUB.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">rv32i_bit_layout.txt (sơ đồ trường bit, MSB→LSB)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">R-type:  funct7[31:25] rs2[24:20] rs1[19:15] funct3[14:12] rd[11:7]  opcode[6:0]
+I-type:  imm[31:20]              rs1[19:15] funct3[14:12] rd[11:7]  opcode[6:0]
+S-type:  imm[31:25]    rs2[24:20] rs1[19:15] funct3[14:12] imm[11:7] opcode[6:0]
+
+# Vi du that: ADD x3, x1, x2  ->  0000000 00010 00001 000 00011 0110011
+#                                 funct7  rs2   rs1   f3  rd    opcode
+#                                 (=0)    (=2)  (=1)  (0) (=3)  (R-type)</code></pre>
+            </div>
+
+            <h2>2. Dịch Assembly sang Mã máy</h2>
+            <p>
+              Dịch (assemble) là ánh xạ CƠ HỌC: tra bảng mnemonic → opcode/funct3/funct7, rồi xếp các trường vào đúng vị
+              trí bit. Verified bằng chính engine (không suy diễn tay): <code>ADD x3, x1, x2</code> dịch thành đúng
+              <code>0x2081b3</code>; đổi CHỈ funct7 (giữ nguyên toán hạng) cho <code>SUB x3, x1, x2</code> ra
+              <code>0x402081b3</code> — đúng khác biệt DUY NHẤT nằm ở 7 bit cao nhất.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">assemble_rv32i.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function assembleRV32I(mnemonic, args) {
+  const info = RV32I_MNEMONIC[mnemonic];   // tra bang: {type, funct3, funct7}
+  if (info.type === 'R') {
+    return ((info.funct7 << 25) | (args.rs2 << 20) | (args.rs1 << 15)
+          | (info.funct3 << 12) | (args.rd << 7) | RV32I_OPCODE.R) >>> 0;
+  }
+  // ... I-type, S-type tuong tu, xep dung vi tri bit ...
+}
+// Verified: assembleRV32I('ADD', {rd:3,rs1:1,rs2:2}) === 0x2081b3
+// Verified: assembleRV32I('SUB', {rd:3,rs1:1,rs2:2}) === 0x402081b3 (chi funct7 doi)</code></pre>
+            </div>
+            <p>
+              Giải mã (decode) là chiều NGƯỢC LẠI: tách bit theo đúng vị trí, tra ngược (funct3, funct7) → mnemonic.
+              Verified bằng phép <strong>khứ hồi</strong>: dịch rồi giải mã LẠI cả 8 mnemonic
+              (ADD/SUB/AND/OR/XOR/ADDI/LW/SW) đều cho ĐÚNG lại mnemonic ban đầu — không có lệnh nào "mất tích" qua vòng
+              dịch-giải mã.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">decode_rv32i.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function decodeRV32I(word) {
+  const opcode = word & 0x7f;              // 7 bit thap nhat luon la opcode
+  const rd     = (word >>> 7)  & 0x1f;
+  const funct3 = (word >>> 12) & 0x7;
+  const rs1    = (word >>> 15) & 0x1f;
+  const rs2    = (word >>> 20) & 0x1f;
+  const funct7 = (word >>> 25) & 0x7f;
+  if (opcode === RV32I_OPCODE.R) {
+    // tra NGUOC (funct3, funct7) -> mnemonic trong bang RV32I_MNEMONIC
+    const mnemonic = /* tim mnemonic co type R khop dung funct3+funct7 */;
+    return { mnemonic, type: 'R', rd, rs1, rs2 };
+  }
+  // ... I-type, ILOAD, S-type tuong tu ...
+}
+// Verified: 8/8 mnemonic khu hoi dung (assemble roi decode ra DUNG lai mnemonic).</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: địa chỉ tuyệt đối vs địa chỉ tương đối PC (PC-relative)</div>
+              <div class="callout__content">
+                Toy CPU của <a href="cpu-von-neumann-isa">Bài 2</a> dùng lệnh nhảy <code>JMP addr</code> với
+                <code>addr</code> là địa chỉ TUYỆT ĐỐI (vd "nhảy tới ô nhớ số 4"). RISC-V THẬT mã hoá lệnh nhảy/rẽ nhánh
+                (B-type/J-type, ngoài phạm vi bộ mã hoá R/I/S của bài này) bằng độ lệch
+                <strong>TƯƠNG ĐỐI so với PC</strong> (vd "nhảy lùi 8 byte so với vị trí hiện tại") — lý do: chương trình
+                có thể được nạp vào BẤT KỲ vùng nhớ nào (định vị lại — relocatable code) mà không cần sửa lại địa chỉ
+                nhảy bên trong. Nhầm 2 kiểu này là lỗi kinh điển khi đọc mã máy thật: cùng một con số offset có thể mang
+                ý nghĩa hoàn toàn khác nhau tuỳ dạng lệnh.
+              </div>
+            </div>
+
+            <h2>3. Thiết kế Datapath đơn chu kỳ (Single-Cycle)</h2>
+            <p>
+              Datapath đơn chu kỳ là "đường đi vật lý" của dữ liệu qua CPU: lệnh được fetch từ RAM → giải mã để biết cần
+              đọc thanh ghi nào → chảy qua <strong>ALU</strong> (<a href="cpu-logic-alu">Bài 1</a>, tái dùng thẳng không
+              viết lại) để tính toán/tính địa chỉ → (nếu là LW/SW) chạm vào bộ nhớ dữ liệu → ghi kết quả trở lại
+              <strong>Register File</strong>. TOÀN BỘ hành trình này diễn ra trong ĐÚNG MỘT chu kỳ xung nhịp — vì vậy
+              chu kỳ xung nhịp CPU phải đủ DÀI để chứa lệnh CHẬM NHẤT (thường là <code>LW</code>, phải đi qua cả ALU
+              tính địa chỉ LẪN bộ nhớ).
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: tưởng mọi lệnh tốn thời gian bằng nhau trên silicon thật</div>
+              <div class="callout__content">
+                Vì thiết kế đơn chu kỳ ép TẤT CẢ lệnh chạy trong đúng 1 chu kỳ xung nhịp có độ dài CỐ ĐỊNH, xung nhịp đó
+                buộc phải dài bằng lệnh CHẬM NHẤT (LW: fetch + decode + ALU tính địa chỉ + truy cập bộ nhớ) — kể cả một
+                lệnh đơn giản như <code>ADD</code> (chỉ cần fetch + decode + ALU) cũng bị "giam" trong cùng khoảng thời
+                gian dài đó, dù bản thân nó có thể xong sớm hơn nhiều. Đây chính là động lực thiết kế
+                <strong>pipeline</strong> ở Bài 4 (sắp ra mắt) — chia nhỏ công việc để mỗi giai đoạn có xung nhịp ngắn
+                hơn, thay vì ép mọi lệnh theo nhịp của lệnh chậm nhất.
+              </div>
+            </div>
+            <p>
+              Verified bằng một chương trình RV32I THẬT (không phải tập lệnh mini của Bài 2): tính $(5+3)-2$ bằng đúng 5
+              lệnh ADDI/ADD/ADDI/SUB, lưu kết quả vào <code>mem[100]</code> bằng SW, rồi đọc lại bằng LW — chạy qua
+              <code>executeRV32I()</code> cho đúng $x_3=8$, $x_5=6$, <code>mem[100]=6</code>, và đọc lại đúng $x_6=6$.
+              Phép ADD/SUB bên trong gọi THẲNG <code>aluExecute()</code> của Bài 1 — không viết lại phép cộng/trừ lần
+              thứ hai.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">datapath_verified_program.js (chương trình đã verify trong self-test)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">const program = [
+  assembleRV32I('ADDI', { rd: 1, rs1: 0, imm: 5 }),    // x1 = 5
+  assembleRV32I('ADDI', { rd: 2, rs1: 0, imm: 3 }),    // x2 = 3
+  assembleRV32I('ADD',  { rd: 3, rs1: 1, rs2: 2 }),    // x3 = x1+x2 = 8
+  assembleRV32I('ADDI', { rd: 4, rs1: 0, imm: 2 }),    // x4 = 2
+  assembleRV32I('SUB',  { rd: 5, rs1: 3, rs2: 4 }),    // x5 = x3-x4 = 6
+  assembleRV32I('SW',   { rs1: 0, rs2: 5, imm: 100 }), // mem[100] = x5
+  assembleRV32I('LW',   { rd: 6, rs1: 0, imm: 100 }),  // x6 = mem[100]
+];
+const { regs, mem } = runRV32IProgram(program);
+// Verified: regs[3]=8, regs[5]=6, mem[100]=6, regs[6]=6</code></pre>
+            </div>
+
+            <h2>4. Thực hành: Trực quan hóa Datapath đơn chu kỳ RISC-V</h2>
+            <p>
+              Gõ một lệnh Assembly (vd <code>ADD x3, x1, x2</code> hoặc <code>LW x5, 8(x2)</code>), bấm "Dịch
+              (Assemble)" để xem breakdown bit 32-bit THẬT, rồi bấm "Thực thi" để chạy lệnh đó qua datapath — khối đang
+              hoạt động sẽ phát sáng cam:
+            </p>
+
+            <div class="code-tabs" id="datapath-simulator-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">📟 Datapath RISC-V đơn chu kỳ — Assemble &amp; Execute</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="datapath-container">
+                  <div class="datapath-controls">
+                    <label class="control-label" for="datapath-asm-input">Gõ lệnh Assembly RV32I</label>
+                    <input
+                      type="text"
+                      id="datapath-asm-input"
+                      value="ADD x3, x1, x2"
+                      placeholder="vd: ADD x3, x1, x2 hoặc LW x5, 8(x2)"
+                    />
+                    <div class="datapath-btns">
+                      <button class="datapath-btn" type="button" id="datapath-assemble-btn">🔧 Dịch (Assemble)</button>
+                      <button class="datapath-btn" type="button" id="datapath-execute-btn">▶ Thực thi</button>
+                      <button class="datapath-btn" type="button" id="datapath-reset-btn">↺ Reset</button>
+                    </div>
+                    <p style="margin: 0; font-size: 12px; font-weight: 600">Mã máy 32-bit (breakdown bit):</p>
+                    <div class="datapath-bits" id="datapath-bits">—</div>
+                    <p style="margin: 0; font-size: 12px; font-weight: 600">Thanh ghi (khác 0):</p>
+                    <div class="datapath-regs" id="datapath-regs">(mọi thanh ghi đều = 0)</div>
+                    <div class="datapath-status" id="datapath-status">Đang khởi tạo…</div>
+                  </div>
+                  <div class="datapath-schematic">
+                    <svg viewBox="0 0 300 260" style="width: 100%; height: auto; max-height: 280px">
+                      <text x="20" y="25" font-family="monospace" font-size="12" font-weight="bold" fill="#475569">
+                        RAM (lệnh)
+                      </text>
+                      <rect x="10" y="35" width="90" height="40" rx="6" class="dp-block" />
+                      <text x="55" y="60" font-family="monospace" font-size="11" text-anchor="middle" fill="#1e293b">
+                        Fetch/Decode
+                      </text>
+
+                      <rect x="120" y="35" width="90" height="40" rx="6" class="dp-block" id="datapath-block-regfile" />
+                      <text x="165" y="60" font-family="monospace" font-size="11" text-anchor="middle" fill="#1e293b">
+                        Register File
+                      </text>
+
+                      <line x1="100" y1="55" x2="120" y2="55" stroke="#94a3b8" stroke-width="2" />
+                      <line x1="165" y1="75" x2="165" y2="105" stroke="#94a3b8" stroke-width="2" />
+
+                      <rect x="105" y="105" width="90" height="40" rx="6" class="dp-block" id="datapath-block-alu" />
+                      <text x="150" y="130" font-family="monospace" font-size="11" text-anchor="middle" fill="#1e293b">
+                        ALU (Bài 1)
+                      </text>
+
+                      <line x1="150" y1="145" x2="150" y2="175" stroke="#94a3b8" stroke-width="2" />
+
+                      <rect x="105" y="175" width="90" height="40" rx="6" class="dp-block" id="datapath-block-mem" />
+                      <text x="150" y="200" font-family="monospace" font-size="11" text-anchor="middle" fill="#1e293b">
+                        Bộ nhớ dữ liệu
+                      </text>
+
+                      <text x="150" y="240" font-family="monospace" font-size="10" fill="#64748b" text-anchor="middle">
+                        (LW/SW chạm bộ nhớ — ADD/SUB dừng ở ALU)
+                      </text>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>✅ RV32I: mọi lệnh dài cố định 32-bit, chia trường theo 3 dạng R/I/S-type (bài này dùng).</li>
+              <li>
+                ✅ Verified: <code>ADD x3,x1,x2</code> = <code>0x2081b3</code>, <code>SUB x3,x1,x2</code> =
+                <code>0x402081b3</code> — chỉ khác 7 bit funct7.
+              </li>
+              <li>✅ Verified: khứ hồi assemble→decode khớp đúng mnemonic trên cả 8 lệnh test.</li>
+              <li>
+                ✅ Pitfall: địa chỉ tuyệt đối (Toy CPU Bài 2) khác hẳn địa chỉ tương đối PC của lệnh nhảy RISC-V thật.
+              </li>
+              <li>
+                ✅ Datapath đơn chu kỳ: TOÀN BỘ lệnh chạy trong 1 chu kỳ, xung nhịp bị ép dài theo lệnh CHẬM NHẤT (LW) —
+                động lực trực tiếp cho pipeline ở Bài 4.
+              </li>
+              <li>
+                ✅ Verified: chương trình RV32I thật (5+3)-2 chạy đúng qua datapath, tái dùng thẳng ALU của Bài 1.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Verified: ADD x3,x1,x2 = 0x2081b3, SUB x3,x1,x2 = 0x402081b3 (cùng toán hạng). Vì sao 2 lệnh khác nhau
+                chỉ ở giá trị này?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! ADD và SUB dùng CHUNG opcode R-type (0110011) — funct7 (7 bit cao nhất) là mã phụ phân biệt chúng: 0000000 cho ADD, 0100000 cho SUB. Đây là cách RISC-V nhét nhiều lệnh vào cùng một opcode mà không tốn thêm bit opcode.'
+                    )
+                  "
+                >
+                  A. ADD và SUB dùng chung opcode R-type — funct7 (7 bit cao nhất) là mã phụ duy nhất phân biệt 2 lệnh
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca 2 lenh deu dung CHINH XAC 3 thanh ghi rd=3, rs1=1, rs2=2 nhu nhau — khong co thanh ghi nao khac nhau giua 2 phep dich nay.'
+                    )
+                  "
+                >
+                  B. Vì SUB dùng thêm một thanh ghi phụ mà ADD không cần
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca ADD va SUB deu la R-type, cung do dai 32-bit, cung cau truc truong bit — khong co su khac biet ve DANG lenh giua 2 phep dich nay.'
+                    )
+                  "
+                >
+                  C. Vì SUB là I-type còn ADD là R-type
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Vì sao lệnh nhảy/rẽ nhánh RISC-V thật mã hoá địa chỉ đích TƯƠNG ĐỐI so với PC, thay vì tuyệt đối như Toy
+                CPU của Bài 2?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Địa chỉ tương đối cho phép chương trình được nạp vào BẤT KỲ vùng nhớ nào (định vị lại — relocatable code) mà không cần sửa lại các độ lệch nhảy bên trong — chỉ cần offset SO VỚI vị trí hiện tại, không quan tâm vị trí tuyệt đối đó là bao nhiêu.'
+                    )
+                  "
+                >
+                  A. Để chương trình có thể được nạp vào bất kỳ vùng nhớ nào mà không cần sửa lại địa chỉ nhảy bên trong
+                  (relocatable code)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca 2 cach ma hoa (tuyet doi va tuong doi) deu la SO NGUYEN thong thuong, khong lien quan gi den so co dau/khong dau — van de la VE Y NGHIA cua con so offset (tinh tu dau), khong phai kieu du lieu.'
+                    )
+                  "
+                >
+                  B. Vì địa chỉ tương đối luôn là số không dấu, giúp CPU tính toán nhanh hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Toy CPU dung so nguyen JavaScript thong thuong (khong gioi han 32-bit) trong khi RISC-V that ma hoa dung 32-bit co dinh - nhung day KHONG PHAI ly do dung dia chi TUONG DOI, ma la ve do dai TU (word length) noi chung.'
+                    )
+                  "
+                >
+                  C. Vì RISC-V thật giới hạn ở 32-bit còn Toy CPU của Bài 2 không giới hạn độ dài số
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Trong thiết kế datapath đơn chu kỳ, vì sao xung nhịp CPU phải dài bằng đúng lệnh CHẬM NHẤT (thường là
+                LW)?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Thiết kế đơn chu kỳ ép MỌI lệnh hoàn thành trong ĐÚNG 1 chu kỳ xung nhịp duy nhất — vì chu kỳ đó có ĐỘ DÀI CỐ ĐỊNH cho mọi lệnh, nó buộc phải đủ dài để chứa cả lệnh CHẬM NHẤT (LW: fetch+decode+ALU tính địa chỉ+truy cập bộ nhớ), dù lệnh khác (như ADD) có thể xong sớm hơn nhiều.'
+                    )
+                  "
+                >
+                  A. Vì mọi lệnh phải hoàn thành trong đúng 1 chu kỳ xung nhịp có độ dài cố định, nên chu kỳ đó buộc
+                  phải đủ dài cho lệnh tốn nhiều bước nhất
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. LW KHONG dung nhieu thanh ghi hon cac lenh khac (van chi 2 thanh ghi: rd va rs1) - van de la ve SO BUOC xu ly (fetch+decode+ALU tinh dia chi+truy cap bo nho), khong phai so luong thanh ghi.'
+                    )
+                  "
+                >
+                  B. Vì LW cần dùng nhiều thanh ghi hơn các lệnh khác
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. LW hoan toan KHONG goi ALU nhieu lan hon - no chi goi ALU MOT LAN de tinh dia chi (base+offset), giong het cach ADD/SUB goi ALU mot lan de tinh ket qua.'
+                    )
+                  "
+                >
+                  C. Vì LW gọi ALU nhiều lần hơn ADD/SUB
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — thư viện kiến trúc máy tính mini dùng xuyên suốt cả 12 bài, Bài 3
+                vừa thêm <code>assembleRV32I()</code>, <code>decodeRV32I()</code>, <code>executeRV32I()</code>,
+                <code>runRV32IProgram()</code> — bộ dịch/giải mã/thực thi RV32I R/I/S-type thật, kèm self-test đối chiếu
+                đúng mọi con số trong bài (chạy <code>node cpu-core.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Đặc tả chính thức:</strong>
+                  <a href="https://riscv.org/technical/specifications/" target="_blank" rel="noopener noreferrer"
+                    >RISC-V International — Technical Specifications</a
+                  >
+                  — tài liệu gốc định nghĩa mã hoá RV32I R/I/S/B/U/J-type.
+                </li>
+                <li>
+                  <strong>Sách giáo khoa cốt lõi:</strong>
+                  <a
+                    href="https://www.amazon.com/Computer-Organization-Design-RISC-V-Architecture/dp/0128203315"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Computer Organization and Design, RISC-V Edition (Patterson &amp; Hennessy)</a
+                  >
+                  — Chương 2-4 trình bày chi tiết mã hoá lệnh và datapath đơn chu kỳ.
+                </li>
+                <li>
+                  <strong>Tham khảo nhanh:</strong>
+                  <a
+                    href="https://en.wikichip.org/wiki/risc-v/instruction_set"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >WikiChip — RISC-V Instruction Set</a
+                  >
+                  — bảng tra opcode/funct3/funct7 đầy đủ.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="cpu-von-neumann-isa" class="article-related__link article-related__link--prev"
+                  >Bài 2: Kiến Trúc Von Neumann &amp; Tập Lệnh ISA</a
+                >
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 4: Pipeline CPU &amp; Xung Đột Dữ Liệu (Data Hazards) — sắp ra mắt
+                </span>
+                <a href="cpu-programming-series" class="article-related__link">Quay lại Lộ trình Kiến Trúc Máy Tính</a>
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="cpu-riscv-datapath.js"></script>
+  </body>
+</html>
