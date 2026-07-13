@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: Apple Silicon &amp; Kiến Trúc Bộ Nhớ Thống Nhất (UMA) — js-tools</title>
+    <meta
+      name="description"
+      content="Hệ thống trên chip (SoC) thay thế bo mạch rời rạc, nhân lớn/nhỏ big.LITTLE (Firestorm/Icestorm), và kiến trúc bộ nhớ thống nhất UMA (Unified Memory Architecture) — CPU và GPU chia sẻ chung một bể RAM băng thông cực lớn, loại bỏ hoàn toàn bước sao chép qua bus PCIe. Verified thật bằng engine tự viết: khung hình 4K (3840x2160, 32-bit màu) nặng đúng 33.177.600 byte (31,64 MiB). Truyền qua PCIe Gen 4 x16 (32 GB/s) mất 1,0368ms; truy cập trực tiếp trên UMA (400 GB/s, Apple M1 Max) chỉ mất 0,0829ms — nhanh hơn đúng 12,5 lần (bằng đúng tỷ lệ băng thông). Ở 60fps, PCIe chiếm 6,22% ngân sách 1 khung hình, UMA chưa tới 0,5%. Demo: so sánh trực tiếp PCIe vs UMA với thông số tuỳ chỉnh."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/cpu/cpu-apple-silicon-uma" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/cpu/cpu-apple-silicon-uma" />
+    <meta property="og:title" content="Bài 9: Apple Silicon &amp; Kiến Trúc Bộ Nhớ Thống Nhất (UMA) — js-tools" />
+    <meta
+      property="og:description"
+      content="SoC, big.LITTLE, UMA. Verified: khung 4K = 33.177.600 byte. PCIe Gen 4 (32GB/s) = 1,0368ms; UMA (400GB/s) = 0,0829ms — nhanh hơn 12,5 lần. Ở 60fps, PCIe chiếm 6,22% ngân sách khung hình, UMA dưới 0,5%."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 9: Apple Silicon &amp; Kiến Trúc Bộ Nhớ Thống Nhất (UMA) — js-tools" />
+    <meta
+      name="twitter:description"
+      content="SoC, big.LITTLE, UMA. Verified: khung 4K = 33.177.600 byte. PCIe (32GB/s)=1,0368ms vs UMA (400GB/s)=0,0829ms — nhanh hơn 12,5 lần."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .uma-demo-container {
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 24px;
+        color: #242424;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .uma-demo-row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .uma-demo-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .uma-demo-field label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #475569;
+      }
+      .uma-demo-field input {
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-family: Consolas, Monaco, monospace;
+        width: 120px;
+      }
+      .uma-output {
+        background: #1e293b;
+        color: #38bdf8;
+        border-radius: 6px;
+        padding: 14px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .uma-bar-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .uma-bar-label {
+        width: 60px;
+        flex-shrink: 0;
+      }
+      .uma-bar-track {
+        flex: 1;
+        background: #e2e8f0;
+        border-radius: 4px;
+        height: 16px;
+        overflow: hidden;
+      }
+      .uma-bar-fill {
+        height: 100%;
+        transition: width 0.2s;
+      }
+      .uma-bar-fill--pcie {
+        background: #f59e0b;
+      }
+      .uma-bar-fill--uma {
+        background: #10b981;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 9: Apple Silicon & Kiến Trúc Bộ Nhớ Thống Nhất (UMA)",
+        "description": "SoC, big.LITTLE, UMA. Verified: khung 4K = 33.177.600 byte. PCIe Gen 4 (32GB/s) = 1,0368ms; UMA (400GB/s) = 0,0829ms — nhanh hơn 12,5 lần. Ở 60fps, PCIe chiếm 6,22% ngân sách khung hình, UMA dưới 0,5%.",
+        "url": "https://js-tools.org/blog/cpu/cpu-apple-silicon-uma",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-21"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--cpu">
+        <div class="container">
+          <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--cpu">Bài 9 · Kiến Trúc Máy Tính</div>
+          <h1 class="article-hero__title">Bài 9: Apple Silicon &amp; Kiến Trúc Bộ Nhớ Thống Nhất (UMA)</h1>
+          <div class="article-hero__meta">21 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: khi CPU và GPU thôi tranh giành, chúng chia sẻ</h2>
+            <p>
+              <a href="cpu-virtual-memory-tlb">Bài 7-8</a> mô tả phân cấp bộ nhớ trong mô hình PC truyền thống: CPU có
+              RAM riêng, GPU có VRAM riêng, kết nối qua bus PCIe. Mỗi lần CPU cần GPU xử lý dữ liệu (render đồ hoạ, huấn
+              luyện mô hình AI), dữ liệu phải được <strong>SAO CHÉP</strong> từ RAM sang VRAM qua PCIe — một bước tốn
+              thời gian, dù chỉ đơn thuần là "chuyển dữ liệu từ nơi này sang nơi khác" chứ không tính toán gì. Apple
+              Silicon đặt câu hỏi ngược: nếu CPU và GPU cùng nằm trên MỘT đế silicon, tại sao không để chúng CHIA SẺ
+              luôn một bể RAM duy nhất?
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Nên đọc <a href="cpu-cache-memory">Bài 7</a> (Cache) và <a href="cpu-virtual-memory-tlb">Bài 8</a>
+                (Bộ nhớ ảo) — UMA bài này là một cách tổ chức KHÁC của chính phân cấp bộ nhớ đã học, không phải khái
+                niệm tách biệt.
+              </div>
+            </div>
+
+            <h2>1. Hệ thống trên chip (SoC) vs Bo mạch truyền thống</h2>
+            <p>
+              PC truyền thống lắp CPU, GPU, RAM, ổ đĩa... là các LINH KIỆN RỜI trên bo mạch chủ, kết nối qua các bus
+              (PCIe, SATA...). Apple Silicon (dòng M) tích hợp CPU, GPU, Neural Engine (NPU), bộ điều khiển bộ nhớ...
+              lên CÙNG một đế silicon — gọi là <strong>SoC</strong> (System on a Chip). Khoảng cách vật lý giữa các khối
+              cực ngắn, giảm độ trễ và tiêu thụ năng lượng đáng kể so với việc tín hiệu phải đi qua các đường dẫn
+              (traces) dài trên bo mạch giữa các chip rời.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">soc_layout.txt (SoC vs bo mạch rời rạc)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">PC truyen thong (linh kien roi tren bo mach):
+  [CPU chip] ---bus--- [GPU chip roi] ---bus--- [RAM DIMM]
+  Tin hieu di qua duong dan (traces) DAI tren bo mach giua cac chip
+
+Apple Silicon SoC (mot de silicon):
+  +--------------------------------------------------+
+  | [CPU: Firestorm x N] [CPU: Icestorm x M] [GPU]    |
+  | [Neural Engine (NPU)] [Bo dieu khien bo nho UMA]  |
+  +--------------------------------------------------+
+  Khoang cach vat ly giua cac khoi CUC NGAN - giam do tre + nang luong</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: SoC đánh đổi khả năng nâng cấp</div>
+              <div class="callout__content">
+                Vì RAM và các thành phần khác được HÀN CHẾT trên cùng đế silicon với CPU/GPU, người dùng KHÔNG THỂ nâng
+                cấp RAM hay thay thế linh kiện rời rạc khi hỏng hóc — khác hẳn PC truyền thống nơi RAM, GPU đều là các
+                khe cắm (slot) có thể tháo lắp. Đây là đánh đổi CÓ CHỦ ĐÍCH giữa hiệu năng/tiết kiệm năng lượng (SoC) và
+                khả năng sửa chữa/nâng cấp (kiến trúc rời rạc) — không phải giới hạn kỹ thuật ngẫu nhiên.
+              </div>
+            </div>
+
+            <h2>2. Nhân lớn/nhỏ (big.LITTLE) &amp; UMA</h2>
+            <p>
+              Apple M1 có 2 loại nhân CPU: <strong>Firestorm</strong> (hiệu năng cao, ăn nhiều điện) và
+              <strong>Icestorm</strong> (tiết kiệm điện, hiệu năng thấp hơn) — hệ điều hành TỰ ĐỘNG đẩy tác vụ nền (đồng
+              bộ email, quét virus) sang Icestorm để tiết kiệm pin, và tác vụ nặng (biên dịch code, render video) sang
+              Firestorm. Quan trọng hơn cho bài này: CPU (cả 2 loại nhân) và GPU đều truy cập CHUNG một bể RAM LPDDR5
+              duy nhất — đây là <strong>UMA</strong> (Unified Memory Architecture).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">uma_vs_traditional.txt (so đồ 2 mô hình)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">PC truyen thong:
+  [CPU] --RAM rieng--    [GPU] --VRAM rieng--
+     |______________PCIe Gen4 x16 (~32 GB/s)_____________|
+     Moi lan GPU can du lieu CPU dang giu -> SAO CHEP qua PCIe
+
+Apple Silicon (UMA):
+  [CPU] ---+
+           +--- CHUNG mot be RAM LPDDR5 (vd 400 GB/s tren M1 Max) ---+
+  [GPU] ---+                                                         |
+     CPU va GPU deu doc/ghi TRUC TIEP, KHONG can sao chep gi ca</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: lập lịch sai lầm gây hao pin</div>
+              <div class="callout__content">
+                Nếu bộ lập lịch hệ điều hành (thread scheduler) đẩy NHẦM một tác vụ nền nhẹ lên nhân Firestorm hiệu năng
+                cao (thay vì Icestorm tiết kiệm điện), pin bị tiêu hao một cách VÔ ÍCH — công việc vẫn hoàn thành đúng,
+                nhưng tốn điện hơn hẳn mức cần thiết. Lập lịch big.LITTLE đúng đắn là bài toán liên tục cân bằng giữa
+                "xong việc nhanh" và "xong việc tiết kiệm điện", không có công thức cố định cho mọi tác vụ.
+              </div>
+            </div>
+
+            <h2>3. Bài toán tính toán băng thông: PCIe vs UMA</h2>
+            <p>Render MỘT khung hình 4K (3840×2160 pixel, 32-bit màu — 4 byte/pixel gồm R/G/B/Alpha) cần đúng:</p>
+            <p style="text-align: center">
+              $$\text{Frame Bytes} = 3840 \times 2160 \times 4 = 33.177.600 \text{ byte}$$
+            </p>
+            <p>
+              Verified thật: khung hình 4K nặng đúng <strong>33.177.600 byte (31,64 MiB)</strong>. So sánh thời gian
+              truyền dữ liệu này qua 2 kênh — PCIe Gen 4 x16 (băng thông thực tế ~32 GB/s, cần SAO CHÉP từ RAM sang
+              VRAM) vs UMA trên Apple M1 Max (băng thông RAM 400 GB/s, GPU truy cập TRỰC TIẾP, không sao chép):
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">bandwidth_compare.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function frameBytes(width, height, bytesPerPixel) {
+  return width * height * bytesPerPixel;
+}
+function transferTimeSeconds(bytes, bandwidthGBps) {
+  return bytes / (bandwidthGBps * 1e9);
+}
+// Verified: frameBytes(3840, 2160, 4) = 33.177.600 byte
+// Verified: transferTimeSeconds(33177600, 32) * 1000  = 1,0368 ms  (PCIe Gen 4 x16)
+// Verified: transferTimeSeconds(33177600, 400) * 1000 = 0,0829 ms  (UMA M1 Max)
+// UMA nhanh hon PCIe DUNG bang ty le bang thong: 400/32 = 12,5 lan</code></pre>
+            </div>
+            <p>
+              Ở khung hình 4K này, PCIe mất <strong>1,0368 ms</strong>, UMA chỉ mất <strong>0,0829 ms</strong> — nhanh
+              hơn đúng <strong>12,5 lần</strong>, khớp CHÍNH XÁC tỷ lệ băng thông ($400/32=12,5$), không phải một con số
+              ước lượng mơ hồ. Ở khung hình 60fps (ngân sách mỗi khung hình $1000/60 \approx 16,67$ ms), PCIe chiếm
+              <strong>6,22%</strong> ngân sách CHỈ ĐỂ SAO CHÉP dữ liệu (chưa tính thời gian GPU thực sự xử lý), trong
+              khi UMA chưa tới <strong>0,5%</strong>.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >frame_budget_60fps.js (tỷ trọng thời gian truyền trên ngân sách khung hình)</span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">const frameBudgetMs = 1000 / 60; // ~16,6667 ms/khung hinh o 60fps
+const pcieShare = (cmp.pcieTimeMs / frameBudgetMs) * 100; // ~6,22%
+const umaShare = (cmp.umaTimeMs / frameBudgetMs) * 100;   // ~0,50%
+// PCIe: gan 1/16 ngan sach khung hinh CHI DE sao chep du lieu
+// UMA: khong dang ke - GPU con thua gan het thoi gian de TINH TOAN thuc su</code></pre>
+            </div>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Đừng so sánh thô xung nhịp CPU/GPU mà bỏ qua băng thông bộ nhớ</div>
+              <div class="callout__content">
+                Chênh lệch 12,5 lần ở trên đến HOÀN TOÀN từ tỷ lệ băng thông bộ nhớ (400 GB/s vs 32 GB/s) — KHÔNG liên
+                quan gì đến xung nhịp (GHz) của CPU hay GPU. Một GPU xung nhịp cao nhưng bị nghẽn ở khâu truyền dữ liệu
+                (data-starved) vẫn chạy chậm hơn hẳn tiềm năng lý thuyết — đây chính là lý do "thông số xung nhịp" một
+                mình không đủ để so sánh hiệu năng thực tế giữa 2 kiến trúc khác nhau.
+              </div>
+            </div>
+
+            <h2>4. Thực hành: So sánh băng thông PCIe vs UMA</h2>
+            <p>
+              Đổi kích thước khung hình, số byte/pixel, và băng thông của cả 2 kênh để xem thời gian truyền thay đổi
+              trực tiếp — thanh màu bên dưới trực quan hoá tỷ lệ chênh lệch:
+            </p>
+
+            <div class="code-tabs" id="uma-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🖥️ So sánh băng thông PCIe vs UMA</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="uma-demo-container">
+                  <div class="uma-demo-row">
+                    <div class="uma-demo-field">
+                      <label for="uma-width-input">Chiều rộng (px)</label>
+                      <input type="number" id="uma-width-input" value="3840" min="1" />
+                    </div>
+                    <div class="uma-demo-field">
+                      <label for="uma-height-input">Chiều cao (px)</label>
+                      <input type="number" id="uma-height-input" value="2160" min="1" />
+                    </div>
+                    <div class="uma-demo-field">
+                      <label for="uma-bpp-input">Byte/pixel</label>
+                      <input type="number" id="uma-bpp-input" value="4" min="1" max="16" />
+                    </div>
+                    <div class="uma-demo-field">
+                      <label for="uma-pcie-input">PCIe (GB/s)</label>
+                      <input type="number" id="uma-pcie-input" value="32" step="0.1" min="0.1" />
+                    </div>
+                    <div class="uma-demo-field">
+                      <label for="uma-bandwidth-input">UMA (GB/s)</label>
+                      <input type="number" id="uma-bandwidth-input" value="400" step="1" min="0.1" />
+                    </div>
+                  </div>
+                  <div class="uma-output" id="uma-output">—</div>
+                  <div class="uma-bar-row">
+                    <span class="uma-bar-label">PCIe</span>
+                    <div class="uma-bar-track">
+                      <div class="uma-bar-fill uma-bar-fill--pcie" id="uma-bar-pcie"></div>
+                    </div>
+                  </div>
+                  <div class="uma-bar-row">
+                    <span class="uma-bar-label">UMA</span>
+                    <div class="uma-bar-track"><div class="uma-bar-fill uma-bar-fill--uma" id="uma-bar-uma"></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ SoC tích hợp CPU/GPU/RAM lên cùng đế silicon, giảm độ trễ và năng lượng — đổi lại mất khả năng nâng
+                cấp/thay thế linh kiện rời.
+              </li>
+              <li>✅ big.LITTLE (Firestorm/Icestorm) cân bằng hiệu năng và pin qua lập lịch tác vụ động.</li>
+              <li>
+                ✅ UMA loại bỏ hoàn toàn bước sao chép CPU→GPU của mô hình PC truyền thống — CPU và GPU truy cập TRỰC
+                TIẾP cùng một bể RAM.
+              </li>
+              <li>
+                ✅ Verified: khung hình 4K = 33.177.600 byte; PCIe Gen 4 (32GB/s) = 1,0368ms; UMA (400GB/s) = 0,0829ms —
+                nhanh hơn đúng 12,5 lần, khớp tỷ lệ băng thông.
+              </li>
+              <li>
+                ✅ Pitfall: chênh lệch hiệu năng đến từ BĂNG THÔNG bộ nhớ, không phải xung nhịp CPU/GPU — so sánh thô
+                xung nhịp bỏ qua yếu tố quyết định thực tế.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                UMA (Unified Memory Architecture) loại bỏ được bước nào trong luồng xử lý đồ hoạ trên PC truyền thống?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Trên PC truyền thống, CPU và GPU có bộ nhớ RIÊNG (RAM và VRAM), nên dữ liệu phải được sao chép qua bus PCIe mỗi khi GPU cần xử lý. UMA cho CPU và GPU chia sẻ CHUNG một bể RAM — GPU đọc/ghi trực tiếp, không cần bước sao chép trung gian nào.'
+                    )
+                  "
+                >
+                  A. Bước sao chép dữ liệu từ RAM (CPU) sang VRAM (GPU) qua bus PCIe — vì cả hai giờ chia sẻ chung một
+                  bể RAM
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. UMA la kien truc BO NHO, hoan toan khong lien quan den qua trinh BIEN DICH shader hay ma nguon GPU - do la mot buoc hoan toan khac trong pipeline do hoa.'
+                    )
+                  "
+                >
+                  B. Bước biên dịch shader trước khi GPU thực thi
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. UMA khong lien quan gi den viec hien thi khung hinh len man hinh (display refresh) - day la ve BANG THONG BO NHO giua CPU va GPU, khac voi qua trinh xuat hinh anh ra man hinh vat ly.'
+                    )
+                  "
+                >
+                  C. Bước hiển thị khung hình đã render lên màn hình vật lý
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: PCIe Gen 4 (32GB/s) mất 1,0368ms để truyền khung 4K, UMA (400GB/s) chỉ mất 0,0829ms — nhanh
+                hơn đúng 12,5 lần. Con số 12,5 lần này đến từ đâu?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! 12,5 = 400/32, đúng bằng tỷ lệ băng thông giữa UMA và PCIe. Vì thời gian truyền tỷ lệ NGHỊCH với băng thông (t = bytes/bandwidth), tỷ lệ tốc độ giữa 2 kênh luôn bằng đúng tỷ lệ băng thông của chúng, không phụ thuộc vào kích thước dữ liệu truyền.'
+                    )
+                  "
+                >
+                  A. Đúng bằng tỷ lệ băng thông UMA/PCIe = 400/32 = 12,5 — vì thời gian truyền tỷ lệ nghịch với băng
+                  thông
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Kich thuoc khung hinh (4K, 33.177.600 byte) la GIONG HET nhau khi tinh ca 2 thoi gian truyen - no khong anh huong den TY LE chenh lech, chi anh huong den GIA TRI TUYET DOI cua ca hai thoi gian.'
+                    )
+                  "
+                >
+                  B. Đến từ kích thước khung hình 4K cụ thể (nếu dùng khung hình khác, tỷ lệ 12,5 lần sẽ thay đổi)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Vi du nay khong lien quan gi den xung nhip CPU - ca PCIe va UMA deu la kenh TRUYEN DU LIEU, chenh lech den tu BANG THONG (GB/s) cua tung kenh, khong phai xung nhip xu ly (GHz) cua CPU/GPU.'
+                    )
+                  "
+                >
+                  C. Đến từ xung nhịp CPU của Apple Silicon nhanh hơn CPU dùng PCIe
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                SoC (System on a Chip) tích hợp CPU/GPU/RAM lên cùng đế silicon đánh đổi điều gì so với PC truyền thống?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Vì RAM và các thành phần khác được hàn chết trên cùng đế silicon với CPU/GPU (không phải khe cắm rời), người dùng không thể nâng cấp RAM hay thay thế linh kiện hỏng như trên PC truyền thống (nơi RAM/GPU là các khe cắm tháo lắp được). Đây là đánh đổi có chủ đích để lấy hiệu năng và tiết kiệm năng lượng.'
+                    )
+                  "
+                >
+                  A. Khả năng nâng cấp RAM hoặc thay thế linh kiện rời rạc khi hỏng hóc — đổi lấy độ trễ thấp hơn và
+                  tiết kiệm năng lượng hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. SoC KHONG lam GPU cham hon - nguoc lai, UMA (mot phan cua thiet ke SoC) giup GPU truy cap du lieu NHANH HON han qua bang thong RAM lon, khong can sao chep qua PCIe.'
+                    )
+                  "
+                >
+                  B. Hiệu năng GPU chậm hơn hẳn so với GPU rời gắn qua khe PCIe
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. SoC KHONG lien quan gi den kha nang chay he dieu hanh da nhiem - big.LITTLE va UMA la ve HIEU NANG/NANG LUONG va BANG THONG BO NHO, khong phai kha nang da nhiem cua he dieu hanh.'
+                    )
+                  "
+                >
+                  C. Khả năng chạy hệ điều hành đa nhiệm (multitasking)
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Vì sao "lập lịch sai lầm" (đẩy tác vụ nền lên nhân Firestorm hiệu năng cao) là một pitfall thực sự của
+                kiến trúc big.LITTLE?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Nhân Firestorm (hiệu năng cao) tiêu thụ điện nhiều hơn hẳn Icestorm (tiết kiệm điện) để hoàn thành CÙNG một công việc. Nếu một tác vụ nền nhẹ (không cần tốc độ) bị lập lịch nhầm lên Firestorm, công việc vẫn xong đúng nhưng tốn pin hơn mức cần thiết một cách vô ích — sai lầm này không gây lỗi chức năng, chỉ gây lãng phí năng lượng.'
+                    )
+                  "
+                >
+                  A. Vì Firestorm tiêu thụ điện nhiều hơn hẳn Icestorm cho cùng công việc — lập lịch sai khiến pin hao
+                  một cách vô ích dù công việc vẫn hoàn thành đúng
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Lap lich sai KHONG lam mat du lieu - day la van de VE NANG LUONG (tieu hao pin khong can thiet), khong phai loi ve tinh dung dan/toan ven du lieu cua chuong trinh.'
+                    )
+                  "
+                >
+                  B. Vì tác vụ chạy trên Firestorm có thể bị mất dữ liệu do nhân này không ổn định
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Icestorm va Firestorm deu truy cap CUNG mot be RAM UMA - khong co su khac biet ve BANG THONG bo nho GIUA 2 LOAI NHAN, chi khac nhau ve HIEU NANG XU LY va MUC TIEU THU DIEN cua chinh nhan CPU.'
+                    )
+                  "
+                >
+                  C. Vì Icestorm không có quyền truy cập vào băng thông UMA đầy đủ như Firestorm
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — thư viện kiến trúc máy tính mini dùng xuyên suốt cả 12 bài, Bài 9
+                vừa thêm <code>frameBytes()</code>, <code>transferTimeSeconds()</code>,
+                <code>compareTransferMethods()</code> — mô hình dung lượng khung hình và so sánh thời gian truyền PCIe
+                vs UMA, kèm self-test đối chiếu đúng mọi con số trong bài (chạy <code>node cpu-core.js</code>, không cần
+                cài thêm gì):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Thông số kỹ thuật chính thức:</strong>
+                  <a
+                    href="https://www.apple.com/newsroom/2021/10/introducing-m1-pro-and-m1-max-the-most-powerful-chips-apple-has-ever-made/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Apple Newsroom — Introducing M1 Pro and M1 Max</a
+                  >
+                  — băng thông bộ nhớ thống nhất 400GB/s (M1 Max) công bố chính thức.
+                </li>
+                <li>
+                  <strong>Tổng quan Unified Memory Architecture:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Apple_silicon" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Apple silicon</a
+                  >
+                  — kiến trúc SoC, UMA và dòng chip Apple M-series.
+                </li>
+                <li>
+                  <strong>Tổng quan PCI Express:</strong>
+                  <a href="https://en.wikipedia.org/wiki/PCI_Express" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — PCI Express</a
+                  >
+                  — băng thông thực tế các thế hệ PCIe, bao gồm Gen 4 x16.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="cpu-virtual-memory-tlb" class="article-related__link article-related__link--prev"
+                  >Bài 8: Bộ Nhớ Ảo &amp; Khối TLB</a
+                >
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 10: Tăng Tốc Phần Cứng: GPU, NPU &amp; AMX — sắp ra mắt
+                </span>
+                <a href="cpu-programming-series" class="article-related__link">Quay lại Lộ trình Kiến Trúc Máy Tính</a>
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="cpu-apple-silicon-uma.js"></script>
+  </body>
+</html>

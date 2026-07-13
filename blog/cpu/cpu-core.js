@@ -912,6 +912,38 @@ function twoLevelPageTableSizeBytes(numUsedPages, entriesPerTable, entryBytes) {
   return firstLevelBytes + numSecondLevelTables * tableBytes;
 }
 
+// ---------------------------------------------------------------------------
+// Bài 9 — Apple Silicon & Kiến trúc Bộ nhớ Thống nhất (UMA). Bài 7-8 giả định
+// CPU và GPU có bộ nhớ RIÊNG (mô hình PC truyền thống) — mọi lần CPU cần GPU
+// xử lý dữ liệu (vd render khung hình), dữ liệu phải được SAO CHÉP qua bus
+// PCIe (chậm hơn hẳn RAM nội bộ). Apple Silicon dùng UMA: CPU và GPU chia
+// sẻ CHUNG một bể RAM băng thông cực lớn — loại bỏ HOÀN TOÀN bước sao chép.
+// Build-out: mô hình băng thông (bytes/khung hình, thời gian truyền PCIe
+// sao chép vs UMA truy cập trực tiếp, Mục 9.4).
+// ---------------------------------------------------------------------------
+
+// Dung lượng byte của MỘT khung hình (Mục 9.4): width × height × số byte/pixel
+// (vd 32-bit màu = 4 byte/pixel, gồm R/G/B/Alpha).
+function frameBytes(width, height, bytesPerPixel) {
+  return width * height * bytesPerPixel;
+}
+
+// Thời gian truyền `bytes` byte qua một kênh có băng thông `bandwidthGBps`
+// GB/s (Mục 9.4): $t = \text{bytes} / (\text{bandwidthGBps} \times 10^9)$.
+function transferTimeSeconds(bytes, bandwidthGBps) {
+  return bytes / (bandwidthGBps * 1e9);
+}
+
+// So sánh trực tiếp 2 luồng truyền dữ liệu cho CÙNG một khung hình (Mục 9.4):
+// PCIe Gen 4 x16 (sao chép CPU->GPU qua bus rời rạc, mô hình PC truyền
+// thống) vs UMA (Apple Silicon — GPU truy cập TRỰC TIẾP cùng bể RAM, không
+// cần sao chép, chỉ còn giới hạn bởi băng thông RAM nội bộ).
+function compareTransferMethods(bytes, pcieGBps, umaGBps) {
+  const pcieTimeMs = transferTimeSeconds(bytes, pcieGBps) * 1000;
+  const umaTimeMs = transferTimeSeconds(bytes, umaGBps) * 1000;
+  return { pcieTimeMs, umaTimeMs, speedupFactor: pcieTimeMs / umaTimeMs };
+}
+
 export {
   toBinString,
   toSigned,
@@ -950,6 +982,9 @@ export {
   pageTableEntryCount,
   singleLevelPageTableSizeBytes,
   twoLevelPageTableSizeBytes,
+  frameBytes,
+  transferTimeSeconds,
+  compareTransferMethods,
 };
 
 // ---------------------------------------------------------------------------
@@ -1506,6 +1541,48 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Page Table 2 cap TIET KIEM hon 2 cap don RAT NHIEU khi chi dung 1 phan nho khong gian dia chi (8KB vs 4MB = re hon 512 lan)',
       singleLevelPageTableSizeBytes(32, 12, 4) / twoLevelPageTableSizeBytes(512, 1024, 4) === 512
+    );
+  }
+
+  // --- Bài 9: Apple Silicon & UMA - dung luong khung hinh + so sanh bang thong ---
+  {
+    // Khung hinh 4K (3840x2160), 32-bit mau (4 byte/pixel) = 33.177.600 byte
+    check(
+      'frameBytes(3840, 2160, 4) = 33.177.600 byte (khung hinh 4K, 32-bit mau)',
+      frameBytes(3840, 2160, 4),
+      33177600
+    );
+
+    // PCIe Gen 4 x16 (~32 GB/s that te) vs UMA Apple M1 Max (400 GB/s, cong bo chinh thuc Apple)
+    const bytes4K = frameBytes(3840, 2160, 4);
+    const pcieGBps = 32;
+    const umaGBps = 400;
+    const cmp = compareTransferMethods(bytes4K, pcieGBps, umaGBps);
+    checkTrue('PCIe: thoi gian truyen 1 khung 4K ~ 1,0368 ms', Math.abs(cmp.pcieTimeMs - 1.0368) < 1e-3);
+    checkTrue('UMA: thoi gian truy cap TRUC TIEP CUNG khung 4K ~ 0,0829 ms', Math.abs(cmp.umaTimeMs - 0.0829) < 1e-3);
+    checkTrue(
+      'UMA nhanh hon PCIe DUNG bang ty le bang thong (400/32 = 12,5 lan) - khong phai con so tuy tien',
+      Math.abs(cmp.speedupFactor - 12.5) < 1e-9
+    );
+
+    // Pitfall Muc 9.4: so sanh THO xung nhip khong tinh den bang thong bo nho
+    // - o day, chenh lech 12,5 lan hoan toan den tu BANG THONG (400 vs 32
+    // GB/s), KHONG lien quan gi den xung nhip CPU/GPU
+    checkTrue(
+      'Pitfall: chenh lech 12,5 lan la do TY LE BANG THONG RAM, khong phai do xung nhip CPU nhanh hay cham hon',
+      Math.abs(cmp.speedupFactor - umaGBps / pcieGBps) < 1e-9
+    );
+
+    // Boi canh 60fps: PCIe chiem ty trong dang ke ngan sach 1 khung hinh,
+    // UMA gan nhu khong dang ke
+    const frameBudgetMs = 1000 / 60;
+    checkTrue(
+      'PCIe: thoi gian truyen chiem ~6,22% ngan sach 1 khung hinh o 60fps (16,67ms) - dang ke',
+      Math.abs((cmp.pcieTimeMs / frameBudgetMs) * 100 - 6.22) < 0.01
+    );
+    checkTrue(
+      'UMA: thoi gian truy cap chi chiem ~0,5% ngan sach 1 khung hinh o 60fps - khong dang ke',
+      (cmp.umaTimeMs / frameBudgetMs) * 100 < 1
     );
   }
 
