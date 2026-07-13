@@ -428,6 +428,108 @@ function detectHazards(instrs, forwardingEnabled) {
   return { totalStalls, hazards };
 }
 
+// ---------------------------------------------------------------------------
+// Bài 5 — Dự đoán nhánh (Branch Prediction) & Spectre. Pipeline của Bài 4 nạp
+// lệnh TIẾP THEO trước khi biết lệnh rẽ nhánh (BEQ/BNE) đi hướng nào — CPU
+// phải ĐOÁN (Mục 5.1). Build-out: bộ dự đoán 1-bit (Mục 5.2, minh hoạ pitfall
+// dao động ở vòng lặp lồng nhau) và 2-bit bão hoà (saturating counter FSM +
+// BHT — Branch History Table) chính xác hơn hẳn, cùng công thức CPI hiệu dụng
+// (Mục 5.3).
+// ---------------------------------------------------------------------------
+
+// Bộ dự đoán nhánh 1-bit: chỉ nhớ kết quả LẦN GẦN NHẤT, đoán y hệt lần đó.
+// State: 0 = đoán Không-nhảy (N), 1 = đoán Nhảy (T). Pitfall Mục 5.2: ở vòng
+// lặp lồng nhau (vd 4 lần T rồi 1 lần N lặp lại), bộ nhớ 1-bit "quên" ngay
+// sau lần N đầu tiên -> đoán sai NGAY lần T kế tiếp -> 2 lần đoán sai liên
+// tiếp mỗi vòng lặp ngoài (thoát vòng trong + quay lại vòng trong).
+function makeBranchPredictor1Bit() {
+  let state = 0; // khoi tao: doan Khong-nhay
+  return {
+    predict() {
+      return state === 1 ? 'T' : 'N';
+    },
+    update(actual) {
+      state = actual === 'T' ? 1 : 0;
+    },
+    getState() {
+      return state;
+    },
+  };
+}
+
+// Bộ dự đoán nhánh 2-bit bão hoà (saturating counter FSM, Mục 5.2): 4 trạng
+// thái 0=Rất-không-nhảy(SNT) 1=Hơi-không-nhảy(WNT) 2=Hơi-nhảy(WT)
+// 3=Rất-nhảy(ST). Đoán "Nhảy" khi state>=2. Khác 1-bit: một lần đoán sai đơn
+// lẻ (T xen giữa chuỗi N, hoặc ngược lại) chỉ đẩy state qua MỘT nấc bão hoà
+// liền kề chứ KHÔNG lật ngay dự đoán — chống dao động ở vòng lặp lồng nhau.
+function makeBranchPredictor2Bit() {
+  let state = 0; // khoi tao: Rat-khong-nhay
+  return {
+    predict() {
+      return state >= 2 ? 'T' : 'N';
+    },
+    update(actual) {
+      state = actual === 'T' ? Math.min(3, state + 1) : Math.max(0, state - 1);
+    },
+    getState() {
+      return state;
+    },
+  };
+}
+
+// Bảng lịch sử nhánh BHT (Branch History Table, Mục 5.2): mỗi ĐỊA CHỈ lệnh
+// rẽ nhánh có một bộ dự đoán 2-bit RIÊNG (lập chỉ mục theo `pc`), vì các
+// nhánh khác nhau trong cùng chương trình có xu hướng khác nhau hoàn toàn —
+// gộp chung một bộ dự đoán duy nhất sẽ trộn lẫn lịch sử của các nhánh không
+// liên quan.
+function makeBranchHistoryTable() {
+  const table = new Map();
+  function entryFor(pc) {
+    let e = table.get(pc);
+    if (!e) {
+      e = makeBranchPredictor2Bit();
+      table.set(pc, e);
+    }
+    return e;
+  }
+  return {
+    predict(pc) {
+      return entryFor(pc).predict();
+    },
+    update(pc, actual) {
+      entryFor(pc).update(actual);
+    },
+    size() {
+      return table.size;
+    },
+  };
+}
+
+// Chạy MỘT bộ dự đoán qua chuỗi kết quả nhánh thực tế `seq` (mảng 'T'/'N'),
+// trả về số lần đoán đúng/tổng/tỷ lệ + vết chạy chi tiết từng bước (dùng cho
+// demo trực quan hoá).
+function runPredictor(predictor, seq) {
+  let correct = 0;
+  const trace = [];
+  for (const actual of seq) {
+    const predicted = predictor.predict();
+    const hit = predicted === actual;
+    if (hit) correct++;
+    trace.push({ predicted, actual, hit });
+    predictor.update(actual);
+  }
+  return { correct, total: seq.length, rate: seq.length === 0 ? 0 : correct / seq.length, trace };
+}
+
+// CPI hiệu dụng (Mục 5.3) khi có xung đột điều khiển:
+// $CPI_{eff} = CPI_{ideal} + \text{BranchFreq} \times \text{MispredictRate} \times \text{PenaltyCycles}$
+// — mỗi lần đoán sai buộc pipeline phải XẢ (flush) các lệnh đã nạp nhầm và
+// nạp lại đúng hướng, tốn `penaltyCycles` chu kỳ lãng phí; tần suất xảy ra
+// điều này là (tỷ lệ lệnh rẽ nhánh) × (tỷ lệ đoán sai của chính bộ dự đoán).
+function effectiveCPI(cpiIdeal, branchFrequency, mispredictionRate, penaltyCycles) {
+  return cpiIdeal + branchFrequency * mispredictionRate * penaltyCycles;
+}
+
 export {
   toBinString,
   toSigned,
@@ -448,6 +550,11 @@ export {
   pipelineTime,
   pipelineCPI,
   detectHazards,
+  makeBranchPredictor1Bit,
+  makeBranchPredictor2Bit,
+  makeBranchHistoryTable,
+  runPredictor,
+  effectiveCPI,
 };
 
 // ---------------------------------------------------------------------------
@@ -743,6 +850,69 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Pitfall load-use: hazard duoc gan dung nhan LOAD_USE (khac RAW thuong)',
       loadUseResult.hazards[0].type === 'LOAD_USE'
     );
+  }
+
+  // --- Bài 5: Bộ dự đoán nhánh 1-bit/2-bit + BHT + CPI hiệu dụng ---
+  {
+    // Chuoi vong lap long nhau: vong ngoai 3 lan, vong trong 4 lan T roi 1 N
+    // (TTTTN lap lai 3 lan) - dung de minh hoa pitfall dao dong cua bo 1-bit
+    const nestedLoop = [];
+    for (let outer = 0; outer < 3; outer++) {
+      for (let inner = 0; inner < 4; inner++) nestedLoop.push('T');
+      nestedLoop.push('N');
+    }
+    check('Chuoi vong lap long nhau co dung 15 nhanh (3x5)', nestedLoop.length, 15);
+
+    const r1 = runPredictor(makeBranchPredictor1Bit(), nestedLoop);
+    check('Bo du doan 1-bit tren vong lap long nhau: 9/15 dung (60%)', r1.correct, 9);
+    checkTrue('Bo du doan 1-bit: ty le dung = 0.6', Math.abs(r1.rate - 0.6) < 1e-9);
+
+    const r2 = runPredictor(makeBranchPredictor2Bit(), nestedLoop);
+    check('Bo du doan 2-bit tren CUNG chuoi: 10/15 dung (66,7% - tot hon 1-bit)', r2.correct, 10);
+    checkTrue('Bo du doan 2-bit: ty le dung = 2/3', Math.abs(r2.rate - 2 / 3) < 1e-9);
+
+    // Pitfall Muc 5.2: 1-bit doan sai NGAY tai moi diem chuyen N->T va T->N
+    // (dao dong lien tuc), con 2-bit CHIU DUNG 1 lan sai don le nho bao hoa
+    checkTrue(
+      'Pitfall: bo 1-bit doan sai o CA hai bien cua moi vong lap trong (N->T va T->N)',
+      !r1.trace[0].hit && !r1.trace[4].hit && !r1.trace[5].hit
+    );
+    checkTrue(
+      '2-bit: sau khi bao hoa Rat-nhay (state=3), 1 lan N don le CHUA lam doi du doan ke tiep',
+      r2.trace[5].predicted === 'T' // dung ngay sau N dau tien, van doan T (khac 1-bit)
+    );
+
+    // BHT: 2 dia chi nhanh KHAC NHAU phai co lich su rieng, khong tron lan
+    {
+      const bht = makeBranchHistoryTable();
+      const seqA = ['T', 'T', 'T', 'T']; // dia chi 100: luon nhay
+      const seqB = ['N', 'N', 'N', 'N']; // dia chi 200: khong bao gio nhay
+      let correctA = 0;
+      let correctB = 0;
+      for (const actual of seqA) {
+        if (bht.predict(100) === actual) correctA++;
+        bht.update(100, actual);
+      }
+      for (const actual of seqB) {
+        if (bht.predict(200) === actual) correctB++;
+        bht.update(200, actual);
+      }
+      // Dia chi 100 khoi dong tu state 0 (doan N) nen 2 lan dau sai truoc khi
+      // hoc du de vuot nguong state>=2 - dung 2/4; dia chi 200 khop ngay tu
+      // dau (state 0 da doan N) nen dung ca 4/4.
+      check('BHT: dia chi 100 (luon nhay) hoc dan, dung 2/4 (2 lan dau sai luc khoi dong)', correctA, 2);
+      check('BHT: dia chi 200 (khong bao gio nhay) khop ngay tu dau, dung 4/4', correctB, 4);
+      check('BHT: lan doan CUOI cua dia chi 100 da dung (T) sau khi hoc', bht.predict(100), 'T');
+      check('BHT: co dung 2 entry rieng biet cho 2 dia chi khac nhau', bht.size(), 2);
+    }
+
+    // Muc 5.3: CPI hieu dung - bai toan thuc te 20% lenh re nhanh, 10% doan
+    // sai, penalty 3 chu ky, CPI ly tuong = 1 -> 1 + 0.2*0.1*3 = 1.06
+    checkTrue(
+      'effectiveCPI(1, 0.2, 0.1, 3) = 1,06 (20% nhanh x 10% doan sai x 3 chu ky phat)',
+      Math.abs(effectiveCPI(1, 0.2, 0.1, 3) - 1.06) < 1e-9
+    );
+    checkTrue('effectiveCPI khong co nhanh nao (branchFreq=0) = dung CPI ly tuong', effectiveCPI(1, 0, 0.1, 3) === 1);
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');

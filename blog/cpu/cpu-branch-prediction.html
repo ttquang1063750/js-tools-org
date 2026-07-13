@@ -1,0 +1,999 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 5: Dự Đoán Nhánh &amp; Lỗ Hổng Bảo Mật Spectre — js-tools</title>
+    <meta
+      name="description"
+      content="Xung đột điều khiển (control hazard) khiến CPU trễ 1-3 chu kỳ mỗi lần rẽ nhánh, bộ dự đoán nhánh 1-bit và 2-bit bão hoà (FSM + BHT), công thức CPI hiệu dụng CPI_eff = CPI_ideal + BranchFreq × MispredictRate × PenaltyCycles, và thực thi suy đoán (speculative execution) cùng lỗ hổng bảo mật Spectre. Verified thật bằng engine tự viết: trên chuỗi vòng lặp lồng nhau 15 nhánh, bộ dự đoán 1-bit chỉ đúng 9/15 (60%) vì dao động liên tục ở biên vòng lặp, bộ 2-bit đúng 10/15 (66,7%) nhờ cơ chế bão hoà. CPI hiệu dụng với 20% lệnh rẽ nhánh, 10% tỷ lệ đoán sai, phạt 3 chu kỳ = 1,06. Demo: mô phỏng dự đoán nhánh 2-bit trên nhiều cấu trúc vòng lặp + máy tính CPI hiệu dụng."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/cpu/cpu-branch-prediction" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/cpu/cpu-branch-prediction" />
+    <meta property="og:title" content="Bài 5: Dự Đoán Nhánh &amp; Lỗ Hổng Bảo Mật Spectre — js-tools" />
+    <meta
+      property="og:description"
+      content="Control hazard, bộ dự đoán nhánh 1-bit/2-bit (FSM+BHT), công thức CPI_eff, thực thi suy đoán & Spectre. Verified: 1-bit đúng 60% trên vòng lặp lồng nhau, 2-bit đúng 66,7%. CPI_eff(20% nhánh, 10% đoán sai, phạt 3 chu kỳ) = 1,06."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 5: Dự Đoán Nhánh &amp; Lỗ Hổng Bảo Mật Spectre — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Control hazard, bộ dự đoán 1-bit/2-bit, CPI_eff, speculative execution & Spectre. Verified: 1-bit 60% vs 2-bit 66,7% trên vòng lặp lồng nhau. CPI_eff = 1,06 (20% nhánh, 10% đoán sai, phạt 3 chu kỳ)."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .bp-demo-container {
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 24px;
+        color: #242424;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .bp-demo-row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+      }
+      .bp-demo-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1;
+        min-width: 140px;
+      }
+      .bp-demo-field label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #475569;
+      }
+      .bp-demo-field input,
+      .bp-demo-field select {
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-family: Consolas, Monaco, monospace;
+      }
+      .bp-trace {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin: 8px 0;
+      }
+      .bp-cell {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 4px;
+        font-family: Consolas, Monaco, monospace;
+        font-weight: 700;
+        font-size: 13px;
+      }
+      .bp-cell--hit {
+        background: rgba(16, 185, 129, 0.2);
+        color: #047857;
+      }
+      .bp-cell--miss {
+        background: rgba(239, 68, 68, 0.2);
+        color: #b91c1c;
+      }
+      .bp-stat {
+        font-family: Consolas, Monaco, monospace;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .bp-predictor-block {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 12px 16px;
+      }
+      .bp-predictor-block h4 {
+        margin: 0 0 4px;
+        font-size: 14px;
+      }
+      .bp-cpi-output {
+        background: #1e293b;
+        color: #38bdf8;
+        border-radius: 6px;
+        padding: 14px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 14px;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 5: Dự Đoán Nhánh & Lỗ Hổng Bảo Mật Spectre",
+        "description": "Control hazard, bộ dự đoán nhánh 1-bit/2-bit (FSM+BHT), công thức CPI_eff, thực thi suy đoán & Spectre. Verified: 1-bit đúng 60% trên vòng lặp lồng nhau, 2-bit đúng 66,7%. CPI_eff(20% nhánh, 10% đoán sai, phạt 3 chu kỳ) = 1,06.",
+        "url": "https://js-tools.org/blog/cpu/cpu-branch-prediction",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-17"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--cpu">
+        <div class="container">
+          <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--cpu">Bài 5 · Kiến Trúc Máy Tính</div>
+          <h1 class="article-hero__title">Bài 5: Dự Đoán Nhánh &amp; Lỗ Hổng Bảo Mật Spectre</h1>
+          <div class="article-hero__meta">17 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: khi pipeline không biết lệnh nào sẽ đến tiếp theo</h2>
+            <p>
+              <a href="cpu-pipeline-hazards">Bài 4</a> giải quyết xung đột DỮ LIỆU giữa các lệnh chồng lấp trong
+              pipeline — nhưng còn một loại xung đột khác, nguy hiểm hơn về mặt THÔNG LƯỢNG: lệnh rẽ nhánh có điều kiện
+              (<code>BEQ</code>, <code>BNE</code>) làm CPU không biết lệnh NÀO sẽ chạy tiếp theo cho tới khi chính nhánh
+              đó được tính toán xong (ở giai đoạn EX, tức 2-3 chu kỳ SAU khi IF đã lỡ nạp lệnh tiếp theo). Đây là
+              <strong>xung đột điều khiển</strong> (control hazard) — và cách CPU hiện đại giải quyết nó (đoán trước rồi
+              chạy suy đoán) vô tình mở ra lỗ hổng bảo mật phần cứng nghiêm trọng nhất lịch sử: Spectre.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Bắt buộc đọc <a href="cpu-pipeline-hazards">Bài 4</a> (pipeline 5 giai đoạn — control hazard bài này xảy
+                ra NGAY tại giai đoạn IF của chính pipeline đó).
+              </div>
+            </div>
+
+            <h2>1. Xung đột điều khiển (Control Hazards) &amp; sự cần thiết của dự đoán</h2>
+            <p>
+              Với lệnh <code>BEQ</code>, CPU chỉ biết CHẮC CHẮN địa chỉ lệnh tiếp theo sau khi tính xong điều kiện so
+              sánh ở giai đoạn EX (theo mô hình Bài 4: EX là giai đoạn thứ 3 trong 5 giai đoạn IF-ID-EX-MEM-WB). Nhưng
+              pipeline đã phải NẠP (IF) 2 lệnh kế tiếp ngay trong 2 chu kỳ liền sau đó — nếu không đoán trước, CPU buộc
+              phải DỪNG nạp lệnh (stall) cho tới khi biết kết quả, mất đúng <strong>1-3 chu kỳ mỗi lần rẽ nhánh</strong>
+              (tuỳ CPU rẽ nhánh được giải quyết ở giai đoạn nào). Với chương trình có nhánh xuất hiện dày đặc — mọi
+              <code>if/else</code>, mọi vòng lặp — chi phí này cộng dồn cực lớn nếu không xử lý.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: tối ưu code nguồn không loại bỏ được xung đột rẽ nhánh</div>
+              <div class="callout__content">
+                Rút gọn số dòng code nguồn (vd gộp nhiều <code>if</code> lồng nhau thành một biểu thức) KHÔNG loại bỏ
+                lệnh rẽ nhánh trong MÃ MÁY sinh ra — trình biên dịch vẫn phải phát sinh <code>BEQ</code>/<code
+                  >BNE</code
+                >
+                cho mọi điểm rẽ nhánh logic, bất kể code nguồn "gọn" thế nào. Xung đột điều khiển là hệ quả của
+                <strong>cấu trúc điều khiển</strong> (branching logic) chứ không phải độ dài code nguồn — vòng lặp
+                <code>for</code> viết 1 dòng vẫn sinh ra đúng số lệnh rẽ nhánh như viết tay 10 dòng.
+              </div>
+            </div>
+
+            <h2>2. Bộ dự đoán nhánh tĩnh &amp; động: FSM 1-bit và 2-bit bão hoà</h2>
+            <p>
+              Cách đơn giản nhất — <strong>dự đoán tĩnh</strong> (luôn đoán Không-nhảy, hoặc luôn đoán Nhảy) — chỉ đúng
+              khoảng 50% với nhánh ngẫu nhiên. <strong>Dự đoán động</strong> ghi nhớ LỊCH SỬ của chính nhánh đó để đoán
+              thông minh hơn, dựa trên tính lặp lại rất cao của nhánh trong vòng lặp thực tế.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">branch_predictor_1bit.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Bo du doan 1-bit: chi nho KET QUA LAN GAN NHAT, doan y het lan do
+function makeBranchPredictor1Bit() {
+  let state = 0; // 0 = doan Khong-nhay (N), 1 = doan Nhay (T)
+  return {
+    predict: () => (state === 1 ? 'T' : 'N'),
+    update: (actual) => { state = actual === 'T' ? 1 : 0; },
+  };
+}
+// Verified: tren chuoi vong lap long nhau (TTTTN lap 3 lan, 15 nhanh),
+// bo 1-bit chi doan dung 9/15 = 60%</code></pre>
+            </div>
+            <p>
+              Bộ dự đoán <strong>2-bit bão hoà</strong> (saturating counter) dùng 4 trạng thái thay vì 2 — một lần đoán
+              sai ĐƠN LẺ chỉ đẩy trạng thái qua một nấc liền kề chứ KHÔNG lật ngay dự đoán, nên "chịu đựng" được nhiễu
+              nhỏ tốt hơn hẳn:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">branch_predictor_2bit.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// 0=Rat-khong-nhay 1=Hoi-khong-nhay 2=Hoi-nhay 3=Rat-nhay; doan T khi state>=2
+function makeBranchPredictor2Bit() {
+  let state = 0;
+  return {
+    predict: () => (state >= 2 ? 'T' : 'N'),
+    update: (actual) => {
+      state = actual === 'T' ? Math.min(3, state + 1) : Math.max(0, state - 1);
+    },
+  };
+}
+// BHT (Branch History Table): moi DIA CHI lenh re nhanh co MOT bo du doan
+// 2-bit RIENG (lap chi muc theo pc) - cac nhanh khac nhau co xu huong khac nhau
+function makeBranchHistoryTable() {
+  const table = new Map();
+  // ... entryFor(pc) tra ve/tao bo du doan 2-bit rieng cho dia chi pc ...
+}
+// Verified: CUNG chuoi 15 nhanh o tren, bo 2-bit dung 10/15 = 66,7% (tot hon 1-bit)</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy chính: bộ 1-bit dao động liên tục ở vòng lặp lồng nhau</div>
+              <div class="callout__content">
+                Với vòng lặp NGOÀI chứa vòng lặp TRONG (mẫu hình cực phổ biến: nhánh thoát vòng trong lặp lại 4 lần Nhảy
+                rồi 1 lần Không-nhảy), bộ 1-bit "quên" trạng thái NGAY sau lần Không-nhảy đầu tiên — dẫn đến
+                <strong>2 lần đoán sai liên tiếp</strong> mỗi vòng lặp ngoài: một lần khi thoát vòng trong (đoán Nhảy
+                nhưng thực tế Không-nhảy), một lần NGAY SAU đó khi quay lại vòng trong (đoán Không-nhảy nhưng thực tế
+                Nhảy). Verified thật: 1-bit chỉ đúng 60% trên chuỗi này, trong khi 2-bit — nhờ cơ chế bão hoà chịu được
+                1 lần nhiễu đơn lẻ mà không đổi dự đoán — đúng 66,7%.
+              </div>
+            </div>
+
+            <h2>3. Tính toán CPI hiệu dụng &amp; chi phí đoán sai</h2>
+            <p>
+              Mỗi lần đoán SAI, pipeline phải xả (flush) các lệnh đã nạp nhầm hướng và nạp lại đúng hướng — tốn
+              <code>PenaltyCycles</code> chu kỳ hoàn toàn lãng phí. CPI hiệu dụng cộng thêm đúng phần chi phí này vào
+              CPI lý tưởng:
+            </p>
+            <p style="text-align: center">
+              $$CPI_{eff} = CPI_{ideal} + \text{BranchFrequency} \times \text{MispredictionRate} \times
+              \text{PenaltyCycles}$$
+            </p>
+            <p>
+              Bài toán thực tế: chương trình có <strong>20% lệnh là rẽ nhánh</strong>, bộ dự đoán đạt tỷ lệ đoán sai
+              <strong>10%</strong>, mỗi lần đoán sai phạt <strong>3 chu kỳ</strong>, CPI lý tưởng $=1$ — verified thật:
+              $CPI_{eff} = 1 + 0,2 \times 0,1 \times 3 = \mathbf{1,06}$. Nghĩa là chỉ riêng đoán sai nhánh đã làm CPU
+              chậm đi <strong>6%</strong> so với lý tưởng, dù tỷ lệ đoán sai chỉ 10% — vì CPI hiệu dụng nhân dồn CẢ BA
+              yếu tố (tần suất nhánh × tỷ lệ sai × số chu kỳ phạt).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">effective_cpi.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function effectiveCPI(cpiIdeal, branchFrequency, mispredictionRate, penaltyCycles) {
+  return cpiIdeal + branchFrequency * mispredictionRate * penaltyCycles;
+}
+// Verified: effectiveCPI(1, 0.2, 0.1, 3) === 1.06
+// Verified: effectiveCPI(1, 0, 0.1, 3) === 1 (khong co nhanh nao -> dung CPI ly tuong)</code></pre>
+            </div>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Đừng đánh giá thấp nhánh KHÔNG THỂ dự đoán</div>
+              <div class="callout__content">
+                Công thức $CPI_{eff}$ giả định MỘT tỷ lệ đoán sai trung bình cho TOÀN chương trình — nhưng thực tế, một
+                số nhánh cực kỳ dễ đoán (vd điều kiện dừng vòng lặp có hàng nghìn lần lặp, chỉ sai 1 lần cuối) trong khi
+                số khác gần như <strong>không thể dự đoán</strong> (dữ liệu ngẫu nhiên, phân nhánh dựa trên input không
+                có quy luật — ví dụ tra cứu nhị phân trên dữ liệu ngẫu nhiên). Dùng MỘT con số tỷ lệ đoán sai trung bình
+                cho cả chương trình có thể che giấu hoàn toàn các "điểm nóng" (hotspot) nơi CPI hiệu dụng cục bộ cao hơn
+                hẳn mức trung bình — cần đo tỷ lệ đoán sai THEO TỪNG nhánh khi tối ưu thật sự.
+              </div>
+            </div>
+
+            <h2>4. Thực thi suy đoán (Speculative Execution) &amp; Lỗ hổng Spectre</h2>
+            <p>
+              Sau khi ĐOÁN hướng nhánh, CPU hiện đại không chỉ nạp lệnh mà còn <strong>chạy trước</strong>
+              (speculative execution) các lệnh ở nhánh được đoán — kể cả các lệnh LOAD dữ liệu từ bộ nhớ vào cache. Nếu
+              đoán ĐÚNG, kết quả được "chính thức hoá" (commit) bình thường. Nếu đoán SAI, CPU khôi phục đúng trạng thái
+              kiến trúc (registers, bộ nhớ) như chưa từng chạy các lệnh đó — nhưng có MỘT dấu vết KHÔNG bị xoá:
+              <strong>trạng thái cache</strong>. Dữ liệu đã được nạp suy đoán vẫn NẰM TRONG cache dù kết quả kiến trúc
+              bị huỷ bỏ.
+            </p>
+            <p>
+              <strong>Spectre</strong> (công bố 2018) khai thác đúng dấu vết này: kẻ tấn công huấn luyện bộ dự đoán
+              nhánh để ép CPU nạn nhân THI HÀNH SUY ĐOÁN một đoạn mã đọc dữ liệu bí mật (vd ngoài biên mảng, vượt qua
+              kiểm tra bounds-check mà CPU chưa kịp xác nhận), rồi dùng thời gian truy cập cache (cache-timing
+              side-channel attack — đo xem một địa chỉ có nằm trong cache hay không qua độ trễ đọc) để SUY RA giá trị bí
+              mật đó, dù kết quả kiến trúc của phép tính suy đoán đã bị huỷ hoàn toàn. Đây KHÔNG phải lỗi phần mềm đơn
+              lẻ — nó khai thác chính CƠ CHẾ suy đoán mà mọi CPU hiệu năng cao hiện đại đều cần để đạt tốc độ.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >spectre_leak_sketch.txt (sơ đồ khai thác, chỉ mang tính minh hoạ khái niệm)</span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// 1. Huan luyen bo du doan: goi ham voi index HOP LE nhieu lan
+//    -> bo du doan "tin tuong" nhanh bounds-check se la TRUE
+// 2. Goi lai voi index NGOAI BIEN (vuot mang that su)
+//    -> CPU DOAN nhanh check van TRUE, THI HANH SUY DOAN doc du lieu
+//       ngoai bien vao thanh ghi, dung no lam chi so doc tiep 1 mang khac
+//    -> gia tri bi mat gio la 1 phan CHI SO dia chi trong cache
+// 3. Khi CPU phat hien doan SAI: KHOI PHUC kien truc (thanh ghi/bo nho)
+//    -> NHUNG cache VAN con dau vet (dia chi vua duoc doc vao cache)
+// 4. Ke tan cong do THOI GIAN truy cap tung dia chi ung vien
+//    -> dia chi nao nhanh (co trong cache) = suy ra dung 1 phan gia tri bi mat</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Cạm bẫy: nghĩ Spectre có thể vá hoàn toàn bằng phần mềm mà không tốn hiệu năng
+              </div>
+              <div class="callout__content">
+                Các bản vá phần mềm (vd chèn "hàng rào suy đoán" — speculation barrier — trước các bounds-check nhạy
+                cảm, hoặc vô hiệu hoá một phần dự đoán nhánh) đều đánh đổi TRỰC TIẾP với hiệu năng, vì chúng buộc CPU
+                phải CHỜ thay vì suy đoán ở đúng những điểm mà suy đoán mang lại lợi ích lớn nhất. Không có bản vá phần
+                mềm nào loại bỏ HOÀN TOÀN lớp lỗ hổng này mà không tốn hiệu năng, vì gốc rễ nằm ở chính PHẦN CỨNG (cơ
+                chế suy đoán + cache chia sẻ) — khắc phục triệt để đòi hỏi thay đổi thiết kế vi kiến trúc (isolation
+                cache theo domain bảo mật, hoặc các CPU thế hệ mới thiết kế lại cơ chế suy đoán), không chỉ là một bản
+                vá firmware/OS.
+              </div>
+            </div>
+
+            <h2>5. Thực hành: Mô phỏng dự đoán nhánh 2-bit</h2>
+            <p>
+              Chọn một cấu trúc điều khiển bên dưới để chạy ĐỒNG THỜI cả bộ dự đoán 1-bit và 2-bit (dùng đúng engine đã
+              verify) — ô xanh là đoán ĐÚNG, ô đỏ là đoán SAI, so sánh trực tiếp tỷ lệ dự đoán chính xác thực tế của 2
+              bộ trên CÙNG một chuỗi nhánh:
+            </p>
+
+            <div class="code-tabs" id="bp-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🎯 Mô phỏng Dự Đoán Nhánh 1-bit vs 2-bit</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="bp-demo-container">
+                  <div class="bp-demo-row">
+                    <div class="bp-demo-field">
+                      <label for="bp-seq-select">Cấu trúc điều khiển</label>
+                      <select id="bp-seq-select">
+                        <option value="nestedLoop">Vòng lặp lồng nhau (4×T rồi 1×N, lặp 3 lần)</option>
+                        <option value="alwaysTaken">Vòng lặp đơn (luôn nhảy — 8×T)</option>
+                        <option value="alternating">Xen kẽ tuyệt đối (T,N,T,N,... — không thể đoán đúng)</option>
+                      </select>
+                    </div>
+                    <button class="btn-facebook" id="bp-run-btn" type="button" style="height: 38px">Chạy lại</button>
+                  </div>
+                  <div class="bp-predictor-block">
+                    <h4>Bộ dự đoán 1-bit</h4>
+                    <div id="bp-trace-1bit"></div>
+                  </div>
+                  <div class="bp-predictor-block">
+                    <h4>Bộ dự đoán 2-bit bão hoà</h4>
+                    <div id="bp-trace-2bit"></div>
+                  </div>
+                  <div>
+                    <p style="margin: 0 0 8px; font-weight: 700; font-size: 14px">Máy tính CPI hiệu dụng</p>
+                    <div class="bp-demo-row">
+                      <div class="bp-demo-field">
+                        <label for="bp-cpi-ideal">CPI lý tưởng</label>
+                        <input type="number" id="bp-cpi-ideal" value="1" step="0.1" min="1" />
+                      </div>
+                      <div class="bp-demo-field">
+                        <label for="bp-cpi-freq">Tỷ lệ lệnh rẽ nhánh</label>
+                        <input type="number" id="bp-cpi-freq" value="0.2" step="0.01" min="0" max="1" />
+                      </div>
+                      <div class="bp-demo-field">
+                        <label for="bp-cpi-miss">Tỷ lệ đoán sai</label>
+                        <input type="number" id="bp-cpi-miss" value="0.1" step="0.01" min="0" max="1" />
+                      </div>
+                      <div class="bp-demo-field">
+                        <label for="bp-cpi-penalty">Chu kỳ phạt/lần sai</label>
+                        <input type="number" id="bp-cpi-penalty" value="3" step="1" min="1" />
+                      </div>
+                    </div>
+                    <div class="bp-cpi-output" id="bp-cpi-output">—</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Xung đột điều khiển: CPU chỉ biết chắc hướng rẽ nhánh sau EX, nhưng đã phải nạp lệnh tiếp theo trước
+                đó — mất 1-3 chu kỳ mỗi nhánh nếu không đoán trước.
+              </li>
+              <li>
+                ✅ Verified: bộ dự đoán 1-bit đúng 60% trên vòng lặp lồng nhau (dao động ở mỗi biên vòng lặp); 2-bit bão
+                hoà đúng 66,7% (chịu được 1 lần nhiễu đơn lẻ).
+              </li>
+              <li>
+                ✅ BHT lưu lịch sử RIÊNG theo từng địa chỉ nhánh — các nhánh khác nhau có xu hướng khác nhau, không thể
+                gộp chung một bộ dự đoán.
+              </li>
+              <li>
+                ✅ Verified: $CPI_{eff} = CPI_{ideal} + \text{BranchFreq} \times \text{MispredictRate} \times
+                \text{Penalty}$ — 20% nhánh, 10% đoán sai, phạt 3 chu kỳ → CPI tăng 6% (1 → 1,06).
+              </li>
+              <li>
+                ✅ Spectre khai thác dấu vết CACHE còn sót lại sau khi thực thi suy đoán bị huỷ — không có bản vá phần
+                mềm nào loại bỏ hoàn toàn mà không tốn hiệu năng, vì gốc rễ nằm ở phần cứng.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao CPU cần bộ dự đoán nhánh thay vì cứ chờ tính xong điều kiện rồi mới nạp lệnh tiếp theo?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Nếu chờ, pipeline phải dừng nạp lệnh (stall) 1-3 chu kỳ mỗi lần rẽ nhánh — với chương trình có nhánh dày đặc (mọi if/else, mọi vòng lặp), chi phí này cộng dồn cực lớn, làm giảm hẳn thông lượng pipeline mà Bài 4 vừa xây.'
+                    )
+                  "
+                >
+                  A. Để tránh phải dừng nạp lệnh (stall) 1-3 chu kỳ mỗi lần gặp rẽ nhánh, giữ pipeline luôn đầy lệnh
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Bo du doan nhanh khong lien quan gi den viec giai quyet xung dot DU LIEU (RAW/load-use) - do la viec cua forwarding/stall o Bai 4. Bo du doan giai quyet xung dot DIEU KHIEN (control hazard).'
+                    )
+                  "
+                >
+                  B. Để giải quyết xung đột dữ liệu RAW giữa các lệnh chồng lấp
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Bo du doan nhanh hoan toan khong lam thay doi dung luong bo nho co the su dung - day la ky thuat xu ly LUONG LENH, khong phai ky thuat luu tru.'
+                    )
+                  "
+                >
+                  C. Để tăng dung lượng bộ nhớ cache có thể sử dụng
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: trên chuỗi vòng lặp lồng nhau 15 nhánh (TTTTN lặp 3 lần), bộ 1-bit đúng 9/15 (60%), bộ 2-bit
+                đúng 10/15 (66,7%). Vì sao 2-bit tốt hơn?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Bộ 1-bit CHỈ nhớ 1 bit nên MỘT lần Không-nhảy đơn lẻ (thoát vòng trong) lật NGAY dự đoán, gây sai tiếp ở lần Nhảy kế tiếp (quay lại vòng trong) — 2 lần sai liên tiếp mỗi vòng ngoài. Bộ 2-bit bão hoà cần 2 lần liên tiếp SAI CÙNG HƯỚNG mới lật dự đoán, nên chịu được 1 lần nhiễu đơn lẻ mà vẫn giữ đúng dự đoán chủ đạo.'
+                    )
+                  "
+                >
+                  A. Bộ 2-bit cần 2 lần sai liên tiếp CÙNG hướng mới đổi dự đoán (bão hoà), nên không bị lật ngay bởi 1
+                  lần nhiễu đơn lẻ như bộ 1-bit
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca hai bo du doan deu chi dua vao LICH SU CUA CHINH nhanh do (khong dung du lieu cua nhanh khac) - dieu tao khac biet la SO BIT trang thai va co che bao hoa, khong phai viec dung them thong tin tu nhanh khac.'
+                    )
+                  "
+                >
+                  B. Bộ 2-bit dùng thêm thông tin từ các nhánh KHÁC trong chương trình để đoán chính xác hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca hai bo du doan deu chay TREN CUNG mot chuoi 15 nhanh y het nhau trong phep so sanh nay - khong phai do chuoi nhanh khac nhau, ma do CO CHE trang thai ben trong bo du doan khac nhau.'
+                    )
+                  "
+                >
+                  C. Vì chuỗi nhánh dùng để test bộ 2-bit dễ đoán hơn chuỗi dùng để test bộ 1-bit
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Verified: effectiveCPI(1, 0.2, 0.1, 3) = 1,06 (CPI lý tưởng 1, 20% lệnh rẽ nhánh, 10% đoán sai, phạt 3
+                chu kỳ/lần sai). Nếu tỷ lệ đoán sai giảm còn 0% (bộ dự đoán hoàn hảo), CPI hiệu dụng bằng bao nhiêu?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! effectiveCPI(1, 0.2, 0, 3) = 1 + 0.2×0×3 = 1 — khi tỷ lệ đoán sai bằng 0, số hạng phạt (BranchFreq × MispredictRate × Penalty) triệt tiêu hoàn toàn về 0 bất kể BranchFreq hay Penalty là bao nhiêu, CPI hiệu dụng về đúng CPI lý tưởng.'
+                    )
+                  "
+                >
+                  A. 1 (đúng bằng CPI lý tưởng — không còn phạt vì không còn đoán sai lần nào)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Cong thuc CPI_eff = CPI_ideal + BranchFreq x MispredictRate x Penalty - khi MispredictRate = 0, ca so hang nhan nay bang 0 bat ke BranchFreq (0.2) hay Penalty (3) la gi, KHONG con lai 0.6.'
+                    )
+                  "
+                >
+                  B. 0,6 (vì vẫn còn 20% lệnh rẽ nhánh × 3 chu kỳ phạt tiềm năng)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. CPI hieu dung KHONG BAO GIO thap hon CPI ly tuong - CPI ly tuong (=1) la GIOI HAN DUOI, chi co the CONG THEM chi phi phat vi doan sai, khong the tru bot.'
+                    )
+                  "
+                >
+                  C. 0 (không còn chi phí nào phát sinh từ rẽ nhánh)
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Lỗ hổng Spectre khai thác điều gì để rò rỉ dữ liệu bí mật, dù kết quả kiến trúc của phép tính suy đoán
+                đã bị huỷ hoàn toàn?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Khi CPU khôi phục kiến trúc sau khi phát hiện đoán sai, thanh ghi/bộ nhớ trở lại đúng trạng thái cũ — nhưng trạng thái CACHE (dữ liệu đã được nạp suy đoán) KHÔNG được khôi phục. Kẻ tấn công đo thời gian truy cập từng địa chỉ ứng viên (cache-timing side-channel) để suy ra địa chỉ nào vừa được nạp vào cache, từ đó suy ngược ra giá trị bí mật.'
+                    )
+                  "
+                >
+                  A. Dấu vết còn sót lại trong CACHE sau khi thực thi suy đoán — đo bằng thời gian truy cập bộ nhớ
+                  (cache-timing side-channel attack)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Neu ket qua KIEN TRUC (gia tri thanh ghi) duoc doc truc tiep, do la mot loi khac han (rd tu suy doan bi commit sai) - Spectre chinh xac la khai thac dau vet GIAN TIEP qua cache SAU KHI ket qua kien truc DA bi huy bo hoan toan.'
+                    )
+                  "
+                >
+                  B. Đọc trực tiếp giá trị thanh ghi của phép tính suy đoán sau khi CPU phát hiện đoán sai
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Bo du doan nhanh CHINH LA co che bi loi dung (khong phai bi thay the) - ke tan cong CHU DONG huan luyen bo du doan de ep CPU nan nhan chay suy doan sai huong, chu khong phai vo hieu hoa bo du doan.'
+                    )
+                  "
+                >
+                  C. Vô hiệu hoá hoàn toàn bộ dự đoán nhánh của CPU nạn nhân
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — thư viện kiến trúc máy tính mini dùng xuyên suốt cả 12 bài, Bài 5
+                vừa thêm <code>makeBranchPredictor1Bit()</code>, <code>makeBranchPredictor2Bit()</code>,
+                <code>makeBranchHistoryTable()</code>, <code>effectiveCPI()</code> — bộ dự đoán nhánh FSM + BHT và công
+                thức CPI hiệu dụng, kèm self-test đối chiếu đúng mọi con số trong bài (chạy
+                <code>node cpu-core.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Sách giáo khoa cốt lõi:</strong>
+                  <a
+                    href="https://www.amazon.com/Computer-Organization-Design-RISC-V-Architecture/dp/0128203315"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Computer Organization and Design, RISC-V Edition (Patterson &amp; Hennessy)</a
+                  >
+                  — Chương 4-5 trình bày control hazard, dự đoán nhánh và các mô hình FSM 1-bit/2-bit kinh điển.
+                </li>
+                <li>
+                  <strong>Nghiên cứu gốc về Spectre:</strong>
+                  <a href="https://spectreattack.com/spectre.pdf" target="_blank" rel="noopener noreferrer"
+                    >Kocher et al. (2019) — Spectre Attacks: Exploiting Speculative Execution</a
+                  >
+                  — bài báo công bố lỗ hổng, mô tả chi tiết cơ chế khai thác cache-timing side-channel.
+                </li>
+                <li>
+                  <strong>Tổng quan bộ dự đoán nhánh:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Branch_predictor" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Branch predictor</a
+                  >
+                  — lịch sử phát triển từ dự đoán tĩnh đến các bộ dự đoán động phức tạp hiện đại.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="cpu-pipeline-hazards" class="article-related__link article-related__link--prev"
+                  >Bài 4: Pipeline CPU &amp; Xung Đột Dữ Liệu (Data Hazards)</a
+                >
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 6: Bộ Nhớ Cache &amp; Hệ Thống Phân Cấp Bộ Nhớ — sắp ra mắt
+                </span>
+                <a href="cpu-programming-series" class="article-related__link">Quay lại Lộ trình Kiến Trúc Máy Tính</a>
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="cpu-branch-prediction.js"></script>
+  </body>
+</html>
