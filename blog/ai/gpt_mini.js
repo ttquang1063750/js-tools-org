@@ -323,8 +323,14 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   const model = initGPTMini(7, vocab.vocabSize, DMODEL, NUM_HEADS, DFF, NUM_BLOCKS, BLOCK_LEN + 8);
   const bd = countBreakdown(model);
   const dk = DMODEL / NUM_HEADS;
-  const expectedPerBlock = NUM_HEADS * (DMODEL * dk * 3 + dk * DMODEL) + 2 * 2 * DMODEL + 2 * DMODEL * DFF + DFF + DMODEL;
-  check('tham so 1 block khop cong thuc tay', bd.perBlock, expectedPerBlock, `got=${bd.perBlock} exp=${expectedPerBlock}`);
+  const expectedPerBlock =
+    NUM_HEADS * (DMODEL * dk * 3 + dk * DMODEL) + 2 * 2 * DMODEL + 2 * DMODEL * DFF + DFF + DMODEL;
+  check(
+    'tham so 1 block khop cong thuc tay',
+    bd.perBlock,
+    expectedPerBlock,
+    `got=${bd.perBlock} exp=${expectedPerBlock}`
+  );
   check('tong = tok + pos + blocks (head weight-tied, khong cong them)', bd.total, bd.tok + bd.pos + bd.blocksTotal);
   console.log(
     `Dem tham so: tokEmb=${bd.tok} + posEmb=${bd.pos} + ${bd.numBlocks} block x ${bd.perBlock}=${bd.blocksTotal} + head(tied)=0 => TONG=${bd.total}`
@@ -347,8 +353,16 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     console.log(
       `Loss full-batch: epoch0=${losses[0].toFixed(3)} epoch60=${losses[60].toFixed(3)} epoch149=${losses[149].toFixed(3)} (uniform=${Math.log(vocab.vocabSize).toFixed(2)})`
     );
-    check('loss giam manh sau 150 epoch full-batch (< 20% loss ban dau)', losses[149] < losses[0] * 0.2, `${losses[0]} -> ${losses[149]}`);
-    check('loss da giam ro ret ngay tai epoch 60 (< 0.3) — dung so voi demo live 60 epoch', losses[60] < 0.3, losses[60]);
+    check(
+      'loss giam manh sau 150 epoch full-batch (< 20% loss ban dau)',
+      losses[149] < losses[0] * 0.2,
+      `${losses[0]} -> ${losses[149]}`
+    );
+    check(
+      'loss da giam ro ret ngay tai epoch 60 (< 0.3) — dung so voi demo live 60 epoch',
+      losses[60] < 0.3,
+      losses[60]
+    );
 
     // Sinh van ban SAU train — verify nho DUNG NGUYEN VAN mot doan dau (bang chung THAT cua viec hoc, khong phai suy dien).
     const seedIds = tokensToIds(encodeText('Trăm năm', vocab.merges), vocab.stoi, 0);
@@ -383,8 +397,16 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       `Train/val: train=${trainSet.length} val=${valSet.length} block | val MIN tai epoch ${minValIdx} (${valLosses[minValIdx].toFixed(3)}), val epoch199=${valLosses[199].toFixed(3)}, train epoch199=${trainLosses[199].toFixed(3)}`
     );
     check('val loss dat MIN rat som (truoc epoch 20)', minValIdx < 20, minValIdx);
-    check('val loss CUOI cao hon RAT NHIEU so voi val MIN (qua dau ro ret)', valLosses[199] > valLosses[minValIdx] * 2, `${valLosses[minValIdx]} -> ${valLosses[199]}`);
-    check('train loss CUOI van tiep tuc giam deu (khong quay dau nhu val)', trainLosses[199] < trainLosses[minValIdx], `${trainLosses[minValIdx]} -> ${trainLosses[199]}`);
+    check(
+      'val loss CUOI cao hon RAT NHIEU so voi val MIN (qua dau ro ret)',
+      valLosses[199] > valLosses[minValIdx] * 2,
+      `${valLosses[minValIdx]} -> ${valLosses[199]}`
+    );
+    check(
+      'train loss CUOI van tiep tuc giam deu (khong quay dau nhu val)',
+      trainLosses[199] < trainLosses[minValIdx],
+      `${trainLosses[minValIdx]} -> ${trainLosses[199]}`
+    );
   }
 
   // 4. Gradient clipping tren graph THAT — verify norm SAU clip <= maxNorm.
@@ -396,7 +418,9 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const beforeSq = params.reduce((s, p) => s + p.grad.reduce((s2, g) => s2 + g * g, 0), 0);
     const { norm } = clipGlobalGradNorm(params, 0.3);
     const afterSq = params.reduce((s, p) => s + p.grad.reduce((s2, g) => s2 + g * g, 0), 0);
-    console.log(`Gradient clipping: norm truoc=${norm.toFixed(3)}, norm sau=${Math.sqrt(afterSq).toFixed(3)} (maxNorm=0.3)`);
+    console.log(
+      `Gradient clipping: norm truoc=${norm.toFixed(3)}, norm sau=${Math.sqrt(afterSq).toFixed(3)} (maxNorm=0.3)`
+    );
     check('clip: norm truoc > maxNorm (can clip that)', norm > 0.3, norm);
     check('clip: norm SAU ~ dung maxNorm=0.3', Math.abs(Math.sqrt(afterSq) - 0.3) < 1e-3, Math.sqrt(afterSq));
   }

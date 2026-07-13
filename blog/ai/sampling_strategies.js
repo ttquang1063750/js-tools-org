@@ -181,16 +181,10 @@ function check(name, cond, detail) {
   const cands = nextCandidates(bigram, 'người');
   const k5 = topK(cands, 5);
   check('top-k=5 giu dung 5', k5.length === 5, k5.length);
-  check(
-    'top-k renormalize = 1',
-    Math.abs(k5.reduce((s, [, p]) => s + p, 0) - 1) < 1e-9
-  );
+  check('top-k renormalize = 1', Math.abs(k5.reduce((s, [, p]) => s + p, 0) - 1) < 1e-9);
   const p80 = topP(cands, 0.8);
   check('top-p cat duoi that (< tong so ung vien)', p80.length < cands.length, p80.length + '/' + cands.length);
-  check(
-    'top-p renormalize = 1',
-    Math.abs(p80.reduce((s, [, p]) => s + p, 0) - 1) < 1e-9
-  );
+  check('top-p renormalize = 1', Math.abs(p80.reduce((s, [, p]) => s + p, 0) - 1) < 1e-9);
 }
 
 // Beam search: verify log-prob >= greedy (không tệ hơn)
