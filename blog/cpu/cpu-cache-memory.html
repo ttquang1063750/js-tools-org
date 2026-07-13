@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 7: Phân Cấp Bộ Nhớ &amp; Kiến Trúc Cache — js-tools</title>
+    <meta
+      name="description"
+      content="Bức tường bộ nhớ (Memory Wall) và nguyên lý cục bộ (Temporal/Spatial Locality), cấu trúc ánh xạ cache Direct-Mapped và Set-Associative qua Tag/Index/Offset, thay thế LRU, và công thức AMAT (Average Memory Access Time) nhiều cấp. Verified thật bằng engine tự viết: duyệt mảng 8x8 theo HÀNG (spatial locality tốt) chỉ 16/64 miss (25%), theo CỘT (locality mất) MISS 100% (64/64) — gấp 4 lần. Direct-Mapped với 2 địa chỉ trùng index khác tag: MISS 100% (20/20, đá nhau liên tục — conflict miss); Set-Associative 2-way CÙNG chuỗi đó: chỉ 2/20 miss. AMAT 2 cấp ví dụ kinh điển Patterson&Hennessy (2% miss L1, L2 hit=10, 25% miss cục bộ L2, phạt DRAM=200) = 2,2 chu kỳ. Demo: bộ tách Tag/Index/Offset trực tiếp + mô phỏng Hit/Miss trên 4 kịch bản."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/cpu/cpu-cache-memory" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/cpu/cpu-cache-memory" />
+    <meta property="og:title" content="Bài 7: Phân Cấp Bộ Nhớ &amp; Kiến Trúc Cache — js-tools" />
+    <meta
+      property="og:description"
+      content="Memory Wall, Temporal/Spatial Locality, Direct-Mapped vs Set-Associative (Tag/Index/Offset, LRU), AMAT nhiều cấp. Verified: duyệt hàng 25% miss, duyệt cột 100% miss. Conflict miss Direct-Mapped 100% vs Set-Associative 2-way chỉ 10%. AMAT 2 cấp = 2,2 chu kỳ."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 7: Phân Cấp Bộ Nhớ &amp; Kiến Trúc Cache — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Memory Wall, Locality, Direct-Mapped vs Set-Associative, AMAT nhiều cấp. Verified: duyệt hàng 25% miss vs duyệt cột 100% miss. Conflict miss 100% (Direct-Mapped) vs 10% (2-way). AMAT=2,2 chu kỳ."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .cache-demo-container {
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 24px;
+        color: #242424;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .cache-demo-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cache-demo-field label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #475569;
+      }
+      .cache-demo-field select,
+      .cache-demo-field input {
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-family: Consolas, Monaco, monospace;
+      }
+      .cache-demo-row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .cache-trace {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
+        margin: 8px 0;
+      }
+      .cache-cell {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        font-family: Consolas, Monaco, monospace;
+        font-weight: 700;
+        font-size: 11px;
+      }
+      .cache-cell--hit {
+        background: rgba(16, 185, 129, 0.2);
+        color: #047857;
+      }
+      .cache-cell--miss {
+        background: rgba(239, 68, 68, 0.2);
+        color: #b91c1c;
+      }
+      .cache-stat {
+        font-family: Consolas, Monaco, monospace;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .cache-split-output {
+        background: #1e293b;
+        color: #38bdf8;
+        border-radius: 6px;
+        padding: 14px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 14px;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 7: Phân Cấp Bộ Nhớ & Kiến Trúc Cache",
+        "description": "Memory Wall, Temporal/Spatial Locality, Direct-Mapped vs Set-Associative (Tag/Index/Offset, LRU), AMAT nhiều cấp. Verified: duyệt hàng 25% miss, duyệt cột 100% miss. Conflict miss Direct-Mapped 100% vs Set-Associative 2-way chỉ 10%. AMAT 2 cấp = 2,2 chu kỳ.",
+        "url": "https://js-tools.org/blog/cpu/cpu-cache-memory",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-19"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--cpu">
+        <div class="container">
+          <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--cpu">Bài 7 · Kiến Trúc Máy Tính</div>
+          <h1 class="article-hero__title">Bài 7: Phân Cấp Bộ Nhớ &amp; Kiến Trúc Cache</h1>
+          <div class="article-hero__meta">19 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: một CPU cực nhanh vẫn vô dụng nếu chờ bộ nhớ mãi</h2>
+            <p>
+              <a href="cpu-ooo-execution">Bài 6</a> xây CPU thực thi ngoài thứ tự cực kỳ tinh vi — nhưng dù có bao nhiêu
+              Reservation Station, mọi lệnh <code>LW</code>/<code>SW</code> (Bài 3) cuối cùng vẫn phải chạm tới bộ nhớ
+              chính (DRAM). Vấn đề: DRAM CHẬM HƠN CPU hàng trăm lần — đây là <strong>Memory Wall</strong> (bức tường bộ
+              nhớ). Giải pháp không phải làm DRAM nhanh hơn (vật lý không cho phép với giá rẻ), mà là chèn một lớp bộ
+              nhớ SRAM nhỏ, cực nhanh, cực đắt giữa CPU và DRAM — gọi là <strong>Cache</strong>.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Nên đọc <a href="cpu-riscv-datapath">Bài 3</a> (truy cập bộ nhớ <code>LW</code>/<code>SW</code> trong
+                datapath — cache bài này chính là lớp ẩn giữa CPU và bộ nhớ chính mà datapath Bài 3 coi là tức thời).
+              </div>
+            </div>
+
+            <h2>1. Nút thắt cổ chai bộ nhớ (Memory Wall) &amp; Nguyên lý Locality</h2>
+            <p>
+              Tốc độ CPU tăng nhanh hơn tốc độ DRAM suốt nhiều thập kỷ — khoảng cách này chính là Memory Wall. Cache
+              "che giấu" độ trễ DRAM bằng cách khai thác 2 quy luật thống kê gần như LUÔN đúng với chương trình thật:
+            </p>
+            <ul>
+              <li>
+                <strong>Temporal Locality</strong> (cục bộ thời gian) — một địa chỉ VỪA được truy cập có xu hướng được
+                truy cập LẠI trong tương lai gần (vd biến đếm vòng lặp).
+              </li>
+              <li>
+                <strong>Spatial Locality</strong> (cục bộ không gian) — nếu địa chỉ X vừa được truy cập, các địa chỉ GẦN
+                X (cùng dòng cache) có xu hướng SẮP được truy cập (vd duyệt tuần tự một mảng).
+              </li>
+            </ul>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: duyệt mảng 2D sai chiều phá vỡ Spatial Locality</div>
+              <div class="callout__content">
+                Mảng 2D lưu theo hàng (row-major, chuẩn C/JS) — duyệt THEO HÀNG truy cập các phần tử NẰM CẠNH NHAU trong
+                bộ nhớ, tận dụng tối đa Spatial Locality. Duyệt THEO CỘT nhảy CÁCH XA mỗi lần (đúng bằng độ dài 1 hàng)
+                — gần như MỌI truy cập đều rơi vào dòng cache KHÁC, phá vỡ hoàn toàn Spatial Locality. Verified thật:
+                mảng 8×8 phần tử 4-byte trên cache 4 dòng×16-byte — duyệt theo HÀNG chỉ
+                <strong>16/64 miss (25%)</strong>, duyệt theo CỘT <strong>MISS TOÀN BỘ 64/64 (100%)</strong> — gấp 4 lần
+                tệ hơn, dù tổng số phần tử truy cập giống hệt nhau.
+              </div>
+            </div>
+
+            <h2>2. Cấu trúc ánh xạ Cache: Direct-Mapped &amp; Set-Associative</h2>
+            <p>
+              Một địa chỉ bộ nhớ được tách thành 3 phần để tra cứu cache (Mục 7.2): <strong>Offset</strong> (bit thấp
+              nhất, chọn byte TRONG dòng cache), <strong>Index</strong> (chọn DÒNG/tập trong cache), và
+              <strong>Tag</strong> (phần còn lại, dùng để XÁC NHẬN đúng dữ liệu đang cần, tránh nhầm với dữ liệu khác
+              cùng index).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">split_address.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function splitAddress(address, offsetBits, indexBits) {
+  const offset = address & ((1 << offsetBits) - 1);
+  const index = (address >>> offsetBits) & ((1 << indexBits) - 1);
+  const tag = address >>> (offsetBits + indexBits);
+  return { tag, index, offset };
+}
+// Verified: splitAddress(0x1234, 4, 2) -> offset=0x4; khu hoi dung dia chi goc</code></pre>
+            </div>
+            <p>
+              <strong>Direct-Mapped</strong>: mỗi index ứng với ĐÚNG 1 dòng cache duy nhất — đơn giản, tra cứu cực
+              nhanh, nhưng 2 địa chỉ khác tag CÙNG index sẽ liên tục "đá" nhau ra dù cache còn dư chỗ ở dòng khác
+              (<strong>Conflict Miss</strong>). <strong>Set-Associative N-way</strong>: mỗi index ứng với một TẬP chứa N
+              dòng — địa chỉ trùng index nhưng khác tag không còn phải tranh 1 chỗ duy nhất, dùng
+              <strong>LRU</strong> (Least Recently Used) để quyết định dòng nào bị thay thế khi tập đầy.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">conflict_miss_demo.js (verified bằng engine — Direct-Mapped vs 2-way)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// 2 dia chi CUNG index nhung KHAC tag, xen ke 10 lan (20 truy cap):
+// addrA = 0, addrB = numSets * lineSize (trung index voi A)
+const dm = makeDirectMappedCache(4, 4);   // Direct-Mapped: 20/20 MISS (100%!)
+const sa = makeSetAssociativeCache(4, 2, 4); // 2-way: chi 2/20 MISS (10%)
+// Set-Associative giu duoc CA HAI dia chi dong thoi trong CUNG mot set</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: Set-Associative không phải "miễn phí"</div>
+              <div class="callout__content">
+                Tăng số "way" giảm Conflict Miss, nhưng mỗi lần truy cập phải so khớp tag với TẤT CẢ N dòng trong tập
+                SONG SONG (mạch so sánh N-way) — tốn diện tích silicon và năng lượng hơn hẳn Direct-Mapped (chỉ so 1
+                tag). Đây là lý do L1 cache (cần cực nhanh, ít way — thường 4-8 way) khác hẳn L3 cache (chấp nhận chậm
+                hơn để đổi lấy độ liên kết cao hơn, giảm miss — thường 16 way trở lên).
+              </div>
+            </div>
+
+            <h2>3. Tính toán chỉ số hiệu năng Cache: AMAT</h2>
+            <p>Thời gian truy cập bộ nhớ TRUNG BÌNH (Average Memory Access Time) với 1 cấp cache:</p>
+            <p style="text-align: center">$$AMAT = T_{Hit} + \text{MissRate} \times T_{MissPenalty}$$</p>
+            <p>
+              Với hệ 2 cấp L1+L2, công thức mở rộng — <code>missRateL2Local</code> là tỷ lệ miss CỤC BỘ của L2 (chỉ tính
+              trên số lần L1 ĐÃ miss, không phải trên tổng số truy cập chương trình):
+            </p>
+            <p style="text-align: center">
+              $$AMAT = T_{HitL1} + \text{MissRateL1} \times (T_{HitL2} + \text{MissRateL2}_{local} \times
+              T_{MissPenalty\_DRAM})$$
+            </p>
+            <p>
+              Verified thật (ví dụ kinh điển Patterson &amp; Hennessy): $T_{HitL1}=1$, MissRateL1=2%, $T_{HitL2}=10$,
+              MissRateL2 CỤC BỘ=25%, phạt truy cập DRAM=200 chu kỳ → $AMAT = 1 + 0,02 \times (10 + 0,25 \times 200) =
+              \mathbf{2,2}$ chu kỳ.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">amat.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function amat(hitTime, missRate, missPenalty) {
+  return hitTime + missRate * missPenalty;
+}
+function amatTwoLevel(hitTimeL1, missRateL1, hitTimeL2, missRateL2Local, missPenaltyMem) {
+  return hitTimeL1 + missRateL1 * (hitTimeL2 + missRateL2Local * missPenaltyMem);
+}
+// Verified: amat(1, 0.05, 100) = 6
+// Verified: amatTwoLevel(1, 0.02, 10, 0.25, 200) = 2.2 (vi du kinh dien P&H)</code></pre>
+            </div>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Miss Rate cục bộ (Local) ≠ Miss Rate toàn cục (Global)</div>
+              <div class="callout__content">
+                MissRateL2 CỤC BỘ (25% ở ví dụ trên) chỉ đo trên số lần L1 ĐÃ MISS — không phải trên TỔNG số truy cập
+                chương trình. Miss Rate TOÀN CỤC của L2 (tỷ lệ truy cập chương trình phải chạm tới DRAM) = MissRateL1 ×
+                MissRateL2Local = $0,02 \times 0,25 = 0,005$ (0,5%) — một con số HOÀN TOÀN khác 25%. Nhầm lẫn 2 tỷ lệ
+                này khi báo cáo hiệu năng hệ thống nhớ nhiều cấp là lỗi cực kỳ phổ biến.
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">locality_demo.js (verified bằng engine — duyệt hàng vs duyệt cột)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Mang 8x8 phan tu 4-byte, cache 4 dong x 16 byte/dong (64 byte tong)
+const rowMajorAddrs = []; // duyet: for row { for col { addrOf(row,col) } }
+const colMajorAddrs = []; // duyet: for col { for row { addrOf(row,col) } }
+
+runCacheTrace(makeDirectMappedCache(4, 4), rowMajorAddrs); // 16/64 miss (25%)
+runCacheTrace(makeDirectMappedCache(4, 4), colMajorAddrs); // 64/64 miss (100%!)
+// CUNG so phan tu duoc truy cap - chi khac THU TU - nhung miss rate gap 4 lan</code></pre>
+            </div>
+
+            <h2>4. Thực hành: Cache L1 Simulator</h2>
+            <p>
+              Bộ tách địa chỉ bên dưới tính trực tiếp Tag/Index/Offset từ một địa chỉ hex tuỳ chỉnh. Bộ mô phỏng Hit/
+              Miss chạy 4 kịch bản đã verify ở trên — đổi giữa Direct-Mapped và Set-Associative để tự tay thấy Conflict
+              Miss biến mất:
+            </p>
+
+            <div class="code-tabs" id="cache-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🗄️ Bộ tách địa chỉ &amp; Mô phỏng Cache Hit/Miss</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="cache-demo-container">
+                  <div>
+                    <p style="margin: 0 0 8px; font-weight: 700; font-size: 14px">Bộ tách Tag/Index/Offset</p>
+                    <div class="cache-demo-row">
+                      <div class="cache-demo-field">
+                        <label for="cache-addr-input">Địa chỉ (hex)</label>
+                        <input type="text" id="cache-addr-input" value="1234" />
+                      </div>
+                      <div class="cache-demo-field">
+                        <label for="cache-offset-bits-input">Số bit Offset</label>
+                        <input type="number" id="cache-offset-bits-input" value="4" min="0" max="16" />
+                      </div>
+                      <div class="cache-demo-field">
+                        <label for="cache-index-bits-input">Số bit Index</label>
+                        <input type="number" id="cache-index-bits-input" value="2" min="0" max="16" />
+                      </div>
+                    </div>
+                    <div class="cache-split-output" id="cache-split-output">—</div>
+                  </div>
+                  <div>
+                    <p style="margin: 0 0 8px; font-weight: 700; font-size: 14px">Mô phỏng Hit/Miss</p>
+                    <div class="cache-demo-field">
+                      <label for="cache-scenario-select">Kịch bản</label>
+                      <select id="cache-scenario-select">
+                        <option value="rowMajor">Duyệt mảng 8×8 theo HÀNG (row-major) — Direct-Mapped</option>
+                        <option value="colMajor">Duyệt mảng 8×8 theo CỘT (column-major) — Direct-Mapped</option>
+                        <option value="conflictDM">Conflict Miss — Direct-Mapped</option>
+                        <option value="conflict2Way">CÙNG chuỗi đó — Set-Associative 2-way</option>
+                      </select>
+                    </div>
+                    <div id="cache-trace-output"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Cache che giấu Memory Wall bằng cách khai thác Temporal &amp; Spatial Locality — không làm DRAM nhanh
+                hơn, mà giảm số lần cần CHẠM tới DRAM.
+              </li>
+              <li>
+                ✅ Verified: duyệt mảng theo HÀNG (locality tốt) chỉ 25% miss; theo CỘT (locality mất) MISS 100% — gấp 4
+                lần tệ hơn dù cùng số phần tử.
+              </li>
+              <li>
+                ✅ Direct-Mapped đơn giản nhưng dễ Conflict Miss (verified 100% miss với 2 địa chỉ trùng index); 2-way
+                Set-Associative giải quyết gần như hoàn toàn (verified chỉ 10% miss).
+              </li>
+              <li>✅ Verified: $AMAT$ 2 cấp (2% L1 miss, L2 hit=10, 25% L2 cục bộ, phạt DRAM=200) = 2,2 chu kỳ.</li>
+              <li>✅ Pitfall: Miss Rate cục bộ (25%) và toàn cục (0,5%) là 2 con số khác hẳn nhau — đừng nhầm lẫn.</li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Verified: duyệt mảng 8×8 theo HÀNG chỉ 25% miss, theo CỘT MISS 100%. Vì sao chênh lệch lớn vậy dù cùng
+                số phần tử được truy cập?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Duyệt theo hàng truy cập các phần tử NẰM CẠNH NHAU trong bộ nhớ (row-major) — mỗi dòng cache 16 byte chứa 4 phần tử, nên 3/4 lần truy cập tiếp theo đã có sẵn trong cache (hit). Duyệt theo cột nhảy CÁCH XA đúng bằng độ dài 1 hàng mỗi lần, luôn rơi vào dòng cache KHÁC — phá vỡ hoàn toàn Spatial Locality.'
+                    )
+                  "
+                >
+                  A. Duyệt theo hàng tận dụng Spatial Locality (phần tử cạnh nhau trong bộ nhớ); duyệt theo cột nhảy xa
+                  mỗi lần, phá vỡ hoàn toàn tính cục bộ không gian
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca hai kich ban dung CUNG mot cache (4 dong, 16 byte/dong) - kich thuoc cache khong doi, chi CACH DUYET (thu tu truy cap dia chi) la khac nhau.'
+                    )
+                  "
+                >
+                  B. Vì cache dùng để duyệt theo cột nhỏ hơn cache dùng để duyệt theo hàng
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Day la Direct-Mapped cache o CA HAI kich ban, khong phai Set-Associative - loai anh xa khong doi, chi thu tu truy cap dia chi khac nhau.'
+                    )
+                  "
+                >
+                  C. Vì duyệt theo cột dùng Set-Associative còn duyệt theo hàng dùng Direct-Mapped
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: 2 địa chỉ trùng index nhưng khác tag, xen kẽ 20 lần — Direct-Mapped MISS 100% (20/20),
+                Set-Associative 2-way chỉ MISS 10% (2/20). Vì sao?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Direct-Mapped chỉ có 1 dòng cho mỗi index — 2 địa chỉ cùng index PHẢI tranh chấp dòng đó, mỗi lần truy cập lại đá địa chỉ kia ra (conflict miss liên tục). Set-Associative 2-way có 2 dòng trong cùng 1 tập — cả hai địa chỉ được giữ ĐỒNG THỜI, chỉ miss 2 lần đầu (compulsory miss) rồi hit mãi mãi.'
+                    )
+                  "
+                >
+                  A. Direct-Mapped chỉ có 1 dòng/index nên 2 địa chỉ phải tranh chấp và đá nhau liên tục; 2-way có 2
+                  dòng/tập nên giữ được cả hai đồng thời
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca hai cache trong vi du deu co TONG dung luong nho (4 set) - Set-Associative 2-way van chi co 4 set x 2 way = 8 dong, khong lon hon nhieu, van de la CACH TO CHUC (bao nhieu way/set) chu khong phai tong dung luong.'
+                    )
+                  "
+                >
+                  B. Set-Associative có tổng dung lượng lớn hơn hẳn Direct-Mapped trong ví dụ này
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca hai dia chi trong vi du deu CO TRONG cache tu truoc (khong phai lan dau truy cap sau vai lan lap) - van de la CO CHE ANH XA (Direct-Mapped vs Set-Associative), khong phai do da duoc \\'lam nong\\' truoc.'
+                    )
+                  "
+                >
+                  C. Vì Set-Associative đã được "làm nóng" (warm-up) trước khi đo, còn Direct-Mapped thì chưa
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Verified: $AMAT = 1 + 0,02 \times (10 + 0,25 \times 200) = 2,2$ chu kỳ. Tỷ lệ 25% trong công thức là
+                MissRateL2 CỤC BỘ. Miss Rate TOÀN CỤC của L2 (trên tổng số truy cập chương trình) là bao nhiêu?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Global Miss Rate L2 = MissRateL1 × MissRateL2Local = 0,02 × 0,25 = 0,005 (0,5%) — vì L2 chỉ được truy cập KHI L1 đã miss (2% số lần), và trong số đó L2 lại miss tiếp 25%. Đây là con số hoàn toàn khác 25% cục bộ.'
+                    )
+                  "
+                >
+                  A. 0,5% (= MissRateL1 × MissRateL2Local = 0,02 × 0,25) — vì L2 chỉ được truy cập khi L1 đã miss
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. 25% CHINH LA Miss Rate CUC BO cua L2 (chi tinh tren so lan L1 da miss), KHONG PHAI Miss Rate toan cuc (tren tong so truy cap chuong trinh) - do la dung 2 khai niem lam mot, chinh la pitfall cua bai nay.'
+                    )
+                  "
+                >
+                  B. 25% — giống hệt Miss Rate cục bộ vì đó là tỷ lệ miss thật của L2
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Miss Rate toan cuc PHAI thap hon Miss Rate cuc bo (vi no duoc \\'loc\\' qua ty le L1 miss truoc) - 27% (cong hai ty le lai) khong dung voi dinh nghia toan hoc cua Miss Rate toan cuc, phai la PHEP NHAN chu khong phai phep cong.'
+                    )
+                  "
+                >
+                  C. 27% (= 2% + 25%, cộng dồn 2 tỷ lệ miss)
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Vì sao L1 cache thường dùng ít "way" hơn (vd 4-8 way) trong khi L3 cache có thể dùng 16 way trở lên?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Mỗi lần truy cập, cache phải so khớp tag với TẤT CẢ N dòng trong tập SONG SONG — nhiều way hơn nghĩa là nhiều mạch so sánh hơn, tốn diện tích silicon và năng lượng, làm CHẬM thời gian truy cập. L1 cần TỐC ĐỘ tối đa (ít way), còn L3 chấp nhận chậm hơn để đổi lấy độ liên kết cao (giảm conflict miss trên dung lượng lớn).'
+                    )
+                  "
+                >
+                  A. Vì so khớp tag với nhiều way tốn thời gian/năng lượng hơn — L1 cần tốc độ tối đa nên ít way, L3
+                  chấp nhận chậm hơn để giảm conflict miss
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca L1 va L3 deu la SRAM (khong phai DRAM) - loai cong nghe bo nho khong phai ly do khac biet so way giua cac cap cache, van de la TOC DO vs DO LIEN KET (associativity) danh doi.'
+                    )
+                  "
+                >
+                  B. Vì L1 dùng công nghệ bộ nhớ khác hẳn (DRAM) so với L3 (SRAM)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Direct-Mapped (1 way) hoan toan KHONG loai bo conflict miss - nguoc lai, no de bi conflict miss NHAT trong tat ca cac loai anh xa, dung nhu Cau 2 vua chung minh.'
+                    )
+                  "
+                >
+                  C. Vì L1 dùng Direct-Mapped để loại bỏ hoàn toàn conflict miss, không cần nhiều way
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — thư viện kiến trúc máy tính mini dùng xuyên suốt cả 12 bài, Bài 7
+                vừa thêm <code>splitAddress()</code>, <code>makeDirectMappedCache()</code>,
+                <code>makeSetAssociativeCache()</code>, <code>amat()</code>, <code>amatTwoLevel()</code> — tách địa chỉ,
+                mô phỏng cache Direct-Mapped/Set-Associative (LRU), và công thức AMAT nhiều cấp, kèm self-test đối chiếu
+                đúng mọi con số trong bài (chạy <code>node cpu-core.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Sách giáo khoa cốt lõi:</strong>
+                  <a
+                    href="https://www.amazon.com/Computer-Organization-Design-RISC-V-Architecture/dp/0128203315"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Computer Organization and Design, RISC-V Edition (Patterson &amp; Hennessy)</a
+                  >
+                  — Chương 5 trình bày đầy đủ nguyên lý locality, cấu trúc cache và AMAT nhiều cấp.
+                </li>
+                <li>
+                  <strong>Tổng quan CPU cache:</strong>
+                  <a href="https://en.wikipedia.org/wiki/CPU_cache" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — CPU cache</a
+                  >
+                  — cấu trúc, chính sách thay thế (LRU, FIFO, random) và các cấp cache thực tế trên CPU hiện đại.
+                </li>
+                <li>
+                  <strong>Locality of reference:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Locality_of_reference"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Locality of reference</a
+                  >
+                  — nền tảng lý thuyết cho mọi thiết kế cache và bộ nhớ phân cấp.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="cpu-ooo-execution" class="article-related__link article-related__link--prev"
+                  >Bài 6: Song Song Cấp Lệnh &amp; Thực Thi Ngoài Thứ Tự (Tomasulo)</a
+                >
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 8: Bộ Nhớ Ảo &amp; Khối TLB — sắp ra mắt
+                </span>
+                <a href="cpu-programming-series" class="article-related__link">Quay lại Lộ trình Kiến Trúc Máy Tính</a>
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="cpu-cache-memory.js"></script>
+  </body>
+</html>

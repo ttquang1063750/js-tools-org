@@ -716,6 +716,109 @@ function runTomasulo(instructions, opts = {}) {
   return { regFile, trace, totalCycles: cycle, ipc: n / cycle };
 }
 
+// ---------------------------------------------------------------------------
+// Bài 7 — Phân cấp bộ nhớ & Kiến trúc Cache. CPU OOO của Bài 6 vẫn phải CHỜ
+// dữ liệu từ bộ nhớ chính (DRAM) — khoảng cách tốc độ CPU vs DRAM (Memory
+// Wall) được che giấu bằng bộ nhớ đệm SRAM cực nhanh (Cache), dựa trên
+// nguyên lý cục bộ THỜI GIAN (temporal locality — vừa dùng sẽ dùng lại) và
+// KHÔNG GIAN (spatial locality — dùng địa chỉ X thì địa chỉ GẦN X cũng sắp
+// được dùng). Build-out: tách địa chỉ tag/index/offset (Mục 7.2), cache
+// direct-mapped & set-associative (LRU, Mục 7.2), và AMAT nhiều cấp (Mục 7.3).
+// ---------------------------------------------------------------------------
+
+// Tách một địa chỉ 32-bit thành (tag, index, offset) theo đúng cấu trúc phần
+// cứng thật: offset (bit thấp nhất) chọn byte TRONG dòng cache, index chọn
+// DÒNG (set) trong cache, tag là phần còn lại dùng để SO KHỚP xem dòng đó có
+// đúng là dữ liệu đang cần hay không (Mục 7.2).
+function splitAddress(address, offsetBits, indexBits) {
+  const offset = address & ((1 << offsetBits) - 1);
+  const index = (address >>> offsetBits) & ((1 << indexBits) - 1);
+  const tag = address >>> (offsetBits + indexBits);
+  return { tag, index, offset };
+}
+
+// Cache Direct-Mapped: mỗi địa chỉ CHỈ ánh xạ vào ĐÚNG 1 dòng cache (theo
+// index) — đơn giản, nhanh, nhưng dễ bị Conflict Miss: 2 địa chỉ khác tag
+// nhưng CÙNG index sẽ liên tục "đá" nhau ra khỏi dòng duy nhất đó dù cache
+// còn thừa chỗ ở dòng khác (Mục 7.2, pitfall Set-Associative giải quyết).
+function makeDirectMappedCache(numSets, offsetBits) {
+  const indexBits = Math.log2(numSets);
+  if (!Number.isInteger(indexBits)) throw new Error('numSets phai la luy thua cua 2');
+  const lines = new Array(numSets).fill(null).map(() => ({ valid: false, tag: null }));
+  return {
+    access(address) {
+      const { tag, index } = splitAddress(address, offsetBits, indexBits);
+      const line = lines[index];
+      if (line.valid && line.tag === tag) return 'HIT';
+      line.valid = true;
+      line.tag = tag;
+      return 'MISS';
+    },
+  };
+}
+
+// Cache Set-Associative N-way + LRU (Least Recently Used, Mục 7.2): mỗi
+// index ứng với một TẬP (set) chứa `ways` dòng — địa chỉ trùng index nhưng
+// khác tag KHÔNG còn phải tranh 1 dòng duy nhất, giảm hẳn Conflict Miss so
+// với Direct-Mapped (đổi lại: phần cứng phức tạp hơn, tốn năng lượng hơn để
+// so khớp `ways` tag song song mỗi lần truy cập — pitfall Mục 7.2).
+function makeSetAssociativeCache(numSets, ways, offsetBits) {
+  const indexBits = Math.log2(numSets);
+  if (!Number.isInteger(indexBits)) throw new Error('numSets phai la luy thua cua 2');
+  const sets = new Array(numSets).fill(null).map(() => []);
+  let clock = 0;
+  return {
+    access(address) {
+      const { tag, index } = splitAddress(address, offsetBits, indexBits);
+      const set = sets[index];
+      const entry = set.find((e) => e.tag === tag);
+      clock++;
+      if (entry) {
+        entry.lastUsed = clock;
+        return 'HIT';
+      }
+      if (set.length < ways) {
+        set.push({ tag, lastUsed: clock });
+      } else {
+        let lruIdx = 0;
+        for (let i = 1; i < set.length; i++) if (set[i].lastUsed < set[lruIdx].lastUsed) lruIdx = i;
+        set[lruIdx] = { tag, lastUsed: clock };
+      }
+      return 'MISS';
+    },
+  };
+}
+
+// Chạy một chuỗi địa chỉ qua MỘT cache, trả về số Hit/Miss + vết chi tiết
+// từng truy cập (dùng cho demo trực quan hoá Hit/Miss).
+function runCacheTrace(cache, addresses) {
+  let hits = 0;
+  let misses = 0;
+  const trace = [];
+  for (const addr of addresses) {
+    const r = cache.access(addr);
+    trace.push(r);
+    if (r === 'HIT') hits++;
+    else misses++;
+  }
+  return { hits, misses, total: addresses.length, missRate: misses / addresses.length, trace };
+}
+
+// AMAT (Average Memory Access Time) 1 cấp cache (Mục 7.3):
+// $AMAT = T_{Hit} + \text{MissRate} \times T_{MissPenalty}$
+function amat(hitTime, missRate, missPenalty) {
+  return hitTime + missRate * missPenalty;
+}
+
+// AMAT 2 cấp cache L1+L2 (Mục 7.3): `missRateL2Local` là tỷ lệ miss CỤC BỘ
+// của L2 — CHỈ tính trên số lần L1 đã miss (không phải trên tổng số truy
+// cập chương trình) — pitfall Mục 7.3: nhầm miss rate cục bộ (local, đúng
+// công thức này) với miss rate toàn cục (global = missRateL1 × missRateL2Local,
+// tức tỷ lệ trên TỔNG số truy cập chương trình, một con số khác hẳn).
+function amatTwoLevel(hitTimeL1, missRateL1, hitTimeL2, missRateL2Local, missPenaltyMem) {
+  return hitTimeL1 + missRateL1 * (hitTimeL2 + missRateL2Local * missPenaltyMem);
+}
+
 export {
   toBinString,
   toSigned,
@@ -742,6 +845,12 @@ export {
   runPredictor,
   effectiveCPI,
   runTomasulo,
+  splitAddress,
+  makeDirectMappedCache,
+  makeSetAssociativeCache,
+  runCacheTrace,
+  amat,
+  amatTwoLevel,
 };
 
 // ---------------------------------------------------------------------------
@@ -1156,6 +1265,81 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Tomasulo doi chung (khong WAR/WAW): tong chu ky bang HET truong hop co WAR/WAW (renaming da lam cho ca 2 truong hop giong nhau ve toc do)',
       resultNoConflict.totalCycles,
       result.totalCycles
+    );
+  }
+
+  // --- Bài 7: Cache tag/index/offset, direct-mapped/set-assoc, AMAT ---
+  {
+    // splitAddress: dia chi 0x1234 (4660) voi offsetBits=4, indexBits=2
+    // -> offset = 4 bit thap = 0x4, index = 2 bit tiep = binary cua (4660>>4)&0b11
+    check('splitAddress(0x1234, 4, 2).offset = 0x4', splitAddress(0x1234, 4, 2).offset, 0x4);
+    checkTrue(
+      'splitAddress khu hoi: ghep lai tag<<(offset+index) | index<<offset | offset = dung dia chi goc',
+      (() => {
+        const { tag, index, offset } = splitAddress(0x1234, 4, 2);
+        return ((tag << 6) | (index << 4) | offset) === 0x1234;
+      })()
+    );
+
+    // Pitfall 7.1 Locality: mang 8x8 phan tu 4-byte, duyet theo HANG (spatial
+    // locality tot) vs duyet theo COT (spatial locality te - nhay xa moi lan)
+    // - CUNG mot cache 4 dong x 16 byte/dong (64 byte tong)
+    const R = 8,
+      C = 8,
+      ELEM = 4;
+    const addrOf = (row, col) => (row * C + col) * ELEM;
+    const rowMajorAddrs = [];
+    for (let row = 0; row < R; row++) for (let col = 0; col < C; col++) rowMajorAddrs.push(addrOf(row, col));
+    const colMajorAddrs = [];
+    for (let col = 0; col < C; col++) for (let row = 0; row < R; row++) colMajorAddrs.push(addrOf(row, col));
+
+    const offsetBits = 4; // 16 byte/dong = 4 phan tu/dong
+    const numSets = 4;
+
+    const rowResult = runCacheTrace(makeDirectMappedCache(numSets, offsetBits), rowMajorAddrs);
+    check('Duyet theo HANG (spatial locality tot): 16/64 miss (25% - dung 1 lan/dong 4 phan tu)', rowResult.misses, 16);
+    checkTrue('Duyet theo HANG: missRate = 0,25', Math.abs(rowResult.missRate - 0.25) < 1e-9);
+
+    const colResult = runCacheTrace(makeDirectMappedCache(numSets, offsetBits), colMajorAddrs);
+    check(
+      'Pitfall Locality: duyet theo COT (spatial locality mat hoan toan) - MISS 100% (64/64), gap 4 lan te hon duyet hang',
+      colResult.misses,
+      64
+    );
+
+    // Conflict miss: 2 dia chi CUNG index nhung KHAC tag lam Direct-Mapped
+    // "da nhau" lien tuc; Set-Associative 2-way giu duoc CA HAI cung luc
+    const lineSize = 16;
+    const addrA = 0; // index 0, tag 0
+    const addrB = numSets * lineSize; // index 0 (trung voi A), tag 1
+    const conflictAddrs = [];
+    for (let i = 0; i < 10; i++) {
+      conflictAddrs.push(addrA);
+      conflictAddrs.push(addrB);
+    }
+    const dmResult = runCacheTrace(makeDirectMappedCache(numSets, offsetBits), conflictAddrs);
+    check(
+      'Pitfall Conflict Miss: Direct-Mapped voi 2 dia chi trung index khac tag - MISS 100% (20/20), da nhau lien tuc',
+      dmResult.misses,
+      20
+    );
+    const saResult = runCacheTrace(makeSetAssociativeCache(numSets, 2, offsetBits), conflictAddrs);
+    check(
+      'Set-Associative 2-way giai quyet HOAN TOAN conflict miss tren: chi 2/20 miss (2 lan dau, compulsory miss)',
+      saResult.misses,
+      2
+    );
+
+    // AMAT 1 cap va 2 cap - vi du kinh dien (P&H): 2% mien L1, L2 hit=10,
+    // 25% mien L2 CUC BO, phat DRAM=200 chu ky -> AMAT = 2,2 chu ky
+    checkTrue('amat(1, 0.05, 100) = 6 chu ky (1 + 0,05*100)', Math.abs(amat(1, 0.05, 100) - 6) < 1e-9);
+    checkTrue(
+      'amatTwoLevel(1, 0.02, 10, 0.25, 200) = 2,2 chu ky (vi du kinh dien Patterson&Hennessy)',
+      Math.abs(amatTwoLevel(1, 0.02, 10, 0.25, 200) - 2.2) < 1e-9
+    );
+    checkTrue(
+      'Pitfall Local vs Global miss rate: global L2 miss rate (tren TONG truy cap) = missRateL1*missRateL2Local = 0,02*0,25 = 0,005 - KHAC han 0,25 cuc bo',
+      Math.abs(0.02 * 0.25 - 0.005) < 1e-9
     );
   }
 
