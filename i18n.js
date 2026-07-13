@@ -276,6 +276,9 @@ const TRANSLATIONS = {
     'learn.dsp.title': 'Digital Signal Processing',
     'learn.dsp.desc':
       'Every DSP algorithm hand-written in vanilla JS — no black-box AnalyserNode: sampling, FFT, windowing, FIR/IIR filters, pole-zero design you hear in real time.',
+    'learn.cpu.title': 'Computer Architecture',
+    'learn.cpu.desc':
+      'Explore the hardware stack running directly in your browser: logic gates, ALU, RISC-V pipelining, speculative execution, cache architectures, Apple Silicon UMA, and quantum qubits.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -554,6 +557,9 @@ const TRANSLATIONS = {
     'learn.dsp.title': 'Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ',
     'learn.dsp.desc':
       'Mọi thuật toán DSP tự viết bằng JavaScript thuần — không dùng AnalyserNode hộp đen: lấy mẫu, FFT, cửa sổ, filter FIR/IIR, thiết kế pole-zero nghe được ngay trong trình duyệt.',
+    'learn.cpu.title': 'Kiến Trúc Máy Tính: Từ Logic Đến Lượng Tử',
+    'learn.cpu.desc':
+      'Khám phá thế giới phần cứng chạy trực tiếp trong trình duyệt: cổng logic, ALU, đường ống dẫn RISC-V Pipeline, thực thi suy đoán, kiến trúc Cache, Apple Silicon UMA và qubit lượng tử.',
   },
 };
 

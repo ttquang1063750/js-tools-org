@@ -157,6 +157,12 @@ js-tools-org/
 │       │   ├── css-playground.html           # Interactive CSS Playground
 │       │   ├── css-box-model-and-flow.html   # Lesson 1
 │       │   └── ... CSS code samples (.css) ...
+│       │
+│   └── # ── Computer Architecture Series (Vietnamese, HTML & files co-located) ──
+│       └── cpu/
+│           ├── cpu-programming-series.html   # Curriculum hub
+│           ├── cpu-pipeline-sim.html         # Core RISC-V Pipeline & Cache L1 Simulator
+│           └── ... CPU lesson files ...
 └── README.md
 ```
 
@@ -196,7 +202,7 @@ js-tools-org/
   - Uses `<input type="checkbox" id="nav-toggle">` + `<label>` with sibling selector `~ nav`
   - Shows SnapCast, ColorQuarium, Blog links + language toggle
 - **Footer**: Full nav with all tools + Blog + Privacy + Terms (icon + text links)
-- **Consistent across all pages**: index, privacy, terms, and all 36 blog HTML files
+- **Consistent across all pages**: index, privacy, terms, and all blog HTML files
 
 ### 6. Blog Section
 
@@ -306,7 +312,7 @@ page), read these two files **first**, in this order:
 1. **Check CSS patterns**: Use flexbox + gap (no old margin/padding stacking)
 2. **Responsive first**: Test at mobile (<600px), tablet (<880px for hamburger), desktop
 3. **i18n coverage**: Any new text needs EN + VI translations
-4. **Consistent nav**: Header and footer must match across ALL pages (index, privacy, terms, 36 blog files)
+4. **Consistent nav**: Header and footer must match across ALL pages (index, privacy, terms, all blog files)
 5. **Canvas performance**: Particle counts scale with viewport size
 
 ### When Adding Features
