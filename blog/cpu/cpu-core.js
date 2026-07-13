@@ -123,7 +123,95 @@ function aluExecute(a, b, op, bits = 4) {
   };
 }
 
-export { toBinString, toSigned, halfAdder, fullAdder, rippleCarryAdd, aluExecute, ALU_OPS };
+// ---------------------------------------------------------------------------
+// Bài 2 — Kiến trúc Von Neumann & Tập lệnh ISA. Toy CPU: chu kỳ Fetch-Decode-
+// Execute chạy trên MỘT bộ nhớ RAM chung (`ram`) chứa CẢ lệnh lẫn dữ liệu —
+// đúng tinh thần Von Neumann Mục 2.1 (đối lập Harvard là 2 bus/2 bộ nhớ tách
+// biệt). ALU (Bài 1) được TÁI DÙNG trực tiếp cho ADD/SUB, không viết lại.
+// ---------------------------------------------------------------------------
+
+// Khởi tạo trạng thái CPU: RAM là bản sao của `program` (mảng lệnh — địa chỉ
+// thấp), 4 thanh ghi đa dụng R0-R3, thanh ghi đếm chương trình PC (Program
+// Counter) và thanh ghi lệnh IR (Instruction Register — lệnh vừa fetch).
+function createCpuState(program) {
+  return { ram: [...program], regs: [0, 0, 0, 0], pc: 0, ir: null, halted: false, flags: null };
+}
+
+// Chạy ĐÚNG một chu kỳ Fetch-Decode-Execute (Mục 2.2):
+//   FETCH   : đọc lệnh tại RAM[PC] vào IR.
+//   (PC tăng lên 1 NGAY SAU fetch — TRƯỚC KHI lệnh được decode/execute; đây
+//    chính là pitfall Mục 2.2: với lệnh JMP/BEQ, PC vừa tăng bị GHI ĐÈ ở
+//    bước execute, nếu quên thứ tự này sẽ tính sai địa chỉ đích nhảy.)
+//   DECODE  : switch theo `op` để biết cần thanh ghi/địa chỉ nào.
+//   EXECUTE : cập nhật thanh ghi/RAM/PC tương ứng.
+function cpuStep(state) {
+  const instr = state.ram[state.pc];
+  if (!instr || typeof instr.op !== 'string') {
+    throw new Error('Lenh khong hop le: ' + (instr && instr.op));
+  }
+  state.ir = instr;
+  state.pc = state.pc + 1;
+  switch (instr.op) {
+    case 'LOADI':
+      state.regs[instr.rd] = instr.imm;
+      break;
+    case 'ADD': {
+      const r = aluExecute(state.regs[instr.rs1], state.regs[instr.rs2], 'ADD', 8);
+      state.regs[instr.rd] = r.result;
+      state.flags = r.flags;
+      break;
+    }
+    case 'SUB': {
+      const r = aluExecute(state.regs[instr.rs1], state.regs[instr.rs2], 'SUB', 8);
+      state.regs[instr.rd] = r.result;
+      state.flags = r.flags;
+      break;
+    }
+    case 'STORE':
+      state.ram[instr.addr] = state.regs[instr.rs];
+      break;
+    case 'LOAD':
+      state.regs[instr.rd] = state.ram[instr.addr];
+      break;
+    case 'JMP':
+      state.pc = instr.addr; // GHI ĐÈ PC vừa tăng ở bước fetch — nhảy TUYỆT ĐỐI
+      break;
+    case 'BEQ':
+      if (state.regs[instr.rs1] === state.regs[instr.rs2]) state.pc = instr.addr;
+      break;
+    case 'HALT':
+      state.halted = true;
+      break;
+    default:
+      throw new Error('Lenh khong hop le: ' + instr.op);
+  }
+  return state;
+}
+
+// Chạy trọn 1 chương trình tới khi HALT (hoặc chạm maxSteps — chống vòng lặp
+// vô hạn khi chương trình lỗi). Trả về trạng thái cuối + số chu kỳ đã chạy.
+function runProgram(program, maxSteps = 1000) {
+  const state = createCpuState(program);
+  let steps = 0;
+  while (!state.halted && steps < maxSteps) {
+    cpuStep(state);
+    steps++;
+  }
+  return { state, steps };
+}
+
+export {
+  toBinString,
+  toSigned,
+  halfAdder,
+  fullAdder,
+  rippleCarryAdd,
+  aluExecute,
+  ALU_OPS,
+  createCpuState,
+  cpuStep,
+  runProgram,
+};
 
 // ---------------------------------------------------------------------------
 // Self-test — chạy bằng `node cpu-core.js`. Kiểm tra `typeof process` trước vì
@@ -247,6 +335,62 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       !rAnd.flags.c && !rAnd.flags.v && !rOr.flags.c && !rOr.flags.v && !rXor.flags.c && !rXor.flags.v
     );
     checkTrue('ALU XOR cua 2 gia tri bang nhau => co Zero bat', aluExecute(0b1010, 0b1010, 'XOR').flags.z === true);
+  }
+
+  // --- Bài 2: Toy CPU fetch-decode-execute (Von Neumann: RAM chung cho lệnh & dữ liệu) ---
+  {
+    // Chuong trinh tuyen tinh: 5+3, luu ket qua vao RAM[10] (dung ALU cua Bai 1)
+    const prog1 = [
+      { op: 'LOADI', rd: 0, imm: 5 },
+      { op: 'LOADI', rd: 1, imm: 3 },
+      { op: 'ADD', rd: 2, rs1: 0, rs2: 1 },
+      { op: 'STORE', rs: 2, addr: 10 },
+      { op: 'HALT' },
+    ];
+    const { state: s1, steps: steps1 } = runProgram(prog1);
+    check('Toy CPU: chuong trinh 5+3 -> R2 = 8', s1.regs[2], 8);
+    check('Toy CPU: STORE ghi dung gia tri 8 vao RAM[10]', s1.ram[10], 8);
+    check('Toy CPU: chay dung 5 chu ky fetch-decode-execute (5 lenh, khong nhay)', steps1, 5);
+    check('Toy CPU: PC dung o 5 sau HALT (da fetch het 5 lenh, tang moi lan fetch)', s1.pc, 5);
+
+    // Vong lap tinh tong 1+2+3+4+5 bang BEQ+JMP (kiem tra dung thu tu PC tang
+    // TRUOC roi JMP/BEQ GHI DE PC o buoc execute - pitfall Muc 2.2)
+    const prog2 = [
+      { op: 'LOADI', rd: 0, imm: 5 }, // 0: R0 = counter = 5
+      { op: 'LOADI', rd: 1, imm: 0 }, // 1: R1 = sum = 0
+      { op: 'LOADI', rd: 2, imm: 0 }, // 2: R2 = 0 (hang so dieu kien dung)
+      { op: 'LOADI', rd: 3, imm: 1 }, // 3: R3 = 1 (hang so tru)
+      { op: 'BEQ', rs1: 0, rs2: 2, addr: 8 }, // 4: counter==0 -> thoat vong lap
+      { op: 'ADD', rd: 1, rs1: 1, rs2: 0 }, // 5: sum += counter
+      { op: 'SUB', rd: 0, rs1: 0, rs2: 3 }, // 6: counter -= 1
+      { op: 'JMP', addr: 4 }, // 7: quay lai kiem tra dieu kien
+      { op: 'HALT' }, // 8
+    ];
+    const { state: s2, steps: steps2 } = runProgram(prog2);
+    check('Toy CPU: vong lap BEQ/JMP tinh dung tong 1+2+3+4+5 = 15', s2.regs[1], 15);
+    check('Toy CPU: counter (R0) ve dung 0 sau vong lap', s2.regs[0], 0);
+    check('Toy CPU: tong so chu ky fetch-decode-execute (verified, khong bia)', steps2, 26);
+
+    // Pitfall Muc 2.1: self-modifying code — STORE vo tinh ghi de dung dia chi
+    // dang la 1 lenh trong CHINH chuong trinh (Von Neumann: RAM chung, khong
+    // co ranh gioi phan biet vung lenh/vung du lieu) — fetch ke tiep tai dia
+    // chi do se doc phai RAC (khong con la lenh hop le) va nem loi.
+    const progSelfModify = [
+      { op: 'LOADI', rd: 0, imm: 99 },
+      { op: 'STORE', rs: 0, addr: 2 }, // ghi de RAM[2] - dung vi tri lenh ke tiep!
+      { op: 'LOADI', rd: 1, imm: 7 }, // se bi ghi de thanh so 99 truoc khi kip fetch
+      { op: 'HALT' },
+    ];
+    let selfModifyThrew = false;
+    try {
+      runProgram(progSelfModify, 10);
+    } catch (e) {
+      selfModifyThrew = true;
+    }
+    checkTrue(
+      'Pitfall self-modifying code: STORE ghi de len vung LỆNH khiến fetch kế tiếp đọc phải rác, ném lỗi (verified thật, không phải suy diễn)',
+      selfModifyThrew
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');

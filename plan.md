@@ -27,7 +27,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 12: AI**             | **Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM**   | **19/19**      | **19**   | **100%** ✅ |
 | Series 13                        | Hệ Thống Nhúng: Từ Thanh Ghi Đến RTOS     | 16/16          | 16       | 100%        |
 | Series 14                        | Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ         | 15/15          | 15       | 100%        |
-| Series 15                        | Kiến Trúc Máy Tính: Từ Logic Đến Lượng Tử | 1/12           | 12       | 8%          |
+| Series 15                        | Kiến Trúc Máy Tính: Từ Logic Đến Lượng Tử | 2/12           | 12       | 17%         |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
@@ -484,7 +484,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 
 > Format theo chuẩn series AI (12) & Nhúng (13)/DSP (14): mỗi mục H2 kèm what/why/pitfall; mỗi bài kết
 > thúc bằng "Trắc nghiệm ôn tập"; mỗi bài có ví dụ tính toán hiệu năng định lượng + snippet assembly/C
-> thật đối chiếu demo trực quan. Nội dung 100% tiếng Việt. Trạng thái: **1/12 bài** (Bài 1 xong 2026-07-13).
+> thật đối chiếu demo trực quan. Nội dung 100% tiếng Việt. Trạng thái: **2/12 bài** (Bài 2 xong 2026-07-14).
 >
 > **Danh tính:** folder `blog/cpu/`, hub `cpu-programming-series.html`, slug `cpu-<topic>.html`, tag
 > `--cpu`, accent `#ea580c` (cam). Prism: `c`, `javascript` (asm RISC-V dùng code block thường).

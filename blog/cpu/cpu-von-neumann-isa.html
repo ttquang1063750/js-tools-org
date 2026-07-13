@@ -1,0 +1,996 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 2: Kiến Trúc Von Neumann & Tập Lệnh ISA — js-tools</title>
+    <meta
+      name="description"
+      content="Mô hình Von Neumann (bus chung lệnh/dữ liệu) đối lập Harvard (bus riêng), chu kỳ Fetch-Decode-Execute, và so sánh RISC vs CISC. Verified thật bằng Toy CPU tự viết: chương trình tuyến tính 5+3 chạy đúng 5 chu kỳ cho R2=8; vòng lặp BEQ/JMP tính tổng 1+2+3+4+5=15 đúng sau 26 chu kỳ; pitfall self-modifying code verified — STORE ghi đè vùng lệnh khiến fetch kế tiếp đọc phải rác và crash thật, không phải suy diễn. Demo: Bộ giả lập Toy CPU tương tác chạy từng bước."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/cpu/cpu-von-neumann-isa" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/cpu/cpu-von-neumann-isa" />
+    <meta property="og:title" content="Bài 2: Kiến Trúc Von Neumann & Tập Lệnh ISA — js-tools" />
+    <meta
+      property="og:description"
+      content="Mô hình Von Neumann vs Harvard, chu kỳ Fetch-Decode-Execute, RISC vs CISC. Verified: Toy CPU chạy chương trình 5+3 đúng 5 chu kỳ, vòng lặp BEQ/JMP tính tổng 1..5=15 sau 26 chu kỳ, pitfall self-modifying code verified crash thật. Demo Toy CPU tương tác chạy từng bước."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 2: Kiến Trúc Von Neumann & Tập Lệnh ISA — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Von Neumann vs Harvard, Fetch-Decode-Execute, RISC vs CISC. Verified: Toy CPU chạy 5+3 đúng 5 chu kỳ, vòng lặp tính tổng 1..5=15 sau 26 chu kỳ, pitfall self-modifying code crash thật."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .toycpu-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 24px;
+        color: #242424;
+      }
+      @media (max-width: 768px) {
+        .toycpu-container {
+          grid-template-columns: 1fr;
+        }
+      }
+      .toycpu-ram-panel {
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 12px;
+      }
+      .toycpu-ram-panel h4 {
+        margin: 0 0 8px;
+        font-size: 13px;
+        color: #475569;
+        text-transform: uppercase;
+      }
+      #toycpu-ram {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 13px;
+      }
+      .toycpu-ram-row {
+        padding: 4px 8px;
+        border-radius: 4px;
+        color: #334155;
+      }
+      .toycpu-ram-row.is-current {
+        background: #ea580c;
+        color: #fff;
+        font-weight: 700;
+      }
+      .toycpu-state {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .toycpu-display {
+        background: #1e293b;
+        color: #38bdf8;
+        border-radius: 6px;
+        padding: 16px;
+        font-family: Consolas, Monaco, monospace;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+      .toycpu-display-line {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        gap: 8px;
+      }
+      .toycpu-btns {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .toycpu-btn {
+        flex: 1;
+        min-width: 90px;
+        height: 38px;
+        background: #e2e8f0;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .toycpu-btn:hover {
+        background: #ea580c;
+        color: #fff;
+        border-color: #c2410c;
+      }
+      .toycpu-status {
+        font-size: 13px;
+        color: #475569;
+        font-style: italic;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 2: Kiến Trúc Von Neumann & Tập Lệnh ISA",
+        "description": "Mô hình Von Neumann vs Harvard, chu kỳ Fetch-Decode-Execute, RISC vs CISC. Verified: Toy CPU chạy chương trình 5+3 đúng 5 chu kỳ, vòng lặp BEQ/JMP tính tổng 1..5=15 sau 26 chu kỳ, pitfall self-modifying code verified crash thật. Demo Toy CPU tương tác chạy từng bước.",
+        "url": "https://js-tools.org/blog/cpu/cpu-von-neumann-isa",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-14"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--cpu">
+        <div class="container">
+          <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--cpu">Bài 2 · Kiến Trúc Máy Tính</div>
+          <h1 class="article-hero__title">Bài 2: Kiến Trúc Von Neumann &amp; Tập Lệnh ISA</h1>
+          <div class="article-hero__meta">14 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: từ mạch đếm bit đến một "bộ não" biết đọc chương trình</h2>
+            <p>
+              <a href="cpu-logic-alu">Bài 1</a> xây một khối ALU biết cộng, trừ, và so sánh — nhưng ALU đó chỉ tính MỘT
+              phép toán khi có ai đó bơm đúng 2 toán hạng vào tay nó. Câu hỏi lớn hơn: làm sao một chuỗi phép toán — một
+              CHƯƠNG TRÌNH — tự động chảy qua ALU đó theo đúng thứ tự, không cần con người bấm nút từng bước? Câu trả
+              lời là một cỗ máy nhỏ gọi <strong>CPU</strong>, và một vòng lặp vô hạn ba bước đã điều khiển mọi chiếc máy
+              tính từ 1945 tới nay: <strong>Fetch — Decode — Execute</strong>.
+            </p>
+            <p>
+              Bài này xây <strong>Toy CPU</strong> đầu tiên của series — một cỗ máy tối giản chạy đúng vòng lặp đó trên
+              một tập lệnh mini tự thiết kế, tái dùng thẳng ALU của Bài 1 cho các lệnh số học. Đi kèm là 2 câu hỏi kiến
+              trúc nền tảng: bộ nhớ nên CHUNG hay TÁCH cho lệnh/dữ liệu (Von Neumann vs Harvard), và tập lệnh nên ĐƠN
+              GIẢN hay PHỨC TẠP (RISC vs CISC).
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Bắt buộc đọc <a href="cpu-logic-alu">Bài 1</a> (ALU 4-bit + cờ trạng thái — Toy CPU bài này tái dùng
+                thẳng <code>aluExecute()</code> cho lệnh ADD/SUB).
+              </div>
+            </div>
+
+            <h2>1. Mô hình Von Neumann vs Harvard</h2>
+            <p>
+              Trong kiến trúc <strong>Von Neumann</strong> (John von Neumann, 1945), lệnh chương trình và dữ liệu nằm
+              CHUNG một bộ nhớ, truy cập qua CHUNG một bus — CPU không phân biệt được nó đang đọc "một lệnh" hay "một
+              con số" cho tới khi thực sự dùng giá trị đó. Kiến trúc <strong>Harvard</strong> đối lập: 2 bộ nhớ vật lý
+              tách biệt, 2 bus riêng cho lệnh và dữ liệu — CPU có thể fetch lệnh KẾ TIẾP đồng thời đọc/ghi dữ liệu của
+              lệnh HIỆN TẠI, tránh nút thắt cổ chai <em>Von Neumann bottleneck</em> (một bus dùng chung giới hạn băng
+              thông tổng).
+            </p>
+            <p>
+              Toy CPU của bài này dùng đúng mô hình Von Neumann: một mảng <code>ram</code> DUY NHẤT chứa cả object lệnh
+              lẫn số liệu dữ liệu — không có ranh giới cứng nào phân biệt "vùng lệnh" với "vùng dữ liệu", đúng bản chất
+              "bus chung" của mô hình gốc.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">von_neumann_vs_harvard.c (mô tả cấu trúc bộ nhớ)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// VON NEUMANN: mot mang bo nho DUY NHAT, dung chung cho lenh va du lieu.
+// CPU khong biet mot o nho la "lenh" hay "so lieu" cho toi khi dung no.
+uint32_t unified_memory[MEM_SIZE];  // ca chuong trinh lan bien deu o day
+
+// HARVARD: hai mang bo nho VAT LY tach biet, hai bus rieng.
+// Fetch lenh KE TIEP va doc/ghi du lieu HIEN TAI co the dien ra DONG THOI.
+uint32_t instruction_memory[PROG_SIZE];  // chi CPU-fetch duoc doc, khong ghi
+uint32_t data_memory[DATA_SIZE];         // doc/ghi tu do, khong bao gio duoc "fetch"</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: Self-modifying code — khi dữ liệu vô tình đè lên lệnh</div>
+              <div class="callout__content">
+                Vì Von Neumann dùng CHUNG bộ nhớ, không có gì ngăn một lệnh <code>STORE</code> ghi dữ liệu ĐÈ LÊN đúng
+                địa chỉ đang chứa một lệnh khác trong CHÍNH chương trình đó. Verified thật (không suy diễn): cho chạy
+                một chương trình có <code>STORE R0, [2]</code> trong khi địa chỉ 2 đang là lệnh
+                <code>LOADI R1, 7</code> — CPU fetch tới địa chỉ 2 gặp phải một con số (99) thay vì object lệnh hợp lệ,
+                và <strong>crash thật</strong> với lỗi <code>"Lệnh không hợp lệ: undefined"</code>. Đây chính là lớp lỗi
+                bảo mật/hành vi-không-xác-định nghiêm trọng nhất của self-modifying code — và là lý do các hệ điều hành
+                hiện đại đánh dấu vùng nhớ chứa code là <strong>read-only + non-writable</strong> (bit NX/XD) ngay ở
+                tầng phần cứng MMU.
+              </div>
+            </div>
+
+            <h2>2. Chu kỳ Fetch-Decode-Execute</h2>
+            <p>Đây là vòng lặp vô hạn điều khiển toàn bộ CPU kể từ lúc khởi động chip tới lúc tắt máy:</p>
+            <ol>
+              <li>
+                <strong>Fetch:</strong> đọc lệnh tại địa chỉ mà thanh ghi <strong>PC</strong> (Program Counter) đang trỏ
+                tới, nạp vào thanh ghi <strong>IR</strong> (Instruction Register).
+              </li>
+              <li>
+                <strong>Decode:</strong> giải mã <code>IR</code> để biết đây là lệnh gì, cần thanh ghi/địa chỉ nào.
+              </li>
+              <li><strong>Execute:</strong> thực thi hiệu ứng thật (cập nhật thanh ghi, bộ nhớ, hoặc chính PC).</li>
+            </ol>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">cpu_step.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function cpuStep(state) {
+  const instr = state.ram[state.pc];      // FETCH
+  state.ir = instr;
+  state.pc = state.pc + 1;                // PC tang NGAY - TRUOC KHI decode/execute!
+  switch (instr.op) {                     // DECODE
+    case 'JMP': state.pc = instr.addr; break;   // EXECUTE: GHI DE PC vua tang
+    case 'ADD': /* ... goi thang aluExecute() cua Bai 1 ... */ break;
+    // ...
+  }
+}
+// Verified: chuong trinh tuyen tinh 5+3 chay DUNG 5 chu ky (5 lenh, khong nhay),
+// PC dung lai o 5 sau HALT - dung so lenh da fetch.</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: thứ tự tăng PC trước lệnh nhảy</div>
+              <div class="callout__content">
+                PC tăng lên 1 NGAY SAU bước fetch — TRƯỚC KHI lệnh được decode/execute. Với lệnh nhảy
+                (<code>JMP</code>/<code>BEQ</code>), giá trị PC vừa tăng đó bị <strong>GHI ĐÈ</strong> ở bước execute
+                bằng địa chỉ đích tuyệt đối. Nếu nhầm thứ tự (tưởng PC tăng SAU khi nhảy), lập trình vi kiến trúc sẽ
+                tính sai địa chỉ đích — verified bằng vòng lặp tính tổng $1+2+3+4+5$: lệnh <code>JMP 4</code> ở địa chỉ
+                7 phải nhảy về ĐÚNG địa chỉ 4 (không phải 4+1=5) để lặp lại đúng phép kiểm tra điều kiện dừng.
+              </div>
+            </div>
+            <p>
+              Verified bằng vòng lặp thật: chương trình tính $1+2+3+4+5$ bằng bộ đếm giảm dần và lệnh
+              <code>BEQ</code>/<code>JMP</code> cho ra đúng $R_{sum} = 15$, bộ đếm về đúng $0$, sau đúng
+              <strong>26 chu kỳ</strong> fetch-decode-execute — con số này do chính engine chạy ra, không bịa tay.
+            </p>
+
+            <h2>3. Kiến trúc tập lệnh ISA: RISC vs CISC</h2>
+            <p>
+              <strong>ISA</strong> (Instruction Set Architecture) là "hợp đồng" giữa phần mềm và phần cứng: tập hợp MỌI
+              lệnh mà CPU hiểu được. <strong>RISC</strong> (Reduced Instruction Set Computer — ví dụ ARM, RISC-V) chọn
+              một tập lệnh nhỏ, đơn giản, độ dài cố định, dễ giải mã bằng mạch cứng tối giản.
+              <strong>CISC</strong> (Complex Instruction Set Computer — ví dụ x86) cho phép lệnh phức tạp, độ dài biến
+              đổi, một lệnh có thể làm việc của nhiều lệnh RISC gộp lại.
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Tiêu chí</th>
+                  <th>RISC (ARM, RISC-V)</th>
+                  <th>CISC (x86)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Độ dài lệnh</td>
+                  <td>Cố định (RISC-V: luôn 32-bit)</td>
+                  <td>Biến đổi (x86: 1-15 byte)</td>
+                </tr>
+                <tr>
+                  <td>Độ phức tạp giải mã phần cứng</td>
+                  <td>Đơn giản, ít transistor hơn cho decoder</td>
+                  <td>Phức tạp — cần decoder biến đổi lệnh thành micro-ops</td>
+                </tr>
+                <tr>
+                  <td>Số lệnh cho 1 tác vụ</td>
+                  <td>Nhiều lệnh đơn giản hơn</td>
+                  <td>Ít lệnh, mỗi lệnh làm nhiều việc hơn</td>
+                </tr>
+                <tr>
+                  <td>Ưu thế thực tế</td>
+                  <td>Hiệu quả điện năng, thiết kế chip đơn giản (di động)</td>
+                  <td>Tương thích ngược cực cao (hàng thập kỷ phần mềm cũ)</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">risc_vs_cisc_memcpy.asm (cùng tác vụ: cộng 1 hằng số vào ô nhớ)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">; CISC (x86) - MOT lenh lam het: doc, cong, ghi lai
+add DWORD PTR [rax], 5      ; 1 lenh, do dai bien doi, phan cung tu lo doc-cong-ghi
+
+; RISC (RISC-V) - PHAI tach thanh nhieu lenh don gian, moi lenh 1 viec
+lw   t0, 0(a0)              ; doc gia tri tu bo nho vao thanh ghi
+addi t0, t0, 5              ; cong hang so NGAY TREN THANH GHI (khong dung bo nho)
+sw   t0, 0(a0)               ; ghi ket qua tro lai bo nho</code></pre>
+            </div>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ "RISC luôn nhanh hơn CISC" — không hoàn toàn đúng</div>
+              <div class="callout__content">
+                Đây là hiểu lầm phổ biến. CPU x86 (CISC) hiện đại KHÔNG thực thi trực tiếp các lệnh phức tạp — chúng có
+                một tầng giải mã ẩn dịch mỗi lệnh CISC thành một hoặc nhiều <strong>micro-ops</strong> đơn giản, rồi
+                chạy các micro-ops đó trên một lõi thực thi mang tinh thần RISC ở bên trong. Nói cách khác, hầu hết CPU
+                x86 hiện đại là "CISC ở vỏ ngoài, RISC ở lõi trong" — sự khác biệt hiệu năng thực tế phụ thuộc vi kiến
+                trúc cụ thể, không phải nhãn RISC/CISC đơn thuần.
+              </div>
+            </div>
+
+            <h2>4. Thực hành: Bộ giả lập Toy CPU đơn giản</h2>
+            <p>
+              Chạy đúng chương trình vòng lặp tính $1+2+3+4+5$ đã verify ở Mục 2 — bấm "Từng bước" để xem PC, IR, thanh
+              ghi cập nhật theo ĐÚNG một chu kỳ fetch-decode-execute mỗi lần bấm, hoặc "Chạy hết" để xem toàn bộ 26 chu
+              kỳ diễn ra tức thì:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">loop_sum_program.js (chương trình chạy trong demo bên dưới)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">const PROGRAM = [
+  { op: 'LOADI', rd: 0, imm: 5 },          // 0: R0 = counter = 5
+  { op: 'LOADI', rd: 1, imm: 0 },          // 1: R1 = sum = 0
+  { op: 'LOADI', rd: 2, imm: 0 },          // 2: R2 = 0 (hang so dieu kien dung)
+  { op: 'LOADI', rd: 3, imm: 1 },          // 3: R3 = 1 (hang so tru)
+  { op: 'BEQ', rs1: 0, rs2: 2, addr: 8 },  // 4: counter==0 -> thoat vong lap
+  { op: 'ADD', rd: 1, rs1: 1, rs2: 0 },    // 5: sum += counter
+  { op: 'SUB', rd: 0, rs1: 0, rs2: 3 },    // 6: counter -= 1
+  { op: 'JMP', addr: 4 },                  // 7: quay lai kiem tra dieu kien
+  { op: 'HALT' },                          // 8
+];
+// Verified: runProgram(PROGRAM) -> R1 (tong) = 15, R0 (counter) = 0, dung 26 chu ky.</code></pre>
+            </div>
+
+            <div class="code-tabs" id="toycpu-simulator-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">📟 Bộ giả lập Toy CPU — Fetch-Decode-Execute</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="toycpu-container">
+                  <div class="toycpu-ram-panel">
+                    <h4>RAM (Von Neumann — lệnh &amp; dữ liệu chung)</h4>
+                    <ul id="toycpu-ram"></ul>
+                  </div>
+                  <div class="toycpu-state">
+                    <div class="toycpu-display">
+                      <div class="toycpu-display-line"><span>PC:</span><span id="toycpu-pc">0</span></div>
+                      <div class="toycpu-display-line"><span>IR:</span><span id="toycpu-ir">—</span></div>
+                      <div class="toycpu-display-line">
+                        <span>Thanh ghi:</span><span id="toycpu-regs">R0=0 R1=0 R2=0 R3=0</span>
+                      </div>
+                    </div>
+                    <div class="toycpu-btns">
+                      <button class="toycpu-btn" type="button" id="toycpu-step-btn">▶ Từng bước</button>
+                      <button class="toycpu-btn" type="button" id="toycpu-run-btn">⏩ Chạy hết</button>
+                      <button class="toycpu-btn" type="button" id="toycpu-reset-btn">↺ Reset</button>
+                    </div>
+                    <div class="toycpu-status" id="toycpu-status">Đang khởi tạo…</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Von Neumann dùng CHUNG bộ nhớ/bus cho lệnh và dữ liệu; Harvard tách riêng để tránh nút thắt cổ chai.
+              </li>
+              <li>
+                ✅ Verified: self-modifying code (STORE ghi đè vùng lệnh) khiến fetch kế tiếp đọc phải rác và crash thật
+                — đúng lý do MMU hiện đại đánh dấu vùng code read-only.
+              </li>
+              <li>
+                ✅ Fetch-Decode-Execute là vòng lặp vô hạn; PC tăng NGAY sau fetch, TRƯỚC KHI lệnh nhảy có cơ hội ghi đè
+                nó.
+              </li>
+              <li>
+                ✅ Verified: Toy CPU chạy chương trình 5+3 đúng 5 chu kỳ; vòng lặp BEQ/JMP tính tổng 1..5=15 sau đúng 26
+                chu kỳ.
+              </li>
+              <li>
+                ✅ RISC (đơn giản, cố định) vs CISC (phức tạp, biến đổi) — CISC hiện đại dịch ngầm về micro-ops kiểu
+                RISC.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao mô hình Von Neumann tạo ra "nút thắt cổ chai" (Von Neumann bottleneck)?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Vì lệnh và dữ liệu dùng CHUNG một bus, CPU không thể fetch lệnh kế tiếp ĐỒNG THỜI với đọc/ghi dữ liệu của lệnh hiện tại — cả hai phải xếp hàng qua đúng một đường truyền.'
+                    )
+                  "
+                >
+                  A. Vì lệnh và dữ liệu dùng chung một bus, CPU không thể fetch lệnh kế tiếp đồng thời đọc/ghi dữ liệu
+                  của lệnh hiện tại
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Von Neumann bottleneck hoàn toàn không liên quan đến tốc độ xung nhịp CPU — đây là vấn đề về BĂNG THÔNG BUS dùng chung, không phải tần số hoạt động.'
+                    )
+                  "
+                >
+                  B. Vì xung nhịp CPU trong kiến trúc Von Neumann luôn chậm hơn Harvard
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. ALU hoàn toàn không liên quan đến khái niệm Von Neumann bottleneck — đây là vấn đề kiến trúc BỘ NHỚ/BUS, không phải đơn vị tính toán.'
+                    )
+                  "
+                >
+                  C. Vì ALU trong Von Neumann chỉ có thể thực hiện được phép cộng, không thực hiện được phép trừ
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: một lệnh <code>STORE</code> ghi đè đúng địa chỉ đang chứa một lệnh khác khiến CPU crash khi
+                fetch tới đó. Đây là hiện tượng gì, và tại sao nó CÓ THỂ xảy ra trong Von Neumann?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Self-modifying code xảy ra được CHÍNH XÁC vì Von Neumann dùng CHUNG bộ nhớ cho lệnh và dữ liệu — không có ranh giới phần cứng nào ngăn một phép ghi dữ liệu đè lên vùng đang chứa lệnh.'
+                    )
+                  "
+                >
+                  A. Self-modifying code — có thể xảy ra vì Von Neumann dùng chung bộ nhớ cho lệnh và dữ liệu, không có
+                  ranh giới phần cứng nào ngăn việc ghi đè
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Đây KHÔNG phải lỗi ALU — ALU (Bài 1) không tham gia vào thao tác STORE/fetch lệnh này, vấn đề nằm ở kiến trúc bộ nhớ dùng chung.'
+                    )
+                  "
+                >
+                  B. Lỗi tính toán của ALU khi cộng hai số quá lớn
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Hiện tượng này hoàn toàn KHÔNG liên quan đến kiến trúc tập lệnh RISC/CISC — nó xảy ra ở tầng bộ nhớ/bus, độc lập với ISA đang dùng.'
+                    )
+                  "
+                >
+                  C. Sự khác biệt giữa tập lệnh RISC và CISC
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Trong chu kỳ Fetch-Decode-Execute, PC (Program Counter) tăng lên tại thời điểm nào?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! PC tăng NGAY sau khi fetch — TRƯỚC KHI lệnh được decode/execute. Với lệnh nhảy (JMP/BEQ), giá trị PC vừa tăng này bị GHI ĐÈ ở bước execute bằng địa chỉ đích tuyệt đối — verified bằng vòng lặp tính tổng 1..5 nhảy đúng về địa chỉ 4.'
+                    )
+                  "
+                >
+                  A. Ngay sau bước fetch, trước khi lệnh được decode/execute — với lệnh nhảy, giá trị này bị ghi đè sau
+                  đó
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Nếu PC tăng SAU execute, lệnh JMP/BEQ sẽ bị chính bước tăng PC ghi đè NGAY SAU KHI đã nhảy — verified thật cho thấy PC phải tăng TRƯỚC, để execute có cơ hội ghi đè lại nếu là lệnh nhảy.'
+                    )
+                  "
+                >
+                  B. Ngay sau bước execute, sau khi lệnh nhảy (nếu có) đã cập nhật xong địa chỉ đích
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. PC phải tăng lên mỗi CHU KỲ (mỗi lệnh fetch), không phải mỗi vòng lặp hoàn chỉnh — verified: chương trình 5+3 (không có vòng lặp) vẫn tăng PC 5 lần tương ứng 5 lệnh.'
+                    )
+                  "
+                >
+                  C. Chỉ tăng khi vòng lặp chương trình chạy xong hoàn toàn một lượt
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">Nhận định nào về RISC và CISC là ĐÚNG?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Đây là hiểu lầm phổ biến — CPU x86 (CISC) hiện đại dịch ngầm lệnh phức tạp thành micro-ops kiểu RISC trước khi thực thi, nên hiệu năng thực tế phụ thuộc vi kiến trúc cụ thể, không phải nhãn RISC/CISC.'
+                    )
+                  "
+                >
+                  A. RISC luôn nhanh hơn CISC trong mọi trường hợp vì tập lệnh đơn giản hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! CPU x86 (CISC) hiện đại có một tầng giải mã ẩn dịch lệnh phức tạp thành các micro-ops đơn giản, rồi chạy micro-ops đó trên lõi thực thi mang tinh thần RISC bên trong — CISC ở vỏ ngoài, RISC ở lõi trong.'
+                    )
+                  "
+                >
+                  B. CPU x86 (CISC) hiện đại dịch ngầm các lệnh phức tạp thành micro-ops đơn giản rồi chạy trên lõi thực
+                  thi kiểu RISC
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. RISC-V (RISC) có độ dài lệnh CỐ ĐỊNH (luôn 32-bit) — chính x86 (CISC) mới có độ dài lệnh BIẾN ĐỔI (1-15 byte).'
+                    )
+                  "
+                >
+                  C. RISC-V có độ dài lệnh biến đổi để tối ưu dung lượng chương trình
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — thư viện kiến trúc máy tính mini dùng xuyên suốt cả 12 bài, Bài 2
+                vừa thêm <code>createCpuState()</code>, <code>cpuStep()</code>, <code>runProgram()</code> — Toy CPU
+                fetch-decode-execute trên tập lệnh mini (LOADI/ADD/SUB/STORE/LOAD/JMP/BEQ/HALT), kèm self-test đối chiếu
+                đúng mọi con số trong bài (chạy <code>node cpu-core.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Sách giáo khoa cốt lõi:</strong>
+                  <a
+                    href="https://www.amazon.com/Computer-Organization-Design-MIPS-Architecture/dp/0124077269"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Computer Organization and Design, MIPS Edition (Patterson &amp; Hennessy)</a
+                  >
+                  — Chương 4 trình bày chi tiết chu kỳ fetch-decode-execute và datapath.
+                </li>
+                <li>
+                  <strong>Von Neumann vs Harvard:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Von_Neumann_architecture"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Von Neumann architecture</a
+                  >
+                  — nguồn gốc lịch sử và so sánh với Harvard architecture.
+                </li>
+                <li>
+                  <strong>RISC vs CISC:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Reduced_instruction_set_computer"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Reduced instruction set computer</a
+                  >
+                  — lịch sử tranh luận RISC/CISC và thực tế vi kiến trúc hiện đại.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-discuss">
+              <img src="../../assets/favicon.svg" alt="" width="36" height="36" />
+              <div>
+                <strong>Có thắc mắc hay đóng góp gì không?</strong>
+                <p>Hãy để lại ý kiến của bạn ở phần bình luận thảo luận GitHub phía dưới để cùng giải đáp nhé!</p>
+              </div>
+            </div>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="cpu-logic-alu" class="article-related__link article-related__link--prev"
+                  >Bài 1: Cổng Logic đến Đơn Vị ALU</a
+                >
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 3: Hợp Ngữ RISC-V &amp; Đường Đi Của Dữ Liệu (Datapath) — sắp ra mắt
+                </span>
+                <a href="cpu-programming-series" class="article-related__link">Quay lại Lộ trình Kiến Trúc Máy Tính</a>
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="cpu-von-neumann-isa.js"></script>
+  </body>
+</html>
