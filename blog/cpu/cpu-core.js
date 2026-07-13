@@ -944,6 +944,43 @@ function compareTransferMethods(bytes, pcieGBps, umaGBps) {
   return { pcieTimeMs, umaTimeMs, speedupFactor: pcieTimeMs / umaTimeMs };
 }
 
+// ---------------------------------------------------------------------------
+// Bài 10 — Tăng tốc phần cứng: GPU, NPU & AMX. Bài 9 giải quyết bức tường
+// BĂNG THÔNG (đưa dữ liệu tới đúng chỗ nhanh nhất có thể) — bài này giải
+// quyết bức tường TÍNH TOÁN: nhân ma trận N×N là phép toán lõi của đồ hoạ
+// VÀ deep learning, và 3 kiến trúc (CPU vô hướng, CPU SIMD, GPU/AMX song
+// song) xử lý CÙNG phép toán đó với thông lượng khác nhau hàng nghìn lần.
+// Build-out: đếm FLOPs nhân ma trận N×N, so tuần tự vs SIMD vs song song
+// (Mục 10.4).
+// ---------------------------------------------------------------------------
+
+// Số phép tính dấu phẩy động (FLOPs) để nhân 2 ma trận N×N theo thuật toán
+// TUẦN TỰ kinh điển $O(N^3)$ (Mục 10.4): mỗi trong $N^2$ phần tử kết quả cần
+// đúng $N$ phép nhân + $(N-1)$ phép cộng = $2N-1$ FLOPs, nhân với $N^2$ phần
+// tử: $N^2 \times (2N-1) = 2N^3 - N^2$.
+function matrixMultiplyFlops(n) {
+  return 2 * Math.pow(n, 3) - Math.pow(n, 2);
+}
+
+// Thời gian tính `flops` phép tính ở thông lượng `flopsPerSecond` (Mục 10.4):
+// $t = \text{flops} / \text{flopsPerSecond}$.
+function computeTimeSeconds(flops, flopsPerSecond) {
+  return flops / flopsPerSecond;
+}
+
+// So sánh 3 kiến trúc tính CÙNG phép nhân ma trận N×N (Mục 10.4): CPU vô
+// hướng tuần tự (scalarGFLOPS), CPU SIMD (simdGFLOPS — thường = scalar ×
+// độ rộng vector, vd AVX 8-wide = 8×), và GPU/AMX song song lớn
+// (gpuTFLOPS, kèm `gpuOverheadSeconds` — chi phí cố định để nạp dữ liệu vào
+// GPU/AMX TRƯỚC khi tính, không phụ thuộc kích thước ma trận).
+function compareComputeMethods(n, scalarGFLOPS, simdGFLOPS, gpuTFLOPS, gpuOverheadSeconds = 0) {
+  const flops = matrixMultiplyFlops(n);
+  const scalarTimeSeconds = computeTimeSeconds(flops, scalarGFLOPS * 1e9);
+  const simdTimeSeconds = computeTimeSeconds(flops, simdGFLOPS * 1e9);
+  const gpuTimeSeconds = computeTimeSeconds(flops, gpuTFLOPS * 1e12) + gpuOverheadSeconds;
+  return { flops, scalarTimeSeconds, simdTimeSeconds, gpuTimeSeconds };
+}
+
 export {
   toBinString,
   toSigned,
@@ -985,6 +1022,9 @@ export {
   frameBytes,
   transferTimeSeconds,
   compareTransferMethods,
+  matrixMultiplyFlops,
+  computeTimeSeconds,
+  compareComputeMethods,
 };
 
 // ---------------------------------------------------------------------------
@@ -1583,6 +1623,52 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'UMA: thoi gian truy cap chi chiem ~0,5% ngan sach 1 khung hinh o 60fps - khong dang ke',
       (cmp.umaTimeMs / frameBudgetMs) * 100 < 1
+    );
+  }
+
+  // --- Bài 10: Tang toc phan cung - dem FLOPs nhan ma tran + tuan tu vs SIMD vs GPU ---
+  {
+    // Nhan ma tran 1024x1024: N^2*(2N-1) = 2N^3 - N^2 = 2.146.435.072 FLOPs
+    check(
+      'matrixMultiplyFlops(1024) = 2.146.435.072 FLOPs (dung cong thuc N^2*(2N-1))',
+      matrixMultiplyFlops(1024),
+      2146435072
+    );
+    check(
+      'matrixMultiplyFlops(2) = 12 FLOPs (2 phan tu, moi phan tu 2*2-1=3 FLOPs, x4 phan tu)',
+      matrixMultiplyFlops(2),
+      12
+    );
+
+    // So sanh 3 kien truc: scalar 4 GFLOPS, SIMD 32 GFLOPS (AVX 8-wide = 8x scalar), GPU 10 TFLOPS
+    const cmpCompute = compareComputeMethods(1024, 4, 32, 10);
+    checkTrue(
+      'Scalar (4 GFLOPS): thoi gian ~0,5366 giay cho ma tran 1024x1024',
+      Math.abs(cmpCompute.scalarTimeSeconds - 0.5366) < 1e-3
+    );
+    checkTrue(
+      'SIMD (32 GFLOPS): thoi gian ~0,0671 giay - nhanh hon scalar DUNG BANG do rong vector (8x)',
+      Math.abs(cmpCompute.simdTimeSeconds - 0.0671) < 1e-3
+    );
+    checkTrue(
+      'SIMD nhanh hon scalar DUNG 8 lan (= 32/4, dung do rong vector AVX, khong phai con so tuy tien)',
+      Math.abs(cmpCompute.scalarTimeSeconds / cmpCompute.simdTimeSeconds - 8) < 1e-6
+    );
+    checkTrue(
+      'GPU (10 TFLOPS): thoi gian ~0,000215 giay (0,215 ms) - nhanh hon scalar 2500 lan',
+      Math.abs(cmpCompute.gpuTimeSeconds - 0.000215) < 1e-6
+    );
+    checkTrue(
+      'GPU nhanh hon scalar dung 2500 lan (= 10000/4, ty le TFLOPS/GFLOPS)',
+      Math.abs(cmpCompute.scalarTimeSeconds / cmpCompute.gpuTimeSeconds - 2500) < 1
+    );
+
+    // Pitfall Muc 10.4: ma tran QUA NHO, overhead nap du lieu vao GPU lam GPU
+    // CHAM HON ca CPU vo huong - verified thuc te bang engine
+    const cmpSmall = compareComputeMethods(4, 4, 32, 10, 0.0001); // GPU co 0,1ms overhead co dinh
+    checkTrue(
+      'Pitfall: ma tran 4x4 QUA NHO - GPU (co overhead nap du lieu 0,1ms) CHAM HON scalar (khong co overhead)',
+      cmpSmall.gpuTimeSeconds > cmpSmall.scalarTimeSeconds
     );
   }
 
