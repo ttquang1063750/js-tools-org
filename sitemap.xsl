@@ -247,6 +247,11 @@
             color: var(--mauve);
           }
 
+          .badge-freq.yearly {
+            background-color: rgba(166, 227, 161, 0.15);
+            color: var(--green);
+          }
+
           .badge-priority {
             font-family: monospace;
             background-color: rgba(166, 227, 161, 0.15);
@@ -371,6 +376,7 @@
                           <xsl:when test="s:changefreq = 'daily'">Hằng ngày</xsl:when>
                           <xsl:when test="s:changefreq = 'weekly'">Hằng tuần</xsl:when>
                           <xsl:when test="s:changefreq = 'monthly'">Hằng tháng</xsl:when>
+                          <xsl:when test="s:changefreq = 'yearly'">Hằng năm</xsl:when>
                           <xsl:otherwise><xsl:value-of select="s:changefreq"/></xsl:otherwise>
                         </xsl:choose>
                       </span>
