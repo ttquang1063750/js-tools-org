@@ -1,0 +1,1041 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 4: Pipeline CPU &amp; Xung Đột Dữ Liệu (Data Hazards) — js-tools</title>
+    <meta
+      name="description"
+      content="Pipeline 5 giai đoạn IF-ID-EX-MEM-WB chồng lấp nhiều lệnh để tăng thông lượng, công thức thời gian T=(N+S-1+stall)×tclk, và xung đột dữ liệu RAW/WAR/WAW với forwarding/stall. Verified thật bằng engine tự viết: 1 triệu lệnh không stall mất đúng 500.002ns ở 2GHz, có 200.000 stall mất 600.002ns (CPI từ 1 lên 1,2). Chuỗi lệnh RAW thật với forwarding cho 0 stall, không forwarding cần đúng 4 stall; load-use hazard (LW rồi dùng ngay) forwarding vẫn cần đúng 1 stall — không thể về 0. Demo: máy tính thời gian/CPI + mô phỏng hazard bật/tắt forwarding, cùng liên kết tới RISC-V Pipeline Simulator đầy đủ."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/cpu/cpu-pipeline-hazards" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/cpu/cpu-pipeline-hazards" />
+    <meta property="og:title" content="Bài 4: Pipeline CPU &amp; Xung Đột Dữ Liệu (Data Hazards) — js-tools" />
+    <meta
+      property="og:description"
+      content="Pipeline 5 giai đoạn, công thức T=(N+S-1+stall)×tclk, xung đột RAW/WAR/WAW, forwarding/stall. Verified: 1 triệu lệnh không stall = 500.002ns, có 200.000 stall = 600.002ns (CPI 1→1,2). Chuỗi RAW thật: forwarding=0 stall, không forwarding=4 stall. Load-use: forwarding vẫn cần đúng 1 stall."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 4: Pipeline CPU &amp; Xung Đột Dữ Liệu (Data Hazards) — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Pipeline 5 giai đoạn, T=(N+S-1+stall)×tclk, RAW/WAR/WAW, forwarding/stall. Verified: 1 triệu lệnh 500.002ns không stall vs 600.002ns có stall. Load-use hazard: forwarding vẫn cần 1 stall."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .pipe-calc-container {
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 24px;
+        color: #242424;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .pipe-calc-row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .pipe-calc-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1;
+        min-width: 140px;
+      }
+      .pipe-calc-field label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #475569;
+      }
+      .pipe-calc-field input,
+      .pipe-calc-field select {
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-family: Consolas, Monaco, monospace;
+      }
+      .pipe-calc-output {
+        background: #1e293b;
+        color: #38bdf8;
+        border-radius: 6px;
+        padding: 14px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 14px;
+      }
+      .pipe-hazard-output {
+        background: #1e293b;
+        color: #f59e0b;
+        border-radius: 6px;
+        padding: 14px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      .pipe-checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+      }
+      .pipe-grid-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 13px;
+        margin: 12px 0;
+      }
+      .pipe-grid-table th,
+      .pipe-grid-table td {
+        border: 1px solid #e5e5e5;
+        padding: 6px 10px;
+        text-align: center;
+      }
+      .pipe-grid-table th {
+        background: #f1f3f5;
+      }
+      .pipe-grid-table td.stage-if {
+        background: rgba(59, 130, 246, 0.15);
+      }
+      .pipe-grid-table td.stage-id {
+        background: rgba(139, 92, 246, 0.15);
+      }
+      .pipe-grid-table td.stage-ex {
+        background: rgba(234, 179, 8, 0.15);
+      }
+      .pipe-grid-table td.stage-mem {
+        background: rgba(16, 185, 129, 0.15);
+      }
+      .pipe-grid-table td.stage-wb {
+        background: rgba(236, 72, 153, 0.15);
+      }
+      .pipe-grid-table td.stage-bubble {
+        background: repeating-linear-gradient(45deg, #fee2e2, #fee2e2 4px, #fecaca 4px, #fecaca 8px);
+        color: #991b1b;
+        font-weight: 700;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 4: Pipeline CPU & Xung Đột Dữ Liệu (Data Hazards)",
+        "description": "Pipeline 5 giai đoạn, công thức T=(N+S-1+stall)×tclk, xung đột RAW/WAR/WAW, forwarding/stall. Verified: 1 triệu lệnh không stall = 500.002ns, có 200.000 stall = 600.002ns (CPI 1→1,2). Chuỗi RAW thật: forwarding=0 stall, không forwarding=4 stall. Load-use: forwarding vẫn cần đúng 1 stall.",
+        "url": "https://js-tools.org/blog/cpu/cpu-pipeline-hazards",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-16"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--cpu">
+        <div class="container">
+          <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--cpu">Bài 4 · Kiến Trúc Máy Tính</div>
+          <h1 class="article-hero__title">Bài 4: Pipeline CPU &amp; Xung Đột Dữ Liệu (Data Hazards)</h1>
+          <div class="article-hero__meta">16 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: chồng lấp thay vì ép mọi lệnh theo nhịp lệnh chậm nhất</h2>
+            <p>
+              <a href="cpu-riscv-datapath">Bài 3</a> kết thúc bằng một pitfall gai góc: datapath đơn chu kỳ ép TẤT CẢ
+              lệnh — kể cả một <code>ADD</code> đơn giản — chạy theo nhịp của lệnh CHẬM NHẤT (<code>LW</code>). Giải
+              pháp không phải "làm ADD chậm hơn cho công bằng" mà ngược lại: chia nhỏ mỗi lệnh thành 5 bước (giai đoạn)
+              và cho nhiều lệnh CHỒNG LẤP nhau — lệnh sau bắt đầu bước 1 ngay khi lệnh trước vừa xong bước 1. Đây là
+              <strong>pipeline</strong>, và cái giá của việc chồng lấp là: các lệnh đang "chạy song song" đôi khi cần DỮ
+              LIỆU của nhau — xung đột dữ liệu (data hazard).
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Bắt buộc đọc <a href="cpu-riscv-datapath">Bài 3</a> (datapath đơn chu kỳ, mã hoá RV32I — pipeline bài
+                này chồng lấp CHÍNH các giai đoạn đã học ở đó).
+              </div>
+            </div>
+
+            <h2>1. Cơ chế Pipeline 5 giai đoạn</h2>
+            <p>
+              Mỗi lệnh RV32I đi qua đúng 5 bước: <strong>IF</strong> (Instruction Fetch — đọc lệnh),
+              <strong>ID</strong> (Instruction Decode — giải mã + đọc thanh ghi), <strong>EX</strong> (Execute — tính
+              toán qua ALU), <strong>MEM</strong> (Memory access — chỉ LW/SW thật sự dùng), <strong>WB</strong> (Write
+              Back — ghi kết quả vào thanh ghi). Pipeline đặt MỘT khối phần cứng riêng cho mỗi giai đoạn, nối bằng các
+              <strong>thanh ghi đệm liên giai đoạn</strong> (pipeline registers) — khi lệnh A đang ở EX, lệnh B (nạp sau
+              A đúng 1 chu kỳ) đã có thể ở ID, và lệnh C đã có thể ở IF — cả 3 lệnh "sống" trong CPU CÙNG một lúc.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">pipeline_5stage.txt (5 giai đoạn &amp; chồng lấp qua các chu kỳ)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">Chu ky:      1    2    3    4    5    6    7
+Lenh A:      IF   ID   EX   MEM  WB
+Lenh B:           IF   ID   EX   MEM  WB
+Lenh C:                IF   ID   EX   MEM  WB
+
+# Tai chu ky 3: A dang o EX, B dang o ID, C dang o IF - CA 3 lenh
+# "song" dong thoi trong CPU, moi lenh o MOT giai doan khac nhau.</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: lầm tưởng pipeline làm 1 lệnh chạy nhanh hơn</div>
+              <div class="callout__content">
+                Pipeline tối ưu <strong>THÔNG LƯỢNG</strong> (số lệnh hoàn thành mỗi giây khi chạy NHIỀU lệnh liên tục),
+                KHÔNG tối ưu <strong>ĐỘ TRỄ</strong> của một lệnh đơn lẻ — một lệnh riêng lẻ vẫn phải đi trọn 5 giai
+                đoạn (5 chu kỳ), không hề nhanh hơn (thậm chí có thêm overhead thanh ghi đệm giữa các giai đoạn). Lợi
+                ích CHỈ xuất hiện khi có NHIỀU lệnh chồng lấp — giống một dây chuyền lắp ráp: một chiếc xe đơn lẻ không
+                ra xưởng nhanh hơn, nhưng hàng nghìn xe/giờ thì có.
+              </div>
+            </div>
+
+            <h2>2. Tính toán hiệu năng Pipeline</h2>
+            <p>
+              Thời gian chạy $N$ lệnh trên pipeline $S$ giai đoạn, xung nhịp $t_{clk}$, có $stallCycles$ chu kỳ "bong
+              bóng" chèn thêm do hazard:
+            </p>
+            <p style="text-align: center">$$T = (N + S - 1 + stallCycles) \times t_{clk}$$</p>
+            <p>
+              Số hạng $(S-1)$ là độ trễ "làm đầy" pipeline lúc khởi động — 4 chu kỳ đầu tiên (với $S=5$) chưa có đủ 5
+              lệnh chồng lấp cùng lúc. Verified bằng số thật: 1 triệu lệnh, pipeline 5 giai đoạn, xung nhịp 2GHz
+              ($t_{clk}=0,5$ns) — KHÔNG có stall mất đúng <strong>500.002 ns</strong>; CÙNG chương trình đó nhưng có
+              200.000 chu kỳ stall (vd do hazard) mất <strong>600.002 ns</strong> — chênh lệch đúng bằng $200.000 \times
+              0,5\text{ns} = 100.000\text{ns}$.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">pipeline_timing.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function pipelineTime(numInstructions, numStages, stallCycles, clockPeriodNs) {
+  return (numInstructions + numStages - 1 + stallCycles) * clockPeriodNs;
+}
+function pipelineCPI(numInstructions, stallCycles) {
+  return (numInstructions + stallCycles) / numInstructions; // CPI ly tuong = 1
+}
+// Verified: pipelineTime(1_000_000, 5, 0, 0.5) === 500002 (ns)
+// Verified: pipelineTime(1_000_000, 5, 200_000, 0.5) === 600002 (ns)
+// Verified: pipelineCPI(1_000_000, 200_000) === 1.2 (CPI ly tuong la 1)</code></pre>
+            </div>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Đừng quên chu kỳ "làm đầy" pipeline khi $N$ nhỏ</div>
+              <div class="callout__content">
+                Với $N=1$ triệu lệnh, số hạng $(S-1)=4$ hoàn toàn không đáng kể (4 phần triệu). Nhưng với một đoạn mã
+                CHỈ có 5 lệnh, $(S-1)=4$ chiếm gần <strong>44%</strong> tổng số chu kỳ ($T$ tính bằng chu kỳ $= 5+4=9$,
+                so với lý tưởng $N=5$) — bỏ qua số hạng này khi ước lượng hiệu năng đoạn mã NGẮN là sai số đáng kể, dù
+                với chương trình dài thì gần như không ảnh hưởng.
+              </div>
+            </div>
+
+            <h2>3. Xung đột dữ liệu (Data Hazards)</h2>
+            <p>
+              Khi lệnh sau CHỒNG LẤP với lệnh trước, nó có thể cần đọc/ghi một thanh ghi mà lệnh trước cũng đang đọc/ghi
+              — 3 kiểu xung đột kinh điển:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Kiểu</th>
+                  <th>Ý nghĩa</th>
+                  <th>Có xảy ra trong pipeline cơ bản?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>RAW (Read-After-Write)</td>
+                  <td>Lệnh sau ĐỌC thanh ghi mà lệnh trước chưa kịp GHI xong</td>
+                  <td>Có — xung đột THẬT, cần forwarding/stall</td>
+                </tr>
+                <tr>
+                  <td>WAR (Write-After-Read)</td>
+                  <td>Lệnh sau GHI thanh ghi mà lệnh trước chưa kịp ĐỌC</td>
+                  <td>Không — pipeline cơ bản đọc ở ID (sớm), ghi ở WB (muộn), thứ tự tự nhiên đã đúng</td>
+                </tr>
+                <tr>
+                  <td>WAW (Write-After-Write)</td>
+                  <td>2 lệnh cùng GHI 1 thanh ghi sai thứ tự</td>
+                  <td>Không — pipeline cơ bản hoàn thành WB đúng thứ tự chương trình (in-order)</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              <strong>Forwarding</strong> (chuyển tiếp dữ liệu): thay vì CHỜ lệnh trước ghi xong vào thanh ghi rồi mới
+              đọc lại, kết quả ALU được "đi tắt" thẳng từ đầu ra EX của lệnh trước sang đầu vào EX của lệnh sau —
+              verified: chuỗi 3 lệnh RV32I thật <code>ADDI x1,x0,20</code> / <code>ADD x2,x1,x1</code> /
+              <code>SUB x3,x2,x1</code> (2 hazard RAW liên tiếp) khi CÓ forwarding cho đúng <strong>0 stall</strong> —
+              hoàn toàn không mất chu kỳ nào; khi TẮT forwarding, mỗi hazard cần đúng 2 stall (chờ tới khi WB xong),
+              tổng <strong>4 stall</strong>.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">detect_hazards.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function detectHazards(instrs, forwardingEnabled) {
+  let totalStalls = 0;
+  const hazards = [];
+  for (let i = 1; i < instrs.length; i++) {
+    const prev = instrs[i - 1], curr = instrs[i];
+    const prevWritesReg = /* prev la R/I/ILOAD va rd != 0 */;
+    if (!prevWritesReg) continue;
+    const reads = curr.rs1 === prev.rd || curr.rs2 === prev.rd;
+    if (!reads) continue;
+    if (prev.type === 'ILOAD') { totalStalls += 1; /* load-use: LUON 1 stall */ }
+    else if (!forwardingEnabled) { totalStalls += 2; /* RAW, khong forwarding */ }
+    // co forwarding + khong phai load-use -> 0 stall, khong lam gi them
+  }
+  return { totalStalls, hazards };
+}
+// Verified: chuoi RAW that CO forwarding -> 0 stall; KHONG forwarding -> 4 stall</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy chính: Load-use hazard — forwarding KHÔNG cứu được</div>
+              <div class="callout__content">
+                Forwarding chuyển kết quả EX → EX kế tiếp, nhưng <code>LW</code> chỉ có dữ liệu SẴN SÀNG ở giai đoạn
+                <strong>MEM</strong> (chậm hơn EX đúng 1 giai đoạn). Nếu lệnh NGAY SAU dùng thẳng kết quả đó, forwarding
+                vẫn không kịp — bắt buộc chèn đúng <strong>1 chu kỳ stall</strong>, dù bật hay tắt forwarding. Verified
+                thật: <code>LW x1, 0(x2)</code> rồi <code>ADD x3, x1, x1</code> (dùng ngay $x_1$) — bật forwarding vẫn
+                cho đúng 1 stall, không thể về 0 như hazard RAW thường.
+              </div>
+            </div>
+
+            <h2>4. Phân tích ví dụ thực tế &amp; tính toán Stall</h2>
+            <p>
+              Giản đồ thời gian (pipeline clock grid) của ví dụ load-use — verified 1 stall đúng bằng cách "trễ" giai
+              đoạn EX của lệnh <code>ADD</code> lại đúng 1 chu kỳ để chờ dữ liệu từ MEM của <code>LW</code>:
+            </p>
+            <table class="pipe-grid-table">
+              <thead>
+                <tr>
+                  <th>Lệnh</th>
+                  <th>C1</th>
+                  <th>C2</th>
+                  <th>C3</th>
+                  <th>C4</th>
+                  <th>C5</th>
+                  <th>C6</th>
+                  <th>C7</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>LW x1,0(x2)</code></td>
+                  <td class="stage-if">IF</td>
+                  <td class="stage-id">ID</td>
+                  <td class="stage-ex">EX</td>
+                  <td class="stage-mem">MEM</td>
+                  <td class="stage-wb">WB</td>
+                  <td></td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td><code>ADD x3,x1,x1</code></td>
+                  <td></td>
+                  <td class="stage-if">IF</td>
+                  <td class="stage-id">ID</td>
+                  <td class="stage-bubble">bubble</td>
+                  <td class="stage-ex">EX</td>
+                  <td class="stage-mem">MEM</td>
+                  <td class="stage-wb">WB</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Đúng công thức: 2 lệnh, 5 giai đoạn, 1 stall → $T = (2+5-1+1) = 7$ chu kỳ — khớp với cột cuối cùng (WB của
+              ADD tại chu kỳ 7) trong bảng trên. CPI thực tế của đoạn mã 2 lệnh này: $CPI = (2+1)/2 = 1,5$ — cao hơn hẳn
+              CPI lý tưởng $=1$ vì tỷ trọng stall trên tổng số lệnh RẤT lớn khi đoạn mã ngắn (đúng pitfall Mục 2 vừa
+              nêu).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">load_use_cpi.js (tính CPI cho ví dụ load-use, dùng đúng engine)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">const seq = [assembleRV32I('LW', {rd:1, rs1:2, imm:0}), assembleRV32I('ADD', {rd:3, rs1:1, rs2:1})]
+  .map(decodeRV32I);
+const { totalStalls } = detectHazards(seq, true); // forwarding bat, van 1 stall
+const T = pipelineTime(2, 5, totalStalls, 0.5);     // = 7 chu ky (don vi: t_clk)
+const cpi = pipelineCPI(2, totalStalls);            // = 1.5
+// Verified: totalStalls=1, T=(2+5-1+1)=7, CPI=(2+1)/2=1.5</code></pre>
+            </div>
+
+            <h2>5. Thực hành: Mô phỏng Pipeline 5 giai đoạn RISC-V tương tác</h2>
+            <p>
+              Máy tính thời gian/CPI bên dưới dùng ĐÚNG công thức đã verify — đổi số lệnh/stall/xung nhịp để xem $T$ và
+              CPI thay đổi trực tiếp. Bộ mô phỏng hazard cho phép bật/tắt forwarding trên 2 chuỗi lệnh RV32I thật (RAW
+              và load-use) để tự tay thấy con số stall đổi đúng như Mục 3:
+            </p>
+
+            <div class="code-tabs" id="pipe-calc-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🧮 Máy tính thời gian/CPI &amp; Mô phỏng Hazard</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="pipe-calc-container">
+                  <div>
+                    <p style="margin: 0 0 8px; font-weight: 700; font-size: 14px">Máy tính T &amp; CPI</p>
+                    <div class="pipe-calc-row">
+                      <div class="pipe-calc-field">
+                        <label for="pipe-num-instr">Số lệnh (N)</label>
+                        <input type="number" id="pipe-num-instr" value="1000000" min="1" />
+                      </div>
+                      <div class="pipe-calc-field">
+                        <label for="pipe-stall-cycles">Số chu kỳ stall</label>
+                        <input type="number" id="pipe-stall-cycles" value="200000" min="0" />
+                      </div>
+                      <div class="pipe-calc-field">
+                        <label for="pipe-clock-period">Chu kỳ xung nhịp (ns)</label>
+                        <input type="number" id="pipe-clock-period" value="0.5" step="0.1" min="0.01" />
+                      </div>
+                    </div>
+                    <div class="pipe-calc-output" id="pipe-timing-output">—</div>
+                  </div>
+                  <div>
+                    <p style="margin: 0 0 8px; font-weight: 700; font-size: 14px">Mô phỏng Hazard</p>
+                    <div class="pipe-calc-row">
+                      <div class="pipe-calc-field">
+                        <label for="pipe-seq-select">Chuỗi lệnh RV32I</label>
+                        <select id="pipe-seq-select">
+                          <option value="raw">RAW: ADDI/ADD/SUB (2 hazard liên tiếp)</option>
+                          <option value="loadUse">Load-use: LW rồi dùng ngay</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="pipe-checkbox-row">
+                      <input type="checkbox" id="pipe-forwarding-checkbox" checked />
+                      <label for="pipe-forwarding-checkbox">Bật Forwarding</label>
+                    </div>
+                    <div class="pipe-hazard-output" id="pipe-hazard-output">—</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🛠️ Công cụ mô phỏng độc lập</div>
+              <div class="callout__content">
+                Muốn xem TỪNG chu kỳ pipeline thật sự chạy (không chỉ đếm stall) — đặc biệt với các đoạn mã tự viết phức
+                tạp hơn — hãy thử
+                <a href="cpu-pipeline-sim">RISC-V Pipeline &amp; Cache L1 Simulator</a>, công cụ mô phỏng trực quan
+                riêng dùng lại xuyên suốt series (đã có sẵn từ trang Lộ trình), hiển thị từng lệnh chồng lấp qua 5 giai
+                đoạn theo thời gian thực, kèm bật/tắt forwarding để nghe/thấy hazard trực tiếp.
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Pipeline chồng lấp nhiều lệnh qua 5 giai đoạn (IF-ID-EX-MEM-WB) để tăng THÔNG LƯỢNG, không rút ngắn
+                độ trễ 1 lệnh đơn lẻ.
+              </li>
+              <li>
+                ✅ Verified: $T=(N+S-1+stall) \times t_{clk}$ — 1 triệu lệnh không stall = 500.002ns, có 200.000 stall =
+                600.002ns ở 2GHz.
+              </li>
+              <li>
+                ✅ RAW là hazard THẬT duy nhất trong pipeline cơ bản (WAR/WAW tự động đúng thứ tự nhờ đọc sớm ở ID, ghi
+                muộn ở WB, in-order commit).
+              </li>
+              <li>
+                ✅ Verified: forwarding giải quyết RAW ALU-ALU hoàn toàn (0 stall); không forwarding cần 2 stall/hazard.
+              </li>
+              <li>
+                ✅ Pitfall: load-use hazard (LW rồi dùng ngay) forwarding KHÔNG cứu được — verified luôn cần đúng 1
+                stall.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">Pipeline 5 giai đoạn giúp cải thiện điều gì so với datapath đơn chu kỳ?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Pipeline tối ưu THÔNG LƯỢNG (số lệnh hoàn thành mỗi giây khi chạy liên tục nhiều lệnh) — một lệnh đơn lẻ vẫn mất trọn 5 chu kỳ, không hề nhanh hơn. Lợi ích chỉ hiện ra khi có nhiều lệnh chồng lấp.'
+                    )
+                  "
+                >
+                  A. Thông lượng (số lệnh hoàn thành mỗi giây khi chạy nhiều lệnh liên tục) — không rút ngắn thời gian
+                  của một lệnh đơn lẻ
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Mot lenh DON LE van phai di tron 5 giai doan (5 chu ky) trong pipeline - khong he nhanh hon dap ung don chu ky, tham chi co the co them overhead thanh ghi dem giua cac giai doan.'
+                    )
+                  "
+                >
+                  B. Độ trễ của một lệnh đơn lẻ — mỗi lệnh chạy nhanh hơn hẳn so với đơn chu kỳ
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Pipeline hoan toan KHONG lien quan gi den dung luong bo nho - day la ky thuat XU LY (chong lap nhieu lenh), khong phai ky thuat luu tru.'
+                    )
+                  "
+                >
+                  C. Dung lượng bộ nhớ có thể sử dụng
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: 1 triệu lệnh không stall mất 500.002ns, có 200.000 stall mất 600.002ns (2GHz). Chênh lệch
+                100.000ns đến từ đâu?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Mỗi chu kỳ stall là một chu kỳ xung nhịp KHÔNG hoàn thành lệnh nào (bong bóng) — 200.000 stall × 0,5ns/chu kỳ = 100.000ns, đúng khớp phần chênh lệch giữa 2 phép tính T.'
+                    )
+                  "
+                >
+                  A. 200.000 chu kỳ stall × 0,5ns/chu kỳ = 100.000ns — mỗi stall là một chu kỳ xung nhịp không hoàn
+                  thành lệnh nào
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. So luong lenh N=1 trieu la CO DINH giong nhau o ca 2 phep tinh - khong co lenh nao duoc them vao, chi co SO CHU KY STALL khac nhau.'
+                    )
+                  "
+                >
+                  B. Vì chương trình có stall chạy nhiều lệnh hơn chương trình không stall
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Xung nhip 2GHz (tclk=0,5ns) la GIONG HET nhau trong ca 2 phep tinh - khong co su thay doi ve toc do xung nhip, chi khac o SO CHU KY STALL.'
+                    )
+                  "
+                >
+                  C. Vì xung nhịp CPU chạy chậm hơn khi có stall
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">Vì sao WAR và WAW KHÔNG xảy ra trong pipeline cơ bản (dù RAW vẫn xảy ra)?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Pipeline cơ bản đọc thanh ghi SỚM (giai đoạn ID) và ghi thanh ghi MUỘN (giai đoạn WB), đồng thời hoàn thành WB đúng thứ tự chương trình (in-order) — thứ tự tự nhiên này đã tự động đúng cho WAR/WAW, không cần cơ chế xử lý thêm.'
+                    )
+                  "
+                >
+                  A. Vì pipeline đọc thanh ghi sớm (ID) và ghi muộn (WB) theo đúng thứ tự chương trình — thứ tự tự nhiên
+                  này đã tự động an toàn cho WAR/WAW
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Forwarding la co che GIAI QUYET RAW (chuyen ket qua EX truc tiep) - no khong lien quan gi toi viec WAR/WAW co xay ra hay khong, vi WAR/WAW von da khong xay ra do THU TU doc/ghi tu nhien cua pipeline.'
+                    )
+                  "
+                >
+                  B. Vì forwarding tự động ngăn chặn cả WAR và WAW
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. RV32I (Bai 3) CHI dung toi da 2 thanh ghi nguon (rs1, rs2) VA 1 thanh ghi dich (rd) cho moi lenh R/I-type - so luong thanh ghi khong lien quan gi den ly do WAR/WAW khong xay ra, van de la ve THU TU doc/ghi.'
+                    )
+                  "
+                >
+                  C. Vì RV32I có quá nhiều thanh ghi nên xác suất trùng lặp gần như bằng 0
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Verified: LW x1,0(x2) rồi ADD x3,x1,x1 (dùng ngay x1) — forwarding vẫn cần đúng 1 stall. Vì sao
+                forwarding không giải quyết được hoàn toàn như hazard RAW thường?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Forwarding chuyển kết quả từ EX sang EX kế tiếp, nhưng LW chỉ có dữ liệu THẬT SỰ sẵn sàng ở giai đoạn MEM (chậm hơn EX đúng 1 giai đoạn) — nếu lệnh ngay sau cần dùng ngay, forwarding không kịp, buộc phải chèn 1 chu kỳ chờ.'
+                    )
+                  "
+                >
+                  A. Dữ liệu LW chỉ sẵn sàng ở giai đoạn MEM (chậm hơn EX đúng 1 giai đoạn) — forwarding từ EX sang EX
+                  không đủ nhanh để bắt kịp
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. LW van dung DUNG 2 thanh ghi (rd va rs1, giong het cac lenh R/I-type khac) - so luong thanh ghi khong phai ly do load-use hazard dac biet, van de la VI TRI GIAI DOAN du lieu san sang.'
+                    )
+                  "
+                >
+                  B. Vì LW cần đọc nhiều thanh ghi hơn ADD/SUB
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. detectHazards() ap dung DUNG mo hinh 5 giai doan chuan (LW san sang o MEM, khong phai EX) - day KHONG PHAI loi engine, ma la BAN CHAT vat ly cua giai doan MEM cham hon EX dung 1 buoc.'
+                    )
+                  "
+                >
+                  C. Vì hàm detectHazards() trong engine tính sai cho riêng trường hợp LW
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — thư viện kiến trúc máy tính mini dùng xuyên suốt cả 12 bài, Bài 4
+                vừa thêm <code>pipelineTime()</code>, <code>pipelineCPI()</code>, <code>detectHazards()</code> — công
+                thức thời gian/CPI có stall và bộ phát hiện hazard RAW/load-use, kèm self-test đối chiếu đúng mọi con số
+                trong bài (chạy <code>node cpu-core.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Sách giáo khoa cốt lõi:</strong>
+                  <a
+                    href="https://www.amazon.com/Computer-Organization-Design-RISC-V-Architecture/dp/0128203315"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Computer Organization and Design, RISC-V Edition (Patterson &amp; Hennessy)</a
+                  >
+                  — Chương 4 trình bày chi tiết pipeline, hazard và forwarding.
+                </li>
+                <li>
+                  <strong>Khái niệm hazard:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Hazard_(computer_architecture)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Hazard (computer architecture)</a
+                  >
+                  — tổng quan RAW/WAR/WAW và các kỹ thuật xử lý.
+                </li>
+                <li>
+                  <strong>Forwarding chi tiết:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Operand_forwarding" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Operand forwarding</a
+                  >
+                  — cơ chế "bypass" dữ liệu giữa các giai đoạn pipeline.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="cpu-riscv-datapath" class="article-related__link article-related__link--prev"
+                  >Bài 3: Hợp Ngữ RISC-V &amp; Đường Đi Của Dữ Liệu (Datapath)</a
+                >
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 5: Dự Đoán Nhánh &amp; Lỗi Bảo Mật Spectre — sắp ra mắt
+                </span>
+                <a href="cpu-programming-series" class="article-related__link">Quay lại Lộ trình Kiến Trúc Máy Tính</a>
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="cpu-pipeline-hazards.js"></script>
+  </body>
+</html>

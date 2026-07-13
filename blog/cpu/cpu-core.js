@@ -368,6 +368,66 @@ function runRV32IProgram(words) {
   return { regs, mem, trace };
 }
 
+// ---------------------------------------------------------------------------
+// Bài 4 — Pipeline CPU & Xung đột dữ liệu (Data Hazards). Datapath đơn chu kỳ
+// của Bài 3 ép MỌI lệnh chạy trong 1 chu kỳ dài bằng lệnh CHẬM NHẤT (LW) —
+// pipeline 5 giai đoạn (IF-ID-EX-MEM-WB) sửa điều này bằng cách CHỒNG LẤP
+// nhiều lệnh, đổi lại phải xử lý xung đột dữ liệu giữa các lệnh đang chồng
+// lấp (Mục 4.3). Build-out: công thức thời gian/CPI (Mục 4.2) + bộ phát hiện
+// hazard RAW/load-use TÁI DÙNG decodeRV32I() của Bài 3 (Mục 4.3-4.4).
+// ---------------------------------------------------------------------------
+
+// Thời gian chạy $N$ lệnh trên pipeline $S$ giai đoạn, có $stallCycles$ chu kỳ
+// "bong bóng" (bubble) chèn thêm do hazard (Mục 4.2):
+// $T = (N + S - 1 + \text{stallCycles}) \times t_{clk}$ — số hạng $(S-1)$ là
+// độ trễ "làm đầy" pipeline lúc khởi động (những lệnh đầu tiên chưa kịp
+// chồng lấp hết các giai đoạn).
+function pipelineTime(numInstructions, numStages, stallCycles, clockPeriodNs) {
+  return (numInstructions + numStages - 1 + stallCycles) * clockPeriodNs;
+}
+
+// CPI (Cycles Per Instruction) hiệu dụng khi có stall: pipeline lý tưởng
+// (không stall) có CPI = 1 (đúng NGHĨA của pipeline — thông lượng 1 lệnh/chu
+// kỳ ở trạng thái ổn định); mỗi stall cộng thêm ĐÚNG 1 chu kỳ "lãng phí"
+// không hoàn thành lệnh nào, nên CPI = (N + stallCycles) / N.
+function pipelineCPI(numInstructions, stallCycles) {
+  return (numInstructions + stallCycles) / numInstructions;
+}
+
+// Phát hiện xung đột dữ liệu RAW (Read-After-Write) giữa các lệnh LIỀN KỀ
+// trong 1 dãy đã decode (tái dùng decodeRV32I() của Bài 3) — đúng khoảng cách
+// mà pipeline 5 giai đoạn CHỒNG LẤP (lệnh sau bắt đầu ID ngay khi lệnh trước
+// đang ở EX). Trả về tổng số stall cần chèn + danh sách từng hazard:
+//   - RAW thường (ALU→ALU): forwarding (chuyển thẳng kết quả EX sang EX kế
+//     tiếp) giải quyết HOÀN TOÀN, 0 stall; KHÔNG forwarding cần đúng 2 stall
+//     (chờ tới khi WB xong mới đọc được thanh ghi).
+//   - Load-use (LW→dùng ngay): dữ liệu LW chỉ sẵn sàng ở giai đoạn MEM (chậm
+//     hơn ALU 1 giai đoạn) — forwarding vẫn KHÔNG kịp, luôn cần ĐÚNG 1 stall
+//     dù bật hay tắt forwarding (Mục 4.3, pitfall chính của bài).
+function detectHazards(instrs, forwardingEnabled) {
+  let totalStalls = 0;
+  const hazards = [];
+  for (let i = 1; i < instrs.length; i++) {
+    const prev = instrs[i - 1];
+    const curr = instrs[i];
+    const prevWritesReg = (prev.type === 'R' || prev.type === 'I' || prev.type === 'ILOAD') && prev.rd !== 0;
+    if (!prevWritesReg) continue;
+    const readsRs1 = curr.rs1 !== undefined && curr.rs1 === prev.rd;
+    const readsRs2 = curr.rs2 !== undefined && curr.rs2 === prev.rd;
+    if (!readsRs1 && !readsRs2) continue;
+    if (prev.type === 'ILOAD') {
+      totalStalls += 1;
+      hazards.push({ index: i, type: 'LOAD_USE', stalls: 1 });
+    } else if (!forwardingEnabled) {
+      totalStalls += 2;
+      hazards.push({ index: i, type: 'RAW', stalls: 2 });
+    } else {
+      hazards.push({ index: i, type: 'RAW', stalls: 0 });
+    }
+  }
+  return { totalStalls, hazards };
+}
+
 export {
   toBinString,
   toSigned,
@@ -385,6 +445,9 @@ export {
   decodeRV32I,
   executeRV32I,
   runRV32IProgram,
+  pipelineTime,
+  pipelineCPI,
+  detectHazards,
 };
 
 // ---------------------------------------------------------------------------
@@ -620,6 +683,66 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const programX0 = [assembleRV32I('ADDI', { rd: 0, rs1: 0, imm: 42 })];
     const { regs: regsX0 } = runRV32IProgram(programX0);
     check('RV32I x0 la hang so cung: ghi 42 vao x0 van doc ra 0', regsX0[0], 0);
+  }
+
+  // --- Bài 4: Pipeline 5 giai đoạn — thời gian/CPI + hazard RAW/load-use ---
+  {
+    // Muc 4.2: 1 trieu lenh, pipeline 5 giai doan, xung nhip 2GHz (0,5ns/chu ky)
+    check(
+      'pipelineTime: 1 trieu lenh, 5 giai doan, KHONG stall, 2GHz -> 500.002 ns',
+      pipelineTime(1_000_000, 5, 0, 0.5),
+      500002
+    );
+    check(
+      'pipelineTime: CUNG chuong trinh nhung co 200.000 stall -> 600.002 ns',
+      pipelineTime(1_000_000, 5, 200_000, 0.5),
+      600002
+    );
+    check(
+      'pipelineCPI: khong stall = 1 (dung NGHIA cua pipeline - 1 lenh/chu ky o trang thai on dinh)',
+      pipelineCPI(1_000_000, 0),
+      1
+    );
+    checkTrue(
+      'pipelineCPI: 200.000 stall tren 1 trieu lenh = 1,2 (CPI hieu dung tang dung ty le stall)',
+      Math.abs(pipelineCPI(1_000_000, 200_000) - 1.2) < 1e-9
+    );
+
+    // Muc 4.3/4.4: day lenh THAT (tai dung decodeRV32I cua Bai 3) co 2 RAW hazard lien tiep
+    // ADDI x1,x0,20 / ADD x2,x1,x1 (doc x1) / SUB x3,x2,x1 (doc x2 VA x1)
+    const seqRAW = [
+      decodeRV32I(assembleRV32I('ADDI', { rd: 1, rs1: 0, imm: 20 })),
+      decodeRV32I(assembleRV32I('ADD', { rd: 2, rs1: 1, rs2: 1 })),
+      decodeRV32I(assembleRV32I('SUB', { rd: 3, rs1: 2, rs2: 1 })),
+    ];
+    const withFwd = detectHazards(seqRAW, true);
+    const noFwd = detectHazards(seqRAW, false);
+    check(
+      'detectHazards CO forwarding: 2 hazard RAW nhung 0 stall (forwarding giai quyet HOAN TOAN)',
+      withFwd.totalStalls,
+      0
+    );
+    check(
+      'detectHazards KHONG forwarding: CUNG 2 hazard nhung ton dung 4 stall (2 stall/hazard, cho toi WB)',
+      noFwd.totalStalls,
+      4
+    );
+
+    // Load-use hazard: LW x1,0(x2) roi dung NGAY x1 - forwarding KHONG cuu duoc
+    const seqLoadUse = [
+      decodeRV32I(assembleRV32I('LW', { rd: 1, rs1: 2, imm: 0 })),
+      decodeRV32I(assembleRV32I('ADD', { rd: 3, rs1: 1, rs2: 1 })),
+    ];
+    const loadUseResult = detectHazards(seqLoadUse, true);
+    check(
+      'Pitfall load-use: LW roi dung NGAY ket qua - forwarding VAN can dung 1 stall (khong the ve 0)',
+      loadUseResult.totalStalls,
+      1
+    );
+    checkTrue(
+      'Pitfall load-use: hazard duoc gan dung nhan LOAD_USE (khac RAW thuong)',
+      loadUseResult.hazards[0].type === 'LOAD_USE'
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
