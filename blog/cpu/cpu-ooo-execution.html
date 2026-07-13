@@ -1,0 +1,952 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 6: Song Song Cấp Lệnh &amp; Thực Thi Ngoài Thứ Tự (Tomasulo) — js-tools</title>
+    <meta
+      name="description"
+      content="Song song cấp lệnh (ILP) & CPU superscalar, phụ thuộc dữ liệu giả WAR/WAW và kỹ thuật đổi tên thanh ghi (register renaming), thuật toán Tomasulo với trạm đặt chỗ (Reservation Station), bus dữ liệu chung CDB, và bộ đệm sắp xếp lại ROB cam kết đúng thứ tự (in-order commit). Verified thật bằng engine tự viết: chương trình MUL R1/ADD R2/SUB R1 (WAR trên R2, WAW trên R1) chạy đúng 9 chu kỳ, IPC=0,333, R1 cuối cùng = 18 (từ lệnh SUB, đúng thứ tự chương trình nhờ in-order commit, không phải 12 từ MUL bị ghi đè). instr2 hoàn tất tính toán (writeback chu kỳ 5) TRƯỚC instr1 (chu kỳ 6) — hoàn thành ngoài thứ tự — nhưng vẫn commit đúng thứ tự 7-8-9. Chuỗi RAW thật (phụ thuộc thật) chậm hơn hẳn: 11 chu kỳ, IPC=0,273. Demo: bảng lập lịch Tomasulo tương tác trên 3 chương trình mẫu."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/cpu/cpu-ooo-execution" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/cpu/cpu-ooo-execution" />
+    <meta property="og:title" content="Bài 6: Song Song Cấp Lệnh &amp; Thực Thi Ngoài Thứ Tự (Tomasulo) — js-tools" />
+    <meta
+      property="og:description"
+      content="ILP, superscalar, WAR/WAW & register renaming, thuật toán Tomasulo (RS + CDB + ROB). Verified: chương trình WAR/WAW chạy 9 chu kỳ, IPC=0,333, R1 cuối = 18 (in-order commit). RAW thật chậm hơn: 11 chu kỳ, IPC=0,273."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 6: Song Song Cấp Lệnh &amp; Thực Thi Ngoài Thứ Tự (Tomasulo) — js-tools" />
+    <meta
+      name="twitter:description"
+      content="ILP, superscalar, WAR/WAW & register renaming, Tomasulo (RS+CDB+ROB). Verified: WAR/WAW = 9 chu kỳ IPC 0,333, R1=18 (in-order commit). RAW thật chậm hơn: 11 chu kỳ."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .tomasulo-demo-container {
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 24px;
+        color: #242424;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .tomasulo-demo-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .tomasulo-demo-field label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #475569;
+      }
+      .tomasulo-demo-field select {
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-family: Consolas, Monaco, monospace;
+      }
+      .tomasulo-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 13px;
+        background: #fff;
+      }
+      .tomasulo-table th,
+      .tomasulo-table td {
+        border: 1px solid #e5e5e5;
+        padding: 6px 10px;
+        text-align: center;
+      }
+      .tomasulo-table th {
+        background: #f1f3f5;
+      }
+      .tomasulo-table td:first-child {
+        text-align: left;
+      }
+      .tomasulo-stat {
+        font-family: Consolas, Monaco, monospace;
+        font-size: 14px;
+        font-weight: 700;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 6: Song Song Cấp Lệnh & Thực Thi Ngoài Thứ Tự (Tomasulo)",
+        "description": "ILP, superscalar, WAR/WAW & register renaming, thuật toán Tomasulo (RS + CDB + ROB). Verified: chương trình WAR/WAW chạy 9 chu kỳ, IPC=0,333, R1 cuối = 18 (in-order commit). RAW thật chậm hơn: 11 chu kỳ, IPC=0,273.",
+        "url": "https://js-tools.org/blog/cpu/cpu-ooo-execution",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-18"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--cpu">
+        <div class="container">
+          <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--cpu">Bài 6 · Kiến Trúc Máy Tính</div>
+          <h1 class="article-hero__title">Bài 6: Song Song Cấp Lệnh &amp; Thực Thi Ngoài Thứ Tự (Tomasulo)</h1>
+          <div class="article-hero__meta">18 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: một nhân chạy nhanh hơn bằng cách phát nhiều lệnh cùng lúc</h2>
+            <p>
+              <a href="cpu-branch-prediction">Bài 5</a> giữ pipeline luôn ĐẦY lệnh bằng cách đoán trước hướng rẽ nhánh.
+              Nhưng pipeline vô hướng (scalar) của Bài 4 vẫn chỉ PHÁT đúng 1 lệnh/chu kỳ, và luôn theo ĐÚNG thứ tự
+              chương trình. CPU hiệu năng cao hiện đại đi xa hơn: phát <strong>nhiều</strong> lệnh mỗi chu kỳ
+              (superscalar), và cho phép lệnh SAU chạy xong TRƯỚC lệnh trước nếu không có phụ thuộc dữ liệu THẬT — gọi
+              là <strong>thực thi ngoài thứ tự</strong> (Out-of-Order execution, OOO). Cái giá: phải giải quyết phụ
+              thuộc dữ liệu GIẢ sinh ra do số thanh ghi kiến trúc hữu hạn, và phải đảm bảo trạng thái kiến trúc cuối
+              cùng vẫn ĐÚNG như chạy tuần tự — bài này xây thuật toán kinh điển giải quyết cả hai:
+              <strong>Tomasulo</strong>.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Bắt buộc đọc <a href="cpu-pipeline-hazards">Bài 4</a> (pipeline, hazard RAW) và
+                <a href="cpu-branch-prediction">Bài 5</a> (dự đoán nhánh). OOO xây THẲNG trên 2 bài này, KHÔNG cần kiến
+                thức về cache hay bộ nhớ ảo (sẽ học ở Bài 7-8).
+              </div>
+            </div>
+
+            <h2>1. Song song cấp lệnh (ILP) &amp; CPU Superscalar</h2>
+            <p>
+              <strong>ILP</strong> (Instruction-Level Parallelism) đo mức độ các lệnh LIỀN KỀ trong chương trình có thể
+              chạy song song mà không đổi kết quả. CPU <strong>vô hướng</strong> (scalar) phát 1 lệnh/chu kỳ; CPU
+              <strong>siêu vô hướng</strong> (superscalar) có nhiều đơn vị chức năng (ALU, bộ nhân, bộ tải/lưu) và có
+              thể phát/thực thi NHIỀU lệnh đồng thời — nhưng tận dụng được bao nhiêu phụ thuộc HOÀN TOÀN vào việc chương
+              trình có đủ lệnh ĐỘC LẬP hay không.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: superscalar không tự động tăng tốc mọi chương trình</div>
+              <div class="callout__content">
+                Hiệu năng thực tế của một CPU superscalar bị NGHẼN bởi các phụ thuộc dữ liệu THẬT (RAW — lệnh sau cần
+                kết quả của lệnh trước) — dù có 8 đơn vị chức năng, một chuỗi lệnh phụ thuộc dây chuyền (mỗi lệnh cần
+                kết quả lệnh ngay trước) vẫn phải chạy gần như TUẦN TỰ, không thể song song hoá dù phần cứng cho phép.
+                Verified ở Mục 4: cùng 3 lệnh, chuỗi RAW thật (mỗi lệnh phụ thuộc lệnh trước) mất 11 chu kỳ, trong khi
+                phiên bản có phụ thuộc GIẢ (WAR/WAW, loại bỏ được) chỉ mất 9 chu kỳ.
+              </div>
+            </div>
+
+            <h2>2. Phụ thuộc dữ liệu giả &amp; Đổi tên thanh ghi (Register Renaming)</h2>
+            <p>
+              Ngoài RAW (hazard THẬT, đã học ở Bài 4), tồn tại 2 loại phụ thuộc chỉ xuất hiện vì CHƯƠNG TRÌNH tái sử
+              dụng cùng MỘT tên thanh ghi kiến trúc cho 2 giá trị KHÔNG liên quan nhau về mặt logic:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Kiểu</th>
+                  <th>Ý nghĩa</th>
+                  <th>Có phải phụ thuộc THẬT?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>RAW (Read-After-Write)</td>
+                  <td>Lệnh sau ĐỌC giá trị lệnh trước GHI ra</td>
+                  <td>Có — phụ thuộc dữ liệu thật, KHÔNG thể loại bỏ</td>
+                </tr>
+                <tr>
+                  <td>WAR (Write-After-Read)</td>
+                  <td>Lệnh sau GHI đè thanh ghi mà lệnh TRƯỚC đang đọc giá trị CŨ</td>
+                  <td>Không — phụ thuộc GIẢ, chỉ vì trùng TÊN thanh ghi</td>
+                </tr>
+                <tr>
+                  <td>WAW (Write-After-Write)</td>
+                  <td>2 lệnh cùng GHI một thanh ghi, phải giữ đúng thứ tự "ai ghi sau thắng"</td>
+                  <td>Không — phụ thuộc GIẢ, chỉ vì trùng TÊN thanh ghi</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              <strong>Đổi tên thanh ghi</strong> (register renaming) loại bỏ hoàn toàn WAR/WAW: mỗi lần một lệnh GHI vào
+              thanh ghi kiến trúc, nó được gán một "phiên bản" MỚI (trong Tomasulo là chỉ số ROB — Reorder Buffer), và
+              Register Alias Table (RAT) ghi nhớ "thanh ghi X hiện đang trỏ tới phiên bản nào". Lệnh sau đọc/ghi thanh
+              ghi đó sẽ tự động dùng ĐÚNG phiên bản tương ứng — không còn tranh chấp vật lý nào giữa các "phiên bản"
+              khác nhau của cùng một tên thanh ghi.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">register_renaming_concept.txt (RAT — Register Alias Table)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">// RAT[r] = null          -> gia tri DUNG cua thanh ghi r nam trong regFile
+// RAT[r] = robIndex       -> gia tri MOI nhat cua r con dang "bay" trong ROB
+//                            tai vi tri robIndex, CHUA duoc commit
+
+// Khi ISSUE mot lenh ghi vao thanh ghi dest:
+//   RAT[dest] = robIndexMoiVuaCapPhat   // "DOI TEN" - tao PHIEN BAN MOI
+// -> lenh SAU do doc "dest" se lay dung PHIEN BAN MOI nay qua RAT,
+//    con lenh TRUOC do (da doc "dest" luc issue, truoc khi bi doi ten)
+//    van giu nguyen gia tri CU cua no - khong bi anh huong boi lenh ghi de.</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: nhầm RAW (không loại bỏ được) với WAR/WAW (loại bỏ được)</div>
+              <div class="callout__content">
+                RAW là ràng buộc DỮ LIỆU thật — nếu lệnh B cần kết quả TÍNH TOÁN của lệnh A, không có mẹo đổi tên nào
+                giúp B chạy được TRƯỚC KHI A tính xong (đó là vi phạm luận lý chương trình, không phải giới hạn phần
+                cứng). Ngược lại, WAR/WAW chỉ là ràng buộc về TÊN — đổi tên thanh ghi giải quyết HOÀN TOÀN, không đổi
+                thứ tự tính toán chút nào. Verified: instr2 (WAR trên R2 với instr1 MUL) bắt đầu thực thi ở chu kỳ 3,
+                RẤT LÂU trước khi instr1 hoàn tất ở chu kỳ 6 — chứng minh renaming loại bỏ stall hoàn toàn.
+              </div>
+            </div>
+
+            <h2>3. Thuật toán Tomasulo: Reservation Station + CDB + ROB</h2>
+            <p>
+              Tomasulo (IBM 360/91, 1967) là thuật toán OOO đầu tiên và vẫn là nền tảng của CPU OOO hiện đại (x86, ARM).
+              3 thành phần chính:
+            </p>
+            <ul>
+              <li>
+                <strong>Reservation Station (RS)</strong> — mỗi đơn vị chức năng có vài "trạm đặt chỗ" giữ lệnh đang chờ
+                toán hạng; khi CẢ 2 toán hạng sẵn sàng, RS tự động bắt đầu thực thi (không cần đợi lệnh trước xong nếu
+                không phụ thuộc).
+              </li>
+              <li>
+                <strong>CDB (Common Data Bus)</strong> — bus dữ liệu DÙNG CHUNG để broadcast kết quả: mọi RS đang chờ
+                giá trị đó "nghe lỏm" (snoop) CDB và tự cập nhật toán hạng ngay khi giá trị xuất hiện. Vì là tài nguyên
+                DÙNG CHUNG, CHỈ 1 lệnh được ghi kết quả (write-result) mỗi chu kỳ — lệnh THUA phải đợi thêm.
+              </li>
+              <li>
+                <strong>ROB (Reorder Buffer)</strong> — bộ đệm giữ MỌI lệnh đang "bay" theo ĐÚNG thứ tự chương trình; dù
+                các lệnh hoàn tất TÍNH TOÁN ngoài thứ tự, <strong>commit</strong> (ghi chính thức vào thanh ghi kiến
+                trúc) luôn lấy từ ĐẦU ROB — đảm bảo trạng thái kiến trúc cuối cùng giống hệt chạy tuần tự.
+              </li>
+            </ul>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tomasulo_cycle.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Moi chu ky, DUNG THU TU: Commit -> Write-result (1 broadcast/chu ky)
+// -> giam remaining cac RS dang thuc thi -> WAITING->EXECUTING khi du toan
+// hang -> Issue 1 lenh moi (doi ten dest qua RAT).
+function runTomasulo(instructions, opts) {
+  // ... xem cpu-core.js day du - day la vong lap chinh moi chu ky ...
+  // 1. COMMIT dau ROB neu ready
+  // 2. WRITE-RESULT: chi 1 broadcast/chu ky, uu tien robIndex NHO HON (lenh cu hon)
+  // 3. Giam remaining RS dang EXECUTING
+  // 4. WAITING -> EXECUTING khi Qj/Qk deu null (da nhan du toan hang qua CDB)
+  // 5. ISSUE 1 lenh: RAT[dest] = robIndex moi (DOI TEN)
+}
+// Verified: chuong trinh MUL R1/ADD R2/SUB R1 (WAR tren R2, WAW tren R1)
+// -> totalCycles=9, ipc=3/9=0.333, R1 cuoi=18 (tu SUB, dung in-order commit)</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: ROB đầy gây "ROB Stall"</div>
+              <div class="callout__content">
+                ROB có DUNG LƯỢNG HỮU HẠN — nếu một lệnh bị kẹt lâu (vd chờ dữ liệu từ bộ nhớ chậm — sẽ học ở Bài 7), nó
+                chiếm giữ đúng vị trí ĐẦU ROB (vì commit phải đúng thứ tự) khiến MỌI lệnh SAU nó, dù đã tính toán xong
+                từ lâu, cũng không thể commit và phải "xếp hàng" trong ROB. Khi ROB đầy, CPU buộc phải NGỪNG phát lệnh
+                mới hoàn toàn (ROB stall) — dù có hàng chục đơn vị chức năng đang rảnh rỗi. Đây là lý do CPU hiện đại
+                đầu tư ROB rất lớn (hàng trăm entry) nhưng vẫn không tránh khỏi stall khi gặp lệnh trễ cực lâu (vd cache
+                miss xuống tận DRAM).
+              </div>
+            </div>
+
+            <h2>4. Tính toán IPC thực tế &amp; hiệu quả thuật toán</h2>
+            <p>
+              Verified thật bằng engine: chương trình 3 lệnh <code>MUL R1,R2,R3</code> / <code>ADD R2,R4,R5</code> (WAR
+              trên R2) / <code>SUB R1,R6,R7</code> (WAW trên R1) — đổi tên giải quyết cả 2 phụ thuộc giả, chạy đúng
+              <strong>9 chu kỳ</strong>, IPC = $3/9 = \mathbf{0,333}$. R1 cuối cùng = <strong>18</strong> (từ
+              <code>SUB</code>, đúng thứ tự chương trình nhờ in-order commit — KHÔNG phải 12 từ <code>MUL</code> bị ghi
+              đè, đúng ngữ nghĩa WAW "ai ghi sau thắng"). Đáng chú ý: <code>ADD</code> (instr2) hoàn tất TÍNH TOÁN
+              (writeback chu kỳ 5) TRƯỚC <code>MUL</code> (instr1, writeback chu kỳ 6) — hoàn thành NGOÀI thứ tự — nhưng
+              vẫn commit ĐÚNG thứ tự chương trình (chu kỳ 7, 8, 9 cho instr1, instr2, instr3).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >tomasulo_schedule_table.txt (bảng lập lịch THẬT, verified bằng engine)</span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">Lenh                Issue  ExecStart  Writeback  Commit
+MUL R1, R2, R3        1        2          6          7
+ADD R2, R4, R5        2        3          5          8
+SUB R1, R6, R7        3        4          7          9
+
+# ADD (writeback=5) xong TRUOC MUL (writeback=6) - hoan thanh NGOAI thu tu.
+# Nhung commit van DUNG thu tu chuong trinh: 7, 8, 9 (MUL, ADD, SUB).
+# Tong 9 chu ky, IPC = 3/9 = 0.333.</code></pre>
+            </div>
+            <p>
+              Đối chứng: CÙNG 3 phép tính đó nhưng viết thành chuỗi RAW THẬT (mỗi lệnh dùng kết quả lệnh ngay trước) —
+              mất tới <strong>11 chu kỳ</strong>, IPC chỉ $3/11 = \mathbf{0,273}$ — chậm hơn hẳn vì phụ thuộc thật KHÔNG
+              có cách nào loại bỏ, đúng pitfall Mục 1.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ipc_comparison.js (đối chứng WAR/WAW vs RAW thật, dùng đúng engine)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Chuong trinh A: MUL R1 / ADD R2 (WAR) / SUB R1 (WAW) -> 9 chu ky, IPC=0.333
+// Chuong trinh B: MUL R1 / ADD R2,R1 (RAW that) / SUB R3,R2 (RAW that)
+//                 -> 11 chu ky, IPC=0.273 (cham hon vi PHU THUOC THAT)
+// Chuong trinh C: MUL R1 / ADD R4 / SUB R5 (khong xung dot gi ca)
+//                 -> CUNG 9 chu ky nhu chuong trinh A - chung minh renaming
+//                    da lam A nhanh NGANG BANG truong hop khong co xung dot!</code></pre>
+            </div>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Cái giá của OOO: diện tích silicon &amp; năng lượng</div>
+              <div class="callout__content">
+                Logic điều khiển OOO (bảng RAT, nhiều Reservation Station, ROB, mạng CDB broadcast tới MỌI RS mỗi chu
+                kỳ) cực kỳ phức tạp so với pipeline vô hướng đơn giản — chiếm diện tích silicon và tiêu thụ năng lượng
+                đáng kể, không tỷ lệ thuận với mức tăng IPC thu được (lợi ích giảm dần khi ILP sẵn có trong chương trình
+                đã cạn — xem lại pitfall Mục 1). Đây chính là lý do các lõi tiết kiệm điện (vd nhân "LITTLE" — sẽ gặp
+                lại ở Bài 9) thường dùng pipeline vô hướng đơn giản hơn thay vì OOO đầy đủ.
+              </div>
+            </div>
+
+            <h2>5. Thực hành: Bộ giả lập Tomasulo thu nhỏ tương tác</h2>
+            <p>
+              Chọn một chương trình mẫu bên dưới để xem bảng lập lịch Tomasulo THẬT (Issue/Exec Start/Writeback/Commit
+              từng lệnh) — so sánh trực tiếp chương trình có WAR/WAW (renaming giải quyết) với chuỗi RAW thật (không
+              giải quyết được) và chương trình không xung đột gì:
+            </p>
+
+            <div class="code-tabs" id="ooo-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🗂️ Bộ giả lập Tomasulo (RS + CDB + ROB)</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="tomasulo-demo-container">
+                  <div class="tomasulo-demo-field">
+                    <label for="ooo-program-select">Chương trình mẫu</label>
+                    <select id="ooo-program-select">
+                      <option value="warWaw">WAR/WAW: MUL R1 / ADD R2 / SUB R1 (đổi tên loại bỏ phụ thuộc giả)</option>
+                      <option value="rawChain">RAW thật: MUL R1 / ADD R2,R1 / SUB R3,R2 (phụ thuộc dây chuyền)</option>
+                      <option value="noConflict">Không xung đột: MUL R1 / ADD R4 / SUB R5 (độc lập hoàn toàn)</option>
+                    </select>
+                  </div>
+                  <div id="ooo-schedule-output"></div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ CPU superscalar phát nhiều lệnh/chu kỳ, nhưng bị nghẽn bởi phụ thuộc dữ liệu THẬT (RAW) — verified:
+                chuỗi RAW thật mất 11 chu kỳ so với 9 chu kỳ của phiên bản có WAR/WAW.
+              </li>
+              <li>
+                ✅ WAR/WAW là phụ thuộc GIẢ (chỉ vì trùng tên thanh ghi) — đổi tên thanh ghi (RAT) loại bỏ HOÀN TOÀN,
+                khác hẳn RAW không thể loại bỏ.
+              </li>
+              <li>
+                ✅ Tomasulo = Reservation Station (chờ toán hạng) + CDB (broadcast, 1 lệnh/chu kỳ) + ROB (commit đúng
+                thứ tự chương trình dù hoàn thành ngoài thứ tự).
+              </li>
+              <li>
+                ✅ Verified: R1 cuối cùng = 18 (từ SUB, lệnh ghi SAU trong chương trình) — in-order commit đảm bảo đúng
+                ngữ nghĩa WAW dù ADD hoàn tất tính toán trước MUL.
+              </li>
+              <li>
+                ✅ Pitfall: ROB đầy (thường do một lệnh kẹt lâu ở đầu ROB) gây ROB stall, ngừng phát lệnh mới hoàn toàn.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Vì sao CPU superscalar không tự động tăng tốc MỌI chương trình lên gấp nhiều lần?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Phụ thuộc dữ liệu THẬT (RAW) không thể loại bỏ bằng bất kỳ kỹ thuật phần cứng nào — nếu lệnh sau CẦN kết quả lệnh trước, nó buộc phải đợi, dù CPU có bao nhiêu đơn vị chức năng song song. Verified: chuỗi RAW thật mất 11 chu kỳ, chậm hơn hẳn phiên bản có phụ thuộc giả (9 chu kỳ).'
+                    )
+                  "
+                >
+                  A. Vì phụ thuộc dữ liệu THẬT (RAW) giữa các lệnh không thể loại bỏ bằng phần cứng, buộc phải chạy tuần
+                  tự
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. So luong thanh ghi kien truc anh huong den WAR/WAW (phu thuoc GIA, giai quyet duoc bang renaming) - khong phai nguyen nhan chinh khien superscalar khong tang toc duoc MOI chuong trinh, do la vi RAW that.'
+                    )
+                  "
+                >
+                  B. Vì số lượng thanh ghi kiến trúc luôn không đủ cho mọi chương trình
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Bo du doan nhanh (Bai 5) giai quyet control hazard, hoan toan khong lien quan den viec superscalar co tan dung duoc ILP hay khong - do la cau chuyen cua RAW/WAR/WAW.'
+                    )
+                  "
+                >
+                  C. Vì bộ dự đoán nhánh luôn đoán sai với CPU superscalar
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Đổi tên thanh ghi (register renaming) giải quyết được loại phụ thuộc nào, và KHÔNG giải quyết được loại
+                nào?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! WAR/WAW chỉ là ràng buộc về TÊN thanh ghi (2 giá trị không liên quan bị buộc dùng chung 1 tên) — đổi tên (gán phiên bản mới qua RAT) loại bỏ hoàn toàn. RAW là ràng buộc DỮ LIỆU thật (lệnh sau cần giá trị TÍNH TOÁN của lệnh trước) — không có cách đổi tên nào giúp bỏ qua được, vì đó là vi phạm logic chương trình.'
+                    )
+                  "
+                >
+                  A. Giải quyết được WAR/WAW (phụ thuộc giả do trùng tên) — KHÔNG giải quyết được RAW (phụ thuộc dữ liệu
+                  thật)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Renaming chinh la co che GIAI QUYET WAR/WAW, khong phai RAW - dieu nguoc lai voi dap an nay.'
+                    )
+                  "
+                >
+                  B. Giải quyết được RAW — KHÔNG giải quyết được WAR/WAW
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. RAW la phu thuoc du lieu THAT - khong co ky thuat phan cung nao (ke ca renaming) loai bo duoc no, vi lenh sau THAT SU can gia tri tinh toan cua lenh truoc.'
+                    )
+                  "
+                >
+                  C. Giải quyết được cả RAW lẫn WAR/WAW
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Verified: trong chương trình WAR/WAW, ADD (instr2) writeback ở chu kỳ 5, TRƯỚC MUL (instr1, chu kỳ 6) —
+                nhưng ADD lại commit ở chu kỳ 8, SAU MUL (chu kỳ 7). Vì sao?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! ROB cho phép các lệnh HOÀN TẤT TÍNH TOÁN (writeback) ngoài thứ tự — nhanh lệnh nào xong trước cứ ghi kết quả trước. Nhưng COMMIT (ghi chính thức vào thanh ghi kiến trúc) luôn lấy từ ĐẦU ROB theo đúng thứ tự chương trình — instr1 (MUL) phải commit trước instr2 (ADD) dù ADD tính xong trước, vì instr1 đứng đầu ROB.'
+                    )
+                  "
+                >
+                  A. ROB cho phép hoàn thành tính toán (writeback) ngoài thứ tự, nhưng commit luôn đúng thứ tự chương
+                  trình — instr1 đứng đầu ROB nên phải commit trước dù tính xong sau
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. CDB chi gioi han SO LUONG broadcast moi chu ky (1 lenh/chu ky) - no khong quy dinh THU TU commit, do la viec cua ROB (in-order commit tu DAU ROB).'
+                    )
+                  "
+                >
+                  B. Vì CDB chỉ cho phép 1 lệnh ghi kết quả mỗi chu kỳ theo thứ tự cố định
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Day KHONG PHAI loi engine - day CHINH LA hanh vi DUNG va CO CHU DICH cua Tomasulo: hoan thanh tinh toan ngoai thu tu (OOO) NHUNG commit dung thu tu (in-order commit) de dam bao trang thai kien truc chinh xac.'
+                    )
+                  "
+                >
+                  C. Đây là lỗi trong bộ mô phỏng — về lý thuyết cả hai phải commit cùng lúc
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                "ROB Stall" xảy ra khi nào, và vì sao nó dừng CPU dù nhiều đơn vị chức năng vẫn rảnh?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Vì commit BẮT BUỘC đúng thứ tự chương trình (lấy từ đầu ROB), một lệnh bị kẹt lâu (vd chờ bộ nhớ chậm) sẽ chiếm giữ đúng vị trí ĐẦU ROB — mọi lệnh SAU nó, dù đã tính toán xong từ lâu, vẫn phải xếp hàng chờ, không thể commit. Khi ROB đầy hoàn toàn, CPU buộc phải ngừng phát lệnh mới, dù các đơn vị chức năng (ALU, bộ nhân...) đang hoàn toàn rảnh rỗi.'
+                    )
+                  "
+                >
+                  A. Khi một lệnh bị kẹt lâu ở ĐẦU ROB (vd chờ dữ liệu chậm) khiến mọi lệnh sau — dù đã tính xong —
+                  không thể commit và ROB đầy dần, buộc CPU ngừng phát lệnh mới
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. So luong Reservation Station khong lien quan truc tiep den ROB Stall - het RS chi lam ngung ISSUE lenh CO CUNG LOAI (vd het RS cho MUL), khac han voi ROB Stall (ngung PHAT lenh MOI hoan toan vi ROB day).'
+                    )
+                  "
+                >
+                  B. Khi số lượng Reservation Station của MỌI loại đơn vị chức năng đều bằng 0
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Bo du doan nhanh doan sai gay flush pipeline (Bai 5) - hoan toan khac co che voi ROB Stall, von la vi ROB day do mot lenh bi ket lau o DAU ROB.'
+                    )
+                  "
+                >
+                  C. Khi bộ dự đoán nhánh đoán sai liên tục
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — thư viện kiến trúc máy tính mini dùng xuyên suốt cả 12 bài, Bài 6
+                vừa thêm <code>runTomasulo()</code> — mô phỏng chu kỳ-chính-xác thuật toán Tomasulo (Reservation
+                Station, CDB, ROB, đổi tên thanh ghi), kèm self-test đối chiếu đúng mọi con số trong bài (chạy
+                <code>node cpu-core.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Sách giáo khoa cốt lõi:</strong>
+                  <a
+                    href="https://www.amazon.com/Computer-Organization-Design-RISC-V-Architecture/dp/0128203315"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Computer Organization and Design, RISC-V Edition (Patterson &amp; Hennessy)</a
+                  >
+                  — Chương 4 (phần nâng cao) trình bày ILP, superscalar và các kỹ thuật OOO.
+                </li>
+                <li>
+                  <strong>Bài báo gốc thuật toán Tomasulo:</strong>
+                  <a href="https://ieeexplore.ieee.org/document/5391329" target="_blank" rel="noopener noreferrer"
+                    >Tomasulo, R. M. (1967) — An Efficient Algorithm for Exploiting Multiple Arithmetic Units</a
+                  >
+                  — công bố gốc trên IBM Journal of Research and Development, thiết kế cho IBM System/360 Model 91.
+                </li>
+                <li>
+                  <strong>Tổng quan register renaming:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Register_renaming" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Register renaming</a
+                  >
+                  — cơ chế loại bỏ WAR/WAW trong các vi kiến trúc OOO hiện đại.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="cpu-branch-prediction" class="article-related__link article-related__link--prev"
+                  >Bài 5: Dự Đoán Nhánh &amp; Lỗ Hổng Bảo Mật Spectre</a
+                >
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 7: Phân Cấp Bộ Nhớ &amp; Kiến Trúc Cache — sắp ra mắt
+                </span>
+                <a href="cpu-programming-series" class="article-related__link">Quay lại Lộ trình Kiến Trúc Máy Tính</a>
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="cpu-ooo-execution.js"></script>
+  </body>
+</html>

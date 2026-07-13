@@ -530,6 +530,192 @@ function effectiveCPI(cpiIdeal, branchFrequency, mispredictionRate, penaltyCycle
   return cpiIdeal + branchFrequency * mispredictionRate * penaltyCycles;
 }
 
+// ---------------------------------------------------------------------------
+// Bài 6 — Song song cấp lệnh (ILP) & Thực thi ngoài thứ tự (Out-of-Order,
+// Tomasulo). Pipeline vô hướng (Bài 4-5) phát đúng 1 lệnh/chu kỳ theo ĐÚNG
+// thứ tự chương trình — CPU superscalar hiện đại phát NHIỀU lệnh, và cho
+// phép lệnh SAU chạy xong TRƯỚC lệnh trước nếu không phụ thuộc dữ liệu THẬT
+// (Mục 6.1). Cái giá: xuất hiện phụ thuộc dữ liệu GIẢ (WAR/WAW) do số thanh
+// ghi kiến trúc hữu hạn bị tái sử dụng — giải quyết bằng ĐỔI TÊN THANH GHI
+// (register renaming, Mục 6.2) trong thuật toán Tomasulo (Mục 6.3): trạm đặt
+// chỗ (Reservation Station) + bus dữ liệu chung (CDB) + bộ đệm sắp xếp lại
+// (ROB) cam kết kết quả ĐÚNG thứ tự chương trình dù thực thi ngoài thứ tự.
+// ---------------------------------------------------------------------------
+
+// Mô phỏng CHU KỲ-CHÍNH-XÁC thuật toán Tomasulo trên một đoạn chương trình
+// ngắn (mảng {op:'ADD'|'SUB'|'MUL', dest, src1, src2} — chỉ số thanh ghi).
+// Mỗi chu kỳ thực hiện đúng thứ tự sau (mô phỏng đúng ràng buộc phần cứng):
+//   1. COMMIT   : đầu ROB (in-order) nếu đã sẵn kết quả -> ghi vào regFile.
+//   2. WRITE-RESULT (CDB): CHỈ 1 broadcast/chu kỳ (bus dùng chung là tài
+//      nguyên hữu hạn) — nếu nhiều RS xong cùng lúc, RS có robIndex NHỎ HƠN
+//      (lệnh CŨ hơn trong chương trình) được ưu tiên; RS thua phải đợi thêm.
+//   3. Giảm `remaining` của các RS đang thực thi.
+//   4. Chuyển RS từ WAITING sang EXECUTING nếu cả 2 toán hạng đã sẵn sàng.
+//   5. ISSUE 1 lệnh mới (nếu còn RS + ROB trống): tra RAT (Register Alias
+//      Table) để lấy giá trị toán hạng NGAY (nếu đã có trong regFile) hoặc
+//      gắn thẻ ROB cần đợi — rồi ĐỔI TÊN đích (RAT[dest] = robIndex MỚI),
+//      đây chính là bước loại bỏ WAR/WAW: lệnh sau ghi vào "phiên bản mới"
+//      của thanh ghi, không đụng tới phiên bản CŨ mà lệnh trước đang dùng.
+function runTomasulo(instructions, opts = {}) {
+  const {
+    numAddRS = 3,
+    numMulRS = 2,
+    addLatency = 2,
+    mulLatency = 4,
+    numRegs = 8,
+    initialRegs = new Array(numRegs).fill(0),
+  } = opts;
+
+  const regFile = [...initialRegs];
+  const RAT = new Array(numRegs).fill(null); // null = gia tri dung trong regFile; nguoc lai = chi so ROB se san xuat gia tri
+  const n = instructions.length;
+  const ROB = new Array(n)
+    .fill(null)
+    .map(() => ({ busy: false, dest: null, value: null, ready: false, instrIdx: null }));
+  let robHead = 0;
+  let robCount = 0;
+
+  function makeRS(kind) {
+    return {
+      kind,
+      busy: false,
+      op: null,
+      Vj: null,
+      Vk: null,
+      Qj: null,
+      Qk: null,
+      robIndex: null,
+      state: null,
+      remaining: 0,
+    };
+  }
+  const addRS = new Array(numAddRS).fill(null).map(() => makeRS('ADD'));
+  const mulRS = new Array(numMulRS).fill(null).map(() => makeRS('MUL'));
+  const allRS = [...addRS, ...mulRS];
+
+  const trace = instructions.map(() => ({ issue: null, execStart: null, writeback: null, commit: null }));
+  let nextIssue = 0;
+  let cycle = 0;
+  let committed = 0;
+
+  function computeVal(op, a, b) {
+    if (op === 'ADD') return a + b;
+    if (op === 'SUB') return a - b;
+    if (op === 'MUL') return a * b;
+    throw new Error('Toan tu Tomasulo khong hop le: ' + op);
+  }
+
+  while (committed < n) {
+    cycle++;
+    if (cycle > 10000) throw new Error('Mo phong Tomasulo chay qua lau - co the bi treo');
+
+    // 1. Commit (dung thu tu chuong trinh - lay tu DAU ROB)
+    if (robCount > 0) {
+      const head = ROB[robHead];
+      if (head.busy && head.ready) {
+        regFile[head.dest] = head.value;
+        if (RAT[head.dest] === robHead) RAT[head.dest] = null;
+        trace[head.instrIdx].commit = cycle;
+        head.busy = false;
+        robHead = (robHead + 1) % n;
+        robCount--;
+        committed++;
+      }
+    }
+
+    // 2. Write-result: CHI 1 broadcast/chu ky (CDB la tai nguyen dung chung)
+    let broadcaster = null;
+    for (const rs of allRS) {
+      if (rs.busy && rs.state === 'EXECUTING' && rs.remaining === 0) {
+        if (broadcaster === null || rs.robIndex < broadcaster.robIndex) broadcaster = rs;
+      }
+    }
+    if (broadcaster) {
+      const val = computeVal(broadcaster.op, broadcaster.Vj, broadcaster.Vk);
+      ROB[broadcaster.robIndex].value = val;
+      ROB[broadcaster.robIndex].ready = true;
+      trace[ROB[broadcaster.robIndex].instrIdx].writeback = cycle;
+      for (const rs of allRS) {
+        if (rs.busy && rs.Qj === broadcaster.robIndex) {
+          rs.Vj = val;
+          rs.Qj = null;
+        }
+        if (rs.busy && rs.Qk === broadcaster.robIndex) {
+          rs.Vk = val;
+          rs.Qk = null;
+        }
+      }
+      broadcaster.busy = false;
+      broadcaster.state = null;
+    }
+
+    // 3. Giam remaining cua cac RS dang EXECUTING
+    for (const rs of allRS) {
+      if (rs.busy && rs.state === 'EXECUTING' && rs.remaining > 0) rs.remaining--;
+    }
+
+    // 4. WAITING -> EXECUTING khi ca 2 toan hang da san sang
+    for (const rs of allRS) {
+      if (rs.busy && rs.state === 'WAITING' && rs.Qj === null && rs.Qk === null) {
+        rs.state = 'EXECUTING';
+        rs.remaining = (rs.kind === 'MUL' ? mulLatency : addLatency) - 1;
+        trace[ROB[rs.robIndex].instrIdx].execStart = cycle;
+      }
+    }
+
+    // 5. Issue 1 lenh moi (dung thu tu chuong trinh) neu con RS + ROB trong
+    if (nextIssue < n && robCount < n) {
+      const instr = instructions[nextIssue];
+      const pool = instr.op === 'MUL' ? mulRS : addRS;
+      const freeRS = pool.find((rs) => !rs.busy);
+      if (freeRS) {
+        const robIndex = (robHead + robCount) % n;
+        const rob = ROB[robIndex];
+        rob.busy = true;
+        rob.dest = instr.dest;
+        rob.value = null;
+        rob.ready = false;
+        rob.instrIdx = nextIssue;
+        robCount++;
+
+        freeRS.busy = true;
+        freeRS.op = instr.op;
+        freeRS.robIndex = robIndex;
+        if (RAT[instr.src1] === null) {
+          freeRS.Vj = regFile[instr.src1];
+          freeRS.Qj = null;
+        } else {
+          const srcRob = ROB[RAT[instr.src1]];
+          if (srcRob.ready) {
+            freeRS.Vj = srcRob.value;
+            freeRS.Qj = null;
+          } else {
+            freeRS.Qj = RAT[instr.src1];
+          }
+        }
+        if (RAT[instr.src2] === null) {
+          freeRS.Vk = regFile[instr.src2];
+          freeRS.Qk = null;
+        } else {
+          const srcRob = ROB[RAT[instr.src2]];
+          if (srcRob.ready) {
+            freeRS.Vk = srcRob.value;
+            freeRS.Qk = null;
+          } else {
+            freeRS.Qk = RAT[instr.src2];
+          }
+        }
+        freeRS.state = 'WAITING';
+        RAT[instr.dest] = robIndex; // DOI TEN - day chinh la buoc loai bo WAR/WAW
+        trace[nextIssue].issue = cycle;
+        nextIssue++;
+      }
+    }
+  }
+
+  return { regFile, trace, totalCycles: cycle, ipc: n / cycle };
+}
+
 export {
   toBinString,
   toSigned,
@@ -555,6 +741,7 @@ export {
   makeBranchHistoryTable,
   runPredictor,
   effectiveCPI,
+  runTomasulo,
 };
 
 // ---------------------------------------------------------------------------
@@ -913,6 +1100,63 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       Math.abs(effectiveCPI(1, 0.2, 0.1, 3) - 1.06) < 1e-9
     );
     checkTrue('effectiveCPI khong co nhanh nao (branchFreq=0) = dung CPI ly tuong', effectiveCPI(1, 0, 0.1, 3) === 1);
+  }
+
+  // --- Bài 6: Tomasulo OOO — dang RS/CDB/ROB, doi ten thanh ghi loai bo WAR/WAW ---
+  {
+    // Vi du kinh dien: instr1 MUL ghi R1 (do lau), instr2 ADD ghi R2 (WAR -
+    // doc R2 ma instr1 KHONG doc, chi la trung dich voi mot lenh SAU doc R2...
+    // that ra day la WAR that: instr1 la nguoi tieu thu R2 CU truoc khi bi
+    // ghi de) - RAT phai doi ten de instr2 khong can doi instr1; instr3 SUB
+    // ghi LAI R1 (WAW voi instr1) - RAT doi ten de instr3 khong can doi
+    // instr1 hoan tat, va COMMIT dung thu tu chuong trinh dam bao R1 cuoi
+    // cung la gia tri CUA INSTR3 (ghi sau trong chuong trinh) chu khong phai
+    // instr1 (WAW dung nghia: "nguoi ghi sau thang").
+    const initialRegs = [0, 10, 3, 4, 5, 6, 20, 2];
+    const program = [
+      { op: 'MUL', dest: 1, src1: 2, src2: 3 }, // R1 = R2*R3 = 3*4 = 12 (do lau, mulLatency)
+      { op: 'ADD', dest: 2, src1: 4, src2: 5 }, // R2 = R4+R5 = 5+6 = 11 (WAR tren R2 voi instr1)
+      { op: 'SUB', dest: 1, src1: 6, src2: 7 }, // R1 = R6-R7 = 20-2 = 18 (WAW tren R1 voi instr1)
+    ];
+    const result = runTomasulo(program, { initialRegs });
+
+    check(
+      'Tomasulo: R1 cuoi cung = 18 (tu instr3 SUB, DUNG thu tu chuong trinh nho in-order commit)',
+      result.regFile[1],
+      18
+    );
+    check('Tomasulo: R2 cuoi cung = 11 (tu instr2 ADD)', result.regFile[2], 11);
+    check('Tomasulo: tong so chu ky (verified thuc te, khong bia)', result.totalCycles, 9);
+    checkTrue('Tomasulo: IPC = 3/9 = 0,333...', Math.abs(result.ipc - 3 / 9) < 1e-9);
+
+    checkTrue(
+      'Pitfall WAR: instr2 (ghi R2) bat dau THUC THI (cycle 3) truoc ca khi instr1 (MUL doc R2) hoan tat writeback (cycle 6) - doi ten loai bo hoan toan WAR stall',
+      result.trace[1].execStart < result.trace[0].writeback
+    );
+    checkTrue(
+      'Out-of-order completion: instr2 writeback (cycle 5) XONG TRUOC instr1 (cycle 6) - hoan thanh tinh toan KHONG theo thu tu chuong trinh',
+      result.trace[1].writeback < result.trace[0].writeback
+    );
+    checkTrue(
+      'Nhung in-order commit: instr1 cam ket TRUOC instr2, instr2 TRUOC instr3 - dung thu tu chuong trinh du hoan thanh ngoai thu tu',
+      result.trace[0].commit < result.trace[1].commit && result.trace[1].commit < result.trace[2].commit
+    );
+
+    // Doi chung: cung chuong trinh nhung KHONG co WAR/WAW (dest khac nhau
+    // hoan toan) - tong chu ky phai <= truong hop co WAW/WAR o tren (khong
+    // te hon), chung minh renaming khong lam cham di so voi truong hop
+    // khong co xung dot gia
+    const programNoConflict = [
+      { op: 'MUL', dest: 1, src1: 2, src2: 3 },
+      { op: 'ADD', dest: 4, src1: 4, src2: 5 }, // dest khac (R4 thay vi R2)
+      { op: 'SUB', dest: 5, src1: 6, src2: 7 }, // dest khac (R5 thay vi R1)
+    ];
+    const resultNoConflict = runTomasulo(programNoConflict, { initialRegs });
+    check(
+      'Tomasulo doi chung (khong WAR/WAW): tong chu ky bang HET truong hop co WAR/WAW (renaming da lam cho ca 2 truong hop giong nhau ve toc do)',
+      resultNoConflict.totalCycles,
+      result.totalCycles
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
