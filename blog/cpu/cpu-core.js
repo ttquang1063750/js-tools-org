@@ -819,6 +819,99 @@ function amatTwoLevel(hitTimeL1, missRateL1, hitTimeL2, missRateL2Local, missPen
   return hitTimeL1 + missRateL1 * (hitTimeL2 + missRateL2Local * missPenaltyMem);
 }
 
+// ---------------------------------------------------------------------------
+// Bài 8 — Bộ nhớ ảo (Virtual Memory) & Khối TLB. Cache (Bài 7) tăng tốc truy
+// cập bộ nhớ VẬT LÝ — bài này thêm một tầng gián tiếp NGAY TRƯỚC đó: mỗi
+// tiến trình thấy một không gian địa chỉ ẢO riêng, được dịch sang địa chỉ
+// VẬT LÝ qua Page Table (Mục 8.1). Vì Page Table cũng nằm trong RAM (tra
+// cứu nó cũng tốn 1 lần truy cập bộ nhớ!), TLB (Translation Lookaside
+// Buffer, Mục 8.3) đóng vai trò CACHE cho chính Page Table.
+// ---------------------------------------------------------------------------
+
+// Tách địa chỉ ẢO thành VPN (Virtual Page Number) + offset trong trang
+// (Mục 8.1) — cấu trúc y hệt splitAddress() của Bài 7 nhưng không có "index"
+// riêng vì Page Table tra cứu bằng TOÀN BỘ VPN (không chia set như cache).
+function splitVirtualAddress(virtualAddress, pageOffsetBits) {
+  const offset = virtualAddress & ((1 << pageOffsetBits) - 1);
+  const vpn = virtualAddress >>> pageOffsetBits;
+  return { vpn, offset };
+}
+
+// TLB (Translation Lookaside Buffer, Mục 8.3): bảng nhỏ, đầy đủ liên kết
+// (fully-associative) + LRU, lưu các cặp (VPN -> PFN) đã dịch GẦN ĐÂY nhất —
+// đúng vai trò MỘT CACHE cho Page Table, giúp tránh phải truy cập RAM lần
+// thứ 2 (đọc Page Table) chỉ để biết địa chỉ vật lý của lần truy cập THỨ NHẤT.
+function makeTLB(capacity) {
+  const entries = []; // {vpn, pfn, lastUsed}
+  let clock = 0;
+  return {
+    lookup(vpn) {
+      const e = entries.find((x) => x.vpn === vpn);
+      clock++;
+      if (e) {
+        e.lastUsed = clock;
+        return e.pfn;
+      }
+      return null;
+    },
+    insert(vpn, pfn) {
+      clock++;
+      if (entries.length < capacity) {
+        entries.push({ vpn, pfn, lastUsed: clock });
+        return;
+      }
+      let lruIdx = 0;
+      for (let i = 1; i < entries.length; i++) if (entries[i].lastUsed < entries[lruIdx].lastUsed) lruIdx = i;
+      entries[lruIdx] = { vpn, pfn, lastUsed: clock };
+    },
+    size() {
+      return entries.length;
+    },
+  };
+}
+
+// Dịch một địa chỉ ảo sang địa chỉ vật lý (Mục 8.1 + 8.3): thử TLB TRƯỚC
+// (nhanh); nếu TLB miss thì tra Page Table (chậm hơn — mô phỏng 1 lần truy
+// cập RAM phụ); nếu VPN không có trong Page Table => Page Fault (trang chưa
+// được ánh xạ/chưa nạp — Mục 8.1).
+function translateAddress(virtualAddress, pageOffsetBits, tlb, pageTable) {
+  const { vpn, offset } = splitVirtualAddress(virtualAddress, pageOffsetBits);
+  let pfn = tlb.lookup(vpn);
+  if (pfn !== null) {
+    return { physicalAddress: (pfn << pageOffsetBits) | offset, tlbHit: true, pageFault: false };
+  }
+  if (pageTable.has(vpn)) {
+    pfn = pageTable.get(vpn);
+    tlb.insert(vpn, pfn);
+    return { physicalAddress: (pfn << pageOffsetBits) | offset, tlbHit: false, pageFault: false };
+  }
+  return { physicalAddress: null, tlbHit: false, pageFault: true };
+}
+
+// Số trang ẢO tối đa trong không gian địa chỉ `addressBits`-bit với trang
+// `pageOffsetBits`-bit (Mục 8.2): $2^{addressBits - pageOffsetBits}$.
+function pageTableEntryCount(addressBits, pageOffsetBits) {
+  return Math.pow(2, addressBits - pageOffsetBits);
+}
+
+// Dung lượng Page Table ĐƠN CẤP (Mục 8.2): một mảng PHẲNG có ĐỦ chỗ cho MỌI
+// trang ảo CÓ THỂ có, kể cả những trang KHÔNG BAO GIỜ được dùng — đây chính
+// là pitfall Mục 8.2 (lãng phí RAM khổng lồ với không gian địa chỉ 64-bit).
+function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) {
+  return pageTableEntryCount(addressBits, pageOffsetBits) * entryBytes;
+}
+
+// Dung lượng Page Table 2 CẤP (Mục 8.2, kiểu x86 32-bit 10-10-12): bảng cấp
+// 1 LUÔN được cấp phát đủ (nhỏ, cố định); bảng cấp 2 chỉ cấp phát cho những
+// VÙNG THẬT SỰ có trang đang dùng — tiết kiệm RAM cực lớn so với đơn cấp khi
+// chương trình chỉ dùng một phần nhỏ không gian địa chỉ (thực tế phổ biến).
+function twoLevelPageTableSizeBytes(numUsedPages, entriesPerTable, entryBytes) {
+  const firstLevelBytes = entriesPerTable * entryBytes;
+  const numSecondLevelTables = Math.ceil(numUsedPages / entriesPerTable);
+  const tableBytes = entriesPerTable * entryBytes;
+  return firstLevelBytes + numSecondLevelTables * tableBytes;
+}
+
 export {
   toBinString,
   toSigned,
@@ -851,6 +944,12 @@ export {
   runCacheTrace,
   amat,
   amatTwoLevel,
+  splitVirtualAddress,
+  makeTLB,
+  translateAddress,
+  pageTableEntryCount,
+  singleLevelPageTableSizeBytes,
+  twoLevelPageTableSizeBytes,
 };
 
 // ---------------------------------------------------------------------------
@@ -1340,6 +1439,73 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Pitfall Local vs Global miss rate: global L2 miss rate (tren TONG truy cap) = missRateL1*missRateL2Local = 0,02*0,25 = 0,005 - KHAC han 0,25 cuc bo',
       Math.abs(0.02 * 0.25 - 0.005) < 1e-9
+    );
+  }
+
+  // --- Bài 8: Bộ nhớ ảo - dịch dia chi qua TLB + Page Table, dung luong Page Table ---
+  {
+    const pageOffsetBits = 12; // trang 4KB
+    const pageTable = new Map([
+      [5, 100],
+      [6, 200],
+    ]); // VPN 5 -> PFN 100, VPN 6 -> PFN 200
+
+    // Khu hoi VPN/offset
+    checkTrue(
+      'splitVirtualAddress khu hoi dung dia chi goc',
+      (() => {
+        const va = (5 << pageOffsetBits) | 0x123;
+        const { vpn, offset } = splitVirtualAddress(va, pageOffsetBits);
+        return ((vpn << pageOffsetBits) | offset) === va;
+      })()
+    );
+
+    const tlb = makeTLB(4);
+    const va1 = (5 << pageOffsetBits) | 0x123;
+    const r1 = translateAddress(va1, pageOffsetBits, tlb, pageTable);
+    check(
+      'Lan dau truy cap VPN5: TLB MISS nhung Page Table HIT, dich dung PA',
+      r1.physicalAddress,
+      (100 << pageOffsetBits) | 0x123
+    );
+    checkTrue('Lan dau truy cap VPN5: tlbHit=false (chua co trong TLB)', r1.tlbHit === false);
+    checkTrue('Lan dau truy cap VPN5: khong Page Fault (VPN co trong Page Table)', r1.pageFault === false);
+
+    const r2 = translateAddress(va1, pageOffsetBits, tlb, pageTable);
+    checkTrue(
+      'Lan HAI truy cap CUNG VPN5: TLB HIT (da luu tu lan truoc) - tranh duoc 1 lan tra Page Table',
+      r2.tlbHit === true
+    );
+    check('Lan hai van dich dung PA nhu lan dau', r2.physicalAddress, r1.physicalAddress);
+
+    const va4 = (7 << pageOffsetBits) | 0; // VPN 7 khong co trong Page Table
+    const r4 = translateAddress(va4, pageOffsetBits, tlb, pageTable);
+    checkTrue('Pitfall: truy cap VPN chua duoc anh xa (VPN 7) -> Page Fault = true', r4.pageFault === true);
+    check('Page Fault: physicalAddress = null (khong dich duoc)', r4.physicalAddress, null);
+
+    // Dung luong Page Table don cap: 32-bit, trang 4KB, PTE 4-byte -> 4MB
+    check('pageTableEntryCount(32, 12) = 2^20 trang ao co the co', pageTableEntryCount(32, 12), Math.pow(2, 20));
+    check(
+      'singleLevelPageTableSizeBytes(32, 12, 4) = 4.194.304 byte (dung 4MB) - kich thuoc THAT cua Page Table 32-bit don cap',
+      singleLevelPageTableSizeBytes(32, 12, 4),
+      4 * 1024 * 1024
+    );
+    checkTrue(
+      'Pitfall Muc 8.2: khong gian dia chi 48-bit (64-bit thuc te) voi Page Table DON CAP nhu tren se can 256GB - hoan toan bat kha thi',
+      Math.abs(singleLevelPageTableSizeBytes(48, 12, 4) / (1024 * 1024 * 1024) - 256) < 1e-6
+    );
+
+    // Dung luong Page Table 2 cap (kieu x86 10-10-12): 512 trang dang dung
+    // (2MB) tren khong gian 32-bit -> chi 8KB, RE HON HANG TRAM LAN so voi
+    // don cap (4MB) vi bang cap 2 CHI cap phat cho vung THAT SU dang dung.
+    check(
+      '2 cap: 512 trang dang dung (2MB), entriesPerTable=1024, entryBytes=4 -> 8192 byte (8KB)',
+      twoLevelPageTableSizeBytes(512, 1024, 4),
+      8192
+    );
+    checkTrue(
+      'Page Table 2 cap TIET KIEM hon 2 cap don RAT NHIEU khi chi dung 1 phan nho khong gian dia chi (8KB vs 4MB = re hon 512 lan)',
+      singleLevelPageTableSizeBytes(32, 12, 4) / twoLevelPageTableSizeBytes(512, 1024, 4) === 512
     );
   }
 
