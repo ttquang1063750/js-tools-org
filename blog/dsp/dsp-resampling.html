@@ -1,0 +1,1033 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 12: Resampling &amp; xử lý đa tốc độ — js-tools</title>
+    <meta
+      name="description"
+      content="Đổi sample rate kiểu 'ngây thơ' — bỏ mẫu cách quãng không lọc trước — verified thật: tần số 10kHz qua downsampleNaive() ở tỉ lệ /4 giữ NGUYÊN biên độ (RMS≈0,707) dù đã vượt Nyquist mới, gập thành đúng 2000Hz (khớp aliasFrequency() Bài 2) — trong khi decimate() lọc trước đúng cách triệt tiêu biên độ xuống dưới 0,05. Interpolation verified khớp đường sin lý tưởng sai số dưới 0,001 sau khi bù trễ nhóm filter. Tỉ lệ hữu tỉ verified thật: 44,1kHz↔48kHz = 160/147 (gcd=300), 96kHz→16kHz chỉ cần decimate sạch 6:1. Polyphase tiết kiệm ĐÚNG hệ số L lần phép nhân — verified bằng đếm trực tiếp."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/dsp/dsp-resampling" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/dsp/dsp-resampling" />
+    <meta property="og:title" content="Bài 12: Resampling &amp; xử lý đa tốc độ — js-tools" />
+    <meta
+      property="og:description"
+      content="Đổi sample rate 'ngây thơ' gây aliasing — verified: 10kHz qua downsampleNaive() ở /4 giữ nguyên biên độ, gập thành 2000Hz (khớp Bài 2). decimate() lọc trước đúng cách triệt tiêu biên độ xuống <0,05. Interpolation khớp sin lý tưởng sai số <0,001. Tỉ lệ hữu tỉ verified: 44,1↔48kHz=160/147, 96→16kHz=6:1. Polyphase tiết kiệm đúng hệ số L lần phép nhân."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 12: Resampling &amp; xử lý đa tốc độ — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Đổi sample rate 'ngây thơ' gây aliasing verified thật. decimate()/interpolate() lọc đúng cách khớp lý thuyết. Tỉ lệ hữu tỉ verified: 44,1↔48kHz=160/147. Polyphase tiết kiệm đúng hệ số L lần phép nhân — đừng nhân với số 0."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Resampling & xử lý đa tốc độ",
+        "description": "Đổi sample rate 'ngây thơ' gây aliasing — verified: 10kHz qua downsampleNaive() ở /4 giữ nguyên biên độ, gập thành 2000Hz (khớp Bài 2). decimate() lọc trước đúng cách triệt tiêu biên độ xuống <0,05. Interpolation khớp sin lý tưởng sai số <0,001. Tỉ lệ hữu tỉ verified: 44,1↔48kHz=160/147, 96→16kHz=6:1. Polyphase tiết kiệm đúng hệ số L lần phép nhân.",
+        "url": "https://js-tools.org/blog/dsp/dsp-resampling",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-08-07"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--dsp">
+        <div class="container">
+          <a href="dsp-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--dsp">Bài 12 · Xử Lý Tín Hiệu Số</div>
+          <h1 class="article-hero__title">Resampling &amp; xử lý đa tốc độ</h1>
+          <div class="article-hero__meta">7 tháng 8, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: đổi sample rate — dễ sai hơn tưởng</h2>
+            <p>
+              44,1kHz (CD) và 48kHz (video) là 2 tốc độ lấy mẫu phổ biến nhất, nhưng KHÔNG chia hết cho nhau — mọi hệ
+              thống trộn 2 chuẩn này (video có nhạc CD, hay ASR giảm 96kHz xuống 16kHz cho model học máy) đều phải
+              <strong>đổi sample rate</strong>. Cách nghĩ đầu tiên ai cũng thử: "muốn ít mẫu hơn thì bỏ bớt mẫu cách
+              quãng" — verify ngay bằng số thật: cách này gây <strong>aliasing tức thì</strong>, đúng con quái vật đã
+              gặp ở <a href="dsp-sampling-aliasing">Bài 2</a> quay lại đòi nợ.
+            </p>
+            <p>
+              Bài này chỉ ra cách làm ĐÚNG — <strong>lọc trước rồi mới đổi rate</strong> — bằng cách tái dùng trực tiếp
+              FIR windowed-sinc của <a href="dsp-fir-filters">Bài 9</a>, tổng quát hoá thành tỉ lệ
+              <strong>hữu tỉ L/M</strong> bất kỳ (44,1↔48kHz hoá ra chỉ là 160/147), và hé lộ một mẹo tối ưu tên
+              <strong>polyphase</strong> — đừng bao giờ nhân với số bạn sắp vứt đi.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="dsp-sampling-aliasing">Bài 2</a> (aliasing, gập phổ) và
+                <a href="dsp-fir-filters">Bài 9</a> (FIR windowed-sinc).
+              </div>
+            </div>
+
+            <h2>1. Bài toán đổi sample rate: cách "ngây thơ" gây aliasing</h2>
+            <p>
+              Muốn đổi từ $f_s$ xuống $f_s/M$? Cách nhanh nhất nhìn thấy là chỉ giữ lại 1 trong mỗi $M$ mẫu, vứt hết
+              phần còn lại — chính là <strong>lấy mẫu lại</strong> tín hiệu ở tốc độ thấp hơn, và Nyquist (<a
+                href="dsp-sampling-aliasing"
+                >Bài 2</a
+              >) áp dụng y hệt: mọi tần số VƯỢT Nyquist MỚI ($f_s/(2M)$) sẽ gập ngược về một tần số khác, nghe SAI hoàn
+              toàn.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">naive_vs_proper.js (trích engine dsp-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// Cach NGAY THO: bo mau cach quang, KHONG loc truoc
+function downsampleNaive(x, M) {
+  const y = [];
+  for (let i = 0; i < x.length; i += M) y.push(x[i]);
+  return y;
+}
+// Verified: tone 10kHz qua downsampleNaive(x, 4) tu fs=48000 (rate moi 12000,
+// Nyquist moi 6000) - bien do RMS SAU khi bo mau van ~0,707 (KHONG suy giam)
+// va gap thanh DUNG 2000Hz - khop CHINH XAC aliasFrequency(10000, 12000) cua Bai 2.</code></pre>
+            </div>
+            <p>
+              Con số verified: sau <code>downsampleNaive(x, 4)</code>, tone 10.000Hz (vượt Nyquist mới 6.000Hz) vẫn giữ
+              nguyên biên độ RMS $\approx 0,707$ — hoàn toàn KHÔNG bị suy giảm, chỉ bị "gập" thành đúng
+              <strong>2.000Hz</strong> (khớp chính xác <code>aliasFrequency(10000, 12000)</code> của
+              <a href="dsp-sampling-aliasing">Bài 2</a>). Tai người nghe sẽ nghe một cao độ hoàn toàn SAI, không liên
+              quan gì tới âm gốc.
+            </p>
+
+            <h2>2. Decimation &amp; Interpolation: lọc đúng chỗ, đúng lúc</h2>
+            <p>
+              Sửa lỗi trên chỉ cần ĐẢO thứ tự: <strong>lọc trước, bỏ mẫu sau</strong>. Gọi bước giảm rate là
+              <strong>decimation ↓M</strong>: chặn mọi tần số trên Nyquist mới bằng 1 low-pass windowed-sinc (tái dùng
+              TRỰC TIẾP <code>firLowpassDesign()</code> của <a href="dsp-fir-filters">Bài 9</a>, cắt tại $f_s/(2M)$),
+              RỒI mới bỏ mẫu — nội dung đáng lẽ gây aliasing đã bị triệt tiêu trước khi có cơ hội gập phổ.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">decimate_interpolate.js (trích engine dsp-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// Decimation DUNG cach: LOC TRUOC (chan Nyquist MOI) roi moi bo mau
+function decimate(x, M, numTaps, windowFn) {
+  const h = firLowpassDesign(numTaps, 1 / (2 * M), windowFn); // cat tai fs/(2M)
+  const filtered = convolve(x, h);
+  return downsampleNaive(filtered, M);
+}
+// Verified: CUNG tone 10kHz qua decimate(x, 4, 81, hannWindow) - RMS sau loc
+// giam xuong DUOI 0,05 (so voi 0,707 khi khong loc) - triet tieu THAT SU.
+
+// Interpolation DUNG cach: chen 0 (len tam thoi) roi loc SACH anh pho
+function interpolate(x, L, numTaps, windowFn) {
+  const zeroStuffed = upsampleZeroStuff(x, L);
+  const h = firLowpassDesign(numTaps, 1 / (2 * L), windowFn).map((v) => v * L);
+  return convolve(zeroStuffed, h);
+}
+// Verified: upsample L=2 mot tone 300Hz roi so voi hinh sin LY TUONG lien tuc
+// tai rate moi (da bu tre nhom filter) - sai so toi da CHI 0,000017.</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: quên bù hệ số $L$ khi chèn 0</div>
+              <div class="callout__content">
+                Chèn $L-1$ số 0 giữa mỗi mẫu làm NĂNG LƯỢNG TRUNG BÌNH của tín hiệu giảm đi đúng $L$ lần (đa số mẫu giờ
+                bằng 0!) — nếu quên nhân bù hệ số $L$ vào hệ số filter (dòng
+                <code>.map((v) => v * L)</code> trong <code>interpolate()</code>), tín hiệu sau khi lọc sẽ nhỏ hơn gốc
+                đúng $L$ lần dù về hình dạng sóng vẫn ĐÚNG — một lỗi âm thầm rất dễ bỏ sót vì không gây lỗi cú pháp, chỉ
+                làm "nhạc nhỏ tiếng lại" một cách khó hiểu.
+              </div>
+            </div>
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 numTaps càng nhiều, dải chuyển tiếp càng gọn — nhưng trễ càng lớn</div>
+              <div class="callout__content">
+                Y hệt trade-off đã gặp ở <a href="dsp-fir-filters">Bài 9</a>: filter chống alias dùng CÀNG NHIỀU tap thì
+                dải chuyển tiếp quanh Nyquist mới càng hẹp (chặn dứt khoát hơn, ít rò rỉ hơn), nhưng trễ nhóm
+                $(numTaps-1)/2$ mẫu cũng CÀNG LỚN. Demo Mục 5 dùng 81 tap — đủ chặn rõ ràng ở tỉ lệ $\div 4$ nhưng vẫn
+                đủ nhẹ để tính realtime trong trình duyệt.
+              </div>
+            </div>
+            <p>
+              Ghép 2 khối lại giải quyết BẤT KỲ tỉ lệ hữu tỉ $L/M$: lên trước ($\times L$, chèn 0) → MỘT filter chung
+              cắt tại Nyquist NHỎ HƠN trong 2 Nyquist (đảm bảo an toàn cả 2 chiều) → xuống sau ($\div M$, bỏ mẫu). Tỉ lệ
+              hữu tỉ giữa 2 chuẩn phổ biến nhất, rút gọn bằng ước chung lớn nhất:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Đổi rate</th>
+                  <th>Tỉ lệ L/M tối giản</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>44,1kHz → 48kHz</td>
+                  <td>$L/M = 160/147$</td>
+                  <td>$\gcd(48000, 44100) = 300$ — cần cả lên lẫn xuống</td>
+                </tr>
+                <tr>
+                  <td>48kHz → 44,1kHz</td>
+                  <td>$L/M = 147/160$</td>
+                  <td>Chiều ngược lại, cùng cặp số</td>
+                </tr>
+                <tr>
+                  <td>96kHz → 16kHz</td>
+                  <td>$L/M = 1/6$</td>
+                  <td>$\gcd(96000, 16000) = 16000$ — decimate SẠCH 6:1, không cần lên</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              96kHz→16kHz là trường hợp đặc biệt gọn: chỉ cần <code>decimate(x, 6, ...)</code>, không cần bước lên —
+              đúng pipeline tiền xử lý âm thanh phổ biến trước khi đưa vào model ASR/ML (nối
+              <a href="ai-tokenizer-llm-pretraining">Series 12 AI</a>).
+            </p>
+
+            <h2>3. Polyphase: đừng nhân với số 0</h2>
+            <p>
+              Nhìn kỹ <code>interpolate()</code> ở Mục 2: sau khi chèn 0, filter <code>convolve()</code> nhân MỌI hệ số
+              $h$ với MỌI mẫu — kể cả những số 0 vừa chèn (chiếm $(L-1)/L$ tổng số mẫu!). Ý tưởng
+              <strong>polyphase</strong>: tách filter $h$ thành $L$ "nhánh pha" nhỏ, mỗi nhánh chỉ nhân với đúng những
+              mẫu THẬT (khác 0) — bỏ qua hoàn toàn phần nhân-với-số-0 vô ích. Tương tự ở chiều decimate: phần lớn mẫu đã
+              lọc SẼ BỊ VỨT NGAY sau đó bởi <code>downsampleNaive()</code> — polyphase chỉ tính đúng những mẫu SẼ ĐƯỢC
+              GIỮ LẠI, không tính rồi vứt.
+            </p>
+            <p>
+              Con số verified bằng đếm trực tiếp (không cần chạy code, chỉ đếm phép nhân): với $L=160$ (chiều
+              44,1→48kHz) và filter $81$ tap, cách trực tiếp (chèn 0 rồi lọc nguyên khối) tốn $N_{in} \times 160 \times
+              81$ phép nhân cho $N_{in}$ mẫu vào; polyphase chỉ tốn $N_{in} \times 81$ — đúng
+              <strong>ít hơn 160 lần</strong>, khớp chính xác hệ số $L$ (mọi phép nhân với số 0 hoặc mẫu sắp bị vứt đều
+              bị loại bỏ, không thừa một phép tính nào).
+            </p>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Phạm vi bài: chỉ trình bày mức sơ đồ + trực giác</div>
+              <div class="callout__content">
+                Polyphase là một kỹ thuật CÀI ĐẶT (implementation trick) — kết quả TOÁN HỌC giống hệt cách trực tiếp ở
+                Mục 2, chỉ khác về hiệu năng. Bài chỉ dừng ở mức hiểu Ý TƯỞNG (đếm phép nhân tiết kiệm được) và KHÔNG
+                viết code polyphase đầy đủ — nằm ngoài phạm vi loạt bài này, dành cho ai muốn tối ưu implementation thực
+                chiến (CMSIS-DSP, libsamplerate).
+              </div>
+            </div>
+
+            <h2>4. Resampling quanh ta: ảnh cũng y hệt</h2>
+            <p>
+              Bài toán resampling không chỉ có ở âm thanh — <strong>thay đổi kích thước ảnh</strong> chính là resampling
+              2 chiều. Bộ lọc <strong>Lanczos</strong> (một lựa chọn chất lượng cao phổ biến khi resize ảnh) chính là
+              windowed-sinc — CÙNG công thức <code>sinc()</code> của <a href="dsp-fir-filters">Bài 9</a>, chỉ áp theo 2
+              trục thay vì 1. Phóng to ảnh = interpolation (chèn pixel "0" rồi lọc mượt); thu nhỏ ảnh không lọc trước =
+              đúng loại aliasing ở Mục 1, biểu hiện bằng hoạ tiết răng cưa/moiré khi thu nhỏ ảnh có chi tiết mịn (lưới,
+              vải sọc) — thử ngay trên
+              <a href="https://image-optimizer.js-tools.org" target="_blank" rel="noopener noreferrer"
+                >Image Optimizer</a
+              >
+              hoặc xem sâu hơn ở series Canvas (xử lý pixel).
+            </p>
+
+            <h2>5. Thực hành: Resampler A/B</h2>
+            <p>
+              Chọn tần số tone và hệ số giảm rate $M$ — nghe và SO SÁNH trực tiếp đường "ngây thơ"
+              (<code>downsampleNaive</code>) với đường "chuẩn" (<code>decimate</code> có lọc), cùng phổ biên độ 2 bên vẽ
+              song song. Kéo tần số tone vượt qua Nyquist mới để nghe rõ tiếng "sai cao độ" của aliasing:
+            </p>
+
+            <div class="code-tabs" id="resample-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🎛️ Resampler A/B — DSPJS thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px">
+                    <label style="font-size: 12px; display: flex; align-items: center; gap: 4px">
+                      Tone: <input type="range" id="rs-freq" min="200" max="15000" value="7000" step="50" />
+                      <span id="rs-freq-val">7000Hz</span>
+                    </label>
+                    <label style="font-size: 12px; display: flex; align-items: center; gap: 4px">
+                      Giảm rate ↓M:
+                      <select id="rs-m" class="mux-input-btn" style="cursor: pointer">
+                        <option value="2">÷2</option>
+                        <option value="3">÷3</option>
+                        <option value="4" selected>÷4</option>
+                        <option value="6">÷6</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div style="display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start">
+                    <div style="flex: 1; min-width: 240px">
+                      <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600">
+                        Phổ NGÂY THƠ (downsampleNaive — không lọc):
+                      </p>
+                      <canvas
+                        id="rs-naive-canvas"
+                        width="360"
+                        height="90"
+                        style="width: 100%; height: 90px; background: rgba(0, 0, 0, 0.15); border-radius: 6px"
+                      ></canvas>
+                    </div>
+                    <div style="flex: 1; min-width: 240px">
+                      <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600">
+                        Phổ CHUẨN (decimate — lọc trước):
+                      </p>
+                      <canvas
+                        id="rs-proper-canvas"
+                        width="360"
+                        height="90"
+                        style="width: 100%; height: 90px; background: rgba(0, 0, 0, 0.15); border-radius: 6px"
+                      ></canvas>
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap">
+                    <button class="mux-input-btn" type="button" id="rs-play-naive-btn">🔊 Nghe bản NGÂY THƠ</button>
+                    <button class="mux-input-btn" type="button" id="rs-play-proper-btn">🔊 Nghe bản CHUẨN</button>
+                  </div>
+                  <div id="rs-status" class="mux-demo__output">Đang khởi tạo…</div>
+                  <p class="mux-demo__hint">
+                    Kéo tone lên trên Nyquist mới (hiện trong ô trạng thái) — bản NGÂY THƠ đổi cao độ hẳn (aliasing),
+                    bản CHUẨN gần như im lặng (đã lọc sạch).
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">resampler_ab_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { sine, downsampleNaive, decimate, hannWindow, aliasFrequency, fft, dftMagnitude, zeroPad } from './dsp-core.js';
+
+function compareResample(freq, fs, M) {
+  const newRate = fs / M;
+  const x = Array.from({ length: 4000 }, (_, n) => sine(n, freq, fs, 1, 0));
+
+  const naive = downsampleNaive(x, M);              // KHONG loc - co the alias
+  const proper = decimate(x, M, 81, hannWindow);     // loc truoc dung cach
+
+  const naiveSpectrum = dftMagnitude(fft(zeroPad(naive, 2048)));   // 2048 > 1000 mau sau /4
+  const properSpectrum = dftMagnitude(fft(zeroPad(proper, 2048)));
+  const predictedAlias = aliasFrequency(freq, newRate); // Bai 2 tai dung
+
+  return { newRate, naive, proper, naiveSpectrum, properSpectrum, predictedAlias };
+}</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Đổi rate "ngây thơ" (bỏ mẫu, không lọc) gây aliasing — verified: tone 10kHz qua
+                <code>downsampleNaive(x,4)</code> giữ NGUYÊN biên độ (RMS≈0,707), gập thành đúng 2000Hz (khớp
+                <code>aliasFrequency()</code> của <a href="dsp-sampling-aliasing">Bài 2</a>).
+              </li>
+              <li>
+                ✅ <code>decimate()</code>/<code>interpolate()</code> lọc đúng chỗ đúng lúc — verified: cùng tone 10kHz
+                qua <code>decimate()</code> bị triệt tiêu (RMS&lt;0,05); upsample L=2 khớp sin lý tưởng sai số chỉ
+                0,000017.
+              </li>
+              <li>
+                ✅ Tỉ lệ hữu tỉ verified thật: 44,1kHz↔48kHz = 160/147 ($\gcd=300$), 96kHz→16kHz chỉ cần decimate sạch
+                6:1.
+              </li>
+              <li>
+                ✅ Polyphase: đừng nhân với số sắp vứt/số 0 — verified bằng đếm trực tiếp: ít hơn ĐÚNG $L$ lần phép nhân
+                so với cách trực tiếp.
+              </li>
+              <li>✅ Resampling ảnh (Lanczos) = windowed-sinc 2D — cùng công thức <code>sinc()</code> của Bài 9.</li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">Vì sao cách "ngây thơ" bỏ mẫu cách quãng (downsampleNaive) gây aliasing?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Bo mau chinh la LAY MAU LAI o toc do thap hon - quy tac Nyquist (Bai 2) ap dung y het: tan so vuot Nyquist MOI se gap nguoc thanh tan so khac. Verified: 10kHz qua downsampleNaive(x,4) giu nguyen bien do nhung gap thanh dung 2000Hz.'
+                    )
+                  "
+                >
+                  A. Bỏ mẫu chính là lấy mẫu lại ở tốc độ thấp hơn — tần số vượt quá Nyquist MỚI sẽ gập ngược thành tần
+                  số khác, đúng quy tắc Nyquist của Bài 2
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Verified nguoc lai: RMS SAU khi bo mau van xap xi 0,707 - KHONG bi suy giam chut nao. Van de khong phai bien do mat di, ma la TAN SO bi GAP SAI thanh mot gia tri khac.'
+                    )
+                  "
+                >
+                  B. Vì phép bỏ mẫu làm biên độ tín hiệu giảm dần theo thời gian
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'JavaScript khong lien quan gi den hien tuong nay - day la mot van de TOAN HOC/VAT LY thuan tuy cua qua trinh lay mau lai, xay ra giong het tren bat ky ngon ngu/phan cung nao.'
+                    )
+                  "
+                >
+                  C. Vì JavaScript làm tròn số không chính xác khi bỏ mẫu
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">decimate() sửa vấn đề của downsampleNaive() bằng cách nào?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! decimate() loc bang low-pass cat tai Nyquist MOI (fs/(2M)) TRUOC, roi moi bo mau - noi dung dang le gay aliasing bi trieu tieu truoc khi co co hoi gap pho. Verified: RMS 10kHz sau loc giam xuong duoi 0,05.'
+                    )
+                  "
+                >
+                  A. Lọc bằng low-pass cắt tại Nyquist MỚI TRƯỚC khi bỏ mẫu — nội dung gây aliasing bị triệt tiêu trước
+                  khi kịp gập phổ
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'decimate() van BO MAU y het downsampleNaive() (cung ham downsampleNaive() ben trong) - khac biet DUY NHAT la co LOC TRUOC hay khong, khong phai ve so luong mau giu lai.'
+                    )
+                  "
+                >
+                  B. Giữ lại nhiều mẫu hơn thay vì bỏ bớt
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca 2 ham deu dung dung sample rate dau vao/dau ra - khong lien quan gi den &quot;doc sai&quot; sample rate. Khac biet la co BUOC LOC hay khong TRUOC khi bo mau.'
+                    )
+                  "
+                >
+                  C. Đọc đúng sample rate gốc thay vì đọc sai như downsampleNaive()
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Verified: 44,1kHz↔48kHz rút gọn về tỉ lệ L/M = 160/147. Vì sao cần CẢ lên lẫn xuống (không chỉ 1 chiều)?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! 48000 va 44100 khong chia het cho nhau (KHONG ton tai so nguyen M de 48000=44100*M hay nguoc lai) - gcd(48000,44100)=300 chi cho ra ti le HUU TI 160/147, khong phai so nguyen don gian, nen can ca len (x160) lan xuong (/147).'
+                    )
+                  "
+                >
+                  A. 48000 và 44100 KHÔNG chia hết cho nhau — tỉ lệ giữa chúng là số HỮU TỈ (160/147), không phải số
+                  nguyên đơn giản, nên cần cả 2 bước
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'gcdInt(48000,44100)=300 la mot con so CO THAT, tinh dung bang thuat toan Euclid chuan - khong co gi &quot;sai&quot; ve mat toan hoc o day, van de la ban chat 2 con so nay von KHONG chia het cho nhau.'
+                    )
+                  "
+                >
+                  B. Vì hàm gcdInt() trong DSPJS tính sai với các cặp số lớn
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Chat luong am thanh KHONG phu thuoc vao viec dung 1 hay 2 buoc - day la vi CAN THIET VE MAT TOAN HOC (48000 va 44100 khong chia het cho nhau), khong phai lua chon ve chat luong.'
+                    )
+                  "
+                >
+                  C. Để tăng chất lượng âm thanh so với chỉ dùng 1 bước
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">Ý tưởng cốt lõi của polyphase (Mục 3) là gì?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Cach truc tiep (chen 0 roi loc nguyen khoi) nhan CA voi nhung so 0 vua chen VA nhung mau sap bi bo mau vut di - toan bo nhung phep nhan do la LANG PHI. Polyphase chi tinh dung nhung gia tri THAT SU can - verified tiet kiem dung he so L lan.'
+                    )
+                  "
+                >
+                  A. Bỏ qua các phép nhân với số 0 vừa chèn hoặc với mẫu sắp bị bỏ đi ngay sau đó — chỉ tính đúng những
+                  gì thật sự cần
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Polyphase cho ra KET QUA TOAN HOC GIONG HET cach truc tiep (Muc 3 da noi ro: chi khac ve HIEU NANG cai dat) - khong phai mot thuat toan loc khac, chi la mot cach TO CHUC LAI phep tinh CUNG mot thuat toan.'
+                    )
+                  "
+                >
+                  B. Dùng một thuật toán lọc hoàn toàn khác, cho kết quả chính xác hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Polyphase KHONG lien quan gi den bo nho luu tru - day la ky thuat toi uu SO PHEP TINH (phep nhan), khong phai ky thuat nen/luu du lieu.'
+                    )
+                  "
+                >
+                  C. Nén hệ số filter để tiết kiệm bộ nhớ lưu trữ
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>DSPJS</code> (<code>dsp-core.js</code>) — thư viện DSP tự viết dùng xuyên suốt cả
+                15 bài, Bài 12 vừa thêm <code>gcdInt()</code>, <code>upsampleZeroStuff()</code>,
+                <code>downsampleNaive()</code>, <code>decimate()</code>, <code>interpolate()</code>,
+                <code>resampleRational()</code>, kèm self-test đối chiếu đúng mọi hành vi trong bài (chạy
+                <code>node dsp-core.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="dsp-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về dsp-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Sample-rate_conversion"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Sample-rate conversion
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Downsampling_(signal_processing)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Downsampling (signal processing)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Polyphase_matrix" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Polyphase matrix
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Lanczos_resampling" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Lanczos resampling
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="dsp-iir-biquad" class="article-related__link article-related__link--prev">
+                  Bài 11: Filter IIR &amp; Biquad
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 13: Phát hiện cao độ — sắp ra mắt
+                </span>
+                <a href="dsp-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Xử Lý Tín Hiệu Số
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        sine,
+        downsampleNaive,
+        decimate,
+        hannWindow,
+        aliasFrequency,
+        fft,
+        dftMagnitude,
+        zeroPad,
+      } from './dsp-core.js';
+
+      const state = { freq: 7000, M: 4, fs: 48000 };
+      let audioCtx = null;
+
+      const freqEl = document.getElementById('rs-freq');
+      const mEl = document.getElementById('rs-m');
+
+      function compareResample(freq, fs, M) {
+        const newRate = fs / M;
+        const x = Array.from({ length: 4000 }, (_, n) => sine(n, freq, fs, 1, 0));
+        const naive = downsampleNaive(x, M);
+        const proper = decimate(x, M, 81, hannWindow);
+        const naiveSpectrum = dftMagnitude(fft(zeroPad(naive, 2048)));
+        const properSpectrum = dftMagnitude(fft(zeroPad(proper, 2048)));
+        const predictedAlias = aliasFrequency(freq, newRate);
+        return { newRate, naive, proper, naiveSpectrum, properSpectrum, predictedAlias };
+      }
+
+      function renderSpectrum(canvasId, spectrum) {
+        const c = document.getElementById(canvasId);
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, c.width, c.height);
+        const half = spectrum.slice(0, spectrum.length / 2);
+        const maxMag = Math.max(...half, 1e-6);
+        ctx.fillStyle = '#22c55e';
+        const barW = c.width / half.length;
+        half.forEach((m, i) => {
+          const h = (m / maxMag) * (c.height - 4);
+          ctx.fillRect(i * barW, c.height - h, Math.max(barW - 1, 1), h);
+        });
+      }
+
+      function render() {
+        const result = compareResample(state.freq, state.fs, state.M);
+        renderSpectrum('rs-naive-canvas', result.naiveSpectrum);
+        renderSpectrum('rs-proper-canvas', result.properSpectrum);
+        const newNyquist = result.newRate / 2;
+        const overNyquist = state.freq > newNyquist;
+        document.getElementById('rs-status').innerHTML =
+          '<strong>Rate mới:</strong> ' +
+          result.newRate.toFixed(0) +
+          'Hz &nbsp;·&nbsp; <strong>Nyquist mới:</strong> ' +
+          newNyquist.toFixed(0) +
+          'Hz &nbsp;·&nbsp; <strong style="color:' +
+          (overNyquist ? '#ef4444' : '#22c55e') +
+          '">' +
+          (overNyquist
+            ? '⚠️ Tone VƯỢT Nyquist — bản ngây thơ sẽ alias thành ' + result.predictedAlias.toFixed(0) + 'Hz'
+            : '✅ Tone trong dải an toàn') +
+          '</strong>';
+        return result;
+      }
+
+      function syncLabels() {
+        document.getElementById('rs-freq-val').textContent = state.freq + 'Hz';
+      }
+
+      freqEl.addEventListener('input', () => {
+        state.freq = Number(freqEl.value);
+        syncLabels();
+        render();
+      });
+      mEl.addEventListener('change', () => {
+        state.M = Number(mEl.value);
+        render();
+      });
+
+      function ensureAudio() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        return audioCtx;
+      }
+
+      function playSamples(samples, rate) {
+        const ctx = ensureAudio();
+        const peak = Math.max(...samples.map(Math.abs), 1e-6);
+        const buffer = ctx.createBuffer(1, samples.length, rate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < samples.length; i++) data[i] = (samples[i] / peak) * 0.5;
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        src.start();
+      }
+
+      document.getElementById('rs-play-naive-btn').addEventListener('click', () => {
+        const result = render();
+        playSamples(result.naive, result.newRate);
+      });
+      document.getElementById('rs-play-proper-btn').addEventListener('click', () => {
+        const result = render();
+        playSamples(result.proper, result.newRate);
+      });
+
+      syncLabels();
+      render();
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

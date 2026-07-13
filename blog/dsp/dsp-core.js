@@ -827,6 +827,69 @@ function biquadDF2T(x, coeffs) {
   return y;
 }
 
+// ---------------------------------------------------------------------------
+// Bài 12 — Resampling & xử lý đa tốc độ. Build-out: upsampleZeroStuff/
+// downsampleNaive (2 khối "ngây thơ" — chèn 0/bỏ mẫu thô, dùng để CHỨNG MINH
+// vì sao cách ngây thơ gây aliasing), decimate/interpolate (LỌC TRƯỚC/SAU
+// đúng cách — tái dùng TRỰC TIẾP firLowpassDesign của Bài 9), và
+// resampleRational (tỉ lệ L/M hữu tỉ bất kỳ — 44,1kHz↔48kHz chính là
+// 147/160, xem gcdInt).
+// ---------------------------------------------------------------------------
+
+// Ước chung lớn nhất — dùng để rút gọn tỉ lệ đổi sample rate về dạng L/M tối
+// giản (vd 48000/44100 → gcd=300 → 160/147).
+function gcdInt(a, b) {
+  return b === 0 ? a : gcdInt(b, a % b);
+}
+
+// Chèn L-1 số 0 giữa mỗi mẫu (Mục 12.2 "Interpolation ↑L bước 1") — tạo ra
+// ảnh phổ (spectral images) lặp lại quanh bội số của fs gốc, CHƯA lọc sạch.
+function upsampleZeroStuff(x, L) {
+  const y = new Array(x.length * L).fill(0);
+  for (let i = 0; i < x.length; i++) y[i * L] = x[i];
+  return y;
+}
+
+// Cách "ngây thơ" nhất để đổi rate: bỏ mẫu cách quãng, KHÔNG lọc trước —
+// verified gây aliasing y hệt Bài 2 khi tần số vượt quá Nyquist MỚI.
+function downsampleNaive(x, M) {
+  const y = [];
+  for (let i = 0; i < x.length; i += M) y.push(x[i]);
+  return y;
+}
+
+// Decimation ĐÚNG cách (Mục 12.2): LỌC TRƯỚC bằng low-pass windowed-sinc cắt
+// tại Nyquist MỚI ($f_s/(2M)$, chuẩn hoá theo $f_s$ gốc là $1/(2M)$ — tái
+// dùng TRỰC TIẾP firLowpassDesign của Bài 9), RỒI mới bỏ mẫu — chặn hết nội
+// dung sẽ gập phổ trước khi nó có cơ hội gập.
+function decimate(x, M, numTaps, windowFn) {
+  const h = firLowpassDesign(numTaps, 1 / (2 * M), windowFn);
+  const filtered = convolve(x, h);
+  return downsampleNaive(filtered, M);
+}
+
+// Interpolation ĐÚNG cách (Mục 12.2): chèn 0 (upsampleZeroStuff) RỒI lọc
+// sạch ảnh phổ bằng low-pass cắt tại $1/(2L)$ — nhân bù hệ số $L$ vì chèn 0
+// làm giảm năng lượng trung bình đi đúng $L$ lần.
+function interpolate(x, L, numTaps, windowFn) {
+  const zeroStuffed = upsampleZeroStuff(x, L);
+  const h = firLowpassDesign(numTaps, 1 / (2 * L), windowFn).map((v) => v * L);
+  return convolve(zeroStuffed, h);
+}
+
+// Đổi sample rate theo tỉ lệ hữu tỉ L/M BẤT KỲ (Mục 12.2): lên trước (chèn 0
+// L lần) → MỘT filter chung cắt tại Nyquist NHỎ HƠN trong 2 Nyquist (đảm bảo
+// vừa chặn ảnh phổ của bước lên, vừa chống alias cho bước xuống) → xuống sau
+// (bỏ mẫu M lần). 44,1kHz↔48kHz chính là L/M = 160/147 hoặc 147/160
+// (gcdInt(48000,44100)=300).
+function resampleRational(x, L, M, numTaps, windowFn) {
+  const zeroStuffed = upsampleZeroStuff(x, L);
+  const cutoffNorm = Math.min(1 / (2 * L), 1 / (2 * M));
+  const h = firLowpassDesign(numTaps, cutoffNorm, windowFn).map((v) => v * L);
+  const filtered = convolve(zeroStuffed, h);
+  return downsampleNaive(filtered, M);
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -895,6 +958,12 @@ export {
   biquadZeros,
   biquadCoeffsRBJ,
   biquadDF2T,
+  gcdInt,
+  upsampleZeroStuff,
+  downsampleNaive,
+  decimate,
+  interpolate,
+  resampleRational,
 };
 
 // ---------------------------------------------------------------------------
@@ -1655,6 +1724,71 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Pitfall lượng tử: làm tròn a1/a2 xuống 1 chữ số thập phân đẩy pole TRƯỢT RA NGOÀI vòng tròn (|pole| ≥ 1, filter Q cao "nổ")',
       polesQuantized.some((p) => Math.hypot(p.re, p.im) >= 1)
+    );
+  }
+
+  // --- Bài 12: resampling — tỉ lệ hữu tỉ, naive aliasing vs decimate/interpolate đúng ---
+  {
+    checkTrue('gcdInt(48000, 44100) = 300 (rút gọn về tỉ lệ L/M tối giản)', gcdInt(48000, 44100) === 300);
+    checkTrue(
+      '44,1kHz↔48kHz rút gọn ĐÚNG bằng 160/147',
+      48000 / gcdInt(48000, 44100) === 160 && 44100 / gcdInt(48000, 44100) === 147
+    );
+
+    function rms(arr) {
+      return Math.sqrt(arr.reduce((s, v) => s + v * v, 0) / arr.length);
+    }
+    const fs12 = 48000;
+    const M12 = 4;
+    const N12 = 2000;
+
+    // Naive downsample KHONG loc truoc: 10kHz (tren Nyquist MOI 6kHz sau /4)
+    // gap pho ve tan so khac, bien do KHONG suy giam - chinh la aliasing.
+    const highTone = Array.from({ length: N12 }, (_, n) => sine(n, 10000, fs12, 1, 0));
+    const naiveDown = downsampleNaive(highTone, M12);
+    checkTrue(
+      'downsampleNaive KHÔNG lọc trước: biên độ tần số 10kHz (trên Nyquist mới) KHÔNG suy giảm — aliasing y hệt Bài 2',
+      Math.abs(rms(naiveDown.slice(20)) - Math.SQRT1_2) < 0.01
+    );
+    checkTrue(
+      'Tần số alias của 10kHz tại rate mới 12kHz đúng bằng aliasFrequency() của Bài 2',
+      Math.abs(aliasFrequency(10000, fs12 / M12) - 2000) < 1e-6
+    );
+
+    // Decimate DUNG cach: loc truoc chan het 10kHz (tren Nyquist moi) TRUOC
+    // khi bo mau - nang luong bi trieu tieu manh, KHONG con aliasing.
+    const properDown = decimate(highTone, M12, 81, hannWindow);
+    checkTrue(
+      'decimate() lọc trước ĐÚNG cách: biên độ 10kHz (trên Nyquist mới) bị TRIỆT TIÊU mạnh (RMS < 0,05, so với naive ~0,707)',
+      rms(properDown.slice(60)) < 0.05
+    );
+
+    // Decimate giu nguyen ven tin hieu TRONG dai (500Hz, duoi Nyquist moi 6kHz)
+    const inBandTone = Array.from({ length: N12 }, (_, n) => sine(n, 500, fs12, 1, 0));
+    const properInBand = decimate(inBandTone, M12, 81, hannWindow);
+    checkTrue(
+      'decimate() GIỮ NGUYÊN biên độ tín hiệu trong dải (500Hz, dưới Nyquist mới) — RMS gần đúng 1/√2',
+      Math.abs(rms(properInBand.slice(60, 400)) - Math.SQRT1_2) < 0.02
+    );
+
+    // Interpolate: tin hieu upsample L=2 khop voi hinh sin LY TUONG tai rate moi
+    // (bu tre nhom filter = (numTaps-1)/2 mau tai rate MOI)
+    const L12 = 2;
+    const numTaps12 = 81;
+    const groupDelay12 = (numTaps12 - 1) / 2;
+    const loFreq12 = 300;
+    const N3 = 200;
+    const loTone = Array.from({ length: N3 }, (_, n) => sine(n, loFreq12, fs12, 1, 0));
+    const interp = interpolate(loTone, L12, numTaps12, hannWindow);
+    let maxErr = 0;
+    for (let n = 100; n < 300; n++) {
+      const idealT = (n - groupDelay12) / L12;
+      const ideal = Math.sin((2 * Math.PI * loFreq12 * idealT) / fs12);
+      maxErr = Math.max(maxErr, Math.abs(interp[n] - ideal));
+    }
+    checkTrue(
+      'interpolate() L=2: khớp đường sin lý tưởng tại rate mới, sai số tối đa < 0,001 (đã bù trễ nhóm filter)',
+      maxErr < 0.001
     );
   }
 
