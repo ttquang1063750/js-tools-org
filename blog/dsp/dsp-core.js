@@ -1108,6 +1108,77 @@ function biquadDF2TBlock(x, coeffs, state) {
   return y;
 }
 
+// ---------------------------------------------------------------------------
+// Bài 15 — Capstone: Trạm Âm Thanh DSP hoàn chỉnh. Build-out: cascadeBiquads
+// (EQ 5 băng = 5 biquad nối tiếp, Mục 15.2, tái dùng biquadDF2T của Bài 11),
+// envelopeFollower + noiseGate (envelope follower attack/release là một FSM
+// mở/đóng có hysteresis, Mục 15.3), và softClip (đối chứng hardClip của Bài
+// 3, Mục 15.4). Mọi khối ở đây là "viên gạch cuối cùng" ghép nối TRỰC TIẾP
+// những gì 14 bài trước đã xây — không thuật toán DSP mới, chỉ KIẾN TRÚC
+// ghép nối.
+// ---------------------------------------------------------------------------
+
+// Nối tiếp (cascade) N biquad — đúng cách 1 EQ nhiều băng hoạt động (Mục
+// 15.2): tín hiệu chảy qua TỪNG biquad theo thứ tự, đầu ra biquad này là đầu
+// vào biquad kế. Tương đương gọi biquadDF2T() lặp lại thủ công, nhưng gọn và
+// đúng thứ tự ghép của 1 EQ 5 băng (low-shelf → 3×peaking → high-shelf).
+function cascadeBiquads(x, coeffsList) {
+  let y = x;
+  for (const coeffs of coeffsList) y = biquadDF2T(y, coeffs);
+  return y;
+}
+
+// Envelope follower — bám biên độ tuyệt đối của tín hiệu bằng bộ lọc 1 cực
+// KHÔNG ĐỐI XỨNG: hệ số "attack" (nhanh) dùng khi tín hiệu ĐANG TĂNG, hệ số
+// "release" (thường chậm hơn) dùng khi ĐANG GIẢM — đúng cơ chế của mọi
+// compressor/gate/limiter thật. Verified: burst rồi im lặng, release 5ms
+// giảm về nửa biên độ chỉ sau ~166 mẫu, release 200ms cần tới ~6654 mẫu —
+// gấp khoảng 40 lần chậm hơn.
+function envelopeFollower(x, fs, attackMs, releaseMs) {
+  const attackCoeff = Math.exp(-1 / ((fs * attackMs) / 1000));
+  const releaseCoeff = Math.exp(-1 / ((fs * releaseMs) / 1000));
+  const env = new Array(x.length);
+  let e = 0;
+  for (let n = 0; n < x.length; n++) {
+    const rectified = Math.abs(x[n]);
+    const coeff = rectified > e ? attackCoeff : releaseCoeff;
+    e = coeff * e + (1 - coeff) * rectified;
+    env[n] = e;
+  }
+  return env;
+}
+
+// Noise gate (Mục 15.3): 1 FSM 2 trạng thái (đóng/mở) với HYSTERESIS — mở
+// khi envelope vượt ngưỡng $thresholdDb$, chỉ đóng lại khi envelope tụt
+// XUỐNG DƯỚI $thresholdDb - hysteresisDb$ (ngưỡng đóng THẤP hơn ngưỡng mở —
+// tránh "nhấp nháy" mở/đóng liên tục quanh 1 ngưỡng duy nhất). Gain mục tiêu
+// (0 hoặc 1) sau đó được LÀM MƯỢT bằng chính envelopeFollower ở trên với
+// attack/release riêng — đây chính là "tốc độ" nghe được của gate.
+function noiseGate(x, fs, thresholdDb, attackMs, releaseMs, hysteresisDb) {
+  const decisionEnv = envelopeFollower(x, fs, 0.5, 5);
+  const openThresh = thresholdDb;
+  const closeThresh = thresholdDb - hysteresisDb;
+  let isOpen = false;
+  const targetGain = new Array(x.length);
+  for (let n = 0; n < x.length; n++) {
+    const envDb = amplitudeToDbfs(decisionEnv[n] + 1e-9);
+    if (!isOpen && envDb > openThresh) isOpen = true;
+    else if (isOpen && envDb < closeThresh) isOpen = false;
+    targetGain[n] = isOpen ? 1 : 0;
+  }
+  const smoothGain = envelopeFollower(targetGain, fs, attackMs, releaseMs);
+  return x.map((v, n) => v * smoothGain[n]);
+}
+
+// Soft clip (Mục 15.4) — đối chứng trực tiếp hardClip() của Bài 3: bão hoà
+// MƯỢT bằng $\tanh$ thay vì cắt phẳng đột ngột. Verified: trên tín hiệu bị
+// overdrive mạnh, hardClip() flatline CHÍNH XÁC tại đúng biên (đạo hàm gián
+// đoạn, "góc nhọn") ở phần lớn số mẫu, trong khi softClip() KHÔNG BAO GIỜ
+// chạm đúng ngưỡng (chỉ tiệm cận, đường cong luôn mượt liên tục).
+function softClip(x, threshold = 1) {
+  return threshold * Math.tanh(x / threshold);
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -1197,6 +1268,10 @@ export {
   q15Add,
   firQ15,
   biquadDF2TBlock,
+  cascadeBiquads,
+  envelopeFollower,
+  noiseGate,
+  softClip,
 };
 
 // ---------------------------------------------------------------------------
@@ -2180,6 +2255,84 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Pitfall: dùng SAI biquadDF2T() (reset state) mỗi block tạo bước nhảy tại ranh giới LỚN HƠN NHIỀU so với bước nhảy bình thường (click nghe được)',
       maxBoundaryJumpBuggy > 10 * maxInteriorJumpCorrect
     );
+  }
+
+  // --- Bài 15: Capstone — cascadeBiquads, envelopeFollower, noiseGate, softClip ---
+  {
+    // cascadeBiquads: khop TUYET DOI voi goi bieuadDF2T() lien tiep thu cong
+    const fs15 = 48000;
+    const c1 = biquadCoeffsRBJ('lowpass', 1000, fs15, 0.707, 0);
+    const c2 = biquadCoeffsRBJ('peaking', 2000, fs15, 1, 6);
+    const impulse15 = [1, ...new Array(99).fill(0)];
+    const yCascade = cascadeBiquads(impulse15, [c1, c2]);
+    const yManual = biquadDF2T(biquadDF2T(impulse15, c1), c2);
+    let maxDiffCascade = 0;
+    for (let i = 0; i < impulse15.length; i++)
+      maxDiffCascade = Math.max(maxDiffCascade, Math.abs(yCascade[i] - yManual[i]));
+    checkTrue(
+      'cascadeBiquads() khớp TUYỆT ĐỐI với gọi biquadDF2T() nối tiếp thủ công (diff < 1e-12)',
+      maxDiffCascade < 1e-12
+    );
+
+    // envelopeFollower: burst roi im lang - release nhanh vs cham
+    const burstLen = 1000;
+    const totalLen = 10000;
+    const xBurst = Array.from({ length: totalLen }, (_, n) => (n < burstLen ? 0.8 : 0));
+    const envFastRelease = envelopeFollower(xBurst, fs15, 1, 5);
+    const envSlowRelease = envelopeFollower(xBurst, fs15, 1, 200);
+    function decaySamples(env, burstEnd) {
+      const peak = env[burstEnd - 1];
+      for (let n = burstEnd; n < env.length; n++) if (env[n] < peak / 2) return n - burstEnd;
+      return -1;
+    }
+    const decayFast = decaySamples(envFastRelease, burstLen);
+    const decaySlow = decaySamples(envSlowRelease, burstLen);
+    checkTrue(
+      'envelopeFollower release nhanh (5ms) giảm về nửa biên độ trong khoảng 150-200 mẫu',
+      decayFast > 100 && decayFast < 250
+    );
+    checkTrue(
+      'envelopeFollower release chậm (200ms) giảm về nửa biên độ CHẬM HƠN release nhanh ít nhất 20 lần',
+      decaySlow > 20 * decayFast
+    );
+
+    // noiseGate pitfall: attack cham "nuot" phu am dau
+    const xTransient = Array.from({ length: 2000 }, (_, n) =>
+      n < 10 ? 0 : n < 500 ? 0.8 * sine(n, 300, fs15, 1, 0) : 0
+    );
+    const gatedSlowAttack = noiseGate(xTransient, fs15, -30, 50, 100, 6);
+    const gatedFastAttack = noiseGate(xTransient, fs15, -30, 1, 100, 6);
+    function energyInWindow(sig, start, end) {
+      let e = 0;
+      for (let i = start; i < end; i++) e += sig[i] * sig[i];
+      return e;
+    }
+    const winEnd = 10 + Math.round(0.01 * fs15);
+    const origEnergy15 = energyInWindow(xTransient, 10, winEnd);
+    const slowAttackEnergy = energyInWindow(gatedSlowAttack, 10, winEnd);
+    const fastAttackEnergy = energyInWindow(gatedFastAttack, 10, winEnd);
+    checkTrue(
+      'Pitfall noiseGate: attack CHẬM (50ms) "nuốt" hơn 90% năng lượng 10ms đầu của phụ âm/transient',
+      slowAttackEnergy / origEnergy15 < 0.1
+    );
+    checkTrue(
+      'noiseGate attack NHANH (1ms) giữ lại phần lớn (>75%) năng lượng transient — không nuốt mất',
+      fastAttackEnergy / origEnergy15 > 0.75
+    );
+
+    // softClip vs hardClip: dao ham gian doan (flatline) vs muot (khong bao gio cham nguong)
+    const N15 = 4096;
+    const f015 = 500;
+    const xOverdrive = Array.from({ length: N15 }, (_, n) => 1.5 * sine(n, f015, fs15, 1, 0));
+    const yHard15 = xOverdrive.map((v) => hardClip(v, 1));
+    const ySoft15 = xOverdrive.map((v) => softClip(v, 0.9));
+    const flatHardCount = yHard15.filter((v) => Math.abs(v) === 1).length;
+    const flatSoftCount = ySoft15.filter((v) => Math.abs(Math.abs(v) - 0.9) < 1e-9).length;
+    checkTrue(
+      'hardClip(): phần lớn mẫu bị lượt sóng overdrive flatline CHÍNH XÁC tại biên (đạo hàm gián đoạn)',
+      flatHardCount > N15 * 0.3
+    );
+    checkTrue('softClip(): KHÔNG mẫu nào chạm đúng ngưỡng (chỉ tiệm cận, luôn mượt liên tục)', flatSoftCount === 0);
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
