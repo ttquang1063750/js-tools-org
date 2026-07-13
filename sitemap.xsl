@@ -10,6 +10,7 @@
         <meta charset="UTF-8"/>
         <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
         <title>Sơ đồ trang Web (XML Sitemap) — js-tools.org</title>
+        <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg"/>
         <style>
           :root {
             --bg: #1e1e2e;
