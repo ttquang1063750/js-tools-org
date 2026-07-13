@@ -1020,6 +1020,94 @@ function freqToNote(f, fRef = 440, refMidi = 69) {
   return { note: names[noteIndex], octave, cents, midi };
 }
 
+// ---------------------------------------------------------------------------
+// Bài 14 — DSP thời gian thực & trên phần cứng nhúng. Build-out: mô phỏng
+// Q15 (số nguyên 16-bit với dấu phẩy TƯỞNG TƯỢNG sau bit dấu — MCU không FPU
+// nhân float bằng phần mềm chậm gấp chục lần, xem Mục 14.3), firQ15 (áp
+// dụng Q15 lên FIR — demo nghe/đo SNR Mục 14.5), và biquadDF2TBlock (biquad
+// GIỮ trạng thái $z_1,z_2$ qua ranh giới block — đối chứng trực tiếp với
+// biquadDF2T() của Bài 11 vốn LUÔN reset trạng thái mỗi lần gọi, chính là
+// pitfall "click chu kỳ đều đặn" của Mục 14.2 khi dùng sai trong xử lý
+// theo khối).
+// ---------------------------------------------------------------------------
+
+const Q15_ONE = 32768;
+const Q15_MAX_FLOAT = 0.999969482421875; // (32767/32768) - so gan +1 lon nhat Q15 bieu dien duoc
+
+// Đổi số thực (giả định trong [-1,1)) sang Q15 — số nguyên 16-bit, CẮT NGẮN
+// (clamp) nếu vượt phạm vi biểu diễn được (Mục 14.3: "cái giá là nhiễu lượng
+// tử HỆ SỐ" — chính là quantize() của Bài 3 áp cho đúng phạm vi Q15).
+function floatToQ15(x) {
+  const clamped = Math.max(-1, Math.min(Q15_MAX_FLOAT, x));
+  return Math.round(clamped * Q15_ONE);
+}
+
+// Đổi ngược Q15 sang số thực.
+function q15ToFloat(q) {
+  return q / Q15_ONE;
+}
+
+// Bão hoà (saturate) về đúng phạm vi int16 — MCU thật KHÔNG cho tràn số âm
+// thầm quấn vòng (wrap-around) như số nguyên C thường, mà giữ nguyên tại
+// biên (saturating arithmetic), tránh tiếng "nổ" digital khi vượt phạm vi.
+function satQ15(x) {
+  return Math.max(-32768, Math.min(32767, x));
+}
+
+// Nhân 2 số Q15: tích của 2 số Q15 ra Q30 (gấp đôi số bit thập phân) — phải
+// dịch phải 15 bit ($\div 2^{15}$) để đưa VỀ LẠI Q15, rồi bão hoà. Đây chính
+// là `(a*b)>>15` nhắc trong Mục 14.3, viết bằng phép chia làm tròn (JS
+// không có toán tử dịch bit cho số lớn hơn 32-bit an toàn tuyệt đối).
+function q15Mul(a, b) {
+  return satQ15(Math.round((a * b) / Q15_ONE));
+}
+
+// Cộng 2 số Q15 kèm bão hoà.
+function q15Add(a, b) {
+  return satQ15(a + b);
+}
+
+// FIR chạy bằng số học Q15 mô phỏng (Mục 14.3/14.5): lượng tử hoá TAP về
+// Q15 một lần, lượng tử hoá TỪNG MẪU đầu vào, nhân-cộng-dồn (accumulate)
+// trong phạm vi số nguyên rộng (đúng tinh thần thanh ghi tích luỹ 32-bit
+// trên MCU thật), rồi bão hoà + đưa về Q15 ở cuối mỗi mẫu ra.
+function firQ15(x, hFloat) {
+  const hQ15 = hFloat.map(floatToQ15);
+  const y = new Array(x.length);
+  for (let n = 0; n < x.length; n++) {
+    let acc = 0;
+    for (let k = 0; k < hQ15.length; k++) {
+      if (n - k >= 0) acc += hQ15[k] * floatToQ15(x[n - k]);
+    }
+    y[n] = q15ToFloat(satQ15(Math.round(acc / Q15_ONE)));
+  }
+  return y;
+}
+
+// Biquad DF2T GIỮ trạng thái $z_1,z_2$ QUA ranh giới lời gọi (Mục 14.2):
+// nhận vào 1 object `state` (được SỬA TRỰC TIẾP — mang trạng thái sang lần
+// gọi kế), khác hẳn biquadDF2T() của Bài 11 vốn khởi tạo $z_1=z_2=0$ MỖI
+// LẦN gọi. Xử lý 1 tín hiệu dài theo TỪNG BLOCK bằng biquadDF2T() (SAI —
+// reset trạng thái mỗi block) tạo ra "click" tại mọi ranh giới block; dùng
+// đúng hàm này (state sống xuyên block) mới khớp TUYỆT ĐỐI với xử lý 1 lần
+// nguyên khối — verified bằng self-test Mục 14.2.
+function biquadDF2TBlock(x, coeffs, state) {
+  const { b0, b1, b2, a1, a2 } = coeffs;
+  let z1 = state.z1;
+  let z2 = state.z2;
+  const y = new Array(x.length);
+  for (let n = 0; n < x.length; n++) {
+    const xn = x[n];
+    const yn = b0 * xn + z1;
+    z1 = b1 * xn - a1 * yn + z2;
+    z2 = b2 * xn - a2 * yn;
+    y[n] = yn;
+  }
+  state.z1 = z1;
+  state.z2 = z2;
+  return y;
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -1102,6 +1190,13 @@ export {
   yinPitch,
   centsFromFreq,
   freqToNote,
+  floatToQ15,
+  q15ToFloat,
+  satQ15,
+  q15Mul,
+  q15Add,
+  firQ15,
+  biquadDF2TBlock,
 };
 
 // ---------------------------------------------------------------------------
@@ -2012,6 +2107,79 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     );
     const noteC4 = freqToNote(261.6255653);
     checkTrue('freqToNote(261,63Hz) = C4 (đúng nốt Đô giữa)', noteC4.note === 'C' && noteC4.octave === 4);
+  }
+
+  // --- Bài 14: Q15 fixed-point, block-processing state pitfall ---
+  {
+    checkTrue('floatToQ15(1,0) bão hoà về 32767 (Q15 KHÔNG biểu diễn được đúng +1)', floatToQ15(1.0) === 32767);
+    checkTrue('floatToQ15(-1,0) = -32768 (biên âm biểu diễn CHÍNH XÁC)', floatToQ15(-1.0) === -32768);
+    checkTrue('q15Mul(32767,32767) bão hoà đúng 32766 (KHÔNG tràn số/quấn vòng âm)', q15Mul(32767, 32767) === 32766);
+    checkTrue('q15Add(32767, 100) bão hoà về đúng 32767 (không tràn thành số âm)', q15Add(32767, 100) === 32767);
+
+    // Q15 FIR: SNR that so voi float, tren filter windowed-sinc (tap << 1, khong can lo doi Q15)
+    const fs14 = 48000;
+    const h14 = firLowpassDesign(41, 1000 / (fs14 / 2), hannWindow);
+    checkTrue(
+      'Tap FIR windowed-sinc luôn nhỏ hơn 1 (an toàn cho Q15, không cần lo tràn phạm vi)',
+      Math.max(...h14.map(Math.abs)) < 1
+    );
+    const N14 = 2000;
+    const xFir14 = Array.from({ length: N14 }, (_, n) => 0.5 * sine(n, 300, fs14, 1, 0));
+    const yFloatFir = convolve(xFir14, h14).slice(0, N14);
+    const yQ15Fir = firQ15(xFir14, h14);
+    let sp14 = 0;
+    let np14 = 0;
+    for (let i = 200; i < N14; i++) {
+      sp14 += yFloatFir[i] * yFloatFir[i];
+      const err = yFloatFir[i] - yQ15Fir[i];
+      np14 += err * err;
+    }
+    const snrDb14 = 10 * Math.log10(sp14 / np14);
+    checkTrue('Q15 FIR: SNR so với float trên 84dB (nhiễu lượng tử rất nhỏ, tai gần như không nghe ra)', snrDb14 > 80);
+
+    // Pitfall Muc 14.2: xu ly theo BLOCK dung ham GIU trang thai (biquadDF2TBlock)
+    // phai khop TUYET DOI voi xu ly nguyen khoi mot lan; dung SAI ham reset
+    // trang thai (biquadDF2T) moi block tao "click" tai RANH GIOI block.
+    const coeffs14 = biquadCoeffsRBJ('lowpass', 1000, fs14, 0.707, 0);
+    const xBlock14 = Array.from({ length: N14 }, (_, n) => 0.5 * sine(n, 300, fs14, 1, 0));
+    const yFull14 = biquadDF2TBlock(xBlock14, coeffs14, { z1: 0, z2: 0 });
+
+    const blockSize14 = 128;
+    const stateCorrect14 = { z1: 0, z2: 0 };
+    let yBlockCorrect14 = [];
+    for (let i = 0; i < N14; i += blockSize14) {
+      yBlockCorrect14 = yBlockCorrect14.concat(
+        biquadDF2TBlock(xBlock14.slice(i, i + blockSize14), coeffs14, stateCorrect14)
+      );
+    }
+    let maxDiffCorrect14 = 0;
+    for (let i = 0; i < N14; i++)
+      maxDiffCorrect14 = Math.max(maxDiffCorrect14, Math.abs(yFull14[i] - yBlockCorrect14[i]));
+    checkTrue(
+      'biquadDF2TBlock() với state GIỮ qua block: khớp TUYỆT ĐỐI xử lý nguyên khối 1 lần (diff = 0)',
+      maxDiffCorrect14 < 1e-12
+    );
+
+    let yBlockBuggy14 = [];
+    for (let i = 0; i < N14; i += blockSize14) {
+      yBlockBuggy14 = yBlockBuggy14.concat(biquadDF2T(xBlock14.slice(i, i + blockSize14), coeffs14));
+    }
+    let maxBoundaryJumpBuggy = 0;
+    for (let i = blockSize14; i < N14; i += blockSize14) {
+      maxBoundaryJumpBuggy = Math.max(maxBoundaryJumpBuggy, Math.abs(yBlockBuggy14[i] - yBlockBuggy14[i - 1]));
+    }
+    let maxInteriorJumpCorrect = 0;
+    for (let i = 1; i < N14; i++) {
+      if (i % blockSize14 !== 0)
+        maxInteriorJumpCorrect = Math.max(
+          maxInteriorJumpCorrect,
+          Math.abs(yBlockCorrect14[i] - yBlockCorrect14[i - 1])
+        );
+    }
+    checkTrue(
+      'Pitfall: dùng SAI biquadDF2T() (reset state) mỗi block tạo bước nhảy tại ranh giới LỚN HƠN NHIỀU so với bước nhảy bình thường (click nghe được)',
+      maxBoundaryJumpBuggy > 10 * maxInteriorJumpCorrect
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');

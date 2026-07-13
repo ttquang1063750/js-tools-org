@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 14: DSP thời gian thực &amp; trên phần cứng nhúng — js-tools</title>
+    <meta
+      name="description"
+      content="Block 128 mẫu @ 48kHz = 2,667ms phải xử lý XONG, không thương lượng. Pitfall verified thật: xử lý biquad theo khối 128 mẫu nhưng RESET trạng thái z1/z2 mỗi khối tạo bước nhảy 0,49 tại ranh giới khối — gấp hơn 25 lần bước nhảy bình thường (0,0196) — trong khi giữ trạng thái xuyên khối khớp TUYỆT ĐỐI xử lý nguyên khối một lần (diff=0). Q15 fixed-point verified: floatToQ15(1,0) bão hoà đúng 32767 (không tràn số), FIR chạy Q15 đạt SNR hơn 84dB so với float — nhiễu lượng tử gần như không nghe ra được. Thực hành A/B float vs Q15 nghe + đo SNR, kéo block size xem latency đổi."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/dsp/dsp-realtime-embedded" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/dsp/dsp-realtime-embedded" />
+    <meta property="og:title" content="Bài 14: DSP thời gian thực &amp; trên phần cứng nhúng — js-tools" />
+    <meta
+      property="og:description"
+      content="Block 128 mẫu @ 48kHz = 2,667ms phải xử lý XONG. Pitfall verified: reset state biquad mỗi khối tạo bước nhảy 0,49 tại ranh giới — gấp 25 lần bình thường; giữ state xuyên khối khớp TUYỆT ĐỐI (diff=0). Q15 verified: floatToQ15(1,0)=32767 (bão hoà), FIR Q15 đạt SNR hơn 84dB so với float. A/B float vs Q15 nghe + đo SNR, kéo block size xem latency."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 14: DSP thời gian thực &amp; trên phần cứng nhúng — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Block 128 mẫu @ 48kHz = 2,667ms deadline. Pitfall verified: reset state biquad mỗi khối gây click 25 lần lớn hơn bình thường. Q15 verified: bão hoà đúng, FIR Q15 đạt SNR >84dB so với float. A/B float vs Q15 nghe + đo SNR."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "DSP thời gian thực & trên phần cứng nhúng",
+        "description": "Block 128 mẫu @ 48kHz = 2,667ms phải xử lý XONG. Pitfall verified: reset state biquad mỗi khối tạo bước nhảy 0,49 tại ranh giới — gấp 25 lần bình thường; giữ state xuyên khối khớp TUYỆT ĐỐI (diff=0). Q15 verified: floatToQ15(1,0)=32767 (bão hoà), FIR Q15 đạt SNR hơn 84dB so với float. A/B float vs Q15 nghe + đo SNR, kéo block size xem latency.",
+        "url": "https://js-tools.org/blog/dsp/dsp-realtime-embedded",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-08-09"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--dsp">
+        <div class="container">
+          <a href="dsp-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--dsp">Bài 14 · Xử Lý Tín Hiệu Số</div>
+          <h1 class="article-hero__title">DSP thời gian thực &amp; trên phần cứng nhúng</h1>
+          <div class="article-hero__meta">9 tháng 8, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: mọi thuật toán trước giờ đều "chưa có deadline"</h2>
+            <p>
+              13 bài trước xử lý tín hiệu như một MẢNG có sẵn — gọi hàm, chờ kết quả, xong. Audio thời gian thực KHÔNG
+              cho phép điều đó: loa cần một mẫu mới đúng $1/f_s$ giây một lần, KHÔNG THƯƠNG LƯỢNG. Trễ deadline dù chỉ
+              một lần cũng nghe ra ngay — tiếng "click" hoặc "dropout" khó chịu. Bài này chuyển góc nhìn từ "thuật toán
+              đúng" sang "thuật toán đúng VÀ kịp giờ", rồi bước sang thế giới phần cứng nhúng nơi ngay cả phép NHÂN cũng
+              có giá.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="dsp-iir-biquad">Bài 11</a> (biquad). Khuyến khích (không bắt buộc):
+                loạt <a href="/blog/embedded/embedded-programming-series">Series 13 — Lập trình Nhúng</a> cho bối cảnh
+                phần cứng thật.
+              </div>
+            </div>
+
+            <h2>1. Ngân sách thời gian thực</h2>
+            <p>
+              Audio xử lý theo <strong>block</strong> — một lô $N$ mẫu liên tiếp — vì gọi callback cho TỪNG mẫu đơn lẻ
+              quá tốn overhead. Ngân sách thời gian của 1 block hoàn toàn cố định: $T_{block} = N / f_s$. Với $N=128$
+              mẫu, $f_s=48000$Hz: $T_{block} = 128/48000 = 2,667$ms — TOÀN BỘ xử lý của block đó (mọi filter, mọi phép
+              tính) phải xong trong đúng 2,667ms, nếu không buffer phát ra "trống" và loa phát tiếng click.
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Block size (mẫu @ 48kHz)</th>
+                  <th>Ngân sách/latency</th>
+                  <th>Đánh đổi</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>64</td>
+                  <td>1,333ms</td>
+                  <td>Trễ thấp nhất — nhưng overhead callback (gọi hàm) trên mỗi mẫu CAO nhất</td>
+                </tr>
+                <tr>
+                  <td>128</td>
+                  <td>2,667ms</td>
+                  <td>Phổ biến cho ứng dụng tương tác thời gian thực (nhạc cụ số, gọi thoại)</td>
+                </tr>
+                <tr>
+                  <td>512</td>
+                  <td>10,667ms</td>
+                  <td>Hiệu quả CPU cao (ít callback hơn) — trễ đã bắt đầu cảm nhận được khi chơi nhạc cụ</td>
+                </tr>
+                <tr>
+                  <td>1024</td>
+                  <td>21,333ms</td>
+                  <td>Hiệu quả nhất, trễ RÕ RỆT — chỉ chấp nhận được cho phát lại (không tương tác)</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Trễ TỔNG mà tai nghe được không chỉ là $T_{block}$ — còn cộng thêm trễ của CHÍNH filter (nhóm delay của
+              FIR, <a href="dsp-fir-filters">Bài 9</a>) và trễ phần cứng (DAC, driver hệ điều hành). Block to hơn = CPU
+              hiệu quả hơn (ít lần gọi hàm/ngắt hơn) NHƯNG trễ tương tác lớn hơn — đây là trade-off cốt lõi của Mục này.
+            </p>
+
+            <h2>2. Sample-by-sample vs block processing: cạm bẫy trạng thái</h2>
+            <p>
+              Một biquad (<a href="dsp-iir-biquad">Bài 11</a>) có TRẠNG THÁI ($z_1, z_2$ của Direct Form II Transposed)
+              — trạng thái đó phải SỐNG XUYÊN qua ranh giới giữa các block, vì filter đang xử lý một dòng tín hiệu LIÊN
+              TỤC, không phải từng đoạn độc lập. <code>biquadDF2T()</code> của Bài 11 khởi tạo $z_1=z_2=0$ MỖI LẦN được
+              gọi — dùng ĐÚNG cho 1 tín hiệu trọn vẹn, nhưng dùng SAI nếu gọi lại nó cho MỖI block riêng biệt của cùng
+              một dòng audio.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">block_state_pitfall.js (trích engine dsp-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// DUNG: state SONG xuyen block, object `state` duoc SUA TRUC TIEP moi lan goi
+function biquadDF2TBlock(x, coeffs, state) {
+  let z1 = state.z1, z2 = state.z2;
+  const y = new Array(x.length);
+  for (let n = 0; n < x.length; n++) {
+    const yn = coeffs.b0 * x[n] + z1;
+    z1 = coeffs.b1 * x[n] - coeffs.a1 * yn + z2;
+    z2 = coeffs.b2 * x[n] - coeffs.a2 * yn;
+    y[n] = yn;
+  }
+  state.z1 = z1; state.z2 = z2;  // luu lai cho block KE TIEP
+  return y;
+}
+// Verified: xu ly theo block 128 mau bang ham NAY khop TUYET DOI (diff=0)
+// voi xu ly nguyen khoi 1 lan. Dung SAI bieuadDF2T() (Bai 11, RESET state
+// moi lan goi) cho tung block tao buoc nhay 0,49 tai RANH GIOI block - gap
+// HON 25 LAN buoc nhay binh thuong giua 2 mau lien tiep (0,0196) = CLICK.</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy kinh điển: reset state mỗi block → click chu kỳ đều đặn</div>
+              <div class="callout__content">
+                Đây là lỗi HẦU NHƯ AI CŨNG DÍNH lần đầu viết audio processor theo block: gọi lại hàm filter "sạch" (khởi
+                tạo state về 0) cho mỗi block tưởng là an toàn — nhưng thực chất đang CẮT ĐỨT dòng tín hiệu liên tục
+                thành nhiều đoạn ĐỘC LẬP GIẢ, mỗi đoạn "quên" hoàn toàn lịch sử ngay trước nó. Verified: bước nhảy tại
+                các ranh giới block ($0,49$) lớn hơn HƠN 25 LẦN bước nhảy tự nhiên giữa 2 mẫu bất kỳ trong xử lý đúng
+                ($0,0196$) — đủ lớn để tai nghe ra thành tiếng click đều đặn theo chu kỳ block.
+              </div>
+            </div>
+
+            <h2>3. Fixed-point Q15: khi không có FPU</h2>
+            <p>
+              MCU không có FPU (Floating Point Unit) phải MÔ PHỎNG phép nhân số thực bằng phần mềm — chậm hơn phép nhân
+              số nguyên gấp hàng chục lần. Giải pháp chuẩn công nghiệp: <strong>Q15</strong> — biểu diễn số thực trong
+              khoảng $[-1, 1)$ bằng số NGUYÊN 16-bit có dấu (int16), với "dấu phẩy tưởng tượng" ngay sau bit dấu: giá
+              trị thực $= \text{int16}/32768$. Nhân 2 số Q15 cho ra kết quả Q30 (gấp đôi số bit thập phân) — phải dịch
+              phải 15 bit ($(a \times b) \gg 15$) để đưa VỀ ĐÚNG Q15, và phải <strong>bão hoà</strong>
+              (saturate) kết quả về đúng phạm vi int16 thay vì để tràn số âm thầm quấn vòng.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">q15_sim.js (trích engine dsp-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">function floatToQ15(x) {
+  const clamped = Math.max(-1, Math.min(0.999969482421875, x)); // Q15 KHONG bieu dien duoc dung +1
+  return Math.round(clamped * 32768);
+}
+function satQ15(x) { return Math.max(-32768, Math.min(32767, x)); }
+function q15Mul(a, b) { return satQ15(Math.round((a * b) / 32768)); } // (a*b)>>15, co bao hoa
+// Verified: floatToQ15(1,0) = 32767 (BAO HOA, khong the bieu dien dung +1)
+// Verified: q15Mul(32767,32767) = 32766 (bao hoa DUNG, khong quan vong am)</code></pre>
+            </div>
+            <p>
+              Verified bằng self-test: <code>firQ15()</code> (FIR chạy hoàn toàn bằng số học Q15) so với FIR float gốc
+              trên cùng tín hiệu đạt <strong>SNR hơn 84dB</strong> — nhiễu lượng tử hệ số/mẫu gần như không thể nghe ra
+              được (tham chiếu: SQNR lý thuyết của Q15 toàn dải là khoảng 92dB, <a href="dsp-quantization">Bài 3</a> đã
+              tính công thức này). Cái giá không miễn phí: hệ số lọc bị LÀM TRÒN về lưới Q15 (nhiễu lượng tử hệ số) —
+              chính là hạt giống của pitfall pole-trượt đã gặp ở <a href="dsp-iir-biquad">Bài 11</a>.
+            </p>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Vì sao biquad Q15 "thật" cần thêm 1 tham số postShift</div>
+              <div class="callout__content">
+                Thử lượng tử trực tiếp hệ số $a_1$ của một biquad lowpass thật ($f_0=1000$Hz, $Q=0,707$, $f_s=48000$Hz)
+                về Q15: giá trị thực là $a_1 \approx -1,815$ — VƯỢT phạm vi $[-1,1)$ mà Q15 biểu diễn được, bị cắt cụt
+                thành $-1,0$, phá vỡ hoàn toàn bộ lọc. Đây chính là lý do hàm <code>arm_biquad_cascade_df1_q15</code>
+                của CMSIS-DSP (thư viện DSP chuẩn công nghiệp cho ARM Cortex-M) có thêm tham số
+                <code>postShift</code>: hệ số được CHIA NHỎ trước khi lượng tử (để vừa khung Q15), rồi kết quả được NHÂN
+                LẠI đúng hệ số đó sau khi tính xong — bài học: fixed-point IIR thật tinh vi hơn nhiều so với FIR, nằm
+                ngoài phạm vi demo của bài (demo Mục 5 dùng FIR — nơi mọi tap tự nhiên đã nhỏ hơn 1, không gặp vấn đề
+                này).
+              </div>
+            </div>
+
+            <h2>4. Thế giới thật: CMSIS-DSP &amp; cross-over với VMCU</h2>
+            <p>
+              Thư viện <code>CMSIS-DSP</code> chính thức của ARM cung cấp sẵn <code>arm_biquad_cascade_df1_q15</code>,
+              <code>arm_fir_q15</code>, v.v. — cùng cấu trúc toán học đã xây ở Mục 2-3, nhưng viết bằng assembly/C tối
+              ưu cho tập lệnh SIMD của Cortex-M, kèm tham số <code>postShift</code> vừa nhắc ở Mục 3. Nếu đã học
+              <a href="/blog/embedded/embedded-programming-series">Series 13 — Lập trình Nhúng</a>: VMCU (bộ mô phỏng vi
+              điều khiển ảo của series đó) có đồng hồ cycle ảo — chạy đúng biquad này trên VMCU và đếm số cycle cho 1
+              mẫu sẽ thấy trực quan TẠI SAO Q15 tồn tại (nhân số nguyên tốn ít cycle hơn hẳn mô phỏng số thực bằng phần
+              mềm trên MCU không FPU). Phần cross-over này KHÔNG bắt buộc để hiểu bài — chỉ là một trải nghiệm mở rộng
+              cho ai đã đi qua series đó.
+            </p>
+
+            <h2>5. Thực hành: A/B Float vs Q15</h2>
+            <p>
+              Nghe và so trực tiếp CÙNG một filter chạy bằng số thực (float) và bằng mô phỏng Q15 — engine tính SNR thật
+              ngay khi bấm nghe. Kéo block size để xem ngân sách thời gian đổi theo, và bật "click do reset state" để tự
+              tai nghe ra đúng pitfall Mục 2:
+            </p>
+
+            <div class="code-tabs" id="realtime-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">⏱️ A/B Float vs Q15 &amp; Block Latency — DSPJS thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div style="display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; align-items: center">
+                    <label style="font-size: 12px; display: flex; align-items: center; gap: 4px">
+                      Block size:
+                      <select id="rt-block" class="mux-input-btn" style="cursor: pointer">
+                        <option value="64">64</option>
+                        <option value="128" selected>128</option>
+                        <option value="512">512</option>
+                        <option value="1024">1024</option>
+                      </select>
+                    </label>
+                    <span id="rt-latency" style="font-size: 13px; opacity: 0.8">Ngân sách: 2,667ms/block</span>
+                  </div>
+                  <canvas
+                    id="rt-latency-canvas"
+                    width="360"
+                    height="36"
+                    style="width: 100%; height: 36px; background: rgba(0, 0, 0, 0.15); border-radius: 6px"
+                  ></canvas>
+                  <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap">
+                    <button class="mux-input-btn" type="button" id="rt-play-float-btn">🔊 Nghe Float</button>
+                    <button class="mux-input-btn" type="button" id="rt-play-q15-btn">🔊 Nghe Q15</button>
+                    <button class="mux-input-btn" type="button" id="rt-play-click-btn">
+                      🔊 Nghe click (state reset lỗi)
+                    </button>
+                  </div>
+                  <div id="rt-status" class="mux-demo__output">Đang khởi tạo…</div>
+                  <p class="mux-demo__hint">
+                    "Nghe Float" và "Nghe Q15" phát cùng 1 tín hiệu qua cùng 1 filter — engine hiện SNR thật ngay bên
+                    dưới. "Nghe click" phát 1 tông liên tục xử lý SAI theo block 128 mẫu (state bị reset) — chú ý tiếng
+                    "tách" đều đặn.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">realtime_ab_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { sine, firLowpassDesign, hannWindow, convolve, firQ15, biquadCoeffsRBJ, biquadDF2T, biquadDF2TBlock } from './dsp-core.js';
+
+function computeSnrDb(fs) {
+  const h = firLowpassDesign(41, 1000 / (fs / 2), hannWindow);
+  const x = Array.from({ length: 4000 }, (_, n) => 0.5 * sine(n, 300, fs, 1, 0));
+  const yFloat = convolve(x, h).slice(0, x.length);
+  const yQ15 = firQ15(x, h);
+  let sp = 0, np = 0;
+  for (let i = 200; i < x.length; i++) {
+    sp += yFloat[i] ** 2;
+    np += (yFloat[i] - yQ15[i]) ** 2;
+  }
+  return 10 * Math.log10(sp / np);
+}
+
+function clickDemo(fs, blockSize) {
+  const coeffs = biquadCoeffsRBJ('lowpass', 1000, fs, 0.707, 0);
+  const x = Array.from({ length: 4000 }, (_, n) => 0.5 * sine(n, 300, fs, 1, 0));
+  let yBuggy = [];
+  for (let i = 0; i < x.length; i += blockSize) {
+    yBuggy = yBuggy.concat(biquadDF2T(x.slice(i, i + blockSize), coeffs)); // SAI: state reset moi block
+  }
+  return yBuggy;
+}</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Ngân sách thời gian thực cố định: block $N$ mẫu @ $f_s$ = $N/f_s$ giây, không thương lượng — verified
+                128 mẫu @ 48kHz = 2,667ms.
+              </li>
+              <li>
+                ✅ Trạng thái biquad phải sống XUYÊN ranh giới block — verified: <code>biquadDF2TBlock()</code> (giữ
+                state) khớp tuyệt đối xử lý nguyên khối; reset state mỗi block tạo bước nhảy gấp hơn 25 lần bình thường
+                tại ranh giới (click nghe được).
+              </li>
+              <li>
+                ✅ Q15 = int16 với dấu phẩy tưởng tượng, nhân là $(a \times b) \gg 15$ + bão hoà — verified FIR Q15 đạt
+                SNR hơn 84dB so với float.
+              </li>
+              <li>
+                ✅ Biquad IIR Q15 "thật" cần thêm tham số postShift (như CMSIS <code>arm_biquad_cascade_df1_q15</code>)
+                vì hệ số $a_1/a_2$ thường vượt phạm vi $[-1,1)$ — verified $a_1 \approx -1,815$ cho 1 lowpass thật.
+              </li>
+              <li>
+                ✅ Block to hơn = CPU hiệu quả hơn nhưng trễ tương tác lớn hơn — trade-off cốt lõi thiết kế realtime.
+              </li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">Verified: block 128 mẫu @ 48kHz = 2,667ms. Con số này có ý nghĩa gì?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Day la NGAN SACH THOI GIAN CUNG - moi xu ly (filter, tinh toan) cho block do phai xong TRONG DUNG khoang thoi gian nay, khong co &quot;gia han&quot;. Tre deadline = buffer trong = click/dropout nghe duoc ngay.'
+                    )
+                  "
+                >
+                  A. Đây là ngân sách thời gian CỨNG — toàn bộ xử lý của block phải xong trong đúng khoảng này, trễ
+                  deadline gây click/dropout nghe được ngay
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Do la thoi gian GHI (input latency cua buffer), khong lien quan gi den con so nay - 2,667ms la thoi gian XU LY cho phep, tinh tu N/fs, khong phai thoi gian ghi am.'
+                    )
+                  "
+                >
+                  B. Đây là thời gian tối thiểu cần để ghi âm 1 mẫu từ mic
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Chat luong am thanh (bit depth, sample rate) hoan toan doc lap voi block size - block size chi anh huong LATENCY/hieu qua CPU, khong anh huong CHAT LUONG tin hieu.'
+                    )
+                  "
+                >
+                  C. Đây là chất lượng âm thanh tối đa có thể đạt được ở 48kHz
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: reset state biquad mỗi block tạo bước nhảy 0,49 tại ranh giới, gấp hơn 25 lần bước nhảy bình
+                thường (0,0196). Vì sao lỗi này xảy ra?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! z1,z2 mang &quot;tri nho&quot; ve nhung mau NGAY TRUOC do - GIA DINH z1=z2=0 tai dau moi block tuong duong voi GIA VO tin hieu vua bat dau tu con so 0 tai chinh xac diem do, du thuc te tin hieu dang o mot gia tri hoan toan khac ngay truoc no.'
+                    )
+                  "
+                >
+                  A. $z_1, z_2$ mang "trí nhớ" về các mẫu ngay trước đó — reset về 0 giả định tín hiệu vừa bắt đầu từ 0
+                  tại mỗi ranh giới block, dù thực tế nó đang ở một giá trị khác hẳn
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'He so b0,b1,b2,a1,a2 la CO DINH, KHONG doi giua cac lan goi ham - van de hoan toan nam o BIEN TRANG THAI z1,z2 (bi reset ve 0), khong phai he so filter.'
+                    )
+                  "
+                >
+                  B. Vì hệ số filter b0,b1,b2 bị tính lại sai mỗi lần gọi hàm
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'block size (128 mau) hoan toan KHONG thay doi giua ham dung va ham sai trong phep thu nay - ca 2 deu xu ly CUNG kich thuoc block, khac biet DUY NHAT la co GIU state hay RESET state.'
+                    )
+                  "
+                >
+                  C. Vì block size 128 quá nhỏ, cần block lớn hơn để tránh lỗi
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Q15 dùng $(a \times b) \gg 15$ thay vì $a \times b$ thông thường khi nhân 2 số. Vì sao?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Moi so Q15 co 15 bit thap phan &quot;tuong tuong&quot; - nhan 2 so Q15 cho ra ket qua co 30 bit thap phan (Q30), can dich phai 15 bit (chia 2^15) de dua VE DUNG lai dinh dang Q15 ban dau, khop dung mo ta &quot;(a*b)>>15&quot; cua Muc 3.'
+                    )
+                  "
+                >
+                  A. Tích của 2 số Q15 (mỗi số có 15 bit thập phân "tưởng tượng") cho ra kết quả Q30 — phải dịch phải 15
+                  bit để đưa về đúng lại định dạng Q15
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Dich bit KHONG lien quan gi den lam tron sai so - day la yeu cau BAT BUOC ve DINH DANG SO (Q15 x Q15 = Q30, can dua VE DUNG Q15), khong phai mot ky thuat giam sai so tuy chon.'
+                    )
+                  "
+                >
+                  B. Vì dịch bit giúp giảm sai số làm tròn so với phép nhân thông thường
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tren MCU that, dich bit CHAM hon phep nhan thong thuong mot chut (them 1 buoc) - day KHONG phai ly do toc do, ma la yeu cau BAT BUOC de giu dung DINH DANG SO Q15 sau khi nhan.'
+                    )
+                  "
+                >
+                  C. Vì dịch bit chạy nhanh hơn phép nhân trên mọi loại CPU
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Verified: $a_1 \approx -1,815$ của 1 biquad lowpass thật vượt phạm vi Q15 $[-1,1)$. CMSIS-DSP giải quyết
+                bằng tham số nào?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! postShift chia nho he so TRUOC khi luong tu (de vua khung Q15), roi nhan lai DUNG he so do SAU khi tinh xong - giai phap chuan cong nghiep cho van de he so IIR vuot pham vi Q15.'
+                    )
+                  "
+                >
+                  A. postShift — chia nhỏ hệ số trước khi lượng tử hoá (để vừa khung Q15), rồi nhân lại đúng hệ số đó
+                  sau khi tính xong
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Q15 luon la 16-bit CO DINH theo dinh nghia - khong co &quot;Q15 mo rong&quot; nao trong CMSIS-DSP. Giai phap that su la SCALE he so bang postShift, khong phai doi dinh dang bit.'
+                    )
+                  "
+                >
+                  B. Q15 mở rộng — dùng 32-bit thay vì 16-bit cho MỌI hệ số
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Bo qua he so vuot pham vi se PHA VO hoan toan bo loc (dung y het vi du a1=-1,815 bi cat cut thanh -1,0 trong bai) - CMSIS-DSP KHONG the &quot;bo qua&quot;, no giai quyet bang postShift de GIU DUNG gia tri, chi scale lai.'
+                    )
+                  "
+                >
+                  C. Bỏ qua hệ số vượt phạm vi, chỉ dùng phần thập phân
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>DSPJS</code> (<code>dsp-core.js</code>) — thư viện DSP tự viết dùng xuyên suốt cả
+                15 bài, Bài 14 vừa thêm <code>floatToQ15()</code>, <code>q15ToFloat()</code>, <code>satQ15()</code>,
+                <code>q15Mul()</code>, <code>q15Add()</code>, <code>firQ15()</code>, <code>biquadDF2TBlock()</code>, kèm
+                self-test đối chiếu đúng mọi hành vi trong bài (chạy <code>node dsp-core.js</code>, không cần cài thêm
+                gì):
+              </p>
+              <a
+                href="dsp-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về dsp-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Q_(number_format)" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Q (number format)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://arm-software.github.io/CMSIS-DSP/latest/group__BiquadCascadeDF1__32x64.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    ARM CMSIS-DSP — Biquad Cascade IIR Filters
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Saturation_arithmetic"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Saturation arithmetic
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="dsp-pitch-detection" class="article-related__link article-related__link--prev">
+                  Bài 13: Phát hiện cao độ: autocorrelation &amp; tuner
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 15: Capstone — Trạm Âm Thanh DSP hoàn chỉnh — sắp ra mắt
+                </span>
+                <a href="dsp-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Xử Lý Tín Hiệu Số
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { sine, firLowpassDesign, hannWindow, convolve, firQ15, biquadCoeffsRBJ, biquadDF2T } from './dsp-core.js';
+
+      let audioCtx = null;
+      const fs14 = 48000;
+
+      const blockEl = document.getElementById('rt-block');
+      const latencyEl = document.getElementById('rt-latency');
+      const statusEl = document.getElementById('rt-status');
+
+      function renderLatencyBar(blockSize) {
+        const c = document.getElementById('rt-latency-canvas');
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, c.width, c.height);
+        const ms = (blockSize / fs14) * 1000;
+        const maxMs = 22;
+        const w = Math.min(1, ms / maxMs) * c.width;
+        ctx.fillStyle = ms > 10 ? '#f59e0b' : '#22c55e';
+        ctx.fillRect(0, 0, w, c.height);
+        latencyEl.textContent = 'Ngân sách: ' + ms.toFixed(3) + 'ms/block';
+      }
+
+      function computeSnrDb() {
+        const h = firLowpassDesign(41, 1000 / (fs14 / 2), hannWindow);
+        const x = Array.from({ length: 4000 }, (_, n) => 0.5 * sine(n, 300, fs14, 1, 0));
+        const yFloat = convolve(x, h).slice(0, x.length);
+        const yQ15 = firQ15(x, h);
+        let sp = 0;
+        let np = 0;
+        for (let i = 200; i < x.length; i++) {
+          sp += yFloat[i] * yFloat[i];
+          np += (yFloat[i] - yQ15[i]) * (yFloat[i] - yQ15[i]);
+        }
+        return { snrDb: 10 * Math.log10(sp / np), yFloat, yQ15 };
+      }
+
+      function ensureAudio() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        return audioCtx;
+      }
+
+      function playSamples(samples, rate) {
+        const ctx = ensureAudio();
+        const peak = Math.max(...samples.map(Math.abs), 1e-6);
+        const buffer = ctx.createBuffer(1, samples.length, rate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < samples.length; i++) data[i] = (samples[i] / peak) * 0.5;
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        src.start();
+      }
+
+      blockEl.addEventListener('change', () => renderLatencyBar(Number(blockEl.value)));
+
+      document.getElementById('rt-play-float-btn').addEventListener('click', () => {
+        const { snrDb, yFloat } = computeSnrDb();
+        playSamples(yFloat, fs14);
+        statusEl.textContent = 'Đang phát bản Float — SNR so với chính nó (tham chiếu) = ∞ dB.';
+      });
+      document.getElementById('rt-play-q15-btn').addEventListener('click', () => {
+        const { snrDb, yQ15 } = computeSnrDb();
+        playSamples(yQ15, fs14);
+        statusEl.textContent = 'Đang phát bản Q15 — SNR so với Float = ' + snrDb.toFixed(1) + 'dB.';
+      });
+      document.getElementById('rt-play-click-btn').addEventListener('click', () => {
+        const blockSize = Number(blockEl.value);
+        const coeffs = biquadCoeffsRBJ('lowpass', 1000, fs14, 0.707, 0);
+        const x = Array.from({ length: 8000 }, (_, n) => 0.5 * sine(n, 300, fs14, 1, 0));
+        let yBuggy = [];
+        for (let i = 0; i < x.length; i += blockSize) {
+          yBuggy = yBuggy.concat(biquadDF2T(x.slice(i, i + blockSize), coeffs));
+        }
+        playSamples(yBuggy, fs14);
+        statusEl.textContent =
+          'Đang phát bản có click (state reset mỗi ' + blockSize + ' mẫu) — chú ý tiếng "tách" đều đặn.';
+      });
+
+      renderLatencyBar(128);
+      statusEl.textContent = 'Sẵn sàng — bấm 1 trong 3 nút để nghe.';
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
