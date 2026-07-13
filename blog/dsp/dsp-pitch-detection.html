@@ -1,0 +1,997 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 13: Phát hiện cao độ — autocorrelation &amp; tuner — js-tools</title>
+    <meta
+      name="description"
+      content="Đỉnh FFT to nhất KHÔNG phải cao độ — verified: tín hiệu CHỈ có hài bậc 2,3,4 (hài bậc 1 vắng mặt hoàn toàn — hiện tượng 'missing fundamental') vẫn cho autocorrFFT() phục hồi ĐÚNG chu kỳ hài bậc 1 (tau=53 mẫu, khớp period=53,33). YIN verified: nội suy parabol đưa sai số tần số xuống dưới 1 cent so với f0 thật, tai người không nghe ra được. Pitfall octave error verified thật: chọn cực tiểu TOÀN CỤC của CMND (cách ngây thơ) rơi vào tau=160 SAI (f≈50Hz), trong khi YIN (ngưỡng tuyệt đối, chọn điểm trũng ĐẦU TIÊN) đúng tau=53. Thực hành Guitar/Voice Tuner chạy mic thật, kim chỉ nốt + độ lệch cent realtime."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/dsp/dsp-pitch-detection" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/dsp/dsp-pitch-detection" />
+    <meta property="og:title" content="Bài 13: Phát hiện cao độ — autocorrelation &amp; tuner — js-tools" />
+    <meta
+      property="og:description"
+      content="Đỉnh FFT to nhất KHÔNG phải cao độ — verified: tín hiệu chỉ có hài bậc 2,3,4 (missing fundamental) vẫn cho autocorrFFT() phục hồi đúng chu kỳ hài bậc 1. YIN verified sai số dưới 1 cent sau nội suy parabol. Pitfall octave error verified: cực tiểu toàn cục CMND chọn SAI tau=160, YIN (ngưỡng + điểm trũng đầu tiên) chọn ĐÚNG tau=53. Guitar/Voice Tuner chạy mic thật, kim chỉ nốt realtime."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 13: Phát hiện cao độ — autocorrelation &amp; tuner — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Đỉnh FFT to nhất KHÔNG phải cao độ. Verified: missing fundamental, autocorrelation qua FFT vẫn phục hồi đúng chu kỳ. YIN sai số dưới 1 cent. Pitfall octave error verified thật: cực tiểu toàn cục CMND sai, YIN đúng. Guitar/Voice Tuner mic thật realtime."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../prism.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Phát hiện cao độ: autocorrelation & tuner",
+        "description": "Đỉnh FFT to nhất KHÔNG phải cao độ — verified: tín hiệu chỉ có hài bậc 2,3,4 (missing fundamental) vẫn cho autocorrFFT() phục hồi đúng chu kỳ hài bậc 1. YIN verified sai số dưới 1 cent sau nội suy parabol. Pitfall octave error verified: cực tiểu toàn cục CMND chọn SAI tau=160, YIN (ngưỡng + điểm trũng đầu tiên) chọn ĐÚNG tau=53. Guitar/Voice Tuner chạy mic thật, kim chỉ nốt realtime.",
+        "url": "https://js-tools.org/blog/dsp/dsp-pitch-detection",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-08-08"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--dsp">
+        <div class="container">
+          <a href="dsp-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--dsp">Bài 13 · Xử Lý Tín Hiệu Số</div>
+          <h1 class="article-hero__title">Phát hiện cao độ: autocorrelation &amp; tuner</h1>
+          <div class="article-hero__meta">8 tháng 8, 2026 · 23 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: cao độ không sống trong miền tần số</h2>
+            <p>
+              Suốt <a href="dsp-fft">Bài 6</a> tới <a href="dsp-iir-biquad">Bài 11</a>, cách đọc một tín hiệu là nhìn
+              phổ — FFT ra một loạt đỉnh, đỉnh cao nhất "chắc chắn" là điều quan trọng nhất. Với cao độ (pitch) của một
+              nốt nhạc hay giọng hát, trực giác này SAI: nhạc cụ thật không phát ra một tần số đơn — chúng phát ra cả
+              một CHỒNG HÀI (harmonics), và đỉnh FFT to nhất có thể là hài bậc 2 hay bậc 3, không phải tần số cơ bản
+              (fundamental) mà tai người thực sự nghe thành "nốt".
+            </p>
+            <p>
+              Bài này quay lại miền THỜI GIAN để định nghĩa cao độ đúng bản chất: <strong>chu kỳ lặp</strong> của dạng
+              sóng. Công cụ chính — <strong>autocorrelation</strong> — hoá ra lại tính nhanh nhất bằng chính FFT (
+              <a href="dsp-fft">Bài 6</a> trả cổ tức lần 2), rồi được vá lỗi bằng thuật toán <strong>YIN</strong> nổi
+              tiếng trong xử lý tiếng nói/âm nhạc. Kết quả là một cái tuner thật, chạy bằng mic thật.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                <strong>Bắt buộc:</strong> <a href="dsp-lti-convolution">Bài 4</a> (correlation),
+                <a href="dsp-fft">Bài 6</a> (FFT), <a href="dsp-stft-spectrogram">Bài 8</a> (xử lý theo khung realtime).
+              </div>
+            </div>
+
+            <h2>1. Pitch không phải đỉnh FFT to nhất</h2>
+            <p>
+              Một nốt nhạc cụ thật là tổng của tần số cơ bản $f_0$ cộng CHUỖI hài $2f_0, 3f_0, 4f_0, \ldots$ — mỗi nhạc
+              cụ có một "vân tay" biên độ hài riêng (đàn guitar khác kèn khác giọng người), và HOÀN TOÀN có thể xảy ra
+              hài bậc 2 hoặc 3 to hơn hài bậc 1. Hiện tượng cực đoan nhất gọi là
+              <strong>missing fundamental</strong> — tần số cơ bản VẮNG MẶT HOÀN TOÀN khỏi tín hiệu (bị lọc mất, hay loa
+              nhỏ không phát nổi tần số thấp) nhưng tai vẫn nghe ra đúng nốt trầm đó, vì bộ não tái tạo chu kỳ từ khoảng
+              cách đều đặn giữa các hài còn lại.
+            </p>
+            <p>
+              Verified bằng chính hiện tượng này: dựng 1 tín hiệu CHỈ gồm hài bậc 2, 3, 4 của $f_0=150$Hz — không hề có
+              thành phần 150Hz nào trong tín hiệu — rồi chạy <code>autocorrFFT()</code>. Kết quả: đỉnh tự tương quan tại
+              $\tau=53$ mẫu, khớp CHÍNH XÁC $f_s/f_0 = 8000/150 \approx 53,33$ mẫu — công cụ phục hồi ĐÚNG chu kỳ của
+              một tần số KHÔNG TỒN TẠI trong tín hiệu, vì cao độ là thuộc tính của CHU KỲ, không phải của một đỉnh phổ
+              đơn lẻ.
+            </p>
+
+            <h2>2. Autocorrelation: tín hiệu tự so với chính nó</h2>
+            <p>
+              Autocorrelation so tín hiệu $x[n]$ với chính nó TRỄ ĐI $\tau$ mẫu: $R(\tau) = \sum_n x[n] \cdot
+              x[n+\tau]$. Nếu $x$ có chu kỳ $T$ mẫu, thì $R(\tau)$ đạt đỉnh mỗi khi $\tau$ là BỘI SỐ của $T$ (tín hiệu
+              trễ đúng 1 chu kỳ khớp lại với chính nó) — đỉnh đầu tiên sau $\tau=0$ chính là chu kỳ cơ bản.
+              Autocorrelation là "họ hàng" của tích chập (<a href="dsp-lti-convolution">Bài 4</a>), nên tính trực tiếp
+              tốn $O(N^2)$ — nhưng định lý Wiener-Khinchin cho phép tính qua FFT: $R = \text{IFFT}(|\text{FFT}(x)|^2)$,
+              CÙNG mẹo "nhân trong miền tần số = tích chập trong miền thời gian" đã dùng ở Bài 6.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">autocorr_fft.js (trích engine dsp-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// Autocorrelation qua Wiener-Khinchin: FFT, nhan voi LIEN HOP chinh no (|X|^2), IFFT
+function autocorrFFT(x) {
+  const N = x.length;
+  const paddedLen = nextPowerOfTwo(2 * N); // zero-pad tranh autocorrelation VONG
+  const X = fft(zeroPad(x, paddedLen));
+  const power = X.map((c) => ({ re: c.re * c.re + c.im * c.im, im: 0 }));
+  const r = ifft(power);
+  return r.slice(0, N).map((c) => c.re);
+}
+// Verified: tin hieu CHI co hai bac 2,3,4 cua f0=150Hz (missing fundamental)
+// - dinh autocorrelation tai tau=53 mau, khop CHINH XAC fs/f0=8000/150=53,33.</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: lỗi lệch quãng tám (octave error)</div>
+              <div class="callout__content">
+                $R(\tau)$ có đỉnh KHÔNG CHỈ tại chu kỳ thật $T$ mà tại MỌI bội số $2T, 3T, \ldots$ (trễ 2 chu kỳ cũng
+                khớp lại). Nếu chọn NHẦM đỉnh — ví dụ đỉnh tại $2T$ to hơn đỉnh tại $T$ do một cấu hình hài đặc biệt —
+                sẽ báo cao độ THẤP HƠN đúng 1 quãng tám (nhầm $f_0/2$ thành $f_0$). Mục 3 (YIN) là "bản vá" trực tiếp
+                cho đúng lỗi này.
+              </div>
+            </div>
+
+            <h2>3. YIN — bản vá cho nhạc thật</h2>
+            <p>
+              YIN sửa 2 điểm yếu của autocorrelation thô: (1) dùng <strong>difference function</strong> $d(\tau) =
+              \sum_j (x[j]-x[j+\tau])^2$ thay vì TÍCH — tại đúng chu kỳ, $d(\tau)$ tiến về 0 (một CỰC TIỂU rõ ràng, dễ
+              tìm hơn một cực đại lẫn giữa nhiều cực đại phụ); (2)
+              <strong>chuẩn hoá trung bình tích luỹ</strong> (Cumulative Mean Normalized Difference — CMND): chia
+              $d(\tau)$ cho trung bình cộng dồn của chính nó — dìm các cực tiểu giả ở $\tau$ nhỏ xuống gần 1, để một
+              <strong>ngưỡng tuyệt đối</strong> (vd 0,1) hoạt động ổn định cho MỌI cao độ. Bước chọn $\tau$ quyết định:
+              lấy điểm trũng ĐẦU TIÊN đủ tốt (dưới ngưỡng), KHÔNG PHẢI cực tiểu toàn cục — đây chính là cách né octave
+              error.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">yin_algorithm.js (trích engine dsp-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">function yinCMND(d) {
+  const dp = new Array(d.length).fill(1);
+  let runningSum = 0;
+  for (let tau = 1; tau < d.length; tau++) {
+    runningSum += d[tau];
+    dp[tau] = d[tau] / (runningSum / tau); // chuan hoa TICH LUY, khong phai tuc thoi
+  }
+  return dp;
+}
+function yinPickTau(dp, threshold, minTau, maxTau) {
+  for (let tau = minTau; tau < maxTau - 1; tau++) {
+    if (dp[tau] < threshold) {                       // DIEM TRUNG DAU TIEN, khong phai cuc tieu toan cuc
+      while (tau + 1 < maxTau && dp[tau + 1] < dp[tau]) tau++;
+      return tau;
+    }
+  }
+  /* ... fallback: cuc tieu toan cuc neu khong dip nao duoi nguong ... */
+}</code></pre>
+            </div>
+            <p>
+              Verified bằng chính hiện tượng octave error: dựng 1 tín hiệu "gai" (hài bậc 2 MẠNH hơn cả $f_0$) — chọn
+              <strong>cực tiểu toàn cục</strong> của CMND (cách ngây thơ) rơi ĐÚNG vào $\tau=160$ (<strong>SAI</strong>,
+              ứng với $f \approx 50$Hz thay vì 150Hz thật) — trong khi <code>yinPickTau()</code>
+              (ngưỡng tuyệt đối + điểm trũng đầu tiên) chọn ĐÚNG $\tau=53$ (khớp $f_0=150$Hz). Cùng dữ liệu, 2 chiến
+              lược chọn đỉnh cho 2 kết quả khác hẳn nhau — YIN đúng, "chọn to nhất" sai.
+            </p>
+
+            <h2>4. Chính xác dưới-mẫu &amp; đổi sang nốt</h2>
+            <p>
+              $\tau$ tìm được là một số NGUYÊN (chỉ số mẫu) — độ phân giải tần số bị giới hạn bởi lưới mẫu rời rạc.
+              <strong>Nội suy parabol</strong> khớp một parabol qua 3 điểm CMND liền kề quanh $\tau$, tìm đáy THỰC
+              (không nguyên) của parabol đó — cho độ chính xác vượt xa 1 mẫu mà không cần tăng tần số lấy mẫu. Sau đó
+              đổi Hz sang đơn vị tai người cảm nhận: <strong>cent</strong>, $1200 \log_2(f/f_{ref})$ — 1 quãng tám (tần
+              số gấp đôi) LUÔN đúng 1200 cent bất kể vị trí trên bàn phím (khác thang Hz tuyến tính, nơi 1 quãng tám ở
+              âm trầm chỉ vài Hz còn ở âm cao là hàng trăm Hz).
+            </p>
+            <p>
+              Verified: trên tín hiệu đầy đủ hài của $f_0=150$Hz, <code>yinPitch()</code> tìm $\tau=53$ rồi nội suy
+              parabol — sai số tần số cuối cùng dưới <strong>1 cent</strong> so với 150Hz thật. Một nửa cung (semitone,
+              khoảng cách 2 phím đàn piano liền kề) là 100 cent — sai số dưới 1 cent là hoàn toàn không thể nghe ra
+              được, ngay cả với tai nhạc sĩ chuyên nghiệp.
+            </p>
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: vì sao nốt nhạc chia đều theo log, không theo Hz</div>
+              <div class="callout__content">
+                Tai người cảm nhận cao độ theo TỈ LỆ tần số, không theo hiệu số Hz — nốt A4 (440Hz) lên A5 (880Hz) và A5
+                lên A6 (1760Hz) nghe "xa nhau bằng nhau" (cùng 1 quãng tám), dù hiệu Hz lần lượt là 440Hz và 880Hz —
+                hoàn toàn khác nhau. Công thức cent dùng $\log_2$ chính vì lý do này: biến TỈ LỆ nhân thành HIỆU SỐ
+                cộng, khớp đúng cách tai/não xử lý cao độ.
+              </div>
+            </div>
+
+            <h2>5. Thực hành: Guitar/Voice Tuner</h2>
+            <p>
+              Bật mic — engine chạy <code>yinPitch()</code> realtime trên từng khung âm thanh (khung xử lý theo kiểu
+              <a href="dsp-stft-spectrogram">Bài 8</a>), hiện tên nốt gần nhất + kim chỉ độ lệch cent. Bật "soi nội
+              tạng" để xem trực tiếp đường CMND và ngưỡng cắt ngay khi đang hát/đàn — thấy tận mắt điểm trũng nào được
+              chọn:
+            </p>
+
+            <div class="code-tabs" id="tuner-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🎸 Guitar/Voice Tuner — DSPJS thật, mic thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <div style="display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap">
+                    <button class="mux-input-btn" type="button" id="tuner-mic-btn">🎤 Bật mic</button>
+                    <button class="mux-input-btn" type="button" id="tuner-internals-btn">🔬 Soi nội tạng</button>
+                  </div>
+                  <div style="text-align: center; padding: 10px; background: rgba(0, 0, 0, 0.15); border-radius: 6px">
+                    <div id="tuner-note" style="font-size: 42px; font-weight: 700">—</div>
+                    <div id="tuner-freq" style="font-size: 13px; opacity: 0.7">Chưa có tín hiệu</div>
+                    <canvas
+                      id="tuner-needle-canvas"
+                      width="360"
+                      height="80"
+                      style="width: 100%; max-width: 360px; height: 80px; margin-top: 8px"
+                    ></canvas>
+                  </div>
+                  <div id="tuner-internals" style="display: none; margin-top: 10px">
+                    <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600">
+                      CMND (đường xanh) &amp; ngưỡng cắt (đường đỏ nét đứt) &amp; điểm chọn (chấm vàng):
+                    </p>
+                    <canvas
+                      id="tuner-cmnd-canvas"
+                      width="360"
+                      height="90"
+                      style="width: 100%; height: 90px; background: rgba(0, 0, 0, 0.15); border-radius: 6px"
+                    ></canvas>
+                  </div>
+                  <div id="tuner-status" class="mux-demo__output">
+                    Bấm "Bật mic" và cho phép trình duyệt truy cập micro.
+                  </div>
+                  <p class="mux-demo__hint">
+                    Đàn/hát một nốt ổn định — kim sẽ dịch về tâm khi đúng cao độ. Mọi xử lý chạy CỤC BỘ trong trình
+                    duyệt, không âm thanh nào được gửi đi đâu cả.
+                  </p>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">tuner_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { yinPitch, freqToNote } from './dsp-core.js';
+
+async function startTuner(onFrame) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const ctx = new AudioContext();
+  const source = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+
+  const buf = new Float32Array(analyser.fftSize);
+  function loop() {
+    analyser.getFloatTimeDomainData(buf);
+    const result = yinPitch(Array.from(buf), ctx.sampleRate, { maxTau: 800, minTau: 30, threshold: 0.15 });
+    if (result.clarity > 0.85) {                       // bo qua khung qua nhieu/im lang
+      const note = freqToNote(result.frequency);
+      onFrame({ note, frequency: result.frequency });
+    }
+    requestAnimationFrame(loop);
+  }
+  loop();
+}</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Pitch = chu kỳ lặp trong miền THỜI GIAN, không phải đỉnh phổ to nhất — verified: tín hiệu missing
+                fundamental (chỉ hài bậc 2,3,4) vẫn cho <code>autocorrFFT()</code> phục hồi đúng chu kỳ $f_0$.
+              </li>
+              <li>✅ Autocorrelation tính nhanh qua FFT (Wiener-Khinchin) — cùng mẹo nhân-phổ của Bài 6.</li>
+              <li>
+                ✅ YIN (difference function + CMND + ngưỡng tuyệt đối, chọn điểm trũng ĐẦU TIÊN) né được octave error —
+                verified: cực tiểu toàn cục chọn SAI $\tau=160$, YIN chọn ĐÚNG $\tau=53$.
+              </li>
+              <li>
+                ✅ Nội suy parabol cho độ chính xác dưới-mẫu — verified sai số cuối cùng dưới 1 cent, không thể nghe ra.
+              </li>
+              <li>✅ Cent dùng $\log_2$ vì tai cảm nhận cao độ theo TỈ LỆ, không theo hiệu số Hz.</li>
+              <li>✅ Guitar/Voice Tuner chạy mic thật, xử lý cục bộ hoàn toàn trong trình duyệt.</li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                Verified: tín hiệu CHỈ có hài bậc 2,3,4 của 150Hz (không có bậc 1) vẫn cho autocorrFFT() phục hồi đúng
+                chu kỳ 150Hz. Điều này chứng minh điều gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Autocorrelation do CHU KY LAP LAI cua ca tin hieu (khoang cach deu dan giua cac hai con lai), khong can thanh phan tan so co ban PHAI CO MAT vat ly trong tin hieu - day chinh la hien tuong missing fundamental.'
+                    )
+                  "
+                >
+                  A. Cao độ là chu kỳ lặp của toàn bộ tín hiệu — không cần thành phần tần số cơ bản phải có mặt vật lý,
+                  miễn các hài còn lại vẫn cách đều nhau đúng chu kỳ đó
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'FFT KHONG lien quan gi den viec nay - autocorrFFT() chi DUNG FFT nhu mot cong cu TINH TOAN nhanh hon (Wiener-Khinchin), ket qua toan hoc GIONG HET tinh autocorrelation truc tiep O(N^2). Van de la ve BAN CHAT cua cao do, khong phai do chinh xac FFT.'
+                    )
+                  "
+                >
+                  B. Vì FFT có thể "đoán" được tần số vắng mặt bằng nội suy
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tin hieu test hoan toan KHONG co nhieu - day la tong cua 3 sine sach (hai bac 2,3,4). Ket qua khong lien quan gi den kha nang chong nhieu, ma la ve BAN CHAT toan hoc cua autocorrelation do CHU KY.'
+                    )
+                  "
+                >
+                  C. Vì autocorrelation có khả năng lọc nhiễu tốt hơn FFT
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                YIN dùng difference function $d(\tau)=\sum(x[j]-x[j+\tau])^2$ thay vì tích như autocorrelation. Vì sao?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Tai DUNG chu ky, x[j] va x[j+tau] gan nhu BANG NHAU nen hieu tien ve 0 - mot CUC TIEU RO RANG, de tim hon mot cuc dai cua tich (co the lan giua nhieu cuc dai phu tu cac hai khac).'
+                    )
+                  "
+                >
+                  A. Tại đúng chu kỳ, hiệu số tiến về 0 — tạo một CỰC TIỂU rõ ràng, dễ tìm hơn cực đại của tích (dễ lẫn
+                  giữa nhiều cực đại phụ)
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca difference function VA tich (autocorrelation) deu tinh duoc bang FFT/O(N log N) - khong co su khac biet ve toc do tinh toan giua 2 cach, van de la ve HINH DANG DUONG CONG (cuc tieu ro rang hay khong) de CHON DUNG diem.'
+                    )
+                  "
+                >
+                  B. Vì difference function tính nhanh hơn phép nhân trên máy tính
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Ca 2 cach deu hoan toan xac dinh (deterministic), khong ngau nhien - day la mot lua chon TOAN HOC de tao ra cuc tieu de nhan dang, khong lien quan gi den nhieu ngau nhien.'
+                    )
+                  "
+                >
+                  C. Vì difference function ít bị ảnh hưởng bởi nhiễu ngẫu nhiên hơn
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Verified: chọn cực tiểu TOÀN CỤC của CMND cho tau=160 (SAI, f≈50Hz), trong khi YIN (ngưỡng + điểm trũng
+                ĐẦU TIÊN) cho tau=53 (ĐÚNG, 150Hz). Bài học là gì?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! CMND co the co NHIEU cuc tieu (tai chu ky that VA tai cac boi so cua no) - cuc tieu SAU (boi so lon hon) doi khi SAU hon ve gia tri so nhung SAI ve y nghia am nhac. Chon diem TRUNG DAU TIEN du tot (duoi nguong) uu tien chu ky THAT thay vi gia tri so nho nhat.'
+                    )
+                  "
+                >
+                  A. CMND có thể có nhiều cực tiểu (tại chu kỳ thật và các bội số) — cực tiểu "sâu nhất" không nhất
+                  thiết là chu kỳ ĐÚNG, nên chọn điểm trũng đầu tiên đủ tốt an toàn hơn
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'yinCMND() va yinDifference() tinh dung theo dinh nghia toan hoc cua chung, khong co loi tinh toan o day - van de la ve CHIEN LUOC CHON diem tren duong CMND da tinh dung, khong phai loi cong thuc.'
+                    )
+                  "
+                >
+                  B. Hàm yinCMND() trong DSPJS tính sai công thức chuẩn hoá
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Tan so lay mau KHONG doi giua 2 phep thu (cung fs=8000Hz ca 2 truong hop) - khac biet DUY NHAT la CHIEN LUOC CHON tau tren CUNG mot duong CMND, khong phai do sample rate.'
+                    )
+                  "
+                >
+                  C. Vì tần số lấy mẫu quá thấp để phân biệt các hài
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">Vì sao công thức cent dùng $\log_2$ thay vì hiệu số Hz thông thường?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  data-correct="true"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Dung! Tai nguoi cam nhan cao do theo TI LE tan so - 1 quang tam LUON la tan so GAP DOI, bat ke vi tri (440->880Hz hay 880->1760Hz deu la 1 quang tam du hieu Hz khac han nhau). log2 doi TI LE NHAN thanh HIEU SO CONG, khop dung cach tai/nao xu ly.'
+                    )
+                  "
+                >
+                  A. Tai người cảm nhận cao độ theo TỈ LỆ tần số (1 quãng tám luôn là gấp đôi) — log biến tỉ lệ nhân
+                  thành hiệu số cộng, khớp đúng cách tai/não xử lý
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Cent hoan toan KHONG lien quan gi den do chinh xac cua may tinh - day la mot lua chon DON VI DO LUONG de khop voi cam nhan cua tai nguoi, khong phai van de ve floating-point.'
+                    )
+                  "
+                >
+                  B. Vì log2 tính toán chính xác hơn phép trừ thông thường trên máy tính
+                </button>
+                <button
+                  class="quiz-option"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'YIN (Muc 3) hoan toan KHONG dung log2 trong difference function hay CMND - cong thuc cent la mot buoc RIENG BIET o Muc 4, chi de DOI DON VI hien thi sau khi da tim duoc tan so, khong lien quan gi toi thuat toan YIN.'
+                    )
+                  "
+                >
+                  C. Vì thuật toán YIN yêu cầu đầu vào dạng logarit
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>DSPJS</code> (<code>dsp-core.js</code>) — thư viện DSP tự viết dùng xuyên suốt cả
+                15 bài, Bài 13 vừa thêm <code>autocorrFFT()</code>, <code>yinDifference()</code>,
+                <code>yinCMND()</code>, <code>yinPickTau()</code>, <code>parabolicRefine()</code>,
+                <code>yinPitch()</code>, <code>centsFromFreq()</code>, <code>freqToNote()</code>, kèm self-test đối
+                chiếu đúng mọi hành vi trong bài (chạy <code>node dsp-core.js</code>, không cần cài thêm gì):
+              </p>
+              <a
+                href="dsp-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về dsp-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Autocorrelation" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Autocorrelation
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.ircam.fr/anasyn/wavelet/YIN.pdf" target="_blank" rel="noopener noreferrer">
+                    de Cheveigné &amp; Kawahara — YIN, a fundamental frequency estimator (2002, gốc)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Missing_fundamental" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Missing fundamental
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Cent_(music)" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Cent (music)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="dsp-resampling" class="article-related__link article-related__link--prev">
+                  Bài 12: Resampling &amp; xử lý đa tốc độ
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 14: DSP thời gian thực &amp; trên phần cứng nhúng — sắp ra mắt
+                </span>
+                <a href="dsp-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Series Xử Lý Tín Hiệu Số
+                </a>
+              </div>
+            </div>
+
+            <div class="article-comments" style="margin-top: 60px">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { yinPitch, yinDifference, yinCMND, freqToNote } from './dsp-core.js';
+
+      let audioCtx = null;
+      let analyser = null;
+      let rafId = null;
+      let showInternals = false;
+
+      const noteEl = document.getElementById('tuner-note');
+      const freqEl = document.getElementById('tuner-freq');
+      const statusEl = document.getElementById('tuner-status');
+      const needleCanvas = document.getElementById('tuner-needle-canvas');
+      const cmndCanvas = document.getElementById('tuner-cmnd-canvas');
+      const internalsBox = document.getElementById('tuner-internals');
+
+      function renderNeedle(cents) {
+        const ctx = needleCanvas.getContext('2d');
+        ctx.clearRect(0, 0, needleCanvas.width, needleCanvas.height);
+        const cx = needleCanvas.width / 2;
+        const baseY = needleCanvas.height - 10;
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.beginPath();
+        ctx.moveTo(10, baseY);
+        ctx.lineTo(needleCanvas.width - 10, baseY);
+        ctx.stroke();
+        ctx.strokeStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.moveTo(cx, baseY);
+        ctx.lineTo(cx, baseY - 60);
+        ctx.stroke();
+        const clamped = Math.max(-50, Math.min(50, cents ?? 0));
+        const angle = (clamped / 50) * (Math.PI / 3);
+        const nx = cx + Math.sin(angle) * 60;
+        const ny = baseY - Math.cos(angle) * 60;
+        ctx.strokeStyle = Math.abs(clamped) < 5 ? '#22c55e' : '#f59e0b';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(cx, baseY);
+        ctx.lineTo(nx, ny);
+        ctx.stroke();
+      }
+
+      function renderCmnd(dp, tau, threshold) {
+        if (!showInternals) return;
+        const ctx = cmndCanvas.getContext('2d');
+        ctx.clearRect(0, 0, cmndCanvas.width, cmndCanvas.height);
+        const maxShow = Math.min(dp.length, 400);
+        ctx.strokeStyle = '#0ea5e9';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let i = 0; i < maxShow; i++) {
+          const x = (i / maxShow) * cmndCanvas.width;
+          const y = cmndCanvas.height - Math.min(dp[i], 2) * (cmndCanvas.height / 2);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        const ty = cmndCanvas.height - threshold * (cmndCanvas.height / 2);
+        ctx.strokeStyle = '#ef4444';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, ty);
+        ctx.lineTo(cmndCanvas.width, ty);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (tau < maxShow) {
+          const px = (tau / maxShow) * cmndCanvas.width;
+          const py = cmndCanvas.height - Math.min(dp[tau], 2) * (cmndCanvas.height / 2);
+          ctx.fillStyle = '#f59e0b';
+          ctx.beginPath();
+          ctx.arc(px, py, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+
+      function loop(buf) {
+        analyser.getFloatTimeDomainData(buf);
+        const maxTau = 800;
+        const minTau = 30;
+        const threshold = 0.15;
+        const d = yinDifference(Array.from(buf), maxTau);
+        const dp = yinCMND(d);
+        const result = yinPitch(Array.from(buf), audioCtx.sampleRate, { maxTau, minTau, threshold });
+        renderCmnd(dp, result.tau, threshold);
+        if (result.clarity > 0.85 && result.frequency > 60 && result.frequency < 1200) {
+          const note = freqToNote(result.frequency);
+          noteEl.textContent = note.note + note.octave;
+          freqEl.textContent =
+            result.frequency.toFixed(1) + 'Hz · ' + (note.cents >= 0 ? '+' : '') + note.cents.toFixed(0) + ' cent';
+          renderNeedle(note.cents);
+        } else {
+          noteEl.textContent = '—';
+          freqEl.textContent = 'Đang lắng nghe…';
+          renderNeedle(0);
+        }
+        rafId = requestAnimationFrame(() => loop(buf));
+      }
+
+      document.getElementById('tuner-mic-btn').addEventListener('click', async () => {
+        try {
+          statusEl.textContent = 'Đang xin quyền truy cập micro…';
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const source = audioCtx.createMediaStreamSource(stream);
+          analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 2048;
+          source.connect(analyser);
+          const buf = new Float32Array(analyser.fftSize);
+          statusEl.textContent = 'Mic đang bật — đàn/hát một nốt để xem kết quả.';
+          if (rafId) cancelAnimationFrame(rafId);
+          loop(buf);
+        } catch (err) {
+          statusEl.textContent = 'Không thể truy cập mic: ' + err.message + ' — kiểm tra quyền trình duyệt.';
+        }
+      });
+
+      document.getElementById('tuner-internals-btn').addEventListener('click', () => {
+        showInternals = !showInternals;
+        internalsBox.style.display = showInternals ? 'block' : 'none';
+      });
+
+      renderNeedle(0);
+    </script>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

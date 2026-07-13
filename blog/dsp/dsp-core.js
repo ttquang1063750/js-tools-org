@@ -890,6 +890,136 @@ function resampleRational(x, L, M, numTaps, windowFn) {
   return downsampleNaive(filtered, M);
 }
 
+// ---------------------------------------------------------------------------
+// Bài 13 — Phát hiện cao độ: autocorrelation & tuner. Build-out: autocorrFFT
+// (tự tương quan qua định lý Wiener-Khinchin — FFT trả cổ tức lần 2, Bài 6),
+// yinDifference/yinCMND/yinPickTau (thuật toán YIN — bản vá cho nhạc thật:
+// difference function thay tích, chuẩn hoá trung bình tích luỹ dìm đỉnh giả,
+// ngưỡng tuyệt đối chọn đỉnh ĐẦU TIÊN đủ tốt thay vì đỉnh to nhất), và
+// parabolicRefine/centsFromFreq/freqToNote (độ chính xác dưới-mẫu + đổi
+// sang nốt nhạc, Mục 13.4).
+// ---------------------------------------------------------------------------
+
+function nextPowerOfTwo(n) {
+  let p = 1;
+  while (p < n) p *= 2;
+  return p;
+}
+
+// Tự tương quan (autocorrelation) qua định lý Wiener-Khinchin: FFT rồi nhân
+// với LIÊN HỢP của chính nó ($|X|^2$, tương đương tích chập của x với chính
+// x đảo ngược) rồi IFFT — nhanh hơn tính trực tiếp $O(N^2)$ rất nhiều, đúng
+// tinh thần "họ hàng tích chập" của Mục 13.2. Zero-pad gấp đôi TRƯỚC khi FFT
+// để tránh autocorrelation "vòng" (circular) làm sai kết quả ở lag lớn.
+function autocorrFFT(x) {
+  const N = x.length;
+  const paddedLen = nextPowerOfTwo(2 * N);
+  const X = fft(zeroPad(x, paddedLen));
+  const power = X.map((c) => ({ re: c.re * c.re + c.im * c.im, im: 0 }));
+  const r = ifft(power);
+  return r.slice(0, N).map((c) => c.re);
+}
+
+// YIN Mục 13.3, bước 1: difference function $d(\tau) = \sum_j (x[j]-x[j+\tau])^2$
+// — DÙNG HIỆU thay vì TÍCH của autocorrelation, để đỉnh tại đúng chu kỳ trở
+// thành một CỰC TIỂU rõ ràng (thay vì một cực đại lẫn giữa nhiều cực đại phụ).
+function yinDifference(x, maxTau) {
+  const N = x.length;
+  const d = new Array(maxTau).fill(0);
+  for (let tau = 1; tau < maxTau; tau++) {
+    let sum = 0;
+    for (let j = 0; j < N - maxTau; j++) {
+      const diff = x[j] - x[j + tau];
+      sum += diff * diff;
+    }
+    d[tau] = sum;
+  }
+  return d;
+}
+
+// YIN bước 2: chuẩn hoá trung bình tích luỹ (Cumulative Mean Normalized
+// Difference — CMND) — chia $d(\tau)$ cho trung bình CỘNG DỒN của chính nó
+// từ $1$ tới $\tau$, dìm các đỉnh giả ở $\tau$ nhỏ xuống gần 1, để một
+// ngưỡng TUYỆT ĐỐI duy nhất (vd 0,1) hoạt động ổn định cho mọi cao độ.
+function yinCMND(d) {
+  const maxTau = d.length;
+  const dp = new Array(maxTau).fill(1);
+  let runningSum = 0;
+  for (let tau = 1; tau < maxTau; tau++) {
+    runningSum += d[tau];
+    dp[tau] = d[tau] / (runningSum / tau);
+  }
+  return dp;
+}
+
+// YIN bước 3: chọn $\tau$ — ngưỡng TUYỆT ĐỐI, lấy đỉnh (chỗ trũng) ĐẦU TIÊN
+// đủ tốt (dưới ngưỡng) rồi trượt tới đáy cục bộ, THAY VÌ tìm cực tiểu TOÀN
+// CỤC. Đây chính là "bản vá" chống lỗi lệch quãng tám (octave error) của
+// Mục 13.2/13.3 — cực tiểu toàn cục đôi khi rơi vào bội số của chu kỳ thật.
+function yinPickTau(dp, threshold, minTau, maxTau) {
+  for (let tau = minTau; tau < maxTau - 1; tau++) {
+    if (dp[tau] < threshold) {
+      while (tau + 1 < maxTau && dp[tau + 1] < dp[tau]) tau++;
+      return tau;
+    }
+  }
+  let best = minTau;
+  let bestVal = Infinity;
+  for (let tau = minTau; tau < maxTau; tau++) {
+    if (dp[tau] < bestVal) {
+      bestVal = dp[tau];
+      best = tau;
+    }
+  }
+  return best;
+}
+
+// Nội suy parabol quanh 1 chỉ số nguyên (Mục 13.4): khớp 1 parabol qua 3
+// điểm liền kề $(tau-1, tau, tau+1)$, trả về vị trí đáy THỰC (không nguyên)
+// — độ chính xác VƯỢT lưới mẫu rời rạc mà không cần tăng tần số lấy mẫu.
+function parabolicRefine(arr, index) {
+  if (index <= 0 || index >= arr.length - 1) return index;
+  const s0 = arr[index - 1];
+  const s1 = arr[index];
+  const s2 = arr[index + 1];
+  const denom = s0 - 2 * s1 + s2;
+  if (denom === 0) return index;
+  return index + (0.5 * (s0 - s2)) / denom;
+}
+
+// Ghép trọn quy trình YIN (Mục 13.3-13.4): difference → CMND → chọn tau bằng
+// ngưỡng → nội suy parabol tinh chỉnh → đổi tau (mẫu) sang tần số (Hz).
+function yinPitch(x, fs, options = {}) {
+  const maxTau = options.maxTau ?? Math.floor(x.length / 2);
+  const minTau = options.minTau ?? 2;
+  const threshold = options.threshold ?? 0.1;
+  const d = yinDifference(x, maxTau);
+  const dp = yinCMND(d);
+  const tau = yinPickTau(dp, threshold, minTau, maxTau);
+  const refinedTau = parabolicRefine(dp, tau);
+  return { tau, refinedTau, frequency: fs / refinedTau, clarity: 1 - dp[tau] };
+}
+
+// Cent — đơn vị đo cao độ theo LOG, đúng cách tai người cảm nhận quãng
+// (Mục 13.4): $1200 \log_2(f/f_{ref})$ — 1 quãng tám (tần số gấp đôi) LUÔN
+// bằng đúng 1200 cent bất kể vị trí trên bàn phím, khác hẳn thang Hz tuyến
+// tính (1 quãng tám ở âm trầm là vài Hz, ở âm cao là hàng trăm Hz).
+function centsFromFreq(f, fRef) {
+  return 1200 * Math.log2(f / fRef);
+}
+
+// Đổi tần số Hz sang nốt nhạc gần nhất (chuẩn 12-TET, A4=440Hz=MIDI 69) +
+// độ lệch cent so với đúng tâm nốt — chính là "kim chỉ nốt" của tuner Mục 13.5.
+function freqToNote(f, fRef = 440, refMidi = 69) {
+  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const midi = refMidi + 12 * Math.log2(f / fRef);
+  const rounded = Math.round(midi);
+  const noteIndex = ((rounded % 12) + 12) % 12;
+  const octave = Math.floor(rounded / 12) - 1;
+  const cents = (midi - rounded) * 100;
+  return { note: names[noteIndex], octave, cents, midi };
+}
+
 export {
   unitImpulse,
   unitStep,
@@ -964,6 +1094,14 @@ export {
   decimate,
   interpolate,
   resampleRational,
+  autocorrFFT,
+  yinDifference,
+  yinCMND,
+  yinPickTau,
+  parabolicRefine,
+  yinPitch,
+  centsFromFreq,
+  freqToNote,
 };
 
 // ---------------------------------------------------------------------------
@@ -1790,6 +1928,90 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'interpolate() L=2: khớp đường sin lý tưởng tại rate mới, sai số tối đa < 0,001 (đã bù trễ nhóm filter)',
       maxErr < 0.001
     );
+  }
+
+  // --- Bài 13: pitch detection — missing fundamental, YIN, octave error, cent/note ---
+  {
+    const fs13 = 8000;
+    const f013 = 150;
+    const period13 = fs13 / f013; // ~53,33 mau
+
+    // Missing fundamental (Muc 13.1): CHI hai bac 2,3,4 - KHONG co bac 1 -
+    // autocorrelation qua FFT van phuc hoi DUNG chu ky cua tan so co ban.
+    const N13 = 2000;
+    const xMissing = Array.from(
+      { length: N13 },
+      (_, n) =>
+        0.3 * sine(n, 2 * f013, fs13, 1, 0) + 0.5 * sine(n, 3 * f013, fs13, 1, 0) + 0.2 * sine(n, 4 * f013, fs13, 1, 0)
+    );
+    const ac = autocorrFFT(xMissing.slice(0, 1024));
+    let bestTau = 20;
+    let bestVal = -Infinity;
+    for (let tau = 20; tau < 200; tau++) {
+      if (ac[tau] > bestVal) {
+        bestVal = ac[tau];
+        bestTau = tau;
+      }
+    }
+    checkTrue(
+      'Missing fundamental: autocorrFFT() trên tín hiệu CHỈ có hài bậc 2,3,4 (KHÔNG có bậc 1) vẫn phục hồi ĐÚNG chu kỳ cơ bản (tau=53, khớp period=53,33)',
+      Math.abs(bestTau - period13) < 1
+    );
+
+    // YIN tren tin hieu day du (co ca f0) - verify tim dung tau va sau khi
+    // parabolic refine, sai so tan so duoi 1 cent (khong nghe ra duoc).
+    const xFull13 = Array.from(
+      { length: N13 },
+      (_, n) => sine(n, f013, fs13, 1, 0) + 0.6 * sine(n, 2 * f013, fs13, 1, 0) + 0.4 * sine(n, 3 * f013, fs13, 1, 0)
+    );
+    const yinResult = yinPitch(xFull13.slice(0, 800), fs13, { maxTau: 200, minTau: 20, threshold: 0.1 });
+    checkTrue('yinPitch(): phát hiện tau=53 trên tín hiệu đầy đủ hài (khớp period=53,33)', yinResult.tau === 53);
+    checkTrue(
+      'yinPitch() sau nội suy parabol: sai số tần số dưới 1 cent so với f0 THẬT (150Hz) — tai người KHÔNG nghe ra được',
+      Math.abs(centsFromFreq(yinResult.frequency, f013)) < 1
+    );
+
+    // Octave error (pitfall Muc 13.2): tin hieu "gai" (hai bac 2 manh hon
+    // ca f0) khien cuc tieu TOAN CUC cua CMND roi vao BOI SO cua chu ky that
+    // - trong khi YIN (nguong tuyet doi, chon DIEM TRUNG DAU TIEN) van dung.
+    const xTricky13 = Array.from(
+      { length: N13 },
+      (_, n) =>
+        0.5 * sine(n, f013, fs13, 1, 0) + 0.9 * sine(n, 2 * f013, fs13, 1, 0.3) + 0.3 * sine(n, 4 * f013, fs13, 1, 0.1)
+    );
+    const d13 = yinDifference(xTricky13.slice(0, 800), 200);
+    const dp13 = yinCMND(d13);
+    let globalMinTau = 20;
+    let globalMinVal = Infinity;
+    for (let tau = 20; tau < 200; tau++) {
+      if (dp13[tau] < globalMinVal) {
+        globalMinVal = dp13[tau];
+        globalMinTau = tau;
+      }
+    }
+    const yinTauTricky = yinPickTau(dp13, 0.1, 20, 200);
+    checkTrue(
+      'Pitfall octave error: chọn CỰC TIỂU TOÀN CỤC của CMND (cách NGÂY THƠ) rơi vào tau=160 (SAI, ứng f≈50Hz thay vì 150Hz)',
+      globalMinTau === 160
+    );
+    checkTrue(
+      'YIN (ngưỡng tuyệt đối, chọn điểm trũng ĐẦU TIÊN đủ tốt) tránh được octave error: tau=53 ĐÚNG (khớp period=53,33)',
+      yinTauTricky === 53
+    );
+
+    // Nội suy parabol + cent + note name - verify voi so THAT
+    checkTrue('centsFromFreq(440,440) = 0 (đúng tâm nốt A4)', Math.abs(centsFromFreq(440, 440)) < 1e-9);
+    checkTrue(
+      'centsFromFreq(880,440) = 1200 (đúng 1 quãng tám, cao gấp đôi)',
+      Math.abs(centsFromFreq(880, 440) - 1200) < 1e-9
+    );
+    const noteA4 = freqToNote(440);
+    checkTrue(
+      'freqToNote(440) = A4, cents ≈ 0',
+      noteA4.note === 'A' && noteA4.octave === 4 && Math.abs(noteA4.cents) < 1e-6
+    );
+    const noteC4 = freqToNote(261.6255653);
+    checkTrue('freqToNote(261,63Hz) = C4 (đúng nốt Đô giữa)', noteC4.note === 'C' && noteC4.octave === 4);
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');
