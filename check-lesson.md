@@ -96,6 +96,14 @@
   `\t(ext|imes|au|frac|circ)\{` (regex có TAB thật) sau khi dán nội dung từ nguồn ngoài.
 - **Demo tương tác bọc trong `.code-tabs`** (Preview | ngôn ngữ chính | JavaScript) — không
   dùng lại nút `⟨⟩ Xem Code` đơn lẻ kiểu cũ, trừ khi series đó có quy tắc riêng cấm code hẳn.
+- **Ô kết quả demo nền tối (`background` khác trắng) mà chèn `<strong>` qua `innerHTML` PHẢI
+  tự khai báo `<class-ô> strong { color: inherit }`** trong cùng `<style>` (xem PHẦN D #19):
+  rule site-wide `.article-body strong { color: #000000 }` có độ đặc thù cao hơn màu chữ tự
+  đặt của ô, nên mọi `<strong>` bên trong bị ép về màu ĐEN — gần như vô hình trên nền tối,
+  kể cả khi nằm trong 1 `<div style="color:...">` con (vẫn không tự kế thừa nếu thiếu rule
+  này). Không lộ qua `prettier`/console, chỉ thấy khi bấm demo thật rồi soi ảnh chụp hoặc đọc
+  `getComputedStyle(strongEl).color` trong browser. Không cần rule này nếu ô chỉ dùng
+  `textContent` (không có thẻ `<strong>` nào được tạo ra).
 - **Quiz phải dùng ĐÚNG MỘT cơ chế đã kiểm chứng chạy được** (xem PHẦN D #5 — 2 lớp bài đã
   gọi sai signature hàm và nút "Kiểm tra" không làm gì cả khi bấm):
   - Mẫu A (khuyên dùng, đã xác minh hoạt động): mỗi lựa chọn là 1 `<button class="quiz-option">`
@@ -461,3 +469,19 @@ grep -A 1 'article-related__link--next"' <file> | grep -o 'href="[^"]*"'
     browser xác nhận demo tương tác không bị ảnh hưởng (script chỉ sửa `<head>`, không đụng
     `<body>`). → sinh ra yêu cầu OG+JSON-LD bắt buộc ở mục "Liên kết & tích hợp" phía trên cho
     MỌI bài học mới từ giờ trở đi.
+19. **2026-07-24, Series 15 CPU (Bài 1, 4, 5, 9, 10, 11):** rule site-wide
+    `.article-body strong { color: #000000 }` (`blog.css`) có độ đặc thù CSS cao hơn màu chữ
+    tự đặt của các ô demo nền tối (`background: #1e293b; color: #38bdf8/#f59e0b` — dạng
+    `.pipe-calc-output`, `.bp-cpi-output`, `.uma-output`, `.hw-output`, `.yc-output`,
+    `.sim-display`...), nên MỌI thẻ `<strong>` render qua `innerHTML` bên trong các ô này bị
+    ép về màu ĐEN — gần như vô hình trên nền tối, kể cả với div con có `style="color:..."`
+    inline riêng (thẻ `strong` bên trong div đó vẫn bị ép đen, không tự kế thừa màu của div
+    cha). Không lộ ra qua `prettier --check` hay console — chỉ thấy khi nhìn ảnh chụp demo
+    thật. Phát hiện qua ảnh chụp người dùng gửi. Fix: thêm `<class-ô-demo> strong { color:
+inherit }` cho từng class ô nền tối có dùng `<strong>` trong nội dung động (không cần
+    thêm cho ô chỉ dùng `textContent`, vì `textContent` không tạo thẻ `<strong>` nào). → sinh
+    ra rule mới ở mục "Công thức & code" phía trên: mọi ô kết quả demo nền tối
+    (`background` khác trắng) mà dùng `innerHTML` chèn `<strong>` PHẢI tự khai báo
+    `<class> strong { color: inherit }` trong cùng `<style>`, không dựa vào màu chữ mặc định
+    của ô — kiểm tra bằng cách bấm demo thật rồi đọc `getComputedStyle(strongEl).color` trong
+    browser, không chỉ nhìn code.
