@@ -11,24 +11,24 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ## 📈 Progress & Status (Cập nhật 2026-07-03)
 
-| Series                               | Tên                                     | Bài hoàn thành | Tổng bài | %           |
-| ------------------------------------ | --------------------------------------- | -------------- | -------- | ----------- |
-| 🎉 **Series 2: WebGPU**              | **Đồ họa 3D & Compute Shader**          | **10/10**      | **10**   | **100%** ✅ |
-| 🎉 **Series 6: CSS & Animation**     | **Hiệu ứng & Bố cục Web hiện đại**      | **10/10**      | **10**   | **100%** ✅ |
-| 🎉 **Series 3: DSA Trực Quan**       | **Cấu Trúc Dữ Liệu & Giải Thuật**       | **12/12**      | **12**   | **100%** ✅ |
-| Series 1                             | WebAssembly & Rust                      | 0/10           | 10       | 0%          |
-| Series 4                             | WebRTC & WebSocket                      | 0/8            | 8        | 0%          |
-| Series 5                             | Toy JS Engine (Trình thông dịch JS)     | 0/?            | TBD      | 0%          |
-| 🎉 **Series 7: SQL**                 | **SQL trong Trình duyệt (SQLite-WASM)** | **17/17**      | **17**   | **100%** ✅ |
-| 🎉 **Series 8: Web Audio**           | **Âm Thanh & Visualizer**               | **8/8**        | **8**    | **100%** ✅ |
-| 🎉 **Series 9: Git**                 | **Mô Hình & Quy Trình Làm Việc**        | **13/13**      | **13**   | **100%** ✅ |
-| 🎉 **Series 10: Điện Tử**            | **Điện Tử & Mô Phỏng Vi Mạch**          | **16/16**      | **16**   | **100%** ✅ |
-| 🎉 **Series 11: VLSI**               | **Thiết Kế Vi Mạch Số & FPGA (VLSI)**   | **14/14**      | **14**   | **100%** ✅ |
-| 🎉 **Series 12: AI**                 | **Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM** | **19/19**      | **19**   | **100%** ✅ |
-| Series 13                            | Hệ Thống Nhúng: Từ Thanh Ghi Đến RTOS   | 16/16          | 16       | 100%        |
-| Series 14                            | Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ       | 15/15          | 15       | 100%        |
-| 🎉 **Series 15: Kiến Trúc Máy Tính** | **Từ Logic Đến Lượng Tử**               | **12/12**      | **12**   | **100%** ✅ |
-| Series 16                            | Kỹ Sư AI Thực Chiến                     | 19/20          | 20       | 95%         |
+| Series                                | Tên                                     | Bài hoàn thành | Tổng bài | %           |
+| ------------------------------------- | --------------------------------------- | -------------- | -------- | ----------- |
+| 🎉 **Series 2: WebGPU**               | **Đồ họa 3D & Compute Shader**          | **10/10**      | **10**   | **100%** ✅ |
+| 🎉 **Series 6: CSS & Animation**      | **Hiệu ứng & Bố cục Web hiện đại**      | **10/10**      | **10**   | **100%** ✅ |
+| 🎉 **Series 3: DSA Trực Quan**        | **Cấu Trúc Dữ Liệu & Giải Thuật**       | **12/12**      | **12**   | **100%** ✅ |
+| Series 1                              | WebAssembly & Rust                      | 0/10           | 10       | 0%          |
+| Series 4                              | WebRTC & WebSocket                      | 0/8            | 8        | 0%          |
+| Series 5                              | Toy JS Engine (Trình thông dịch JS)     | 0/?            | TBD      | 0%          |
+| 🎉 **Series 7: SQL**                  | **SQL trong Trình duyệt (SQLite-WASM)** | **17/17**      | **17**   | **100%** ✅ |
+| 🎉 **Series 8: Web Audio**            | **Âm Thanh & Visualizer**               | **8/8**        | **8**    | **100%** ✅ |
+| 🎉 **Series 9: Git**                  | **Mô Hình & Quy Trình Làm Việc**        | **13/13**      | **13**   | **100%** ✅ |
+| 🎉 **Series 10: Điện Tử**             | **Điện Tử & Mô Phỏng Vi Mạch**          | **16/16**      | **16**   | **100%** ✅ |
+| 🎉 **Series 11: VLSI**                | **Thiết Kế Vi Mạch Số & FPGA (VLSI)**   | **14/14**      | **14**   | **100%** ✅ |
+| 🎉 **Series 12: AI**                  | **Trí Tuệ Nhân Tạo: Từ Neuron Đến LLM** | **19/19**      | **19**   | **100%** ✅ |
+| Series 13                             | Hệ Thống Nhúng: Từ Thanh Ghi Đến RTOS   | 16/16          | 16       | 100%        |
+| Series 14                             | Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ       | 15/15          | 15       | 100%        |
+| 🎉 **Series 15: Kiến Trúc Máy Tính**  | **Từ Logic Đến Lượng Tử**               | **12/12**      | **12**   | **100%** ✅ |
+| 🎉 **Series 16: Kỹ Sư AI Thực Chiến** | **Lộ Trình Lập Trình Viên Web**         | **20/20**      | **20**   | **100%** ✅ |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
