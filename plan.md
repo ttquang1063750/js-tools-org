@@ -28,7 +28,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | Series 13                            | Hệ Thống Nhúng: Từ Thanh Ghi Đến RTOS   | 16/16          | 16       | 100%        |
 | Series 14                            | Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ       | 15/15          | 15       | 100%        |
 | 🎉 **Series 15: Kiến Trúc Máy Tính** | **Từ Logic Đến Lượng Tử**               | **12/12**      | **12**   | **100%** ✅ |
-| Series 16                            | Kỹ Sư AI Thực Chiến                     | 12/20          | 20       | 60%         |
+| Series 16                            | Kỹ Sư AI Thực Chiến                     | 13/20          | 20       | 65%         |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
