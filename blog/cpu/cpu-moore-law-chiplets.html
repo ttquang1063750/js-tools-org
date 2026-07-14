@@ -1,0 +1,967 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 11: Điểm Cuối Định Luật Moore & Đóng Gói Chiplet — js-tools</title>
+    <meta
+      name="description"
+      content="Giới hạn vật lý của silicon (hiệu ứng đường hầm lượng tử dưới 3nm, Dark Silicon), xu hướng thiết kế Chiplet chia nhỏ die lớn thành nhiều die nhỏ ghép trên interposer, công nghệ đóng gói 3D IC & kết nối TSV, và bài toán tính Yield Rate (mô hình Poisson/Murphy) so sánh chi phí sản xuất monolithic die lớn vs chiplet nhiều die nhỏ. Verified thật bằng engine tự viết: die nguyên khối 600mm² trên wafer 300mm chỉ cắt được 90 die/wafer, Yield (Murphy) chỉ 56,55%; die chiplet 150mm² cắt được 416 die/wafer, Yield tới 86,23%. Chi phí 1 die nguyên khối đạt chuẩn ~196,49 USD; chi phí 4 chiplet đạt chuẩn (tương đương lượng logic) chỉ ~111,51 USD — rẻ hơn 43%. Demo: máy tính Yield & chi phí Wafer tương tác."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/cpu/cpu-moore-law-chiplets" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/cpu/cpu-moore-law-chiplets" />
+    <meta property="og:title" content="Bài 11: Điểm Cuối Định Luật Moore & Đóng Gói Chiplet — js-tools" />
+    <meta
+      property="og:description"
+      content="Giới hạn vật lý Silicon, Chiplet, đóng gói 3D IC/TSV, Yield Poisson/Murphy. Verified: die 600mm² = 90/wafer, Yield 56,55%; chiplet 150mm² = 416/wafer, Yield 86,23%. Chi phí monolithic ~196,49 USD vs 4 chiplet ~111,51 USD — rẻ hơn 43%."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 11: Điểm Cuối Định Luật Moore & Đóng Gói Chiplet — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Giới hạn Silicon, Chiplet, 3D IC/TSV, Yield Poisson/Murphy. Verified: monolithic 600mm²=90 die/wafer (Yield 56,55%) vs chiplet 150mm²=416 die/wafer (Yield 86,23%). Chi phí: 196,49 USD vs 111,51 USD (rẻ hơn 43%)."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .yc-demo-container {
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 24px;
+        color: #242424;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .yc-demo-row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .yc-demo-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .yc-demo-field label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #475569;
+      }
+      .yc-demo-field input {
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-family: Consolas, Monaco, monospace;
+        width: 120px;
+      }
+      .yc-output {
+        background: #1e293b;
+        color: #38bdf8;
+        border-radius: 6px;
+        padding: 14px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .yc-bar-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .yc-bar-label {
+        width: 90px;
+        flex-shrink: 0;
+      }
+      .yc-bar-track {
+        flex: 1;
+        background: #e2e8f0;
+        border-radius: 4px;
+        height: 16px;
+        overflow: hidden;
+      }
+      .yc-bar-fill {
+        height: 100%;
+        transition: width 0.2s;
+      }
+      .yc-bar-fill--mono {
+        background: #ef4444;
+      }
+      .yc-bar-fill--chiplet {
+        background: #10b981;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 11: Điểm Cuối Định Luật Moore & Đóng Gói Chiplet",
+        "description": "Giới hạn vật lý Silicon, Chiplet, đóng gói 3D IC/TSV, Yield Poisson/Murphy. Verified: die 600mm² = 90/wafer, Yield 56,55%; chiplet 150mm² = 416/wafer, Yield 86,23%. Chi phí monolithic ~196,49 USD vs 4 chiplet ~111,51 USD — rẻ hơn 43%.",
+        "url": "https://js-tools.org/blog/cpu/cpu-moore-law-chiplets",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-23"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--cpu">
+        <div class="container">
+          <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--cpu">Bài 11 · Kiến Trúc Máy Tính</div>
+          <h1 class="article-hero__title">Bài 11: Điểm Cuối Định Luật Moore & Đóng Gói Chiplet</h1>
+          <div class="article-hero__meta">23 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: khi transistor không thể nhỏ hơn được nữa</h2>
+            <p>
+              Suốt 5 thập kỷ, <strong>Định luật Moore</strong> (số transistor trên 1 die tăng gấp đôi mỗi ~2 năm) là
+              động cơ ngầm phía sau MỌI bài học trước trong series này — pipeline sâu hơn (<a
+                href="cpu-pipeline-hazards"
+                >Bài 4</a
+              >), cache lớn hơn (<a href="cpu-cache-memory">Bài 7</a>), OOO phức tạp hơn (<a href="cpu-ooo-execution"
+                >Bài 6</a
+              >) đều cần NHIỀU transistor hơn để thực hiện. Nhưng thu nhỏ transistor đang chạm giới hạn VẬT LÝ thật sự —
+              và ngành công nghiệp chip đã tìm ra lối thoát không phải bằng cách thu nhỏ hơn nữa, mà bằng cách LẮP GHÉP
+              khác đi.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Bối cảnh</div>
+              <div class="callout__content">
+                Bài này không yêu cầu kiến thức cụ thể từ bài trước, nhưng đọc <a href="cpu-apple-silicon-uma">Bài 9</a>
+                (Apple Silicon &amp; UMA) sẽ giúp hiểu rõ hơn TẠI SAO các nhà sản xuất chip hiện đại (Apple M-Ultra, AMD
+                Ryzen, Intel Meteor Lake) đều áp dụng chiplet — đây chính là bước tiếp theo của xu hướng tích hợp SoC đã
+                học.
+              </div>
+            </div>
+
+            <h2>1. Giới hạn vật lý của Silicon &amp; Sự kết thúc của Định luật Moore</h2>
+            <p>
+              Khi cổng transistor (gate) thu nhỏ xuống dưới 3nm, các electron bắt đầu "xuyên qua" lớp cách điện mỏng nhờ
+              <strong>hiệu ứng đường hầm lượng tử</strong> (quantum tunneling) — dòng điện rò rỉ này KHÔNG PHẢI lỗi
+              thiết kế mà là hệ quả vật lý không thể tránh khi khoảng cách vật lý tiệm cận kích thước nguyên tử. Đồng
+              thời, đóng gói transistor dày đặc hơn tạo ra nhiệt tập trung tới mức KHÔNG THỂ bật CÙNG lúc toàn bộ die ở
+              xung nhịp tối đa mà không cháy chip — hiện tượng <strong>Dark Silicon</strong> (phần silicon phải "tắt"
+              hoặc chạy chậm để giữ nhiệt an toàn).
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">moore_scaling_limit.txt (xu hướng thu nhỏ node vs giới hạn vật lý)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">Node (nm)   Nam gioi thieu (~)   Ghi chu
+180          1999                 Con thoai mai, chua co van de ro ret
+65           2006                 Bat dau xuat hien dong ro ri (leakage) dang ke
+14           2014                 FinFET pho bien - kiem soat kenh dan tot hon
+5            2020                 Hieu ung luong tu bat dau anh huong ro ret
+3 va nho hon 2023+                Quantum tunneling + Dark Silicon la rao can CHINH
+                                   -> chuyen huong sang chiplet + toi uu vi kien truc</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: "Định luật Moore kết thúc" ≠ "CPU ngừng nhanh hơn"</div>
+              <div class="callout__content">
+                Tốc độ THU NHỎ transistor đang chậm lại rõ rệt — nhưng hiệu năng CPU thực tế vẫn tăng đều mỗi năm, chỉ
+                là động lực tăng đã CHUYỂN từ "nhiều transistor hơn ở cùng thiết kế" sang tối ưu vi kiến trúc: pipeline
+                thông minh hơn (Bài 4-6), cache/bộ nhớ phân cấp tốt hơn (Bài 7-8), tăng tốc chuyên dụng (Bài 10), VÀ —
+                chủ đề bài này — thiết kế đóng gói khác đi (chiplet) thay vì chỉ dựa vào thu nhỏ đơn thuần.
+              </div>
+            </div>
+
+            <h2>2. Xu hướng thiết kế Chiplet</h2>
+            <p>
+              Thay vì chế tạo MỘT die khổng lồ chứa mọi thành phần (CPU, I/O, cache), thiết kế
+              <strong>Chiplet</strong> chia nhỏ thành NHIỀU die nhỏ hơn, mỗi die đảm nhận một vai trò riêng (lõi CPU, bộ
+              điều khiển I/O, cache lớn...) — rồi ghép lại trên một <strong>interposer</strong> (nền kết nối trung
+              gian). AMD Ryzen, Intel Meteor Lake, và Apple M-Ultra đều dùng chiến lược này.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">monolithic_vs_chiplet.txt (sơ đồ 2 chiến lược thiết kế)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-c">Monolithic (1 die lon, mot khoi nguyen ven):
+  +------------------------------------------+
+  |  CPU cores | Cache lon | Bo dieu khien IO |
+  +------------------------------------------+
+  MOT loi chi tiet nho o BAT KY dau -> CA DIE hong -> ty le hong CAO voi die lon
+
+Chiplet (nhieu die nho ghep tren interposer):
+  +--------+  +--------+  +--------+  +--------+
+  | CPU die|  | CPU die|  | IO die |  |Cache die|
+  +--------+  +--------+  +--------+  +--------+
+        \\        |            |          /
+         +-------+-- Interposer (nen ket noi) --+
+  MOI die nho rieng - loi 1 die CHI hong die DO, khong keo theo ca he thong</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: chiplet không "miễn phí" — độ trễ giao tiếp giữa các die</div>
+              <div class="callout__content">
+                Giao tiếp GIỮA các chiplet (qua interposer) LUÔN chậm hơn giao tiếp NỘI BỘ trong cùng một die nguyên
+                khối (do phải đi qua thêm một lớp kết nối vật lý). Với khối lượng công việc cần nhiều lượt trao đổi dữ
+                liệu qua lại GIỮA các chiplet (vd CPU chiplet liên tục hỏi Cache chiplet), overhead độ trễ này có thể ăn
+                mòn đáng kể lợi ích từ chi phí sản xuất rẻ hơn — thiết kế chiplet phải cân nhắc kỹ VAI TRÒ nào nên tách
+                riêng, vai trò nào nên giữ chung trên cùng die.
+              </div>
+            </div>
+
+            <h2>3. Công nghệ đóng gói 3D IC &amp; Kết nối TSV</h2>
+            <p>
+              Ngoài ghép NGANG (chiplet cạnh nhau trên interposer), công nghệ 3D IC xếp CHỒNG silicon theo chiều DỌC,
+              kết nối các lớp bằng <strong>TSV</strong> (Through-Silicon Via — lỗ xuyên silicon dẫn điện). Ví dụ thực
+              tế: 3D V-Cache của AMD (xếp thêm một lớp cache SRAM ngay TRÊN die CPU) và bộ nhớ HBM (High Bandwidth
+              Memory) xếp chồng sát cạnh GPU — tăng dung lượng VÀ băng thông giao tiếp lên cực đại trong cùng diện tích
+              bo mạch.
+            </p>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Thách thức giải nhiệt cho các tầng silicon dưới cùng</div>
+              <div class="callout__content">
+                Khi xếp chồng nhiều lớp silicon, các tầng NẰM DƯỚI bị các tầng TRÊN che kín — nhiệt sinh ra ở tầng dưới
+                khó thoát ra ngoài hơn hẳn so với thiết kế phẳng (2D) truyền thống. Đây là thách thức kỹ thuật LỚN NHẤT
+                của 3D IC, không phải vấn đề kết nối điện (TSV đã giải quyết tốt phần đó) — nhiều thiết kế 3D IC phải hạ
+                xung nhịp các tầng dưới để tránh quá nhiệt, đánh đổi một phần hiệu năng lý thuyết.
+              </div>
+            </div>
+
+            <h2>4. Bài toán tính toán Yield Rate &amp; Chi phí sản xuất</h2>
+            <p>
+              Một wafer silicon tròn được cắt thành nhiều die vuông — nhưng KHÔNG PHẢI mọi die đều "sạch" lỗi.
+              <strong>Yield</strong> (tỷ lệ đạt chuẩn) giảm dần khi diện tích die TĂNG, vì die càng lớn càng có xác suất
+              cao "dính" phải ít nhất 1 lỗi ngẫu nhiên trên bề mặt wafer. Mô hình <strong>Poisson</strong> (đơn giản,
+              hơi bi quan) và <strong>Murphy</strong> (thực tế hơn) đều biểu diễn quan hệ này:
+            </p>
+            <p style="text-align: center">
+              $$Y_{Poisson} = e^{-A \times D} \qquad\qquad Y_{Murphy} = \left(\frac{1 - e^{-A \times D}}{A \times
+              D}\right)^2$$
+            </p>
+            <p>
+              với $A$ = diện tích die (mm²), $D$ = mật độ lỗi (lỗi/mm²). Verified thật: wafer 300mm (chuẩn công nghiệp),
+              mật độ lỗi 0,001 lỗi/mm² — die nguyên khối <strong>600mm²</strong> chỉ cắt được
+              <strong>90 die/wafer</strong>, Yield (Murphy) chỉ <strong>56,55%</strong>. Chia thành
+              <strong>4 chiplet 150mm²</strong> (tổng logic TƯƠNG ĐƯƠNG die lớn) cắt được
+              <strong>416 die/wafer</strong> — gần gấp 5 lần — với Yield tăng vọt lên <strong>86,23%</strong>.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">yield_cost.js (trích engine dùng chung cpu-core.js)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">function yieldMurphy(area, defectDensity) {
+  const x = area * defectDensity;
+  return Math.pow((1 - Math.exp(-x)) / x, 2);
+}
+function diesPerWafer(waferDiameterMm, dieAreaMm2) {
+  const waferArea = Math.PI * Math.pow(waferDiameterMm / 2, 2);
+  const edgeLoss = (Math.PI * waferDiameterMm) / Math.sqrt(2 * dieAreaMm2);
+  return Math.floor(waferArea / dieAreaMm2 - edgeLoss);
+}
+function costPerGoodDie(waferCostUsd, dieAreaMm2, waferDiameterMm, defectDensity, yieldFn) {
+  return waferCostUsd / (diesPerWafer(waferDiameterMm, dieAreaMm2) * yieldFn(dieAreaMm2, defectDensity));
+}
+// Verified: diesPerWafer(300, 600) = 90;  diesPerWafer(300, 150) = 416
+// Verified: yieldMurphy(600, 0.001) = 0,5655;  yieldMurphy(150, 0.001) = 0,8623</code></pre>
+            </div>
+            <p>
+              Với giá 1 wafer 10.000 USD (giá trị minh hoạ): chi phí cho MỘT die nguyên khối đạt chuẩn ~
+              <strong>196,49 USD</strong>. Chi phí để có ĐỦ 4 chiplet đạt chuẩn (đúng bằng 1 sản phẩm hoàn chỉnh, tổng
+              logic tương đương die lớn) chỉ ~<strong>111,51 USD</strong> — <strong>rẻ hơn 43%</strong>. Đây chính là
+              động lực kinh tế mạnh mẽ thúc đẩy ngành công nghiệp chip chuyển sang chiplet.
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">cost_comparison.js (verified bằng engine — chi phí thực tế)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">const costMono = costPerGoodDie(10000, 600, 300, 0.001, yieldMurphy);       // ~196,49 USD
+const costChiplet1 = costPerGoodDie(10000, 150, 300, 0.001, yieldMurphy);   // ~27,88 USD/chiplet
+const costChiplet4 = costChiplet1 * 4;                                      // ~111,51 USD (can 4 chiplet)
+// Verified: costChiplet4 (111,51) < costMono (196,49) - re hon dung 43%</code></pre>
+            </div>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: bỏ qua chi phí đóng gói &amp; kiểm thử</div>
+              <div class="callout__content">
+                Con số 43% tiết kiệm ở trên CHỈ tính chi phí chế tạo die thô (wafer + yield) — CHƯA tính chi phí đóng
+                gói (packaging) các chiplet lên interposer (phức tạp hơn hẳn đóng gói 1 die đơn) và chi phí kiểm thử
+                (testing) TỪNG chiplet riêng lẻ TRƯỚC khi ghép (để tránh ghép 1 chiplet lỗi vào sản phẩm cuối, lãng phí
+                các chiplet tốt còn lại). Bài toán tổng chi phí thật sự PHẢI cộng thêm 2 khoản này — với thiết kế
+                chiplet quá manh mún (quá nhiều mảnh nhỏ), chi phí đóng gói/kiểm thử có thể ăn hết phần tiết kiệm từ
+                Yield.
+              </div>
+            </div>
+
+            <h2>5. Thực hành: Trình giả lập tính toán Yield &amp; Chi phí Wafer</h2>
+            <p>
+              Đổi diện tích die, mật độ lỗi, kích thước wafer và số chiplet cần thiết để xem trực tiếp Yield và chi phí
+              thay đổi ra sao — thử tăng diện tích die nguyên khối để thấy Yield giảm nhanh cỡ nào:
+            </p>
+
+            <div class="code-tabs" id="yc-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🏭 Máy tính Yield &amp; Chi phí Wafer</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="yc-demo-container">
+                  <div class="yc-demo-row">
+                    <div class="yc-demo-field">
+                      <label for="yc-wafer-diameter-input">Đường kính wafer (mm)</label>
+                      <input type="number" id="yc-wafer-diameter-input" value="300" min="50" />
+                    </div>
+                    <div class="yc-demo-field">
+                      <label for="yc-wafer-cost-input">Giá 1 wafer (USD)</label>
+                      <input type="number" id="yc-wafer-cost-input" value="10000" min="1" />
+                    </div>
+                    <div class="yc-demo-field">
+                      <label for="yc-defect-density-input">Mật độ lỗi (lỗi/mm²)</label>
+                      <input type="number" id="yc-defect-density-input" value="0.001" step="0.0001" min="0" />
+                    </div>
+                  </div>
+                  <div class="yc-demo-row">
+                    <div class="yc-demo-field">
+                      <label for="yc-mono-area-input">Die nguyên khối (mm²)</label>
+                      <input type="number" id="yc-mono-area-input" value="600" min="1" />
+                    </div>
+                    <div class="yc-demo-field">
+                      <label for="yc-chiplet-area-input">Diện tích 1 chiplet (mm²)</label>
+                      <input type="number" id="yc-chiplet-area-input" value="150" min="1" />
+                    </div>
+                    <div class="yc-demo-field">
+                      <label for="yc-num-chiplets-input">Số chiplet cần/sản phẩm</label>
+                      <input type="number" id="yc-num-chiplets-input" value="4" min="1" />
+                    </div>
+                  </div>
+                  <div class="yc-output" id="yc-output">—</div>
+                  <div class="yc-bar-row">
+                    <span class="yc-bar-label">Monolithic</span>
+                    <div class="yc-bar-track"><div class="yc-bar-fill yc-bar-fill--mono" id="yc-bar-mono"></div></div>
+                  </div>
+                  <div class="yc-bar-row">
+                    <span class="yc-bar-label">Chiplet</span>
+                    <div class="yc-bar-track">
+                      <div class="yc-bar-fill yc-bar-fill--chiplet" id="yc-bar-chiplet"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Tóm lược</h2>
+            <ul>
+              <li>
+                ✅ Định luật Moore chậm lại do giới hạn vật lý thật (quantum tunneling dưới 3nm, Dark Silicon) — nhưng
+                hiệu năng CPU vẫn tăng nhờ tối ưu vi kiến trúc và đóng gói, không chỉ nhờ thu nhỏ transistor.
+              </li>
+              <li>
+                ✅ Chiplet chia nhỏ die lớn thành nhiều die nhỏ ghép trên interposer — mỗi die lỗi CHỈ hỏng chính nó,
+                không kéo theo cả hệ thống như monolithic.
+              </li>
+              <li>
+                ✅ 3D IC + TSV xếp chồng silicon dọc, tăng dung lượng/băng thông — đổi lại thách thức giải nhiệt tầng
+                dưới.
+              </li>
+              <li>
+                ✅ Verified: die 600mm² chỉ 90/wafer, Yield 56,55%; chiplet 150mm² tới 416/wafer, Yield 86,23%. Chi phí
+                monolithic ~196,49 USD vs 4 chiplet ~111,51 USD — rẻ hơn 43%.
+              </li>
+              <li>✅ Pitfall: con số tiết kiệm trên chưa tính chi phí đóng gói + kiểm thử từng chiplet.</li>
+            </ul>
+
+            <h2>Trắc nghiệm ôn tập</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Câu 1</h3>
+              <p class="quiz-question">
+                "Định luật Moore kết thúc" có nghĩa là CPU sẽ ngừng nhanh hơn qua các năm không?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Tốc độ THU NHỎ transistor đang chậm lại, nhưng hiệu năng CPU thực tế vẫn tăng đều — động lực tăng đã chuyển từ số lượng transistor sang tối ưu vi kiến trúc (pipeline, cache, OOO), tăng tốc chuyên dụng (GPU/NPU/AMX), và thiết kế đóng gói khác đi như chiplet.'
+                    )
+                  "
+                >
+                  A. Không — hiệu năng vẫn tăng, chỉ là động lực tăng đã chuyển từ thu nhỏ transistor sang tối ưu vi
+                  kiến trúc và đóng gói (chiplet)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Day CHINH LA pitfall cua bai hoc - hieu nang CPU van tang deu qua cac nam, chi la nguon tang khac di, khong phai dung lai hoan toan.'
+                    )
+                  "
+                >
+                  B. Đúng — CPU sẽ hoàn toàn dừng tăng hiệu năng từ nay trở đi
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Dinh luat Moore lien quan truc tiep den viec THU NHO TRANSISTOR va gioi han vat ly cua silicon - hoan toan khong lien quan gi den dung luong RAM cua may tinh.'
+                    )
+                  "
+                >
+                  C. Đúng — nhưng chỉ ảnh hưởng đến dung lượng RAM, không ảnh hưởng CPU
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 2</h3>
+              <p class="quiz-question">
+                Verified: die 600mm² có Yield (Murphy) chỉ 56,55%, trong khi chiplet 150mm² (nhỏ hơn 4 lần) có Yield tới
+                86,23%. Vì sao chênh lệch lớn vậy?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Công thức Yield (cả Poisson lẫn Murphy) có quan hệ HÀM MŨ NGHỊCH với diện tích die × mật độ lỗi. Die càng lớn, xác suất DÍNH PHẢI ít nhất 1 lỗi ngẫu nhiên trên bề mặt wafer càng cao — die nhỏ hơn có ít &quot;chỗ&quot; để lỗi rơi trúng hơn, nên Yield cao hơn hẳn.'
+                    )
+                  "
+                >
+                  A. Yield có quan hệ hàm mũ nghịch với diện tích die — die càng lớn càng dễ dính phải ít nhất 1 lỗi
+                  ngẫu nhiên trên bề mặt wafer
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca hai truong hop deu dung CUNG mot mat do loi (0,001 loi/mm^2) trong vi du nay - khong phai mat do loi khac nhau, ma la DIEN TICH DIE khac nhau gay ra chenh lech Yield.'
+                    )
+                  "
+                >
+                  B. Vì chiplet được sản xuất bằng công nghệ chip tiên tiến hơn hẳn die nguyên khối
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Wafer 300mm la GIONG HET nhau cho ca hai truong hop trong vi du - khong phai kich thuoc wafer khac nhau, ma la DIEN TICH DIE (600mm^2 vs 150mm^2) khac nhau gay ra chenh lech Yield.'
+                    )
+                  "
+                >
+                  C. Vì chiplet dùng wafer nhỏ hơn hẳn die nguyên khối
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 3</h3>
+              <p class="quiz-question">
+                Verified: chi phí 4 chiplet đạt chuẩn (~111,51 USD) rẻ hơn 1 die nguyên khối đạt chuẩn (~196,49 USD) dù
+                cần TỚI 4 chiplet tốt cho 1 sản phẩm. Vì sao vẫn rẻ hơn?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Chiplet nhỏ hơn cắt được NHIỀU die/wafer hơn hẳn (416 so với 90, gần gấp 5 lần) VÀ có Yield cao hơn hẳn (86,23% so với 56,55%) — cả hai yếu tố nhân lại làm chi phí MỖI chiplet đạt chuẩn rẻ hơn nhiều so với chi phí mỗi die lớn đạt chuẩn, đủ để bù lại việc cần dùng 4 chiplet thay vì 1 die.'
+                    )
+                  "
+                >
+                  A. Chiplet cắt được nhiều die/wafer hơn hẳn VÀ có Yield cao hơn hẳn — cả hai yếu tố cộng lại đủ bù lại
+                  việc cần dùng tới 4 chiplet
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Ca hai truong hop trong vi du deu dung CUNG mot gia wafer (10.000 USD) - khong phai gia wafer chiplet re hon, ma la SO LUONG die cat duoc va Yield khac nhau gay ra chenh lech chi phi.'
+                    )
+                  "
+                >
+                  B. Vì giá 1 wafer dùng cho chiplet rẻ hơn hẳn giá wafer dùng cho die nguyên khối
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Vi du nay CHUA tinh chi phi dong goi/kiem thu (day chinh la pitfall cua Muc 4) - neu tinh them, phan tiet kiem 43% co the giam di, nhung KHONG PHAI ly do chinh khien 4 chiplet re hon 1 die lon trong phep tinh CHE TAO THO da neu.'
+                    )
+                  "
+                >
+                  C. Vì bài toán này đã tính đủ chi phí đóng gói và kiểm thử, cho thấy chiplet luôn thắng tuyệt đối
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Câu 4</h3>
+              <p class="quiz-question">
+                Vì sao thiết kế chiplet không phải lúc nào cũng thắng tuyệt đối so với monolithic?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Đúng! Giao tiếp GIỮA các chiplet (qua interposer) luôn chậm hơn giao tiếp NỘI BỘ trong cùng một die — nếu khối lượng công việc cần trao đổi dữ liệu liên tục giữa các chiplet, overhead độ trễ này có thể ăn mòn đáng kể lợi ích tiết kiệm chi phí sản xuất. Ngoài ra, chi phí đóng gói và kiểm thử từng chiplet cũng chưa được tính vào con số tiết kiệm chế tạo thô.'
+                    )
+                  "
+                >
+                  A. Vì độ trễ giao tiếp GIỮA các chiplet cao hơn nội bộ một die, và chi phí đóng gói/kiểm thử chưa được
+                  tính vào phần tiết kiệm chế tạo
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. Chiplet KHONG lam Yield thap hon monolithic - nguoc lai, chiplet (die nho hon) LUON co Yield CAO HON die lon, dung nhu verified o Muc 4 (86,23% vs 56,55%).'
+                    )
+                  "
+                >
+                  B. Vì chiplet luôn có Yield thấp hơn hẳn monolithic
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Sai. TSV la cong nghe dung cho 3D IC (xep chong DOC) - chiplet ghep NGANG tren interposer khong bat buoc phai dung TSV, day khong phai ly do khien chiplet khong thang tuyet doi.'
+                    )
+                  "
+                >
+                  C. Vì chiplet không tương thích với công nghệ TSV
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — thư viện kiến trúc máy tính mini dùng xuyên suốt cả 12 bài, Bài 11
+                vừa thêm <code>yieldPoisson()</code>, <code>yieldMurphy()</code>, <code>diesPerWafer()</code>,
+                <code>costPerGoodDie()</code> — mô hình Yield và chi phí wafer, so sánh monolithic vs chiplet, kèm
+                self-test đối chiếu đúng mọi con số trong bài (chạy <code>node cpu-core.js</code>, không cần cài thêm
+                gì):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Giới hạn vật lý &amp; Định luật Moore:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Moore%27s_law" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Moore's law</a
+                  >
+                  — lịch sử, giới hạn vật lý hiện tại và tranh luận về "kết thúc" của định luật.
+                </li>
+                <li>
+                  <strong>Mô hình Yield bán dẫn:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Semiconductor_device_fabrication"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Semiconductor device fabrication</a
+                  >
+                  — quy trình chế tạo wafer và các mô hình tính Yield (Poisson, Murphy, và các biến thể).
+                </li>
+                <li>
+                  <strong>Thiết kế Chiplet &amp; TSV:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Chiplet" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Chiplet</a
+                  >
+                  — tổng quan xu hướng chiplet và công nghệ đóng gói 3D IC hiện đại.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="cpu-hardware-acceleration" class="article-related__link article-related__link--prev"
+                  >Bài 10: Tăng Tốc Phần Cứng: GPU, NPU &amp; AMX</a
+                >
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  🔒 Bài 12: Kiến Trúc Máy Tính Lượng Tử (Quantum Computing) — sắp ra mắt
+                </span>
+                <a href="cpu-programming-series" class="article-related__link">Quay lại Lộ trình Kiến Trúc Máy Tính</a>
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="cpu-moore-law-chiplets.js"></script>
+  </body>
+</html>

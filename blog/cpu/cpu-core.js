@@ -981,6 +981,52 @@ function compareComputeMethods(n, scalarGFLOPS, simdGFLOPS, gpuTFLOPS, gpuOverhe
   return { flops, scalarTimeSeconds, simdTimeSeconds, gpuTimeSeconds };
 }
 
+// ---------------------------------------------------------------------------
+// Bài 11 — Điểm cuối Định luật Moore & Đóng gói Chiplet. Thu nhỏ transistor
+// (Định luật Moore) đang chạm giới hạn vật lý (hiệu ứng đường hầm lượng tử
+// dưới 3nm, giới hạn nhiệt Dark Silicon) — ngành công nghiệp chip chuyển
+// sang CHIA NHỎ một die lớn thành nhiều "chiplet" nhỏ hơn ghép trên
+// interposer. Build-out: mô hình hiệu suất chế tạo (Yield) Poisson/Murphy
+// và chi phí wafer, so sánh die nguyên khối (monolithic) lớn vs nhiều
+// chiplet nhỏ (Mục 11.4).
+// ---------------------------------------------------------------------------
+
+// Mô hình Yield POISSON (đơn giản nhất, Mục 11.4): xác suất một die diện
+// tích `area` (mm²) hoàn toàn KHÔNG dính lỗi nào, với mật độ lỗi
+// `defectDensity` (lỗi/mm²) phân bố ngẫu nhiên đều: $Y = e^{-A \times D}$.
+// Mô hình này đơn giản nhưng bi quan quá mức với die LỚN.
+function yieldPoisson(area, defectDensity) {
+  return Math.exp(-area * defectDensity);
+}
+
+// Mô hình Yield MURPHY (thực tế hơn Poisson, Mục 11.4): giả định mật độ lỗi
+// dao động theo phân bố (không đều tuyệt đối như Poisson), cho kết quả gần
+// với số liệu thực tế ngành bán dẫn hơn: $Y = \left(\dfrac{1 - e^{-x}}{x}\right)^2$
+// với $x = A \times D$.
+function yieldMurphy(area, defectDensity) {
+  const x = area * defectDensity;
+  if (x === 0) return 1;
+  return Math.pow((1 - Math.exp(-x)) / x, 2);
+}
+
+// Số die CÓ THỂ cắt được từ một wafer tròn đường kính `waferDiameterMm`
+// (Mục 11.4): diện tích wafer chia cho diện tích 1 die, TRỪ ĐI phần hao hụt
+// ở rìa wafer (các die bị cắt cụt không dùng được, xấp xỉ theo chu vi wafer).
+function diesPerWafer(waferDiameterMm, dieAreaMm2) {
+  const waferArea = Math.PI * Math.pow(waferDiameterMm / 2, 2);
+  const edgeLoss = (Math.PI * waferDiameterMm) / Math.sqrt(2 * dieAreaMm2);
+  return Math.floor(waferArea / dieAreaMm2 - edgeLoss);
+}
+
+// Chi phí trung bình cho MỖI die ĐẠT CHUẨN (Mục 11.4): chi phí 1 wafer chia
+// cho số die THẬT SỰ dùng được (số die cắt được × tỷ lệ Yield). `yieldFn`
+// là yieldPoisson hoặc yieldMurphy (hoặc hàm tương thích tuỳ chỉnh).
+function costPerGoodDie(waferCostUsd, dieAreaMm2, waferDiameterMm, defectDensity, yieldFn) {
+  const n = diesPerWafer(waferDiameterMm, dieAreaMm2);
+  const y = yieldFn(dieAreaMm2, defectDensity);
+  return waferCostUsd / (n * y);
+}
+
 export {
   toBinString,
   toSigned,
@@ -1025,6 +1071,10 @@ export {
   matrixMultiplyFlops,
   computeTimeSeconds,
   compareComputeMethods,
+  yieldPoisson,
+  yieldMurphy,
+  diesPerWafer,
+  costPerGoodDie,
 };
 
 // ---------------------------------------------------------------------------
@@ -1669,6 +1719,55 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Pitfall: ma tran 4x4 QUA NHO - GPU (co overhead nap du lieu 0,1ms) CHAM HON scalar (khong co overhead)',
       cmpSmall.gpuTimeSeconds > cmpSmall.scalarTimeSeconds
+    );
+  }
+
+  // --- Bài 11: Yield Poisson/Murphy + chi phi wafer - monolithic vs chiplet ---
+  {
+    // Wafer 300mm (chuan cong nghiep), gia wafer 10.000 USD (minh hoa), mat
+    // do loi 0,001 loi/mm^2 (= 0,1 loi/cm^2, gia tri sach giao khoa pho bien)
+    const waferDiameter = 300;
+    const waferCost = 10000;
+    const defectDensity = 0.001;
+    const monoArea = 600; // mm^2 - die nguyen khoi lon
+    const chipletArea = 150; // mm^2 - 4 chiplet = tuong duong logic voi 1 die 600mm^2
+
+    check(
+      'diesPerWafer(300mm, 600mm^2) = 90 die/wafer (die nguyen khoi lon)',
+      diesPerWafer(waferDiameter, monoArea),
+      90
+    );
+    check(
+      'diesPerWafer(300mm, 150mm^2) = 416 die/wafer (chiplet nho hon 4 lan cat duoc NHIEU hon 4 lan)',
+      diesPerWafer(waferDiameter, chipletArea),
+      416
+    );
+
+    checkTrue(
+      'yieldMurphy(mono, 600mm^2) = 0,5655 (56,55% die dat chuan)',
+      Math.abs(yieldMurphy(monoArea, defectDensity) - 0.5655) < 1e-3
+    );
+    checkTrue(
+      'yieldMurphy(chiplet, 150mm^2) = 0,8623 (86,23% - die NHO hon co Yield CAO hon han)',
+      Math.abs(yieldMurphy(chipletArea, defectDensity) - 0.8623) < 1e-3
+    );
+    checkTrue(
+      'yieldPoisson(mono) < yieldMurphy(mono) - Poisson bi quan hon Murphy voi die lon',
+      yieldPoisson(monoArea, defectDensity) < yieldMurphy(monoArea, defectDensity)
+    );
+
+    const costMono = costPerGoodDie(waferCost, monoArea, waferDiameter, defectDensity, yieldMurphy);
+    const costChiplet1 = costPerGoodDie(waferCost, chipletArea, waferDiameter, defectDensity, yieldMurphy);
+    const costChipletTotal4 = costChiplet1 * 4; // can DUNG 4 chiplet tot cho 1 san pham hoan chinh
+
+    checkTrue('Chi phi 1 die nguyen khoi dat chuan ~ 196,49 USD', Math.abs(costMono - 196.49) < 0.1);
+    checkTrue(
+      'Chi phi 4 chiplet dat chuan (1 san pham hoan chinh) ~ 111,51 USD',
+      Math.abs(costChipletTotal4 - 111.51) < 0.1
+    );
+    checkTrue(
+      'Pitfall/dong luc kinh te: chiplet RE HON nguyen khoi ~43% cho CUNG mot luong logic - dong luc that su nganh ban dan chuyen sang chiplet',
+      costChipletTotal4 < costMono && 1 - costChipletTotal4 / costMono > 0.4
     );
   }
 
