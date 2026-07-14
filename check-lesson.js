@@ -72,28 +72,38 @@ try {
 // Read raw file content
 const rawHTML = fs.readFileSync(filePath, 'utf8');
 
-// Strip script and style content blocks but preserve the tags to avoid shifting lines
+// Strip script, style, and comment content blocks but preserve the tags and spacing/newlines to preserve line numbers
 let cleanHTML = rawHTML;
-cleanHTML = cleanHTML.replace(/(<script[\s\S]*?>)[\s\S]*?<\/script>/gi, '$1</script>');
-cleanHTML = cleanHTML.replace(/(<style[\s\S]*?>)[\s\S]*?<\/style>/gi, '$1</style>');
-cleanHTML = cleanHTML.replace(/<!--[\s\S]*?-->/g, ''); // Remove comments
+cleanHTML = cleanHTML.replace(/(<script[\s>][^>]*?>)([\s\S]*?)(<\/script>)/gi, (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3);
+cleanHTML = cleanHTML.replace(/(<style[\s>][^>]*?>)([\s\S]*?)(<\/style>)/gi, (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3);
+cleanHTML = cleanHTML.replace(/(<!--)([\s\S]*?)(-->)/g, (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3);
 
 // ----------------------------------------------------
 // 2. HTML Tag Balancing Check (Strict stack check)
 // ----------------------------------------------------
 const tagsStack = [];
-const tagRegex = /<\/?([a-z0-9]+)(?:[\s][^>]*?)?>/gi;
+const tagRegex = /<\/?([a-z0-9\-]+)(?:[\s][^>]*?)?>/gi;
 let match;
 let nestingError = false;
+
+const voidElements = [
+  'img', 'br', 'hr', 'input', 'link', 'meta', 'source', 'embed', 'param', 
+  'track', 'wbr', 'area', 'base', 'col'
+];
 
 while ((match = tagRegex.exec(cleanHTML)) !== null) {
   const fullTag = match[0];
   const tagName = match[1].toLowerCase();
   const isClosing = fullTag.startsWith('</');
-  const isSelfClosing = fullTag.endsWith('/>') || ['img', 'br', 'hr', 'input', 'link', 'meta', 'circle', 'line', 'polyline', 'rect', 'path', 'g', 'svg'].includes(tagName);
+  const isSelfClosing = fullTag.endsWith('/>') || voidElements.includes(tagName);
   
-  if (isSelfClosing) continue;
-  if (['script', 'style'].includes(tagName)) continue;
+  if (isSelfClosing) {
+    if (isClosing) {
+      reportError('Cân bằng thẻ HTML', `Thẻ void/self-closing <${tagName}> không được phép có thẻ đóng </${tagName}>`, getLineNumber(cleanHTML, match.index));
+      nestingError = true;
+    }
+    continue;
+  }
 
   if (!isClosing) {
     tagsStack.push({ name: tagName, line: getLineNumber(cleanHTML, match.index) });
@@ -104,46 +114,22 @@ while ((match = tagRegex.exec(cleanHTML)) !== null) {
     } else {
       const last = tagsStack.pop();
       if (last.name !== tagName) {
-        // Safe pop for optional HTML tags
-        const optionalTags = ['p', 'li', 'option', 'thead', 'tbody', 'tr', 'td', 'th', 'dt', 'dd'];
-        if (optionalTags.includes(last.name)) {
-          let found = false;
-          const temp = [last];
-          while (tagsStack.length > 0) {
-            const nextLast = tagsStack.pop();
-            temp.push(nextLast);
-            if (nextLast.name === tagName) {
-              found = true;
-              break;
-            }
-            if (!optionalTags.includes(nextLast.name)) {
-              break;
-            }
-          }
-          if (!found) {
-            tagsStack.push(...temp.reverse());
-            reportError('Cân bằng thẻ HTML', `Thẻ mở <${last.name}> ở dòng ${last.line} lại được đóng bằng </${tagName}>`, getLineNumber(cleanHTML, match.index));
-            nestingError = true;
-          }
-        } else {
-          reportError('Cân bằng thẻ HTML', `Thẻ mở <${last.name}> ở dòng ${last.line} lại được đóng bằng </${tagName}>`, getLineNumber(cleanHTML, match.index));
-          nestingError = true;
-        }
+        reportError('Cân bằng thẻ HTML', `Thẻ mở <${last.name}> ở dòng ${last.line} lại được đóng bằng </${tagName}>`, getLineNumber(cleanHTML, match.index));
+        nestingError = true;
       }
     }
   }
 }
 
-const unclosedStrict = tagsStack.filter(t => !['p', 'li', 'option', 'thead', 'tbody', 'tr', 'td', 'th', 'dt', 'dd'].includes(t.name));
-if (unclosedStrict.length > 0) {
-  unclosedStrict.forEach(t => {
+if (tagsStack.length > 0) {
+  tagsStack.forEach(t => {
     reportError('Cân bằng thẻ HTML', `Thẻ mở <${t.name}> không được đóng`, t.line);
   });
   nestingError = true;
 }
 
 if (!nestingError) {
-  reportPass('Cân bằng thẻ HTML', 'Toàn bộ cấu trúc thẻ lồng nhau hoàn hảo.');
+  reportPass('Cân bằng thẻ HTML', 'Toàn bộ cấu trúc thẻ HTML đóng/mở khớp nhau tuyệt đối.');
 }
 
 // ----------------------------------------------------
