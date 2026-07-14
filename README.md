@@ -47,7 +47,8 @@ js-tools-org/
     ├── canvas/          # Canvas Series (HTML & code files co-located)
     ├── bash/            # Bash Series (HTML & code files co-located)
     ├── css/             # CSS & Animation Series (HTML & files co-located)
-    └── cpu/             # Computer Architecture Series (HTML & files co-located)
+    ├── cpu/             # Computer Architecture Series (HTML & files co-located)
+    └── aie/             # AI Engineer Series (HTML & files co-located)
 ```
 
 ## Features

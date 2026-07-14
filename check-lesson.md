@@ -120,7 +120,10 @@
   `<head>` từ bài khác rồi quên sửa (xem PHẦN D #4, lặp lại **9 lần** trong 1 series). Sau
   khi tạo file mới, luôn diff lại `<title>` / `canonical` / `description` xem có nhất quán
   với nhau không.
-- **Tài liệu tham khảo (`.article-refs`) bắt buộc hiển thị trực quan và đúng nội dung bài:** Không được để khối `.article-refs` bị ẩn bằng `style="display: none"`, và không copy-paste tài liệu của bài học khác làm placeholder. Mỗi bài phải chứa liên kết chính xác dẫn tới các nguồn uy tín (Wikipedia, Khan Academy, All About Circuits) và datasheet chính thức của các linh kiện/chip thật được giới thiệu trong bài học.
+- **Tài liệu tham khảo (`.article-refs`) bắt buộc hiển thị trực quan và đúng nội dung bài:** Không được để khối `.article-refs` bị ẩn bằng `style="display: none"`, và không copy-paste tài liệu của bài học khác làm placeholder. Mỗi bài phải chứa liên kết chính xác dẫn tới các nguồn uy tín (Wikipedia, Khan Academy, All About Circuits) và datasheet chính thức của các linh kiện/chip thật được giới thiệu trong bài học. Đồng thời, **luôn giữ phần Tài liệu tham khảo tách biệt hoàn toàn** khỏi phần tải file code mẫu (không gộp chung).
+- **Khối tải file code thực hành:** Bắt buộc đặt trong một hộp `.article-cta` riêng biệt với class và cấu trúc chuẩn (giao diện VS Code Light), không dùng inline styles tùy biến và không gộp chung vào tham khảo.
+- **Link điều hướng bài viết (`.article-related`):** Mũi tên điều hướng (`←`, `→`) là do CSS pseudo-elements tự động tạo dựa trên class và modifier (`--prev`, `--next`, `--locked`). Tuyệt đối không viết tay các ký tự mũi tên này trong thẻ link.
+- **Khung bình luận:** Phải có tiêu đề `<h2>Bình luận</h2>` nằm ngay phía trên widget Giscus bên trong khối `.article-comments`.
 - **Link `.article-related` prev/next phải trỏ đúng bài liền kề theo số thứ tự thật** (đối
   chiếu hub), không tự tham chiếu chính mình, không nhảy cóc qua 1 bài (xem PHẦN D #3).
 - Hub → từng bài (đúng thứ tự, slug không đuôi `.html`); `.lessons-list` trên hub khớp 100%

@@ -279,6 +279,9 @@ const TRANSLATIONS = {
     'learn.cpu.title': 'Computer Architecture',
     'learn.cpu.desc':
       'Explore the hardware stack running directly in your browser: logic gates, ALU, RISC-V pipelining, speculative execution, cache architectures, Apple Silicon UMA, and quantum qubits.',
+    'learn.aie.title': 'Practical AI Engineer',
+    'learn.aie.desc':
+      'Transition from Web Development to AI. Master Python, PyTorch, MLP/CNN training, Self-Attention & Transformers, LLM APIs, advanced RAG pipelines, and stateful multi-agent systems offline.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -560,6 +563,9 @@ const TRANSLATIONS = {
     'learn.cpu.title': 'Kiến Trúc Máy Tính: Từ Logic Đến Lượng Tử',
     'learn.cpu.desc':
       'Khám phá thế giới phần cứng chạy trực tiếp trong trình duyệt: cổng logic, ALU, đường ống dẫn RISC-V Pipeline, thực thi suy đoán, kiến trúc Cache, Apple Silicon UMA và qubit lượng tử.',
+    'learn.aie.title': 'Kỹ Sư AI Thực Chiến',
+    'learn.aie.desc':
+      'Chuyển dịch từ lập trình Web lên AI Specialist. Làm chủ Python, PyTorch, MLP/CNN, cơ chế Self-Attention & Transformer, API LLM, hệ thống RAG nâng cao và AI Agent chạy offline.',
   },
 };
 

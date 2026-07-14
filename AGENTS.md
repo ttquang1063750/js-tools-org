@@ -163,6 +163,12 @@ js-tools-org/
 │           ├── cpu-programming-series.html   # Curriculum hub
 │           ├── cpu-pipeline-sim.html         # Core RISC-V Pipeline & Cache L1 Simulator
 │           └── ... CPU lesson files ...
+│
+│   └── # ── Practical AI Engineer Series (Vietnamese, HTML & files co-located) ──
+│       └── aie/
+│           ├── aie-programming-series.html   # Curriculum hub
+│           ├── data_cleaner.py               # Practice code file
+│           └── ... AIE lesson files ...
 └── README.md
 ```
 
@@ -207,7 +213,7 @@ js-tools-org/
 ### 6. Blog Section
 
 - **Tool articles**: 8 bilingual EN/VI articles about SnapCast, Image Optimizer, QR Generator, ColorQuarium, Remove BG
-- **Programming series**: C (11 lessons), C++ (15 lessons), JavaScript (12 lessons), HTML5 Canvas (17 lessons), WebGL & 3D (18 lessons), Bash (11 lessons), CSS & Animation (2 lessons) — all in Vietnamese
+- **Programming series**: C (11 lessons), C++ (15 lessons), JavaScript (12 lessons), HTML5 Canvas (17 lessons), WebGL & 3D (18 lessons), Bash (11 lessons), CSS & Animation (2 lessons), Practical AI Engineer (20 lessons, 1 completed) — all in Vietnamese
   - **Academic Rigor**: The lessons feature high-quality computer science concepts. For example:
     - _C Series (Lesson 7)_: Formal Big O Time & Space complexity analysis, C examples for $O(1)$ to $O(N!)$, and recursion Call Stack depth analysis.
     - _C++ Series_: Name mangling, SSO (Small String Optimization), Vector dynamic array structures, RAII, Vptr/Vtable dynamic dispatch, and smart pointer atomic control blocks.
@@ -324,8 +330,12 @@ page), read these two files **first**, in this order:
 - Do NOT use markdown bold syntax (`**`) in HTML text (use `<strong>`).
 - Include official educational citation links (MDN, W3C, Khan Academy) for new technologies.
 - Render mathematical equations and matrices using KaTeX with appropriate page header libraries.
+- **File download block**: Always place file downloads in a separate `.article-cta` container (VS Code Light look). Do not combine it inside references box.
+- **References block**: Always place external references in a separate `<section class="article-refs">` box (standard layout).
+- **Related links**: Always use `.article-related`, `.article-related__links`, and `.article-related__link` classes (with `--next` and `--locked` modifiers as appropriate). Do NOT write manual arrows (`←`, `→`) in the link text, as they are dynamically prepended/appended via CSS.
+- **Comments**: Always include `<h2>Bình luận</h2>` inside the `.article-comments` container above the Giscus widget.
 
 ---
 
-**Last Updated**: 2026-06-29
+**Last Updated**: 2026-07-14
 **Maintained by**: Quang (support@js-tools.org)
