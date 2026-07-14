@@ -188,6 +188,9 @@ Thay `<file>` bằng đường dẫn bài vừa viết/sửa.
 ### C1. Lệnh tự động — bắt buộc chạy, không được bỏ qua
 
 ```bash
+# 0. Chạy bộ kiểm tra tự động (Quét toàn bộ thẻ, markdown thô, KaTeX corrupt, canonical, og:url, JSON-LD, v.v.):
+node check-lesson.js <file>
+
 # 1. Prettier PHẢI pass sạch — đây là bẫy rẻ nhất bắt lỗi lồng thẻ (div thiếu/thừa).
 #    Nếu lỗi "Unexpected closing tag ..." → có thẻ mở/đóng lệch tầng, xem PHẦN D #7.
 npx prettier --check <file>
