@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agentic ReAct &amp; Graph State Simulator — js-tools</title>
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+
+    <!-- KaTeX library for math equations rendering -->
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+
+    <style>
+      :root {
+        --aie-accent: #eab308;
+        --bg-dark: #0f172a;
+        --panel-bg: #1e293b;
+        --border-color: #334155;
+        --text-light: #f8fafc;
+        --text-muted: #94a3b8;
+        --color-node-inactive: #475569;
+        --color-node-active: #eab308;
+        --color-node-success: #10b981;
+      }
+      body {
+        background: var(--bg-dark);
+        color: var(--text-light);
+        font-family:
+          'Inter',
+          system-ui,
+          -apple-system,
+          sans-serif;
+        margin: 0;
+        padding: 0;
+      }
+      .sim-container {
+        display: grid;
+        grid-template-columns: 480px 1fr;
+        height: 100vh;
+        overflow: hidden;
+      }
+      @media (max-width: 1024px) {
+        .sim-container {
+          grid-template-columns: 1fr;
+          height: auto;
+          overflow-y: auto;
+        }
+        .graph-panel {
+          height: 500px !important;
+        }
+      }
+      /* Left Panel: Steps Debugger */
+      .control-panel {
+        background: var(--panel-bg);
+        border-right: 1px solid var(--border-color);
+        padding: 24px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      .panel-title {
+        font-size: 18px;
+        font-weight: 800;
+        color: var(--aie-accent);
+        margin: 0 0 4px 0;
+      }
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-muted);
+      }
+      input[type='text'] {
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-light);
+        padding: 10px 12px;
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+      .btn-row {
+        display: flex;
+        gap: 12px;
+      }
+      button.btn-action {
+        flex: 1;
+        background: var(--aie-accent);
+        color: #000;
+        border: none;
+        border-radius: 6px;
+        padding: 10px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: opacity 0.2s;
+      }
+      button.btn-action:hover {
+        opacity: 0.9;
+      }
+      button.btn-action.secondary {
+        background: #334155;
+        color: var(--text-light);
+      }
+      .log-box {
+        flex: 1;
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+        font-family: monospace;
+        font-size: 12px;
+        overflow-y: auto;
+        line-height: 1.6;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .log-entry {
+        border-left: 3px solid var(--border-color);
+        padding-left: 8px;
+      }
+      .log-entry.thought {
+        border-color: var(--aie-accent);
+        color: #fef08a;
+      }
+      .log-entry.action {
+        border-color: #38bdf8;
+        color: #bae6fd;
+      }
+      .log-entry.observation {
+        border-color: #4ade80;
+        color: #bbf7d0;
+      }
+      .log-entry.final {
+        border-color: #ec4899;
+        color: #fbcfe8;
+        font-weight: bold;
+      }
+
+      /* Right Panel: SVG Graph & State */
+      .graph-panel {
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        height: 100%;
+        background: #090d16;
+      }
+      .svg-container {
+        flex: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      svg {
+        width: 100%;
+        height: 100%;
+      }
+      /* Node Styles */
+      .node rect,
+      .node circle {
+        fill: var(--panel-bg);
+        stroke: var(--color-node-inactive);
+        stroke-width: 2.5;
+        transition: all 0.3s ease;
+      }
+      .node.active rect,
+      .node.active circle {
+        stroke: var(--color-node-active);
+        filter: drop-shadow(0px 0px 8px rgba(234, 179, 8, 0.6));
+      }
+      .node.success rect,
+      .node.success circle {
+        stroke: var(--color-node-success);
+        filter: drop-shadow(0px 0px 8px rgba(16, 185, 129, 0.6));
+      }
+      .node-text {
+        fill: var(--text-light);
+        font-size: 12px;
+        font-weight: 600;
+        text-anchor: middle;
+        pointer-events: none;
+      }
+      /* Edge arrows styling */
+      .edge path {
+        fill: none;
+        stroke: var(--color-node-inactive);
+        stroke-width: 2;
+        marker-end: url(#arrow);
+        transition: stroke 0.3s ease;
+      }
+      .edge.active path {
+        stroke: var(--aie-accent);
+      }
+      /* State Table Box */
+      .state-box {
+        background: var(--panel-bg);
+        border-top: 1px solid var(--border-color);
+        padding: 16px 24px;
+        font-size: 12px;
+        max-height: 220px;
+        overflow-y: auto;
+      }
+      .state-box h4 {
+        margin: 0 0 8px 0;
+        color: var(--aie-accent);
+        font-size: 13px;
+      }
+      .state-grid {
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        gap: 8px;
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 12px;
+        font-family: monospace;
+      }
+      .state-key {
+        color: var(--text-muted);
+        font-weight: bold;
+      }
+      .state-val {
+        color: #10b981;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sim-container">
+      <!-- Left Panel: Controller -->
+      <div class="control-panel">
+        <div>
+          <div class="panel-title">🔄 Agentic ReAct &amp; Graph Simulator</div>
+          <p style="margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.5">
+            Trực quan hóa vòng lặp suy luận ReAct và cách quản lý State chuyển tiếp qua từng Node đồ thị LangGraph.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label for="requestInput">Yêu cầu gửi cho Agent:</label>
+          <input type="text" id="requestInput" value="Nếu tôi mua 15 cổ phiếu AAPL thì tôi cần trả bao nhiêu USD?" />
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-action" id="btnStep">⏯️ Chạy từng bước (Step)</button>
+          <button class="btn-action secondary" id="btnReset">🔄 Reset</button>
+        </div>
+
+        <label>Bản ghi suy luận của Agent (Reasoning Logs):</label>
+        <div class="log-box" id="logBox">
+          <div style="color: var(--text-muted); text-align: center; margin-top: auto; margin-bottom: auto">
+            Nhấn 'Chạy từng bước' để bắt đầu kích hoạt Agent.
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Graph -->
+      <div class="graph-panel">
+        <div class="svg-container">
+          <svg viewBox="0 0 800 500">
+            <!-- Arrow markers definitions -->
+            <defs>
+              <marker
+                id="arrow"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#475569" />
+              </marker>
+              <marker
+                id="arrow-active"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#eab308" />
+              </marker>
+            </defs>
+
+            <!-- Grid references/background lines -->
+            <g class="edges">
+              <!-- Start -> Coder/LLM -->
+              <g id="edge-start-coder" class="edge"><path d="M 120 250 L 210 250" /></g>
+              <!-- Coder/LLM -> Router -->
+              <g id="edge-coder-router" class="edge"><path d="M 330 250 L 415 250" /></g>
+              <!-- Router -> Tool -->
+              <g id="edge-router-tool" class="edge"><path d="M 450 210 L 450 140 L 330 140" /></g>
+              <!-- Tool -> Coder -->
+              <g id="edge-tool-coder" class="edge"><path d="M 270 140 L 270 210" /></g>
+              <!-- Router -> Approver -->
+              <g id="edge-router-approver" class="edge"><path d="M 485 250 L 560 250" /></g>
+              <!-- Approver -> End -->
+              <g id="edge-approver-end" class="edge"><path d="M 670 250 L 730 250" /></g>
+            </g>
+
+            <!-- Nodes Group -->
+            <g class="nodes">
+              <!-- Start Node -->
+              <g id="node-start" class="node">
+                <circle cx="80" cy="250" r="30" />
+                <text x="80" y="254" class="node-text">START</text>
+              </g>
+
+              <!-- Coder/LLM Node -->
+              <g id="node-coder" class="node">
+                <rect x="210" y="210" width="120" height="80" rx="10" />
+                <text x="270" y="244" class="node-text">Node Coder</text>
+                <text x="270" y="262" class="node-text" style="font-size: 10px; fill: var(--text-muted)">
+                  (LLM Brain)
+                </text>
+              </g>
+
+              <!-- Decision Router -->
+              <g id="node-router" class="node">
+                <polygon
+                  points="450,210 490,250 450,290 410,250"
+                  style="fill: var(--panel-bg); stroke: var(--color-node-inactive); stroke-width: 2.5"
+                />
+                <text x="450" y="254" class="node-text" style="font-size: 11px">Rẽ nhánh?</text>
+              </g>
+
+              <!-- Tool Node -->
+              <g id="node-tool" class="node">
+                <rect x="210" y="100" width="120" height="60" rx="8" />
+                <text x="270" y="130" class="node-text">Node Tools</text>
+                <text x="270" y="145" class="node-text" style="font-size: 9px; fill: var(--text-muted)">
+                  (calculate/stock)
+                </text>
+              </g>
+
+              <!-- Human Approver Node -->
+              <g id="node-approver" class="node">
+                <rect x="560" y="210" width="110" height="80" rx="10" />
+                <text x="615" y="244" class="node-text">Node Approver</text>
+                <text x="615" y="262" class="node-text" style="font-size: 9px; fill: var(--text-muted)">
+                  (Human-in-loop)
+                </text>
+              </g>
+
+              <!-- End Node -->
+              <g id="node-end" class="node">
+                <circle cx="760" cy="250" r="30" />
+                <text x="760" y="254" class="node-text">END</text>
+              </g>
+            </g>
+          </svg>
+        </div>
+
+        <!-- State Table View -->
+        <div class="state-box">
+          <h4>📦 Đối tượng State chứa biến toàn cục của Đồ thị (LangGraph State):</h4>
+          <div class="state-grid">
+            <div class="state-key">task_description</div>
+            <div class="state-val" id="stateTask">"..."</div>
+
+            <div class="state-key">last_llm_response</div>
+            <div class="state-val" id="stateResponse">"..."</div>
+
+            <div class="state-key">tool_output</div>
+            <div class="state-val" id="stateToolOutput">"..."</div>
+
+            <div class="state-key">error_count</div>
+            <div class="state-val" id="stateErrorCount">0</div>
+
+            <div class="state-key">approved_by_human</div>
+            <div class="state-val" id="stateApproved">false</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Simulation steps flow logic
+      let stepIndex = 0;
+      let state = {
+        task: '',
+        response: '',
+        toolOutput: '',
+        errorCount: 0,
+        approved: false,
+      };
+
+      const logBox = document.getElementById('logBox');
+      const requestInput = document.getElementById('requestInput');
+
+      const stateTask = document.getElementById('stateTask');
+      const stateResponse = document.getElementById('stateResponse');
+      const stateToolOutput = document.getElementById('stateToolOutput');
+      const stateErrorCount = document.getElementById('stateErrorCount');
+      const stateApproved = document.getElementById('stateApproved');
+
+      // Reset Simulation State
+      function resetSimulation() {
+        stepIndex = 0;
+        state = {
+          task: requestInput.value,
+          response: 'Rỗng.',
+          toolOutput: 'Không có.',
+          errorCount: 0,
+          approved: false,
+        };
+        logBox.innerHTML = `
+          <div style="color: var(--text-muted); text-align: center; margin-top: auto; margin-bottom: auto;">
+            Hệ thống đã reset. Nhấn 'Chạy từng bước' để bắt đầu.
+          </div>
+        `;
+        updateStateTable();
+        highlightNode('node-start');
+        highlightEdge(null);
+      }
+
+      // Highlight active node in SVG
+      function highlightNode(nodeId) {
+        document.querySelectorAll('.node').forEach((node) => {
+          node.classList.remove('active', 'success');
+        });
+        const activeNode = document.getElementById(nodeId);
+        if (activeNode) {
+          activeNode.classList.add('active');
+        }
+      }
+
+      // Highlight edge routing
+      function highlightEdge(edgeId) {
+        document.querySelectorAll('.edge').forEach((edge) => {
+          edge.classList.remove('active');
+          edge.querySelector('path').style.markerEnd = 'url(#arrow)';
+        });
+        if (edgeId) {
+          const activeEdge = document.getElementById(edgeId);
+          if (activeEdge) {
+            activeEdge.classList.add('active');
+            activeEdge.querySelector('path').style.markerEnd = 'url(#arrow-active)';
+          }
+        }
+      }
+
+      // Update State Dashboard values
+      function updateStateTable() {
+        stateTask.textContent = `"${state.task}"`;
+        stateResponse.textContent = `"${state.response}"`;
+        stateToolOutput.textContent = `"${state.toolOutput}"`;
+        stateErrorCount.textContent = state.errorCount;
+        stateApproved.textContent = state.approved.toString();
+      }
+
+      // Append text log to reasoning box
+      function appendLog(type, header, message) {
+        if (logBox.querySelector('div[style*="text-align: center"]')) {
+          logBox.innerHTML = '';
+        }
+
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.innerHTML = `<strong>${header}:</strong> ${message}`;
+        logBox.appendChild(entry);
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+
+      // Core simulation state machine
+      function executeStep() {
+        if (stepIndex === 0) {
+          // Initialize Task
+          state.task = requestInput.value;
+          appendLog('thought', 'START', `Nhận yêu cầu: "${state.task}"`);
+          highlightNode('node-coder');
+          highlightEdge('edge-start-coder');
+          stepIndex = 1;
+        } else if (stepIndex === 1) {
+          // LLM Thought Loop 1
+          state.response =
+            'Thought: Tôi cần lấy giá cổ phiếu của AAPL trước. Sau đó dùng máy tính để nhân với 15 cổ phiếu.\nAction: get_stock_price[AAPL]';
+          appendLog(
+            'thought',
+            'Thought',
+            'Tôi cần lấy giá cổ phiếu của AAPL trước. Sau đó dùng máy tính để nhân với 15 cổ phiếu.'
+          );
+          appendLog('action', 'Action', 'Gọi công cụ get_stock_price[AAPL]');
+          highlightNode('node-router');
+          highlightEdge('edge-coder-router');
+          stepIndex = 2;
+        } else if (stepIndex === 2) {
+          // Router Node evaluates Tool branch
+          appendLog('thought', 'Router', 'Đồ thị phát hiện lệnh gọi công cụ. Chuyển sang Node Tools.');
+          highlightNode('node-tool');
+          highlightEdge('edge-router-tool');
+          stepIndex = 3;
+        } else if (stepIndex === 3) {
+          // Execute Tool Node
+          state.toolOutput = '185.50 USD';
+          appendLog('observation', 'Observation', 'Kết quả thực thi get_stock_price[AAPL] -> "185.50 USD"');
+          highlightNode('node-coder');
+          highlightEdge('edge-tool-coder');
+          stepIndex = 4;
+        } else if (stepIndex === 4) {
+          // LLM Thought Loop 2 (Computation)
+          state.response =
+            'Thought: Tôi đã có giá cổ phiếu AAPL là 185.50 USD. Bây giờ cần tính tổng giá trị của 15 cổ phiếu.\nAction: calculate[150 * 185.50]';
+          appendLog(
+            'thought',
+            'Thought',
+            'Tôi đã có giá cổ phiếu AAPL là 185.50 USD. Bây giờ cần tính tổng giá trị của 15 cổ phiếu.'
+          );
+          appendLog('action', 'Action', 'Gọi công cụ calculate[15 * 185.50]');
+          highlightNode('node-router');
+          highlightEdge('edge-coder-router');
+          stepIndex = 5;
+        } else if (stepIndex === 5) {
+          // Router Node evaluates Tool branch 2
+          appendLog('thought', 'Router', 'Đồ thị phát hiện lệnh gọi công cụ. Chuyển sang Node Tools.');
+          highlightNode('node-tool');
+          highlightEdge('edge-router-tool');
+          stepIndex = 6;
+        } else if (stepIndex === 6) {
+          // Execute Tool Node 2 (Calculator)
+          state.toolOutput = '2782.5 USD';
+          appendLog('observation', 'Observation', 'Kết quả thực thi calculate[15 * 185.50] -> "2782.5 USD"');
+          highlightNode('node-coder');
+          highlightEdge('edge-tool-coder');
+          stepIndex = 7;
+        } else if (stepIndex === 7) {
+          // Final LLM Answer Generation
+          state.response =
+            'Thought: Tôi đã có câu trả lời cuối cùng.\nFinal Answer: Để mua 15 cổ phiếu AAPL với giá hiện tại là 185.50 USD/cổ phiếu, bạn cần trả tổng cộng là 2,782.50 USD.';
+          appendLog('thought', 'Thought', 'Đã tính toán xong. Chuẩn bị xuất câu trả lời.');
+          appendLog(
+            'final',
+            'Final Answer',
+            'Để mua 15 cổ phiếu AAPL với giá hiện tại là 185.50 USD/cổ phiếu, bạn cần trả tổng cộng là 2,782.50 USD.'
+          );
+          highlightNode('node-router');
+          highlightEdge('edge-coder-router');
+          stepIndex = 8;
+        } else if (stepIndex === 8) {
+          // Router branch logic determines to forward to Human Approver node
+          appendLog(
+            'thought',
+            'Router',
+            'Không phát hiện cuộc gọi công cụ nào thêm. Chuyển sang Node Approver để kiểm duyệt trước khi kết thúc.'
+          );
+          highlightNode('node-approver');
+          highlightEdge('edge-router-approver');
+          stepIndex = 9;
+        } else if (stepIndex === 9) {
+          // Approver approval confirmation (simulate approval toggle)
+          state.approved = true;
+          appendLog('observation', 'Approver', 'Con người nhấn xác nhận phê duyệt câu trả lời.');
+          highlightNode('node-end');
+          highlightEdge('edge-approver-end');
+
+          // Color end node as success green
+          document.getElementById('node-end').classList.add('success');
+
+          stepIndex = 10;
+        } else {
+          appendLog('final', 'COMPLETE', 'Đồ thị đã kết thúc thành công.');
+        }
+
+        updateStateTable();
+      }
+
+      // Bind events
+      document.getElementById('btnStep').addEventListener('click', executeStep);
+      document.getElementById('btnReset').addEventListener('click', resetSimulation);
+
+      // Auto start on load
+      resetSimulation();
+    </script>
+  </body>
+</html>
