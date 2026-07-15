@@ -38,6 +38,12 @@ if (!fs.existsSync(filePath)) {
 
 console.log(`${colors.cyan}${colors.bold}=== Đang tiến hành kiểm định tự động: ${path.basename(filePath)} ===${colors.reset}\n`);
 
+const isLessonPage = filePath.includes('blog/') && 
+                     !filePath.endsWith('series.html') && 
+                     !filePath.endsWith('simulator.html') && 
+                     !filePath.endsWith('playground.html') && 
+                     !filePath.endsWith('index.html');
+
 let hasError = false;
 
 // Helpers to record errors
@@ -133,11 +139,15 @@ if (!nestingError) {
 }
 
 // ----------------------------------------------------
-// Helper to search text outside <code> and <pre> tags
+// Helper to search text outside <code>, <pre>, <script>, <style> tags
 // ----------------------------------------------------
 function getPlainTextOnly(html) {
-  // Replace pre/code blocks with placeholders
-  return html.replace(/<(pre|code)[\s\S]*?<\/\1>/gi, '');
+  // Strip script/style blocks entirely (handles template literals in JS)
+  let out = html.replace(/<script[\s>][\s\S]*?<\/script>/gi, '');
+  out = out.replace(/<style[\s>][\s\S]*?<\/style>/gi, '');
+  // Strip pre/code blocks
+  out = out.replace(/<(pre|code)[\s\S]*?<\/\1>/gi, '');
+  return out;
 }
 
 const plainTextOnly = getPlainTextOnly(rawHTML);
@@ -235,11 +245,15 @@ if (!canonicalMatch) {
 }
 
 // ----------------------------------------------------
-// 8. JSON-LD syntax check
+// 8. JSON-LD syntax check (chỉ bắt buộc với trang bài học)
 // ----------------------------------------------------
 const jsonLdMatch = rawHTML.match(/<script\s+type="application\/ld\+json">([\s\S]*?)<\/script>/i);
 if (!jsonLdMatch) {
-  reportError('JSON-LD', 'Không tìm thấy khối script Dữ liệu cấu trúc JSON-LD.');
+  if (isLessonPage) {
+    reportError('JSON-LD', 'Không tìm thấy khối script Dữ liệu cấu trúc JSON-LD.');
+  } else {
+    reportPass('JSON-LD', 'Trang Hub/Simulator/Playground không yêu cầu JSON-LD — bỏ qua.');
+  }
 } else {
   try {
     JSON.parse(jsonLdMatch[1]);
@@ -250,13 +264,17 @@ if (!jsonLdMatch) {
 }
 
 // ----------------------------------------------------
-// 9. Article Body Wrapper check
+// 9. Article Body Wrapper check (chỉ bắt buộc với trang bài học)
 // ----------------------------------------------------
 const bodyMatchesCount = (rawHTML.match(/class="article-body"/g) || []).length;
-if (bodyMatchesCount !== 1) {
-  reportError('Article Body Wrapper', `Phải có duy nhất 1 thẻ div bọc nội dung có class="article-body" (phát hiện thấy: ${bodyMatchesCount}).`);
+if (isLessonPage) {
+  if (bodyMatchesCount !== 1) {
+    reportError('Article Body Wrapper', `Phải có duy nhất 1 thẻ div bọc nội dung có class="article-body" (phát hiện thấy: ${bodyMatchesCount}).`);
+  } else {
+    reportPass('Article Body Wrapper', 'Phần thân bài có đúng 1 lớp bọc class="article-body".');
+  }
 } else {
-  reportPass('Article Body Wrapper', 'Phần thân bài có đúng 1 lớp bọc class="article-body".');
+  reportPass('Article Body Wrapper', 'Trang Hub/Simulator/Playground không yêu cầu article-body wrapper — bỏ qua.');
 }
 
 // ----------------------------------------------------
