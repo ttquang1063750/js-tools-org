@@ -282,6 +282,9 @@ const TRANSLATIONS = {
     'learn.aie.title': 'Practical AI Engineer',
     'learn.aie.desc':
       'Transition from Web Development to AI. Master Python, PyTorch, MLP/CNN training, Self-Attention & Transformers, LLM APIs, advanced RAG pipelines, and stateful multi-agent systems offline.',
+    'learn.repair.title': 'Circuit Troubleshooting & Repair',
+    'learn.repair.desc':
+      'Master hardware troubleshooting from block diagrams to circuit schematic tracing. Learn how to use a virtual multimeter for live DC voltage and cold resistance/diode measurements, test passive/active components, and repair linear & switched-mode power supplies.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -566,6 +569,9 @@ const TRANSLATIONS = {
     'learn.aie.title': 'Kỹ Sư AI Thực Chiến',
     'learn.aie.desc':
       'Chuyển dịch từ lập trình Web lên AI Specialist. Làm chủ Python, PyTorch, MLP/CNN, cơ chế Self-Attention & Transformer, API LLM, hệ thống RAG nâng cao và AI Agent chạy offline.',
+    'learn.repair.title': 'Chẩn Đoán & Sửa Chữa Mạch',
+    'learn.repair.desc':
+      'Làm chủ quy trình chẩn đoán mạch điện tử: Đọc sơ đồ nguyên lý/sơ đồ khối, sử dụng đồng hồ vạn năng ảo đo nóng điện áp tĩnh VDC/VAC và đo nguội trở kháng/tiếp giáp diode, kiểm tra linh kiện hỏng hóc và sửa nguồn tuyến tính/nguồn xung.',
   },
 };
 
