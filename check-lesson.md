@@ -35,28 +35,27 @@
      đọc lại toàn bài như người dùng thật.
 4. **Xác định trước danh sách file phụ** cần tạo cùng lúc: file `.js` co-located (nếu bài có
    demo tương tác), entry cần thêm vào hub/sitemap/search-index/root `index.html`.
-5. **Kiểm tra series này có quy tắc riêng đè lên quy tắc chung không** (vd: series Điện Tử
-   **cấm** dùng `.code-window` code JS thực hành — chỉ dùng JS làm engine ngầm cho
-   simulator, xem `plan.md` Series 10 §5 mục 9). Đọc mục "Quy tắc thiết kế" / "Quality
-   Contract" riêng của series trong `plan.md` trước khi áp rule mặc định.
-6. **Riêng Series 11 (VLSI):** mẫu tham chiếu cho "demo tương tác + quiz + file tải về" đã
-   xác minh chạy đúng là `blog/vlsi/vlsi-rtl-mindset.html` (Bài 1, xem PHẦN D #10). **Copy
-   nguyên khối pattern JS** của bài đó cho các bài sau, không viết lại từ đầu:
-   - Cấu trúc `.code-tabs` gồm 1 panel "Xem trước" (demo tương tác thật) + N panel code
-     (`.code-window` cho từng kiểu/biến thể) — xem khối `#mux-tour` làm mẫu.
-   - Script `type="module"` cuối `<body>` (trước `<footer>`) import trực tiếp từ engine dùng
-     chung `vlsi-verilite.js` (`VeriLiteParser`) và `vlsi-netlist-svg.js`
-     (`NetlistRenderer`/`elaborateAST`/`simulateGates`) — KHÔNG copy-paste lại logic
-     parser/simulator vào từng bài.
-   - Pattern 3 phần trong demo: **style-selector** (nút chọn biến thể code đang mô phỏng) +
-     **input-toggle** (nút bấm đổi từng tín hiệu 0/1) + render netlist SVG có tô sáng dây
-     đang mang giá trị 1 (`activeSignals`) — tái sử dụng y hệt tên hàm
-     `renderXxxDemo()`/`initXxxDemo()` và cách gọi `elaborateAST` + `simulateGates` đã verify
-     đúng, chỉ đổi code mẫu (`muxCode` → tên biến phù hợp bài) và id phần tử DOM.
-   - Nếu bài cần mở rộng engine (cú pháp SV mới chưa parse được) → sửa trực tiếp
-     `vlsi-verilite.js`/`vlsi-netlist-svg.js` dùng chung, KHÔNG fork riêng bản sao cho từng
-     bài — viết lại self-test bằng `node --input-type=module -e "..."` (xem PHẦN D #10) để
-     xác nhận không phá vỡ các bài trước đã dùng engine này.
+5. **Kiểm tra series này có quy tắc riêng đè lên quy tắc chung không** — ví dụ đã từng gặp:
+   một series cấm dùng `.code-window` code JS thực hành, chỉ dùng JS làm engine ngầm cho
+   simulator. Nếu `plan.md` vẫn còn phần "Quy tắc thiết kế" / "Quality Contract" riêng của
+   series đó (series chưa hoàn thành, chưa bị gỡ khỏi `plan.md`), đọc mục đó trước khi áp rule
+   mặc định. Nếu series đã hoàn thành 100% và phần thiết kế đã bị gỡ khỏi `plan.md`, đối chiếu
+   trực tiếp với các bài đã publish của chính series đó (trang hub + 1-2 bài mẫu) để nắm quy
+   ước riêng, vì trang thật mới là nguồn chính xác lúc này.
+6. **Nếu series dùng một engine JS dùng chung cho nhiều bài** (parser/simulator/renderer tái
+   sử dụng qua các bài thay vì file riêng từng bài — ví dụ mẫu đã verify:
+   `blog/vlsi/vlsi-rtl-mindset.html` dùng chung `vlsi-verilite.js`/`vlsi-netlist-svg.js`, xem
+   PHẦN D #10): tìm bài **gần nhất trong series đã publish và xác nhận chạy đúng**, rồi **copy
+   nguyên khối pattern JS** của bài đó cho bài mới, không viết lại từ đầu:
+   - Copy cấu trúc `.code-tabs` (1 panel "Xem trước" demo tương tác thật + N panel code cho
+     từng kiểu/biến thể) và cách import engine dùng chung ở script `type="module"` cuối
+     `<body>` — KHÔNG copy-paste lại logic parser/simulator vào từng bài.
+   - Giữ nguyên tên hàm khởi tạo demo (`renderXxxDemo()`/`initXxxDemo()`) và cách gọi các hàm
+     engine đã verify đúng, chỉ đổi code mẫu/dữ liệu và id phần tử DOM cho phù hợp bài mới.
+   - Nếu bài cần mở rộng engine (cú pháp/tính năng mới engine chưa xử lý được) → sửa trực tiếp
+     file engine dùng chung, KHÔNG fork riêng bản sao cho từng bài — viết self-test Node
+     (`node --input-type=module -e "..."`) xác nhận không phá vỡ các bài trước đã dùng engine
+     này (xem PHẦN D #10 cho ví dụ cụ thể).
 
 ---
 
@@ -64,11 +63,16 @@
 
 ### Ngôn ngữ & nội dung
 
-- **Series mới (từ DSA 2026-07-03 trở đi — gồm Điện Tử, VLSI): CHỈ TIẾNG VIỆT.** Không dùng
-  cặp `data-lang-content="en"`/`"vi"`, không có div `en` với text "chỉ có tiếng Việt". Header
-  /footer/nav vẫn giữ `data-i18n` (chrome dùng chung site, không đổi). Series cũ (C, C++, JS,
-  Canvas, WebGL, Bash, WebGPU, CSS) đã lỡ song ngữ thì giữ nguyên, không viết lại.
-- **Lưu ý riêng Series Điện Tử:** Khi giới thiệu hoặc đề cập đến bất kỳ linh kiện bán dẫn hay chip thật nào (như đi-ốt 1N4007, transistor TIP120/IRF540N, IC 555, vi điều khiển ATmega328P, PIC16F877A, STM32F103, ESP32), **bắt buộc** phải chèn liên kết (`<a>` với `target="_blank"` và `rel="noopener noreferrer"`) dẫn đến datasheet chính thức từ nhà sản xuất gốc (như Microchip, Texas Instruments, Infineon, STMicroelectronics, Espressif).
+- **Mọi series mới (bắt đầu từ 2026-07-03 trở đi): CHỈ TIẾNG VIỆT.** Không dùng cặp
+  `data-lang-content="en"`/`"vi"`, không có div `en` với text "chỉ có tiếng Việt". Header
+  /footer/nav vẫn giữ `data-i18n` (chrome dùng chung site, không đổi). **Ngoại lệ duy nhất**
+  (giữ song ngữ, không viết lại): 8 series cũ đã lỡ song ngữ trước mốc này — C, C++, JS,
+  Canvas, WebGL, Bash, WebGPU, CSS.
+- **Khi giới thiệu hoặc đề cập đến bất kỳ linh kiện bán dẫn hay chip thật nào** (ở BẤT KỲ
+  series nào, không riêng series điện tử — ví dụ đi-ốt 1N4007, transistor TIP120/IRF540N, IC
+  555, vi điều khiển ATmega328P/PIC16F877A/STM32F103/ESP32), **bắt buộc** phải chèn liên kết
+  (`<a>` với `target="_blank"` và `rel="noopener noreferrer"`) dẫn đến datasheet chính thức từ
+  nhà sản xuất gốc (Microchip, Texas Instruments, Infineon, STMicroelectronics, Espressif...).
 - **Không dùng `<blockquote>[!NOTE]` kiểu GitHub-alert** — trang tĩnh không render cú pháp
   này, người đọc thấy nguyên chữ `[!NOTE]`. Dùng component `.callout--*`.
 - **Chỉ 5 class callout có thật trong `blog.css`**: `--note`, `--tip`, `--warning`,
