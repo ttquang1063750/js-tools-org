@@ -286,6 +286,9 @@ const TRANSLATIONS = {
     'learn.repair.title': 'Circuit Troubleshooting & Repair',
     'learn.repair.desc':
       'Master hardware troubleshooting from block diagrams to circuit schematic tracing. Learn how to use a virtual multimeter for live DC voltage and cold resistance/diode measurements, test passive/active components, and repair linear & switched-mode power supplies.',
+    'learn.aisys.title': 'AI Systems Engineering',
+    'learn.aisys.desc':
+      'Go beyond training a model: the real industrial lifecycle (data pipeline, distributed training, RLHF, red-teaming, rollout), hand-write your own agent framework, and orchestrate a multi-agent system with a blackboard and deadlock handling.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -574,6 +577,9 @@ const TRANSLATIONS = {
     'learn.repair.title': 'Chẩn Đoán & Sửa Chữa Mạch',
     'learn.repair.desc':
       'Làm chủ quy trình chẩn đoán mạch điện tử: Đọc sơ đồ nguyên lý/sơ đồ khối, sử dụng đồng hồ vạn năng ảo đo nóng điện áp tĩnh VDC/VAC và đo nguội trở kháng/tiếp giáp diode, kiểm tra linh kiện hỏng hóc và sửa nguồn tuyến tính/nguồn xung.',
+    'learn.aisys.title': 'Kỹ Thuật Hệ Thống AI',
+    'learn.aisys.desc':
+      'Vượt xa việc huấn luyện model: vòng đời công nghiệp thật (data pipeline, huấn luyện phân tán, RLHF, red-team, rollout), tự tay viết framework agent và điều phối hệ multi-agent với blackboard, xử lý deadlock.',
   },
 };
 

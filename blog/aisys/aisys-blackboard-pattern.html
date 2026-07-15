@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 11: Blackboard Pattern & Shared State — js-tools</title>
+    <meta
+      name="description"
+      content="Kiến trúc blackboard cổ điển, so sánh với shared-memory kiểu CrewAI/AutoGen, race condition khi nhiều agent ghi cùng lúc, và cạm bẫy stale read/blackboard phình to. Demo tương tác Blackboard Lab."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/aisys/aisys-blackboard-pattern" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/aisys/aisys-blackboard-pattern" />
+    <meta property="og:title" content="Bài 11: Blackboard Pattern & Shared State — js-tools" />
+    <meta
+      property="og:description"
+      content="Kiến trúc blackboard cổ điển, so sánh với shared-memory kiểu CrewAI/AutoGen, race condition khi nhiều agent ghi cùng lúc, và cạm bẫy stale read/blackboard phình to. Demo tương tác Blackboard Lab."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 11: Blackboard Pattern & Shared State — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Kiến trúc blackboard cổ điển, so sánh với shared-memory kiểu CrewAI/AutoGen, race condition khi nhiều agent ghi cùng lúc, và cạm bẫy stale read/blackboard phình to. Demo tương tác Blackboard Lab."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      .bblab {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 20px;
+        color: #242424;
+      }
+      .bblab-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 10px 14px;
+      }
+      .bblab-controls label {
+        font-size: 13px;
+        font-weight: 700;
+        color: #334155;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .bblab-run-btn {
+        border: none;
+        background: #3b82f6;
+        color: #fff;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: 700;
+        cursor: pointer;
+        margin-left: auto;
+      }
+      .bblab-timeline {
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .bblab-timeline-line {
+        font-size: 13px;
+        color: #334155;
+      }
+      .bblab-stale-warning {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #991b1b;
+        border-radius: 6px;
+        padding: 10px 14px;
+        font-size: 13px;
+      }
+      .bblab-stale-ok {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        color: #166534;
+        border-radius: 6px;
+        padding: 10px 14px;
+        font-size: 13px;
+      }
+      .bblab-state {
+        background: #1e293b;
+        color: #e2e8f0;
+        border-radius: 6px;
+        padding: 12px 14px;
+        font-size: 12px;
+        white-space: pre-wrap;
+        margin: 0;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 11: Blackboard Pattern & Shared State",
+        "description": "Kiến trúc blackboard cổ điển, so sánh với shared-memory kiểu CrewAI/AutoGen, race condition khi nhiều agent ghi cùng lúc, và cạm bẫy stale read/blackboard phình to. Demo tương tác Blackboard Lab.",
+        "url": "https://js-tools.org/blog/aisys/aisys-blackboard-pattern",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-16"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--aisys">
+        <div class="container">
+          <a href="aisys-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--aisys">Bài 11 · Kỹ Thuật Hệ Thống AI</div>
+          <h1 class="article-hero__title">Bài 11: Blackboard Pattern & Shared State</h1>
+          <div class="article-hero__meta">16 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Một kiến trúc AI từ thập niên 1980 vẫn sống trong framework agent 2026</h2>
+            <p>
+              Bài 10 cho các agent giao tiếp qua message điểm-tới-điểm — Planner biết chính xác phải gửi cho Coder,
+              Coder biết phải gửi cho Critic. Nhưng nếu có 10 agent thay vì 3, mỗi agent phải "biết tên" 9 agent còn lại
+              để gửi đúng message — không mở rộng được. Giải pháp cho vấn đề này đã có từ những năm 1980, lâu trước khi
+              LLM tồn tại: <strong>blackboard pattern</strong>.
+            </p>
+            <p>
+              Bài này mở rộng thêm <code>aisys-orchestrator.js</code> với class <code>Blackboard</code> — và quan trọng
+              hơn, phơi bày một lớp lỗi hoàn toàn mới chỉ xuất hiện khi nhiều agent cùng ghi vào 1 nơi:
+              <strong>race condition</strong>.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Nên đọc <a href="aisys-multiagent-architecture">Bài 10</a> trước để so sánh trực tiếp 2 mô hình giao
+                tiếp: message passing (Bài 10) vs blackboard (bài này).
+              </div>
+            </div>
+
+            <h2>1. Kiến Trúc Blackboard Cổ Điển</h2>
+            <p>
+              Ý tưởng gốc (từ hệ thống AI symbolic HEARSAY-II thập niên 1970–80): nhiều "chuyên gia" (knowledge sources)
+              độc lập, không biết về nhau, cùng nhìn vào MỘT không gian dữ liệu chung (blackboard) — mỗi chuyên gia đọc
+              phần thông tin liên quan đến mình, đóng góp thêm hiểu biết, và cứ thế bài toán được giải dần từng mảnh mà
+              không cần 1 nhạc trưởng điều phối từng bước:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">blackboard-core.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">class Blackboard {
+  constructor() { this.state = {}; this.log = []; }
+  read(key) {
+    const entry = this.state[key];
+    return entry ? entry.value : undefined;
+  }
+  write(agentName, key, value) {
+    this.state[key] = { value, owner: agentName };
+    this.log.push({ type: "write", agent: agentName, key, value });
+  }
+}
+// Agent A không cần biết Agent B tồn tại — cả hai chỉ cần biết TÊN KEY chung
+// ("draft_answer", "task_status"...) để phối hợp gián tiếp qua blackboard.</code></pre>
+            </div>
+
+            <h2>2. So Sánh Với Shared-Memory Kiểu CrewAI/AutoGen</h2>
+            <p>
+              Các framework agent hiện đại đều có một biến thể của ý tưởng này — CrewAI gọi là "shared context", AutoGen
+              truyền trạng thái qua lịch sử group chat mà mọi agent cùng thấy. Điểm chung: một "sự thật dùng chung"
+              (shared source of truth) thay vì mỗi agent giữ bản sao riêng.
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Tiêu chí</th>
+                  <th>Message Passing (Bài 10)</th>
+                  <th>Blackboard (bài này)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Agent có cần biết tên nhau?</td>
+                  <td>Có — gửi đích danh</td>
+                  <td>Không — chỉ cần biết tên KEY chung</td>
+                </tr>
+                <tr>
+                  <td>Thêm agent mới có dễ không?</td>
+                  <td>Khó hơn — phải sửa logic routing</td>
+                  <td>Dễ hơn — agent mới tự đọc key liên quan</td>
+                </tr>
+                <tr>
+                  <td>Rủi ro đặc trưng</td>
+                  <td>Message thất lạc/sai đích</td>
+                  <td>Race condition khi ghi đồng thời (mục 3)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h2>3. Race Condition Khi Nhiều Agent Ghi Cùng Lúc</h2>
+            <p>
+              Đây là cái giá phải trả cho sự tiện lợi "không cần biết tên nhau": nếu 2 agent cùng ghi vào 1 key mà không
+              có cơ chế phối hợp, agent ghi SAU sẽ âm thầm xoá mất công sức của agent ghi TRƯỚC — không có lỗi nào được
+              ném ra, không ai biết dữ liệu đã mất:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">race-condition.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">blackboard.write("AgentA", "draft_answer", "Bản nháp A...");
+// ... AgentB không hay biết AgentA vừa ghi ...
+blackboard.write("AgentB", "draft_answer", "Bản nháp B...");
+// Kết quả: "Bản nháp A" biến mất VĨNH VIỄN, không log lỗi, không cảnh báo.</code></pre>
+            </div>
+            <p>
+              Chiến lược khắc phục phổ biến nhất: <strong>khoá (lock)</strong> — agent ghi trước "khoá" key lại, agent
+              ghi sau bị từ chối rõ ràng thay vì âm thầm ghi đè, buộc phải đọc lại giá trị mới nhất trước khi thử lại:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">write-with-lock.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">write(agentName, key, value, { requireLock = false } = {}) {
+  const existing = this.state[key];
+  if (requireLock && this.locks.has(key) && existing && existing.owner !== agentName) {
+    return { accepted: false, reason: `Key "${key}" đang bị khoá bởi ${existing.owner}` };
+  }
+  this.state[key] = { value, owner: agentName };
+  if (requireLock) this.locks.add(key);
+  return { accepted: true };
+}</code></pre>
+            </div>
+
+            <h2>4. Cạm Bẫy: Blackboard Phình To & Stale Read</h2>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy 1: Blackboard phình to không kiểm soát</div>
+              <div class="callout__content">
+                Vì MỌI agent đều có thể ghi vào blackboard mà không cần xin phép ai, một hệ thống chạy lâu dễ tích luỹ
+                hàng trăm key không còn ai dùng tới — không có cơ chế "dọn dẹp" tự nhiên như trong message passing (nơi
+                message chỉ tồn tại tạm thời). Cần chủ động đặt TTL (thời gian sống) hoặc quy ước dọn key theo giai đoạn
+                task, nếu không blackboard sẽ trở thành một "biến toàn cục" khổng lồ khó kiểm soát.
+              </div>
+            </div>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Cạm bẫy 2: Stale read — agent hành động dựa trên dữ liệu đã lỗi thời</div>
+              <div class="callout__content">
+                Ngay cả khi không mất dữ liệu (nhờ lock), một agent đã ĐỌC giá trị cũ TRƯỚC khi agent khác ghi giá trị
+                mới vẫn có thể tiếp tục hành động dựa trên bản đọc cũ đó (nó không tự động "biết" giá trị vừa đổi) — đây
+                gọi là <strong>stale read</strong>. Demo mục 5 minh hoạ trực tiếp: AgentC đọc bản nháp A, sau đó AgentB
+                ghi đè thành bản nháp B, nhưng AgentC vẫn đang cầm bản nháp A trong "đầu" nó.
+              </div>
+            </div>
+
+            <h2>5. Thực hành tương tác: Blackboard Lab</h2>
+            <p>
+              Bật/tắt "khoá trước khi ghi" và chạy lại kịch bản để so sánh hai hậu quả: ghi đè âm thầm (mất dữ liệu) so
+              với từ chối rõ ràng (an toàn nhưng agent phải tự retry):
+            </p>
+
+            <div class="code-tabs" id="blackboard-lab-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">📋 Blackboard Lab</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="bblab" id="blackboard-lab-root">
+                  <div class="bblab-controls">
+                    <label><input type="checkbox" class="bblab-lock-toggle" /> Bật khoá (lock) trước khi ghi</label>
+                    <button class="bblab-run-btn" type="button">▶ Chạy kịch bản</button>
+                  </div>
+                  <div class="bblab-timeline"></div>
+                  <div class="bblab-stale-check"></div>
+                  <pre class="bblab-state"></pre>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">aisys-blackboard-lab.js (trích)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { Blackboard } from "./aisys-orchestrator.js";
+const bb = new Blackboard();
+bb.write("AgentA", "draft_answer", "...", { requireLock });
+const cached = bb.read("draft_answer"); // AgentC lưu bản cache
+bb.write("AgentB", "draft_answer", "...", { requireLock }); // race condition xảy ra ở đây</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <p>
+              Bài 12 sẽ đi sâu hơn vào 1 loại lỗi phối hợp khác — <strong>deadlock</strong>, khi 2 agent CHỜ NHAU thay
+              vì ghi đè nhau — và cách circuit-breaker phá vỡ tình huống đó.
+            </p>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>aisys-orchestrator.js</code> — class <code>Blackboard</code> vừa thêm ở bài này,
+                cùng <code>aisys-blackboard-lab.js</code> wiring demo:
+              </p>
+              <a
+                href="aisys-orchestrator.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về aisys-orchestrator.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Blackboard system gốc:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Blackboard_(design_pattern)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Blackboard (design pattern)</a
+                  >
+                  — lịch sử HEARSAY-II và kiến trúc gốc nhắc ở mục 1.
+                </li>
+                <li>
+                  <strong>CrewAI shared context:</strong>
+                  <a href="https://docs.crewai.com/" target="_blank" rel="noopener noreferrer">CrewAI Documentation</a>
+                  — cách CrewAI hiện đại hoá ý tưởng shared state.
+                </li>
+                <li>
+                  <strong>Race condition & concurrency:</strong>
+                  <a
+                    href="https://developer.mozilla.org/en-US/docs/Glossary/Race_condition"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >MDN — Race Condition</a
+                  >
+                  — định nghĩa kỹ thuật nền tảng cho mục 3.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="aisys-multiagent-architecture" class="article-related__link article-related__link--prev">
+                  Bài 10: Kiến Trúc Multi-Agent — Vai Trò & Giao Tiếp
+                </a>
+                <a href="aisys-orchestration-advanced" class="article-related__link article-related__link--next">
+                  Bài 12: Orchestration Nâng Cao — Xung Đột & Deadlock
+                </a>
+                <a href="aisys-programming-series" class="article-related__link"
+                  >Quay lại Lộ trình Kỹ Thuật Hệ Thống AI</a
+                >
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/portfolio" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Portfolio</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="aisys-blackboard-lab.js"></script>
+  </body>
+</html>

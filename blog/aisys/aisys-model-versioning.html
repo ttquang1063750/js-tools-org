@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 6: Model Versioning, Rollback & Chi Phí Hạ Tầng — js-tools</title>
+    <meta
+      name="description"
+      content="Semantic versioning cho model/weight, canary/A-B deploy, rollback khi phát hiện regression, và ước lượng chi phí hạ tầng GPU-hour training vs inference. Demo Fleet Dashboard tương tác."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/aisys/aisys-model-versioning" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/aisys/aisys-model-versioning" />
+    <meta property="og:title" content="Bài 6: Model Versioning, Rollback & Chi Phí Hạ Tầng — js-tools" />
+    <meta
+      property="og:description"
+      content="Semantic versioning cho model/weight, canary/A-B deploy, rollback khi phát hiện regression, và ước lượng chi phí hạ tầng GPU-hour training vs inference. Demo Fleet Dashboard tương tác."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 6: Model Versioning, Rollback & Chi Phí Hạ Tầng — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Semantic versioning cho model/weight, canary/A-B deploy, rollback khi phát hiện regression, và ước lượng chi phí hạ tầng GPU-hour training vs inference. Demo Fleet Dashboard tương tác."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      .fleet-dashboard {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 20px;
+        color: #242424;
+      }
+      .fleet-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 12px 14px;
+      }
+      .fleet-controls label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #334155;
+      }
+      .fleet-step-label {
+        font-size: 13px;
+        font-weight: 700;
+        color: #334155;
+        margin-left: auto;
+      }
+      .fleet-btn {
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        border-radius: 6px;
+        padding: 8px 14px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        color: #334155;
+      }
+      .fleet-step-btn {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #fff;
+      }
+      .fleet-rollback-btn {
+        background: #ef4444;
+        border-color: #ef4444;
+        color: #fff;
+      }
+      .fleet-rollback-btn:disabled {
+        background: #fca5a5;
+        border-color: #fca5a5;
+        cursor: not-allowed;
+      }
+      .fleet-alert {
+        display: none;
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #991b1b;
+        border-radius: 6px;
+        padding: 10px 14px;
+        font-size: 13px;
+      }
+      .fleet-alert.is-active {
+        display: block;
+      }
+      .fleet-cards {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      @media (max-width: 700px) {
+        .fleet-cards {
+          grid-template-columns: 1fr;
+        }
+      }
+      .fleet-card {
+        background: #1e293b;
+        color: #e2e8f0;
+        border-radius: 8px;
+        padding: 14px 16px;
+        border: 2px solid transparent;
+      }
+      .fleet-card strong {
+        color: inherit;
+      }
+      .fleet-card h4 {
+        margin: 0 0 10px;
+        font-size: 14px;
+      }
+      .fleet-card.is-regression {
+        border-color: #ef4444;
+      }
+      .fleet-metric {
+        font-size: 13px;
+        color: #94a3b8;
+        margin-bottom: 4px;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 6: Model Versioning, Rollback & Chi Phí Hạ Tầng",
+        "description": "Semantic versioning cho model/weight, canary/A-B deploy, rollback khi phát hiện regression, và ước lượng chi phí hạ tầng GPU-hour training vs inference. Demo Fleet Dashboard tương tác.",
+        "url": "https://js-tools.org/blog/aisys/aisys-model-versioning",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-16"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--aisys">
+        <div class="container">
+          <a href="aisys-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--aisys">Bài 6 · Kỹ Thuật Hệ Thống AI</div>
+          <h1 class="article-hero__title">Bài 6: Model Versioning, Rollback & Chi Phí Hạ Tầng</h1>
+          <div class="article-hero__meta">16 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Bài học cuối cùng của Track A — vận hành, không chỉ xây dựng</h2>
+            <p>
+              Model đã qua đủ 5 giai đoạn trước: thu thập dữ liệu (Bài 2), huấn luyện (Bài 3), alignment (Bài 4),
+              red-team/benchmark (Bài 5) — giờ là lúc đưa nó ra phục vụ người dùng thật. Đây là nơi tư duy kỹ sư phần
+              mềm truyền thống (versioning, deploy an toàn, rollback) gặp gỡ đặc thù của AI: một "bug" ở đây không phải
+              lúc nào cũng là lỗi logic rõ ràng — nó có thể là "model trả lời tệ hơn một chút" mà chỉ số liệu mới phát
+              hiện ra.
+            </p>
+            <p>
+              Bài học này khép lại Track A bằng 4 mảnh ghép vận hành: cách đánh version cho model, kỹ thuật canary/A-B
+              deploy để phát hiện vấn đề trước khi ảnh hưởng toàn bộ người dùng, cơ chế rollback tức thời, và cách ước
+              lượng chi phí hạ tầng — mảnh ghép cuối cùng khép lại vòng lặp chi phí đã mở ra từ Bài 1.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Nên đọc <a href="aisys-redteam-benchmark">Bài 5</a> trước — bảng điểm benchmark ở đó chính là tiêu chí
+                để quyết định 1 phiên bản model có đủ điều kiện triển khai hay không, được dùng lại ở mục 2 bài này.
+              </div>
+            </div>
+
+            <h2>1. Semantic Versioning cho Model/Weight</h2>
+            <p>
+              Phần mềm truyền thống dùng semantic versioning (<code>MAJOR.MINOR.PATCH</code>) để báo hiệu mức độ thay
+              đổi. Model AI cũng cần một quy ước tương tự — nhưng "thay đổi" ở đây không phải dòng code mà là trọng số
+              (weights), dữ liệu huấn luyện, và cấu hình alignment:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">model-version-schema.json</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-json">{
+  "modelName": "assistant",
+  "version": "3.2.1",
+  "changeType": {
+    "major": "Kiến trúc/kích thước model thay đổi, hoặc dữ liệu train làm lại từ đầu",
+    "minor": "Thêm dữ liệu mới đáng kể hoặc chạy thêm 1 vòng RLHF, giữ kiến trúc cũ",
+    "patch": "Vá lỗi cụ thể (ví dụ 1 lớp jailbreak mới phát hiện ở Bài 5), không train lại toàn bộ"
+  },
+  "weightsChecksum": "sha256:9f8a...",
+  "trainingDataSnapshot": "corpus-v7-2026-06",
+  "benchmarkReportRef": "benchmark-report-v3.2.1.json"
+}</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Vì sao không thể chỉ "ghi đè" model cũ</div>
+              <div class="callout__content">
+                Nếu không version hoá rõ ràng, khi phát hiện regression sau deploy, đội vận hành sẽ không biết chính xác
+                phiên bản NÀO đang chạy, dùng dữ liệu train NÀO, đã qua benchmark NÀO — khiến việc điều tra sự cố (và
+                rollback đúng đích) gần như bất khả thi. Mỗi model version phải là bất biến (immutable) — không bao giờ
+                sửa trực tiếp, chỉ tạo version mới.
+              </div>
+            </div>
+
+            <h2>2. Canary / A-B Deploy</h2>
+            <p>
+              Thay vì đẩy phiên bản mới cho 100% người dùng ngay lập tức, <strong>canary deploy</strong> cho phiên bản
+              mới phục vụ một phần nhỏ traffic trước (ví dụ 5%), so sánh các chỉ số (tỷ lệ lỗi, độ trễ, benchmark chất
+              lượng) với phiên bản đang chạy ổn định, rồi mới tăng dần tỷ lệ nếu mọi thứ ổn:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">canary-ramp.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">function nextCanaryTrafficPct(currentPct, errorRatePct, errorThresholdPct) {
+  if (errorRatePct > errorThresholdPct) {
+    return currentPct; // dừng tăng, KHÔNG tự động rollback — cần con người xác nhận
+  }
+  return Math.min(100, currentPct + 15); // healthy -> tăng dần 15%/lần kiểm tra
+}</code></pre>
+            </div>
+            <p>
+              Đây chính xác là cơ chế đứng sau demo tương tác ở mục 5 — traffic canary chỉ tăng khi tỷ lệ lỗi dưới
+              ngưỡng an toàn.
+            </p>
+
+            <h2>3. Rollback Khi Phát Hiện Regression</h2>
+            <p>
+              Khi metric của canary vượt ngưỡng an toàn, hệ thống cần khả năng đưa 100% traffic quay lại phiên bản ổn
+              định NGAY LẬP TỨC — không chờ điều tra xong nguyên nhân gốc rễ trước (đó là việc làm SAU khi đã rollback,
+              không phải điều kiện để rollback):
+            </p>
+            <ul>
+              <li>
+                <strong>Tiêu chí kích hoạt:</strong> tỷ lệ lỗi/độ trễ vượt ngưỡng định trước, hoặc benchmark tự động
+                (Bài 5) phát hiện điểm an toàn giảm đột ngột.
+              </li>
+              <li>
+                <strong>Tốc độ:</strong> rollback phải là thao tác gần như tức thời (đổi route traffic), KHÔNG phải
+                deploy lại từ đầu — đó là lý do version cũ vẫn phải giữ chạy song song trong giai đoạn canary.
+              </li>
+              <li>
+                <strong>Sau rollback:</strong> điều tra nguyên nhân, vá lỗi, tạo version PATCH mới, và lặp lại canary từ
+                đầu — không bao giờ đẩy thẳng phiên bản đã rollback trở lại 100% traffic.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: Cố "sửa nóng" thay vì rollback ngay</div>
+              <div class="callout__content">
+                Sai lầm phổ biến là cố "sửa nóng" (hotfix) ngay trên phiên bản đang gặp sự cố thay vì rollback ngay.
+                Nguyên tắc vận hành đúng: LUÔN rollback về phiên bản đã biết là ổn định trước, giảm thiểu tác động tới
+                người dùng, rồi mới bình tĩnh điều tra nguyên nhân trên môi trường tách biệt. Vá lỗi giữa lúc đang cháy
+                nhà thường tạo ra lỗi MỚI chồng lên lỗi cũ.
+              </div>
+            </div>
+
+            <h2>4. Ước Lượng Chi Phí Hạ Tầng</h2>
+            <p>
+              Bài 1 đã chỉ ra huấn luyện là chi phí MỘT LẦN còn phục vụ (serving) là chi phí LIÊN TỤC. Ở bước vận hành
+              này, ta cần công cụ ước lượng cụ thể hơn để ra quyết định — ví dụ khi nào nên dùng model nhỏ hơn (rẻ hơn,
+              nhanh hơn) thay vì model lớn nhất hiện có:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">infra-cost-estimate.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">function estimateMonthlyServingCost(requestsPerDay, costPerThousandRequests, gpuHourFleetCost) {
+  const requestCost = (requestsPerDay / 1000) * costPerThousandRequests * 30;
+  return requestCost + gpuHourFleetCost * 24 * 30; // hạ tầng GPU chạy 24/7 phục vụ traffic
+}
+
+// So sánh nhanh: model lớn (chất lượng cao hơn, costPerThousandRequests cao,
+// gpuHourFleetCost cao) vs model nhỏ hơn (rẻ hơn nhưng chất lượng thấp hơn) —
+// quyết định phụ thuộc benchmark chất lượng (Bài 5) có đủ đáp ứng yêu cầu
+// sản phẩm hay không, KHÔNG chỉ dựa vào chi phí đơn thuần.</code></pre>
+            </div>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Tiêu chí</th>
+                  <th>Model lớn</th>
+                  <th>Model nhỏ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Chi phí inference/request</td>
+                  <td>Cao</td>
+                  <td>Thấp</td>
+                </tr>
+                <tr>
+                  <td>Chất lượng câu trả lời</td>
+                  <td>Thường cao hơn</td>
+                  <td>Có thể thấp hơn ở tác vụ phức tạp</td>
+                </tr>
+                <tr>
+                  <td>Độ trễ</td>
+                  <td>Cao hơn</td>
+                  <td>Thấp hơn</td>
+                </tr>
+                <tr>
+                  <td>Phù hợp khi nào</td>
+                  <td>Tác vụ phức tạp, ít nhạy cảm về chi phí/độ trễ</td>
+                  <td>Tác vụ đơn giản/lặp lại, cần phản hồi nhanh, quy mô lớn</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h2>5. Thực hành tương tác: Fleet Dashboard</h2>
+            <p>
+              Bật "Có lỗi tiềm ẩn" để mô phỏng một canary có bug (chỉ lộ rõ sau vài bước), rồi bấm "Bước tiếp theo"
+              nhiều lần và quan sát: traffic canary tự tăng dần khi khoẻ mạnh, cảnh báo đỏ xuất hiện ngay khi tỷ lệ lỗi
+              vượt ngưỡng, và bấm "Rollback ngay" để xem toàn bộ traffic quay về v2 tức thời:
+            </p>
+
+            <div class="code-tabs" id="fleet-dashboard-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🚦 Fleet Dashboard — v2 (Stable) vs v3 (Canary)</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="fleet-dashboard" id="fleet-dashboard-root">
+                  <div class="fleet-controls">
+                    <label><input type="checkbox" class="fleet-buggy-toggle" /> Có lỗi tiềm ẩn trong canary v3</label>
+                    <button class="fleet-btn fleet-step-btn" type="button">▶ Bước tiếp theo</button>
+                    <button class="fleet-btn fleet-rollback-btn" type="button" disabled>⏪ Rollback ngay</button>
+                    <button class="fleet-btn fleet-reset-btn" type="button">↺ Reset</button>
+                    <span class="fleet-step-label">Bước hiện tại: 0</span>
+                  </div>
+                  <div class="fleet-alert"></div>
+                  <div class="fleet-cards">
+                    <div class="fleet-card fleet-card--stable"></div>
+                    <div class="fleet-card fleet-card--canary"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">aisys-fleet-dashboard.js (trích)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">export function computeCanaryMetrics(step, buggy) {
+  if (!buggy) return { errorRatePct: Math.min(1.2, 0.4 + step * 0.02), latencyMs: Math.min(130, 115 + step) };
+  const regressionSteps = Math.max(0, step - 1); // bug chỉ lộ ra từ bước 2
+  return { errorRatePct: 0.5 + regressionSteps * 1.8, latencyMs: 120 + regressionSteps * 20 };
+}</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <p>
+              Nếu bạn muốn xem góc nhìn "đánh giá liên tục sau deploy" ở tầm ứng dụng AI Engineer (không chỉ hạ tầng),
+              xem thêm <a href="../aie/aie-mlops-eval">Series 16 — MLOps & Evaluation</a>. Bài 13 (Capstone) của series
+              này sẽ ghép chính cơ chế rollback ở đây với 1 agent tự động giám sát và tự kích hoạt rollback — không cần
+              con người bấm nút.
+            </p>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>aisys-fleet-dashboard.js</code> — logic metric canary/stable, ramp traffic, và
+                rollback dùng trong bài:
+              </p>
+              <a
+                href="aisys-fleet-dashboard.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về aisys-fleet-dashboard.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Canary deployment:</strong>
+                  <a href="https://martinfowler.com/bliki/CanaryRelease.html" target="_blank" rel="noopener noreferrer"
+                    >Martin Fowler — Canary Release</a
+                  >
+                  — khái niệm gốc của kỹ thuật triển khai dần ở mục 2.
+                </li>
+                <li>
+                  <strong>MLOps vòng đời model:</strong>
+                  <a href="https://ml-ops.org/" target="_blank" rel="noopener noreferrer"
+                    >ml-ops.org — MLOps Principles</a
+                  >
+                  — thực hành versioning/rollback cho hệ thống ML trong công nghiệp.
+                </li>
+                <li>
+                  <strong>Site Reliability Engineering:</strong>
+                  <a href="https://sre.google/sre-book/table-of-contents/" target="_blank" rel="noopener noreferrer"
+                    >Google — Site Reliability Engineering (sách online miễn phí)</a
+                  >
+                  — nguyên lý rollback-trước-điều-tra-sau ở mục 3 vay mượn trực tiếp từ SRE truyền thống.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="aisys-redteam-benchmark" class="article-related__link article-related__link--prev">
+                  Bài 5: Red-Teaming & Đánh Giá Benchmark
+                </a>
+                <a href="aisys-tool-calling" class="article-related__link article-related__link--next">
+                  Bài 7: Tool-Calling — Thiết Kế Interface Tool
+                </a>
+                <a href="aisys-programming-series" class="article-related__link"
+                  >Quay lại Lộ trình Kỹ Thuật Hệ Thống AI</a
+                >
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/portfolio" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Portfolio</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="aisys-fleet-dashboard.js"></script>
+  </body>
+</html>

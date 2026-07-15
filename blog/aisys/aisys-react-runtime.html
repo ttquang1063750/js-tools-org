@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 9: ReAct Loop, Callback & Streaming — js-tools</title>
+    <meta
+      name="description"
+      content="Vòng lặp Thought-Action-Observation, event emitter cho streaming, xử lý lỗi tool với retry/backoff, và giới hạn số bước tránh vòng lặp vô hạn. Tự viết Agent hoàn chỉnh — demo ReAct Runtime."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/aisys/aisys-react-runtime" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/aisys/aisys-react-runtime" />
+    <meta property="og:title" content="Bài 9: ReAct Loop, Callback & Streaming — js-tools" />
+    <meta
+      property="og:description"
+      content="Vòng lặp Thought-Action-Observation, event emitter cho streaming, xử lý lỗi tool với retry/backoff, và giới hạn số bước tránh vòng lặp vô hạn. Tự viết Agent hoàn chỉnh — demo ReAct Runtime."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 9: ReAct Loop, Callback & Streaming — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Vòng lặp Thought-Action-Observation, event emitter cho streaming, xử lý lỗi tool với retry/backoff, và giới hạn số bước tránh vòng lặp vô hạn. Tự viết Agent hoàn chỉnh — demo ReAct Runtime."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <style>
+      .react-lab {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 20px;
+        color: #242424;
+      }
+      .react-lab-presets {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .react-lab-preset-btn {
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        border-radius: 6px;
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        color: #334155;
+      }
+      .react-lab-preset-btn:hover {
+        border-color: #3b82f6;
+      }
+      .react-lab-log {
+        background: #1e293b;
+        border-radius: 6px;
+        padding: 12px 14px;
+        max-height: 260px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .react-lab-log-line {
+        font-size: 13px;
+        color: #e2e8f0;
+        line-height: 1.5;
+      }
+      .react-lab-log-line strong {
+        color: inherit;
+      }
+      .react-lab-log-line--query {
+        color: #93c5fd;
+      }
+      .react-lab-log-line--thought {
+        color: #cbd5e1;
+      }
+      .react-lab-log-line--action {
+        color: #fbbf24;
+      }
+      .react-lab-log-line--observation {
+        color: #4ade80;
+      }
+      .react-lab-log-line--error {
+        color: #f87171;
+      }
+      .react-lab-step-counter {
+        font-size: 12px;
+        color: #64748b;
+      }
+      .react-lab-final {
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 12px 14px;
+        font-size: 14px;
+        font-weight: 700;
+        color: #1e3a8a;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 9: ReAct Loop, Callback & Streaming",
+        "description": "Vòng lặp Thought-Action-Observation, event emitter cho streaming, xử lý lỗi tool với retry/backoff, và giới hạn số bước tránh vòng lặp vô hạn. Tự viết Agent hoàn chỉnh — demo ReAct Runtime.",
+        "url": "https://js-tools.org/blog/aisys/aisys-react-runtime",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-16"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--aisys">
+        <div class="container">
+          <a href="aisys-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--aisys">Bài 9 · Kỹ Thuật Hệ Thống AI</div>
+          <h1 class="article-hero__title">Bài 9: ReAct Loop, Callback & Streaming — Tự Viết Runtime Agent</h1>
+          <div class="article-hero__meta">16 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Ghép 2 viên gạch cuối cùng thành 1 Agent thật</h2>
+            <p>
+              Bài 7 cho agent khả năng dùng tool. Bài 8 cho agent khả năng nhớ và lắp ghép prompt an toàn. Bài này ghép
+              cả hai lại thành thứ mọi người vẫn gọi là "AI Agent": một vòng lặp suy luận từng bước, tự quyết định khi
+              nào cần tool, khi nào đủ thông tin để trả lời, và biết dừng lại đúng lúc thay vì lặp vô hạn.
+            </p>
+            <p>
+              Đây là bài cuối cùng của Track C — sau bài này, <code>aisys-agent-kernel.js</code> đã đủ đầy đủ để Track B
+              (Bài 10–12) dùng lại nguyên vẹn <code>Agent</code> class làm đơn vị điều phối trong hệ multi-agent.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Bắt buộc đã đọc <a href="aisys-tool-calling">Bài 7</a> và <a href="aisys-memory-prompt">Bài 8</a> — bài
+                này dùng lại nguyên vẹn <code>ToolRegistry</code> và không giới thiệu lại từ đầu.
+              </div>
+            </div>
+
+            <h2>1. Vòng Lặp Thought → Action → Observation</h2>
+            <p>
+              <strong>ReAct</strong> (Reasoning + Acting) là mẫu hình phổ biến nhất cho agent: thay vì trả lời ngay lập
+              tức, agent "nghĩ thành lời" (Thought) trước khi hành động (Action), rồi quan sát kết quả (Observation) để
+              quyết định bước tiếp theo — lặp lại tới khi đủ thông tin trả lời:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">react-loop-sketch.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// Phác thảo ý tưởng (bản đầy đủ có retry/giới hạn bước ở mục 3 và 4):
+while (true) {
+  const { thought, action, finalAnswer } = decide(query);   // Thought
+  if (!action) return finalAnswer;                          // đủ thông tin -> dừng
+  const observation = toolRegistry.execute(action.tool, action.args); // Action
+  query = incorporateObservation(query, observation);        // Observation -> vòng lặp tiếp
+}</code></pre>
+            </div>
+            <p>
+              Điểm mấu chốt: agent KHÔNG biết trước nó sẽ cần mấy bước — số bước phụ thuộc vào độ phức tạp câu hỏi, khác
+              hẳn một hàm xử lý tuyến tính cố định.
+            </p>
+
+            <h2>2. Event Emitter Cho Streaming</h2>
+            <p>
+              Thay vì đợi cả vòng lặp chạy xong mới trả về 1 cục kết quả, runtime thật phát ra sự kiện NGAY khi có — để
+              giao diện hiển thị "agent đang nghĩ..." theo thời gian thực. Cách đơn giản nhất: truyền các hàm callback
+              vào, gọi ngay tại thời điểm có dữ liệu:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">agent-run-streaming.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">class Agent {
+  run(userQuery, { onThought, onAction, onObservation, onError, onFinish } = {}) {
+    // ... trong vòng lặp:
+    onThought && onThought(decision.thought, step);   // phát NGAY khi có Thought
+    onAction && onAction(decision.action, step);       // phát NGAY khi có Action
+    // ...
+    onObservation && onObservation(observation, step); // phát NGAY khi có Observation
+  }
+}</code></pre>
+            </div>
+            <p>
+              Đây chính xác là cách demo mục 5 hiển thị log — mỗi dòng xuất hiện ngay khi callback tương ứng được gọi,
+              không đợi <code>run()</code> return.
+            </p>
+
+            <h2>3. Xử Lý Lỗi Tool — Retry/Backoff</h2>
+            <p>
+              Tool có thể lỗi (input không hợp lệ, service ngoài timeout...). Agent không nên bỏ cuộc ngay ở lần lỗi đầu
+              tiên, nhưng cũng không được thử lại vô hạn:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">retry-once.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">try {
+  const observation = toolRegistry.execute(action.tool, action.args);
+  // ... thành công, trả lời luôn
+} catch (err) {
+  onError && onError(err, step);
+  if (retriedThisStep) {
+    return giveUp(err); // đã retry 1 lần rồi vẫn lỗi -> dừng hẳn, KHÔNG lặp mãi
+  }
+  retriedThisStep = true;
+  step++; // cho thử lại ở vòng lặp kế tiếp
+}</code></pre>
+            </div>
+            <p>
+              Demo mục 5 có preset "🧪 Bơm lỗi" cố tình gửi một biểu thức sai cú pháp — bạn sẽ thấy agent thử, lỗi, thử
+              lại lần 2 (do <code>mockDecide</code> tất định nên vẫn ra cùng lỗi), rồi dừng hẳn với thông báo rõ ràng
+              thay vì treo mãi.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Mẹo: Production dùng exponential backoff, không chỉ retry-once</div>
+              <div class="callout__content">
+                Agent trong bài này retry đúng 1 lần cho đơn giản sư phạm. Hệ thống thật thường dùng
+                <strong>exponential backoff</strong> — chờ lâu hơn theo cấp số nhân giữa các lần thử (100ms, 200ms,
+                400ms...) — vì phần lớn lỗi tool trong thực tế là timeout mạng tạm thời, không phải lỗi logic cố định
+                như demo này; retry ngay lập tức nhiều lần có thể làm nghẽn thêm 1 service đã quá tải.
+              </div>
+            </div>
+
+            <h2>4. Giới Hạn Số Bước & Phát Hiện Vòng Lặp Vô Hạn</h2>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: Agent không có giới hạn bước có thể chạy MÃI MÃI</div>
+              <div class="callout__content">
+                Nếu "bộ não" quyết định (model thật hoặc mock-LLM) rơi vào vòng lặp — liên tục nghĩ cần gọi tool nhưng
+                không bao giờ thấy đủ thông tin để dừng — agent sẽ chạy vô hạn, tốn chi phí compute (và tiền API thật)
+                không kiểm soát được. Giải pháp bắt buộc: một tham số <code>maxSteps</code> cứng, agent PHẢI dừng và trả
+                về thông báo rõ ràng khi chạm giới hạn, thay vì im lặng treo máy:
+              </div>
+            </div>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">max-steps-guard.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">while (step < this.maxSteps) {
+  // ... toàn bộ logic ReAct + retry ở trên
+}
+// Ra khỏi vòng lặp vì hết maxSteps mà vẫn chưa xong -> PHẢI báo rõ, không im lặng:
+return { finalAnswer: "Đã đạt giới hạn số bước tối đa — dừng lại để tránh vòng lặp vô hạn.", steps: step };</code></pre>
+            </div>
+
+            <h2>5. Thực hành tương tác: ReAct Runtime</h2>
+            <p>
+              Chọn 1 trong 4 preset — quan sát log Thought/Action/Observation xuất hiện theo thứ tự, và đặc biệt thử
+              preset "Bơm lỗi" để xem cơ chế retry-rồi-dừng hoạt động trực tiếp:
+            </p>
+
+            <div class="code-tabs" id="react-lab-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🤖 ReAct Runtime</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="react-lab" id="react-lab-root">
+                  <div class="react-lab-presets"></div>
+                  <div class="react-lab-log"></div>
+                  <div class="react-lab-step-counter"></div>
+                  <div class="react-lab-final"></div>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">aisys-react-lab.js (trích)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { Agent } from "./aisys-agent-kernel.js";
+import { createDemoRegistry } from "./aisys-tool-lab.js"; // TÁI SỬ DỤNG registry Bài 7
+
+const agent = new Agent({ toolRegistry: createDemoRegistry(), maxSteps: 4 });
+agent.run(query, { onThought, onAction, onObservation, onError, onFinish });</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <p>
+              Track C đã hoàn chỉnh: <code>ToolRegistry</code> (Bài 7) + <code>Memory</code>/<code>PromptTemplate</code>
+              (Bài 8) + <code>Agent</code> ReAct loop (bài này). Bài 10 sẽ mở Track B — dùng nhiều <code>Agent</code>
+              như thế này cùng lúc, điều phối qua một message bus.
+            </p>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>aisys-agent-kernel.js</code> — bản HOÀN CHỈNH của cả 3 bài Track C (Tool + Memory
+                + Agent/ReAct), cùng <code>aisys-react-lab.js</code> wiring demo bài này:
+              </p>
+              <a
+                href="aisys-agent-kernel.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về aisys-agent-kernel.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Paper gốc ReAct:</strong>
+                  <a href="https://arxiv.org/abs/2210.03629" target="_blank" rel="noopener noreferrer"
+                    >Yao et al., 2022 — ReAct: Synergizing Reasoning and Acting in Language Models</a
+                  >
+                  — nguồn gốc mẫu hình Thought/Action/Observation ở mục 1.
+                </li>
+                <li>
+                  <strong>Streaming responses:</strong>
+                  <a
+                    href="https://developer.mozilla.org/en-US/docs/Web/API/Streams_API"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >MDN — Streams API</a
+                  >
+                  — nền tảng kỹ thuật streaming thật (SSE/chunked response) mà callback ở mục 2 mô phỏng ý tưởng.
+                </li>
+                <li>
+                  <strong>Agent loop trong thực tế:</strong>
+                  <a href="../aie/aie-agents-react">Series 16 — Agents & ReAct</a>
+                  — góc nhìn ứng dụng (dùng LLM/framework thật) bổ trợ cho góc nhìn tự-viết-từ-đầu ở bài này.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="aisys-memory-prompt" class="article-related__link article-related__link--prev">
+                  Bài 8: Memory & Prompt Template Engine
+                </a>
+                <a href="aisys-multiagent-architecture" class="article-related__link article-related__link--next">
+                  Bài 10: Kiến Trúc Multi-Agent — Vai Trò & Giao Tiếp
+                </a>
+                <a href="aisys-programming-series" class="article-related__link"
+                  >Quay lại Lộ trình Kỹ Thuật Hệ Thống AI</a
+                >
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/portfolio" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Portfolio</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="aisys-react-lab.js"></script>
+  </body>
+</html>

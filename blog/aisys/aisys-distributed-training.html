@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 3: Huấn Luyện Phân Tán (Khái Niệm) — js-tools</title>
+    <meta
+      name="description"
+      content="Vì sao 1 GPU không đủ, data/model/pipeline parallelism, đồng bộ gradient (all-reduce) & checkpoint, và đánh đổi compute vs communication khi thêm worker. Demo mô phỏng huấn luyện phân tán tương tác."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/aisys/aisys-distributed-training" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/aisys/aisys-distributed-training" />
+    <meta property="og:title" content="Bài 3: Huấn Luyện Phân Tán (Khái Niệm) — js-tools" />
+    <meta
+      property="og:description"
+      content="Vì sao 1 GPU không đủ, data/model/pipeline parallelism, đồng bộ gradient (all-reduce) & checkpoint, và đánh đổi compute vs communication khi thêm worker. Demo mô phỏng huấn luyện phân tán tương tác."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 3: Huấn Luyện Phân Tán (Khái Niệm) — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Vì sao 1 GPU không đủ, data/model/pipeline parallelism, đồng bộ gradient (all-reduce) & checkpoint, và đánh đổi compute vs communication khi thêm worker. Demo mô phỏng huấn luyện phân tán tương tác."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <script defer src="../prism.js"></script>
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script defer src="../katex/katex.min.js"></script>
+    <script defer src="../katex/contrib/auto-render.min.js"></script>
+    <script defer src="../katex-render.js"></script>
+    <style>
+      .pipeline-sim {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        background: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 20px;
+        color: #242424;
+      }
+      .pipeline-sim-workers {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .pipeline-sim-worker-btn {
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        border-radius: 6px;
+        padding: 8px 14px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        color: #334155;
+      }
+      .pipeline-sim-worker-btn:hover {
+        border-color: #3b82f6;
+      }
+      .pipeline-sim-worker-btn.is-active {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #fff;
+      }
+      .pipeline-sim-result {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      @media (max-width: 700px) {
+        .pipeline-sim-result {
+          grid-template-columns: 1fr;
+        }
+      }
+      .pipeline-sim-stat {
+        background: #1e293b;
+        color: #e2e8f0;
+        border-radius: 6px;
+        padding: 14px;
+        text-align: center;
+      }
+      .pipeline-sim-stat strong {
+        color: inherit;
+      }
+      .pipeline-sim-stat__value {
+        display: block;
+        font-size: 20px;
+        font-weight: 800;
+        color: #60a5fa;
+      }
+      .pipeline-sim-stat__label {
+        display: block;
+        font-size: 12px;
+        color: #94a3b8;
+        margin-top: 4px;
+      }
+      .pipeline-sim-bars {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 14px 16px;
+      }
+      .pipeline-sim-bar-row {
+        display: grid;
+        grid-template-columns: 90px 1fr 70px;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+      }
+      .pipeline-sim-bar-row.is-active .pipeline-sim-bar-row__label {
+        color: #3b82f6;
+        font-weight: 800;
+      }
+      .pipeline-sim-bar-row__label {
+        font-weight: 600;
+        color: #334155;
+      }
+      .pipeline-sim-bar-row__track {
+        position: relative;
+        height: 14px;
+        background: #e2e8f0;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .pipeline-sim-bar-row__ideal {
+        position: absolute;
+        inset: 0;
+        height: 100%;
+        background: repeating-linear-gradient(45deg, #cbd5e1, #cbd5e1 4px, #e2e8f0 4px, #e2e8f0 8px);
+      }
+      .pipeline-sim-bar-row__actual {
+        position: absolute;
+        inset: 0;
+        height: 100%;
+        background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      }
+      .pipeline-sim-bar-row__time {
+        color: #64748b;
+        text-align: right;
+      }
+      .pipeline-sim-legend {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: #64748b;
+      }
+      .pipeline-sim-legend__swatch {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        margin-right: 4px;
+        vertical-align: middle;
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 3: Huấn Luyện Phân Tán (Khái Niệm)",
+        "description": "Vì sao 1 GPU không đủ, data/model/pipeline parallelism, đồng bộ gradient (all-reduce) & checkpoint, và đánh đổi compute vs communication khi thêm worker. Demo mô phỏng huấn luyện phân tán tương tác.",
+        "url": "https://js-tools.org/blog/aisys/aisys-distributed-training",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-07-16"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--aisys">
+        <div class="container">
+          <a href="aisys-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
+          <div class="article-hero__tag article-hero__tag--aisys">Bài 3 · Kỹ Thuật Hệ Thống AI</div>
+          <h1 class="article-hero__title">Bài 3: Huấn Luyện Phân Tán (Khái Niệm)</h1>
+          <div class="article-hero__meta">16 tháng 7, 2026 · Học thuật chuyên sâu</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <h2>Mở đầu: Tại sao không thể "thêm GPU cho nhanh" mãi mãi</h2>
+            <p>
+              Trực giác phổ biến: model AI càng lớn, cứ thêm GPU vào là train nhanh hơn tỷ lệ thuận. Bài học này sẽ phá
+              vỡ trực giác đó bằng cả lý thuyết lẫn con số cụ thể — có một điểm mà thêm worker vào KHÔNG những không
+              giúp gì mà còn làm chậm đi, vì chi phí giao tiếp giữa các worker bắt đầu áp đảo lợi ích tính toán song
+              song. Đây là bài toán kỹ thuật hệ thống thực sự đứng sau con số "huấn luyện trên 10.000 GPU" mà bạn hay
+              đọc thấy.
+            </p>
+            <p>
+              Bài học đi từ giới hạn bộ nhớ của 1 GPU, qua 3 chiến lược song song hoá (data/model/pipeline parallelism),
+              cơ chế đồng bộ gradient bằng all-reduce, tới bài toán đánh đổi compute-vs-communication được minh hoạ trực
+              tiếp bằng demo tương tác dùng chính công thức trong bài.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Điều kiện tiên quyết</div>
+              <div class="callout__content">
+                Nên đọc <a href="aisys-data-pipeline">Bài 2</a> trước (dữ liệu phải sẵn sàng trước khi huấn luyện). Nếu
+                bạn chưa quen gradient descent, xem qua
+                <a href="../ai/ai-gradient-descent">Series 12 — Gradient Descent</a> — bài này giả định bạn đã biết khái
+                niệm gradient, chỉ tập trung vào góc độ hệ thống/hạ tầng.
+              </div>
+            </div>
+
+            <h2>1. Vì sao một GPU không đủ</h2>
+            <p>
+              Một model ngôn ngữ lớn không chỉ cần lưu trọng số (weights) — quá trình huấn luyện còn cần lưu gradient và
+              trạng thái optimizer (ví dụ Adam lưu 2 giá trị phụ cho mỗi tham số). Với optimizer Adam ở độ chính xác
+              32-bit, tổng bộ nhớ cần cho 1 tham số xấp xỉ:
+            </p>
+            <p>
+              \[ \text{Bộ nhớ} \approx N_{\text{tham số}} \times (4 \text{ byte (weight)} + 4 \text{ byte (gradient)} +
+              8 \text{ byte (2 trạng thái Adam)}) = N_{\text{tham số}} \times 16 \text{ byte} \]
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">estimate-training-memory.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">function estimateTrainingMemoryGB(paramCountBillions) {
+  const bytesPerParam = 16; // weight(4) + gradient(4) + 2 trạng thái Adam(8), FP32
+  const totalBytes = paramCountBillions * 1e9 * bytesPerParam;
+  return totalBytes / 1024 ** 3;
+}
+
+// Model 7 tỷ tham số (7B) cần ~104 GB chỉ riêng cho training state —
+// vượt xa bộ nhớ của một GPU tiêu dùng phổ biến (24 GB), thậm chí vượt cả
+// nhiều GPU trung tâm dữ liệu đơn lẻ (80 GB) => BẮT BUỘC phải chia ra nhiều GPU.
+console.log(estimateTrainingMemoryGB(7)); // ≈ 104.3 GB</code></pre>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: Nhầm bộ nhớ inference với bộ nhớ training</div>
+              <div class="callout__content">
+                Người mới thường ước lượng bộ nhớ theo kích thước file model (thường chỉ lưu weight ở FP16/INT8, dùng
+                cho suy luận/inference) rồi bất ngờ khi training "hết bộ nhớ". Training cần thêm gradient + trạng thái
+                optimizer + activation trung gian (để backprop) — tổng bộ nhớ training thường gấp
+                <strong>4–6 lần</strong>
+                bộ nhớ cần cho riêng inference cùng model đó.
+              </div>
+            </div>
+
+            <h2>2. Data, Model & Pipeline Parallelism</h2>
+            <p>
+              Khi 1 GPU không đủ, có 3 chiến lược chia việc cho nhiều GPU — mỗi chiến lược giải quyết một dạng giới hạn
+              khác nhau:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Chiến lược</th>
+                  <th>Chia cái gì</th>
+                  <th>Khi nào dùng</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Data Parallelism</strong></td>
+                  <td>Chia batch dữ liệu — mỗi GPU giữ TOÀN BỘ model, xử lý 1 phần batch</td>
+                  <td>Model vừa bộ nhớ 1 GPU, muốn tăng thông lượng (throughput)</td>
+                </tr>
+                <tr>
+                  <td><strong>Model Parallelism</strong></td>
+                  <td>Chia CHÍNH model (từng layer/tensor) ra nhiều GPU</td>
+                  <td>Model quá lớn, không vừa bộ nhớ dù chỉ 1 bản sao</td>
+                </tr>
+                <tr>
+                  <td><strong>Pipeline Parallelism</strong></td>
+                  <td>Chia model theo layer thành các "trạm", chạy như dây chuyền lắp ráp</td>
+                  <td>Model rất sâu (nhiều layer), muốn giảm giao tiếp so với model parallelism thô</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Mẹo: Ba chiến lược không loại trừ nhau</div>
+              <div class="callout__content">
+                Các hệ thống huấn luyện LLM quy mô lớn thật sự thường kết hợp CẢ BA cùng lúc (gọi là "3D parallelism") —
+                ví dụ dùng pipeline parallelism giữa các nhóm GPU, model parallelism trong mỗi nhóm, và data parallelism
+                giữa các bản sao pipeline. Bài này chỉ mô phỏng data parallelism (đơn giản nhất) để làm rõ cơ chế cốt
+                lõi của việc đồng bộ.
+              </div>
+            </div>
+
+            <h2>3. Đồng bộ Gradient (All-Reduce) & Checkpoint</h2>
+            <p>
+              Với data parallelism, mỗi worker tính gradient trên phần dữ liệu riêng của mình — nhưng để cập nhật model
+              nhất quán, TẤT CẢ worker phải có cùng một gradient trung bình trước khi bước tiếp theo. Đây là việc của
+              thuật toán <strong>all-reduce</strong>: mỗi worker gửi gradient của mình, nhận về gradient trung bình của
+              toàn bộ nhóm, rồi mới cùng cập nhật trọng số:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">all-reduce-concept.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// Mô phỏng khái niệm (không phải triển khai mạng thật) của all-reduce
+// kiểu "ring" — mỗi worker chỉ nói chuyện với 2 hàng xóm, tổng dữ liệu
+// truyền đi KHÔNG phụ thuộc vào số worker (khác all-to-all ngây thơ).
+function ringAllReduce(workerGradients) {
+  const n = workerGradients.length;
+  const paramCount = workerGradients[0].length;
+  const averaged = new Array(paramCount).fill(0);
+
+  for (let p = 0; p < paramCount; p++) {
+    let sum = 0;
+    for (let w = 0; w < n; w++) sum += workerGradients[w][p];
+    averaged[p] = sum / n; // mọi worker cuối cùng đều có cùng giá trị này
+  }
+  return averaged;
+}</code></pre>
+            </div>
+
+            <p>
+              Vì huấn luyện có thể chạy hàng tuần trên hàng nghìn GPU, xác suất một GPU gặp sự cố phần cứng giữa chừng
+              là không nhỏ. <strong>Checkpoint</strong> — lưu toàn bộ trạng thái model + optimizer định kỳ — cho phép
+              phục hồi từ điểm gần nhất thay vì train lại từ đầu:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">checkpoint-strategy.js</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">function shouldCheckpoint(step, checkpointEveryNSteps) {
+  return step > 0 && step % checkpointEveryNSteps === 0;
+}
+
+// Đánh đổi: checkpoint dày (vd mỗi 100 bước) tốn thời gian ghi đĩa/mạng lưu trữ
+// nhưng phục hồi nhanh sau sự cố; checkpoint thưa (vd mỗi 5000 bước) tốn ít
+// overhead nhưng mất nhiều tiến độ hơn nếu sự cố xảy ra ngay trước điểm lưu.</code></pre>
+            </div>
+
+            <h2>4. Sharding & Overhead Giao Tiếp</h2>
+            <p>
+              Đây là nơi lý thuyết gặp thực tế: thêm worker giúp <em>compute per step</em> giảm (chia việc), nhưng
+              <em>sync overhead</em> lại tăng (nhiều worker hơn = nhiều dữ liệu gradient phải trao đổi/điều phối hơn).
+              Tổng thời gian mỗi bước là tổng của cả hai — và tại một điểm nào đó, overhead thắng thế:
+            </p>
+            <p>
+              \[ T_{\text{step}}(N) = \underbrace{\frac{T_{\text{compute}}}{N}}_{\text{giảm theo N}} +
+              \underbrace{T_{\text{sync}}(N)}_{\text{tăng theo N}} \]
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: Vì sao demo dưới đây cho thấy 8 worker CHẬM HƠN 4 worker</div>
+              <div class="callout__content">
+                Với các con số giả định trong demo (200ms compute/step ở N=1, overhead đồng bộ 10ms cố định + 8ms cho
+                mỗi worker thêm vào), tổng thời gian mỗi bước đạt cực tiểu quanh N=4, rồi TĂNG trở lại khi N=8, 16, 32.
+                Đây không phải lỗi mô phỏng — đó chính xác là hiện tượng có thật khiến các đội hạ tầng ML phải đo đạc kỹ
+                trước khi chọn số lượng GPU cho một job huấn luyện, thay vì mặc định "càng nhiều càng nhanh".
+              </div>
+            </div>
+
+            <h2>5. Thực hành tương tác: Distributed Training Simulator</h2>
+            <p>
+              Chọn số lượng worker và quan sát: thời gian compute/step giảm, nhưng overhead đồng bộ tăng — cột màu xanh
+              đặc là thời gian THẬT (có overhead), phần vân chéo là thời gian LÝ TƯỞNG (song song hoàn hảo, không
+              overhead) để bạn thấy khoảng cách giữa lý thuyết và thực tế ngày càng doãng ra khi N lớn:
+            </p>
+
+            <div class="code-tabs" id="pipeline-sim-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">⚙️ Distributed Training Simulator</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="pipeline-sim" id="pipeline-sim-root">
+                  <div class="pipeline-sim-workers">
+                    <button class="pipeline-sim-worker-btn" type="button" data-workers="1">1 worker</button>
+                    <button class="pipeline-sim-worker-btn" type="button" data-workers="2">2 worker</button>
+                    <button class="pipeline-sim-worker-btn" type="button" data-workers="4">4 worker</button>
+                    <button class="pipeline-sim-worker-btn" type="button" data-workers="8">8 worker</button>
+                    <button class="pipeline-sim-worker-btn" type="button" data-workers="16">16 worker</button>
+                    <button class="pipeline-sim-worker-btn" type="button" data-workers="32">32 worker</button>
+                    <button class="pipeline-sim-worker-btn" type="button" data-workers="64">64 worker</button>
+                  </div>
+                  <div class="pipeline-sim-result"></div>
+                  <div class="pipeline-sim-legend">
+                    <span
+                      ><span class="pipeline-sim-legend__swatch" style="background: #3b82f6"></span>Thời gian thật</span
+                    >
+                    <span
+                      ><span
+                        class="pipeline-sim-legend__swatch"
+                        style="
+                          background: repeating-linear-gradient(45deg, #cbd5e1, #cbd5e1 2px, #e2e8f0 2px, #e2e8f0 4px);
+                        "
+                      ></span
+                      >Lý tưởng (không overhead)</span
+                    >
+                  </div>
+                  <div class="pipeline-sim-bars"></div>
+                </div>
+              </div>
+
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">aisys-pipeline-sim.js (trích)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">export function simulateTraining(workerCount) {
+  const computePerStep = BASE_COMPUTE_MS_PER_STEP / workerCount;
+  const syncOverhead = workerCount > 1
+    ? FIXED_SYNC_LATENCY_MS + SYNC_COST_PER_EXTRA_WORKER_MS * (workerCount - 1)
+    : 0;
+  const stepTime = computePerStep + syncOverhead;
+  // ... nhân với tổng số bước để ra tổng thời gian huấn luyện
+}</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <p>
+              Nếu bạn muốn xem cách song song hoá thật sự được thực thi ở mức phần cứng (GPU thread/warp), xem thêm
+              <a href="../webgpu/webgpu-compute-matrix">Series 2 — WebGPU Compute Shader: Nhân Ma Trận</a> — cùng ý
+              tưởng song song hoá nhưng ở tầng GPU compute thay vì tầng điều phối cụm máy.
+            </p>
+
+            <div class="article-cta">
+              <h3>Tải file code thực hành minh họa bài học</h3>
+              <p>
+                File JavaScript <code>aisys-pipeline-sim.js</code> — mô hình chi phí compute/sync theo số worker và hàm
+                render demo tương tác dùng trong bài:
+              </p>
+              <a
+                href="aisys-pipeline-sim.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Tải về aisys-pipeline-sim.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <strong>Kỹ thuật Megatron-LM (model parallelism):</strong>
+                  <a href="https://arxiv.org/abs/1909.08053" target="_blank" rel="noopener noreferrer"
+                    >Megatron-LM: Training Multi-Billion Parameter Language Models (Shoeybi et al., 2019)</a
+                  >
+                  — nền tảng cho kỹ thuật chia tensor/model parallelism hiện đại.
+                </li>
+                <li>
+                  <strong>ZeRO — tối ưu bộ nhớ optimizer:</strong>
+                  <a href="https://arxiv.org/abs/1910.02054" target="_blank" rel="noopener noreferrer"
+                    >ZeRO: Memory Optimizations Toward Training Trillion Parameter Models (Rajbhandari et al., 2019)</a
+                  >
+                  — kỹ thuật sharding trạng thái optimizer nhắc ở mục 1 và 4.
+                </li>
+                <li>
+                  <strong>Ring All-Reduce:</strong>
+                  <a
+                    href="https://www.oreilly.com/radar/reduce-all-in-the-cloud-with-horovod/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Horovod / Ring All-Reduce — bài trình bày kỹ thuật</a
+                  >
+                  — thuật toán đồng bộ gradient dùng thực tế trong công nghiệp.
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="aisys-data-pipeline" class="article-related__link article-related__link--prev">
+                  Bài 2: Thu Thập & Làm Sạch Dữ Liệu
+                </a>
+                <a href="aisys-rlhf-alignment" class="article-related__link article-related__link--next">
+                  Bài 4: RLHF & Alignment
+                </a>
+                <a href="aisys-programming-series" class="article-related__link"
+                  >Quay lại Lộ trình Kỹ Thuật Hệ Thống AI</a
+                >
+              </div>
+            </div>
+
+            <div class="article-comments">
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/portfolio" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Portfolio</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+    <script src="../../i18n.js" defer></script>
+    <script src="../blog.js" defer></script>
+    <script src="../ide.js" defer></script>
+    <script type="module" src="aisys-pipeline-sim.js"></script>
+  </body>
+</html>

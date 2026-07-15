@@ -30,6 +30,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 15: Kiến Trúc Máy Tính**            | **Từ Logic Đến Lượng Tử**               | **12/12**      | **12**   | **100%** ✅ |
 | 🎉 **Series 16: Kỹ Sư AI Thực Chiến**           | **Lộ Trình Lập Trình Viên Web**         | **20/20**      | **20**   | **100%** ✅ |
 | 🎉 **Series 17: Chẩn Đoán &amp; Sửa Chữa Mạch** | **Từ Đo Kiểm Đến Sửa Chữa Thực Chiến**  | **8/8**        | **8**    | **100%** ✅ |
+| 🎉 **Series 18: Kỹ Thuật Hệ Thống AI**          | **Từ Pipeline Đến Đội Ngũ Agent**       | **13/13**      | **13**   | **100%** ✅ |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
@@ -168,7 +169,91 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 
 ---
 
-# 🧱 PHẦN II — CÔNG VIỆC TRIỂN KHAI (Implementation Tasks)
+## 🤖 Series 18: Kỹ Thuật Hệ Thống AI (Từ Pipeline Đến Đội Ngũ Agent)
+
+> **Định danh series (chốt 2026-07-16):**
+>
+> | Trường          | Giá trị                                                                                                 |
+> | --------------- | ------------------------------------------------------------------------------------------------------- |
+> | Tên series (VI) | Kỹ Thuật Hệ Thống AI: Từ Pipeline Đến Đội Ngũ Agent                                                     |
+> | Thư mục slug    | `blog/aisys/`                                                                                           |
+> | File hub        | `aisys-programming-series.html`                                                                         |
+> | Mẫu slug bài    | `aisys-<chu-de>.html` (vd `aisys-data-pipeline.html`)                                                   |
+> | Tag class CSS   | `.blog-card__tag--aisys`                                                                                |
+> | Màu accent      | `#3b82f6` (xanh dương — chưa trùng 28 tag hiện có)                                                      |
+> | Prism ngôn ngữ  | `js` (đã có sẵn) — mọi pseudo-code training/data pipeline mô phỏng bằng JS thuần, không cần grammar mới |
+>
+> **Phân biệt với 2 series AI đã có (để tránh trùng lặp):**
+>
+> - **Series 12 (AI: Từ Neuron Đến LLM)** dạy **toán & kiến trúc model** — từ linear regression tới tự viết GPT-mini.
+> - **Series 16 (Kỹ Sư AI Thực Chiến)** dạy **ứng dụng đơn agent** — RAG, prompting, fine-tuning LoRA, 1 agent ReAct/LangGraph.
+> - **Series 18 (series này)** dạy **hệ thống hoá ở tầm sản phẩm/tổ chức** — không lặp lại toán model hay 1-agent cơ bản, mà đi sâu vào 3 track:
+>   1. **Track A — Hậu trường công nghiệp:** quy trình thật tạo ra 1 AI product (data pipeline, distributed training khái niệm, RLHF/alignment, red-teaming, benchmark, model versioning, chi phí hạ tầng).
+>   2. **Track B — Kiến trúc multi-agent:** orchestration nhiều agent phối hợp, giao tiếp, phân vai, blackboard pattern, kiến trúc kiểu AutoGen/CrewAI, xử lý xung đột/deadlock.
+>   3. **Track C — Tự viết framework agent từ số 0:** góc kỹ sư hệ thống — tự viết abstraction cho tool-calling, memory, prompt template, callback/streaming (thu nhỏ 1 LangChain/LangGraph bằng JS thuần).
+> - **Ngoại lệ quality contract riêng của Series 18 (chốt 2026-07-16):** **KHÔNG bắt buộc mục "Câu hỏi trắc nghiệm ôn tập"** ở cuối mỗi bài — bỏ quiz để dành không gian cho nội dung sâu/dài hơn và tiết kiệm context khi triển khai. Đây là ngoại lệ **chỉ áp dụng cho Series 18**, không áp dụng ngược cho series khác đã/đang làm. Mọi rubric định lượng khác (Phần IV §2: số mục H2, độ dài, code window, callout, bảng so sánh, cross-link, tài liệu tham khảo, glossary) vẫn áp dụng đầy đủ như chuẩn chung.
+> - **Demo tương tác:** được phép là mô phỏng/visualizer tự viết bằng JS (giống cách Series 12 mô phỏng neural net, Series 11 VLSI mô phỏng RTL) — KHÔNG bắt buộc chạy model/framework AI thật trên trình duyệt, đúng ràng buộc no-build-step của site.
+
+### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
+
+- **Ngôn ngữ:** Pure JavaScript (ES6+, `type="module"`), không TypeScript, không framework.
+- **Engine dùng chung (co-located, tái sử dụng qua nhiều bài — giống pattern VLSI `vlsi-verilite.js`, xem `check-lesson.md` PHẦN A mục 6):**
+  - `aisys-mock-llm.js` — một "LLM giả lập" tất định (deterministic): nhận `(systemPrompt, messages, tools[])`, trả lời bằng luật khớp từ khoá + template biên soạn sẵn (không gọi API thật, không cần khoá API, không cần mạng). Đây là "bộ não" đứng sau mọi agent trong toàn series — mô phỏng đủ hành vi thật (chọn gọi tool nào, khi nào dừng, khi nào ảo giác/refuse) để dạy đúng cơ chế mà không cần LLM thật.
+  - `aisys-agent-kernel.js` — framework agent tự viết (Track C): `Agent` class (system prompt, memory, tool registry), `Tool` interface (`name`, `schema`, `execute`), `Memory` (short-term buffer + key-value store mô phỏng vector recall bằng so khớp từ khoá), `runReActLoop()` (Thought → Action → Observation → lặp), callback/streaming event emitter (`onToken`, `onToolCall`, `onFinish`).
+  - `aisys-orchestrator.js` — điều phối nhiều agent (Track B): hàng đợi message giữa agent, `Blackboard` (shared state store, agent đọc/ghi), `Router` (phân task theo vai trò/khả năng agent), phát hiện & xử lý deadlock (2 agent chờ nhau) và xung đột ghi (2 agent sửa cùng 1 key blackboard).
+  - `aisys-pipeline-sim.js` — mô phỏng vòng đời huấn luyện (Track A): các "stage" (thu thập → làm sạch → chia train/val/test → training loop rút gọn → RLHF reward scoring → red-team probe → benchmark eval → deploy/rollback), mỗi stage là hàm thuần chạy trên dữ liệu đồ chơi (mảng số nhỏ), có độ trễ giả lập (không phải training thật) để trực quan hoá thời gian/chi phí tương đối giữa các giai đoạn.
+- **Giao diện:** HTML5 Canvas (vẽ đồ thị agent + message bus) + SVG (sơ đồ pipeline dạng timeline, dễ style/animate hơn canvas cho box-and-arrow tĩnh).
+- **Không cần:** API key thật, WebGPU/WASM (mock LLM chạy CPU-nhẹ bằng luật, không cần tăng tốc), backend/server.
+
+### 2. Thiết kế Demo tương tác cốt lõi (Core Visualizer Demo)
+
+- **Tên: "Agent Orchestra Console" (Bàn Điều Phối Dàn Agent)** — file `aisys-agent-orchestra.html`, dùng xuyên suốt Track B + C (mỗi bài nhúng lại với kịch bản/tool khác nhau qua tham số cấu hình, không viết lại engine).
+- **Mô tả giao diện (3 panel):**
+  1. **Trái — Canvas đồ thị agent:** mỗi agent là 1 node tròn (tên vai trò: Planner, Researcher, Coder, Critic…), đường nối là message bus; khi agent gửi message, một "hạt" chạy dọc theo cạnh nối kèm tooltip nội dung message; node đổi màu viền theo trạng thái (đang nghĩ / đang gọi tool / đang chờ / lỗi deadlock — viền đỏ nhấp nháy).
+  2. **Giữa — Blackboard (shared state) trực tiếp:** bảng key-value hiển thị trạng thái chung mọi agent đọc/ghi (vd `task_status`, `draft_answer`, `budget_remaining`); mỗi lần 1 agent ghi, dòng đó highlight nhấp nháy + ghi chú "ghi bởi Agent X lúc bước N" — trực quan hoá xung đột khi 2 agent ghi cùng key trong cùng bước.
+  3. **Phải — Log thực thi từng bước (ReAct trace):** danh sách cuộn `Thought → Action(tool, args) → Observation → ...` theo từng agent, màu theo agent; nút Step/Play/Reset điều khiển tốc độ giống Algo Sandbox (Series 3) đã có.
+- **Dưới cùng — Bảng điều khiển kịch bản:** dropdown chọn kịch bản demo (vd "2 agent tranh chấp 1 tài nguyên → deadlock", "Planner–Coder–Critic tự sửa lỗi bằng vòng phản hồi", "Pipeline huấn luyện: 5 stage chạy tuần tự kèm đồng hồ chi phí") + nút "Bơm lỗi" (buộc 1 agent trả lời sai/tool lỗi) để minh hoạ cơ chế retry/fallback.
+- **Vì sao đây là visualizer đúng "cốt lõi" của series:** nó là nơi DUY NHẤT mà cả 3 track hội tụ — Track A (pipeline stage timeline) chạy như 1 kịch bản trong cùng console; Track B (blackboard, deadlock) là panel giữa; Track C (ReAct trace, tool schema) là panel phải và chính là code người học tự viết ra rồi cắm vào console để xem chạy thật.
+
+### 3. Đề cương tổng quan (Overview Syllabus)
+
+> Thứ tự: **Track A (bối cảnh — vì sao/thế nào 1 AI product ra đời) → Track C (tự viết nguyên liệu framework) → Track B (dùng nguyên liệu đó điều phối nhiều agent) → Capstone (ghép cả 3)**. Lý do đặt C trước B: Track B (orchestration nhiều agent) cần các khối `Agent`/`Tool`/`Memory` đã tự viết ở Track C làm đơn vị điều phối — không thể dạy "điều phối nhiều agent" trước khi có khái niệm "1 agent" hoàn chỉnh.
+
+| Bài | Track    | Tên bài học                                                  | Nội dung CS chuyên sâu                                                                                                                                                                                                 | Dự án/Demo đi kèm                                                                                                            |
+| --- | -------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 1   | A        | **Vòng Đời Một AI Product Thật**                             | Toàn cảnh pipeline công nghiệp (data → train → RLHF → eval → deploy → monitor); ai làm gì ở mỗi giai đoạn; vì sao "train xong" mới là 20% công việc.                                                                   | Timeline SVG tương tác 6 giai đoạn, click từng giai đoạn xem chi phí/thời gian/nhân sự tương đối.                            |
+| 2   | A        | **Thu Thập & Làm Sạch Dữ Liệu**                              | Nguồn dữ liệu (web crawl, license, PII), dedup, lọc chất lượng/độc hại, data drift, class imbalance.                                                                                                                   | Demo lọc bộ dữ liệu đồ chơi: kéo thanh trượt ngưỡng chất lượng, xem % dữ liệu bị loại + phân bố trước/sau.                   |
+| 3   | A        | **Huấn Luyện Phân Tán (Khái Niệm)**                          | Data parallelism vs model parallelism vs pipeline parallelism, gradient sync, checkpoint, sharding.                                                                                                                    | `aisys-pipeline-sim.js`: mô phỏng N "worker" giả lập chia batch, đồng bộ gradient theo bước, đo overhead sync.               |
+| 4   | A        | **RLHF & Alignment**                                         | Reward model, PPO khái niệm, preference dataset, vì sao SFT chưa đủ, chi phí gán nhãn con người.                                                                                                                       | Demo chấm điểm 2 câu trả lời (A/B) xây "reward model" đồ chơi từ preference của người dùng.                                  |
+| 5   | A        | **Red-Teaming & Đánh Giá Benchmark**                         | Adversarial prompt, jailbreak class, benchmark suite (đa nhiệm/đa domain), Goodhart's law khi tối ưu benchmark.                                                                                                        | Bảng "tấn công thử" — người học nhập prompt tấn công, mock-LLM phản hồi theo luật + bảng điểm benchmark trước/sau vá.        |
+| 6   | A        | **Model Versioning, Rollback & Chi Phí Hạ Tầng**             | Semantic versioning cho model/weight, A/B canary deploy, rollback khi regression, ước lượng chi phí GPU-hour/inference.                                                                                                | Dashboard giả lập "fleet" nhiều phiên bản model, so sánh latency/lỗi, nút rollback tức thời.                                 |
+| 7   | C        | **Tool-Calling — Thiết Kế Interface Tool**                   | Function/tool schema (JSON Schema), validate input trước khi thực thi, sandbox hoá side-effect, tool registry pattern.                                                                                                 | Tự viết `Tool` interface + 3 tool đồ chơi (calculator, tra từ điển giả, đọc "file"), agent tự chọn tool đúng.                |
+| 8   | C        | **Memory & Prompt Template Engine**                          | Short-term (context window) vs long-term memory, so khớp từ khoá mô phỏng vector recall, template engine (system/few-shot/variable inject).                                                                            | Bảng memory trực quan: hội thoại dài dần, xem context bị "cắt" (truncate) và recall từ long-term memory.                     |
+| 9   | C        | **ReAct Loop, Callback & Streaming — Tự Viết Runtime Agent** | Vòng lặp Thought→Action→Observation, event emitter cho streaming token, xử lý lỗi tool (retry/backoff), giới hạn số bước tránh vòng lặp vô hạn.                                                                        | `aisys-agent-kernel.js` hoàn chỉnh: 1 agent tự trả lời câu hỏi nhiều bước bằng tool thật đã viết ở Bài 7–8.                  |
+| 10  | B        | **Kiến Trúc Multi-Agent — Vai Trò & Giao Tiếp**              | Phân vai (Planner/Executor/Critic), message passing giữa agent, giao thức điều phối tập trung vs phi tập trung.                                                                                                        | Agent Orchestra Console: kịch bản 3 agent (Planner–Coder–Critic) tự sửa lỗi qua vòng phản hồi.                               |
+| 11  | B        | **Blackboard Pattern & Shared State**                        | Kiến trúc blackboard cổ điển (AI symbolic), so sánh với shared-memory kiểu CrewAI, race condition khi nhiều agent ghi cùng lúc.                                                                                        | Panel Blackboard trực tiếp: 2 agent cùng ghi 1 key, trực quan xung đột + chiến lược giải quyết (lock/merge/last-write-wins). |
+| 12  | B        | **Orchestration Nâng Cao — Xung Đột & Deadlock**             | Deadlock (2 agent chờ nhau), livelock, timeout/circuit-breaker, kiến trúc kiểu AutoGen (group chat) vs CrewAI (hierarchical crew).                                                                                     | Kịch bản cố ý gây deadlock trong Console, người học chỉnh timeout/priority để giải quyết trực tiếp trên UI.                  |
+| 13  | Capstone | **Dự Án: AI Ops Center**                                     | Ghép cả 3 track: pipeline (Bài 1–6) sinh ra "model", framework (Bài 7–9) đóng gói thành agent, orchestration (Bài 10–12) điều phối đội agent giám sát chính pipeline đó (agent tự phát hiện regression → tự rollback). | Phiên bản đầy đủ Agent Orchestra Console: dashboard vận hành mô phỏng 1 tổ chức AI thu nhỏ, từ train tới agent tự vận hành.  |
+
+> **Kiểm tra phụ thuộc kiến thức:** Bài 7–9 (Track C) chỉ dùng khái niệm đã học ở Bài 1 (bối cảnh) — không cần Bài 2–6. Bài 10–12 (Track B) bắt buộc dùng lại `Agent`/`Tool`/`Memory` đã tự viết ở Bài 9 — nếu người đọc bỏ qua Track C sẽ callout `--note` "cần đã hoàn thành Bài 9" ở đầu Bài 10. Bài 13 (Capstone) tham chiếu ngược cả 12 bài — là bài duy nhất được phép dùng toàn bộ khái niệm series.
+
+### 4. Quality contract riêng của Series 18
+
+- Áp dụng **toàn bộ** rubric Phần IV §2 (mục H2 ≥4/≥5, ≥1.200 từ/bài, ≥4 `.code-window`, ≥1 visualizer/sơ đồ, ≥3 callout kèm ≥1 `--pitfall`, ≥1 bảng so sánh khi có khái niệm đối lập, ≥3 cross-link nội bộ, ≥3 tài liệu tham khảo ngoài, glossary đầy đủ, ≥1 file code tải về) **NGOẠI TRỪ dòng Quiz** — đã chốt bỏ hẳn mục "Câu hỏi trắc nghiệm ôn tập" cho cả 13 bài (xem ghi chú ở định danh series và Phần IV §2).
+- Vì không có quiz, chỗ trống dành cho quiz phải chuyển thành nội dung sâu hơn thật sự — ưu tiên thêm ví dụ/anti-pattern, mở rộng phần "Cạm bẫy", hoặc thêm 1 case study thực tế — không để bài ngắn hơn các series khác.
+- Tài liệu tham khảo ngoài cho Track A nên ưu tiên nguồn kỹ thuật uy tín thật (paper InstructGPT/RLHF gốc, blog kỹ thuật OpenAI/Anthropic/DeepMind, tài liệu MLPerf cho benchmark) thay vì nguồn tổng hợp chung chung.
+
+### 5. Checklist triển khai & tích hợp (Series 18)
+
+- [ ] Tạo thư mục `blog/aisys/`.
+- [ ] Hạ tầng dùng chung (nếu chưa có từ series khác): callout/`.article-refs`/glossary/KaTeX/giscus đã có sẵn toàn site — chỉ cần thêm `.blog-card__tag--aisys` (màu `#3b82f6`) vào `blog/blog.css`. Không cần Prism grammar mới (chỉ dùng `js`).
+- [ ] 4 file engine dùng chung: `aisys-mock-llm.js`, `aisys-agent-kernel.js`, `aisys-orchestrator.js`, `aisys-pipeline-sim.js` — viết 1 lần, tái dùng qua 13 bài.
+- [ ] Core visualizer `aisys-agent-orchestra.html` (3 panel — xem Phần II mục 4).
+- [ ] Trang hub `aisys-programming-series.html` (copy từ `webgl-programming-series.html`, `.lessons-list` 13 dòng, glossary EN–VI thuật ngữ series: RLHF, red-team, blackboard, deadlock, ReAct, tool-calling…).
+- [ ] 13 trang bài học — mỗi bài: `.article-body` theo đề cương H2 ở Phần III, `.code-tabs` (Preview | JS), `.article-refs`, `.article-related` (prev/next/hub), `.article-comments` (giscus) — **KHÔNG có mục quiz** (ngoại lệ đã chốt).
+- [ ] File code co-located mỗi bài (`.js`) cho nút "Tải file code thực hành".
+- [ ] Tích hợp toàn cục sau khi xong: `blog/index.html` (`a.blog-card` + `.blog-card__tag--aisys`), ROOT `index.html` (`a.learn-card`, đối chiếu số lượng khớp `blog/index.html`), `sitemap.xml` (hub priority 0.8 + 13 bài + visualizer priority 0.7), `blog/search-index.json` (13 entry, `headingsVi` khớp H2 thật), `README.md`/`AGENTS.md` (cập nhật số series/bài + Last Updated), và cập nhật bảng tiến độ đầu `plan.md` (`X/13`).
+- [ ] Chạy đủ `check-lesson.md` PHẦN C cho từng bài trước khi báo "xong" — **bỏ qua duy nhất** lệnh đếm `quiz-container`/`quiz-question` (Phần C1 mục 6) vì series này không có quiz; mọi lệnh C1 khác vẫn chạy đầy đủ.
 
 > Tài liệu bàn giao cho người/agent thực thi. Phần I ở trên là **thiết kế nội dung**; phần II này là **danh sách công việc kỹ thuật** bám đúng khung (template) thật của dự án. Đọc kèm `AGENTS.md`.
 >
@@ -206,6 +291,7 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 | 10  | Điện Tử & Mô Phỏng Vi Mạch | `blog/electronics/` | `electronics-programming-series.html` | `--electronics` | 16     |
 | 11  | Thiết Kế Vi Mạch Số & FPGA | `blog/vlsi/`        | `vlsi-programming-series.html`        | `--vlsi`        | 14     |
 | 15  | Kiến Trúc Máy Tính         | `blog/cpu/`         | `cpu-programming-series.html`         | `--cpu`         | 12     |
+| 18  | Kỹ Thuật Hệ Thống AI       | `blog/aisys/`       | `aisys-programming-series.html`       | `--aisys`       | 13     |
 
 > Slug từng bài đặt theo mẫu sẵn có: `<series>-<chu-de>.html` (vd `wasm-linear-memory.html`, `webgpu-compute-shaders.html`). Đặt tên kebab-case, không dấu.
 
@@ -256,6 +342,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - [ ] **Web Audio** → `audio-synth-lab.html`: node-graph kéo-thả + Canvas waveform/FFT + nguồn synth/file/mic. Tôn trọng autoplay policy (chỉ khởi tạo `AudioContext` sau user gesture).
 - [ ] **Git** → `git-graph-sim.html`: canvas/SVG vẽ DAG commit + ô nhập lệnh giả lập + panel 3 cây & refs di chuyển trực quan.
 - [ ] **Electronics** → `circuit-scope-lab.html`: canvas vẽ lưới mạch điện (nguồn DC/AC, trở, tụ, cuộn cảm, đi-ốt, transistor, cổng logic, LED) kéo thả + electron chạy trên dây dẫn + máy hiện sóng oscilloscope hiển thị dạng sóng điện áp/dòng điện thời gian thực.
+- [ ] **AI Hệ Thống (Series 18)** → `aisys-agent-orchestra.html`: 3 panel (Canvas đồ thị agent + message bus, Blackboard key-value trực tiếp, log ReAct trace) + bảng chọn kịch bản (deadlock, Planner–Coder–Critic, pipeline 5 stage) + nút "Bơm lỗi". Dùng chung engine `aisys-mock-llm.js` + `aisys-agent-kernel.js` + `aisys-orchestrator.js` + `aisys-pipeline-sim.js` (co-located trong `blog/aisys/`) tái sử dụng qua tất cả 13 bài — không viết lại engine cho từng bài (xem `check-lesson.md` PHẦN A mục 6, giống pattern VLSI). Không cần API key/GPU thật — toàn bộ "LLM" là luật tất định.
 
 > ⚠️ Ràng buộc "no build step": với Rust/Wasm phải **commit sẵn artifact `.wasm`** (build offline), trang chỉ `fetch()` + `instantiate`. Không thêm toolchain vào CI/Cloudflare.
 
@@ -333,7 +420,23 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - **Bài 7 — Call Stack & Heap Visualizer:** 7.1 Phân biệt Stack vs Heap runtime · 7.2 Tham chiếu đối tượng trên Heap · 7.3 Debugger step-into/over · 7.4 Vẽ bộ nhớ động từng bước.
 - **Bài 8 — Dự án: Garbage Collector:** 8.1 Vì sao cần GC · 8.2 Tìm root set (global/stack) · 8.3 Thuật toán Mark-and-Sweep · 8.4 Trực quan thu hồi ô nhớ rác.
 
-# 🏅 PHẦN IV — TIÊU CHUẨN CHẤT LƯỢNG NỘI DUNG (Content Quality Contract)
+## Series 18 — Kỹ Thuật Hệ Thống AI (Từ Pipeline Đến Đội Ngũ Agent)
+
+> **Ngoại lệ áp dụng cho toàn bộ series này:** KHÔNG cần mục "Câu hỏi trắc nghiệm ôn tập" cuối bài (đã chốt ở định danh series, Phần I) — bỏ để dành không gian cho nội dung sâu hơn. Mọi mục H2 dưới đây vẫn phải trả lời đủ 4 câu hỏi What/Why/When/Pitfall (Phần IV §1) như chuẩn chung.
+
+- **Bài 1 — Vòng Đời Một AI Product Thật:** 1.1 Vì sao "train xong" chỉ là ~20% công việc — bản đồ toàn cảnh 6 giai đoạn (data → train → RLHF → eval → deploy → monitor) · 1.2 Ai làm gì ở mỗi giai đoạn (Data Engineer, ML/Research Scientist, MLOps, Trust & Safety) và bàn giao giữa các vai trò · 1.3 Chi phí thật nằm ở đâu — phân bổ tương đối GPU-hour/nhân sự/gán nhãn dữ liệu (đối chiếu số liệu công khai đã biết của các phòng lab lớn) · 1.4 Case study rút gọn: 1 vòng đời phát hành model thật (từ ý tưởng đến bản release) chiếu lên đúng 6 giai đoạn.
+- **Bài 2 — Thu Thập & Làm Sạch Dữ Liệu:** 2.1 Nguồn dữ liệu & vấn đề pháp lý (web crawl, license, PII, bản quyền) · 2.2 Dedup & lọc chất lượng (khái niệm near-dup hashing, heuristic filter, classifier filter) · 2.3 Data drift & class imbalance — vì sao "sạch hôm nay" có thể lệch ngày mai · 2.4 Cạm bẫy: lọc quá tay làm mất đa dạng dữ liệu, vòng lọc khuếch đại thiên lệch (bias amplification) sẵn có.
+- **Bài 3 — Huấn Luyện Phân Tán (Khái Niệm):** 3.1 Vì sao 1 GPU không đủ — kích thước model vs giới hạn bộ nhớ · 3.2 Data parallelism vs Model parallelism vs Pipeline parallelism, khi nào chọn loại nào · 3.3 Đồng bộ gradient (all-reduce khái niệm) & checkpoint để phục hồi sự cố · 3.4 Sharding & overhead giao tiếp — đánh đổi compute vs communication, đo bằng `aisys-pipeline-sim.js`.
+- **Bài 4 — RLHF & Alignment:** 4.1 Vì sao SFT (supervised fine-tune) chưa đủ — khoảng cách giữa "nói đúng cú pháp" và "nói điều con người muốn" · 4.2 Preference dataset & reward model — thu thập so sánh A/B, huấn luyện reward model đồ chơi từ điểm chấm của người dùng · 4.3 PPO khái niệm — policy cập nhật theo reward, KL penalty giữ model không lệch quá xa bản gốc · 4.4 Cạm bẫy reward hacking — model học cách "đánh lừa" reward model thay vì thật sự tốt hơn, và chi phí gán nhãn con người bị đánh giá thấp.
+- **Bài 5 — Red-Teaming & Đánh Giá Benchmark:** 5.1 Adversarial prompt & các lớp jailbreak phổ biến (roleplay injection, encoding trick, multi-turn erosion) · 5.2 Quy trình red-team có hệ thống — nội bộ vs bug bounty vs automated red-teaming · 5.3 Benchmark suite đa nhiệm/đa domain — vì sao 1 con số leaderboard duy nhất gây hiểu lầm · 5.4 Cạm bẫy Goodhart's Law — tối ưu quá mức theo benchmark làm giảm chất lượng thật (benchmark overfitting).
+- **Bài 6 — Model Versioning, Rollback & Chi Phí Hạ Tầng:** 6.1 Semantic versioning cho model/weight — vì sao không thể chỉ "ghi đè" model cũ · 6.2 Canary/A-B deploy — release dần dần, đo regression trước khi full rollout · 6.3 Rollback khi phát hiện regression — tiêu chí tự động kích hoạt rollback · 6.4 Ước lượng chi phí hạ tầng — GPU-hour training vs inference cost, đánh đổi giữa model lớn/nhỏ.
+- **Bài 7 — Tool-Calling: Thiết Kế Interface Tool:** 7.1 Vì sao agent cần "tool" — giới hạn của model thuần sinh văn bản (không tính toán chính xác, không truy cập dữ liệu ngoài) · 7.2 Tool schema (JSON Schema) — mô tả tên/tham số/kiểu dữ liệu để model "hiểu" cách gọi · 7.3 Validate input trước khi thực thi & sandbox hoá side-effect — không tin tưởng mù quáng input do model sinh ra · 7.4 Tool registry pattern — đăng ký/tra cứu tool động, mở rộng tool mới không sửa core.
+- **Bài 8 — Memory & Prompt Template Engine:** 8.1 Short-term memory (context window) vs long-term memory — giới hạn token và nhu cầu nhớ lâu dài · 8.2 Mô phỏng "vector recall" bằng so khớp từ khoá — rút gọn ý tưởng embedding/similarity search (nối với RAG ở Series 16) · 8.3 Prompt template engine — system/few-shot/variable injection, escape biến người dùng · 8.4 Cạm bẫy: context truncation cắt mất thông tin quan trọng, prompt/template injection khi không escape biến.
+- **Bài 9 — ReAct Loop, Callback & Streaming — Tự Viết Runtime Agent:** 9.1 Vòng lặp Thought → Action → Observation — suy luận từng bước thay vì trả lời ngay · 9.2 Event emitter cho streaming token — kiến trúc callback (`onToken`/`onToolCall`/`onFinish`) · 9.3 Xử lý lỗi tool — retry/backoff, fallback khi tool thất bại · 9.4 Giới hạn số bước & phát hiện vòng lặp vô hạn khi agent không tìm ra lời giải.
+- **Bài 10 — Kiến Trúc Multi-Agent: Vai Trò & Giao Tiếp:** 10.1 Vì sao 1 agent không đủ cho task phức tạp — chia vai trò (Planner/Executor/Critic) · 10.2 Message passing giữa agent — cấu trúc message, hàng đợi, thứ tự xử lý · 10.3 Điều phối tập trung (central orchestrator) vs phi tập trung (peer-to-peer negotiation) · 10.4 Cạm bẫy: thêm agent không tương xứng lợi ích — over-engineering multi-agent khi 1 agent đã đủ.
+- **Bài 11 — Blackboard Pattern & Shared State:** 11.1 Kiến trúc blackboard cổ điển (AI symbolic thập niên 1980) — "bảng chung" nhiều chuyên gia cùng đọc/ghi · 11.2 So sánh với shared-memory kiểu CrewAI/AutoGen hiện đại · 11.3 Race condition khi nhiều agent ghi cùng lúc — lock, versioning, hay merge? · 11.4 Cạm bẫy: blackboard phình to không kiểm soát, agent đọc phải state cũ (stale read).
+- **Bài 12 — Orchestration Nâng Cao: Xung Đột & Deadlock:** 12.1 Deadlock giữa agent (2 agent chờ nhau) — điều kiện xảy ra & cách phát hiện · 12.2 Livelock — vòng lặp "nhường nhau" không tiến triển · 12.3 Timeout/circuit-breaker để phá vỡ deadlock/livelock · 12.4 So sánh kiến trúc AutoGen (group chat) vs CrewAI (hierarchical crew) — khi nào chọn kiểu nào.
+- **Bài 13 — Dự án: AI Ops Center:** 13.1 Kiến trúc tổng thể — ghép pipeline (Bài 1–6) + framework (Bài 7–9) + orchestration (Bài 10–12) thành 1 hệ thống · 13.2 Agent giám sát tự động — phát hiện regression từ benchmark (Bài 5–6), tự kích hoạt rollback bằng ReAct loop (Bài 9) & orchestration (Bài 12) · 13.3 Dashboard vận hành — theo dõi sức khoẻ hệ thống thời gian thực, log quyết định từng agent · 13.4 Giới hạn của mô phỏng — những gì hệ thống đồ chơi này CHƯA thể hiện được so với vận hành AI production thật (quy mô, chi phí thật, rủi ro pháp lý).
 
 > **Ưu tiên chất lượng hơn số lượng bài.** Một bài chỉ được coi là "xong" khi đạt **toàn bộ** rubric dưới đây. Thà ít bài mà mỗi bài sâu — đủ thông tin, đủ ví dụ, đủ liên kết, đủ chú thích — còn hơn nhiều bài hời hợt. Tiêu chuẩn này áp cho cả 9 series.
 
@@ -362,6 +465,8 @@ Mỗi mục H2 KHÔNG chỉ mô tả "cái gì". Phải bao trùm:
 | Quiz                         | **≥ 3 câu** (`ide.js`) + giải thích đáp án        | Có feedback đúng/sai.                        |
 | File code tải về             | **≥ 1** file co-located                           | Link "Tải file code thực hành".              |
 
+> **Ngoại lệ Series 18:** dòng "Quiz" ở trên **không áp dụng** cho Series 18 (Kỹ Thuật Hệ Thống AI) — series này bỏ hẳn mục quiz để dành không gian cho nội dung sâu hơn (chốt cùng chủ dự án 2026-07-16, xem định danh series ở Phần I). Mọi dòng rubric khác trong bảng vẫn áp dụng đầy đủ, không được nới lỏng thêm.
+
 ## 3. "Đủ ví dụ" — quy tắc ví dụ
 
 - Mỗi khái niệm trừu tượng → **≥ 1 ví dụ cụ thể, tối giản, chạy được** trong `.code-window` (có `.code-filename`, nút copy, Prism highlight).
@@ -377,21 +482,25 @@ Mỗi mục H2 KHÔNG chỉ mô tả "cái gì". Phải bao trùm:
 - `prev`/`next` + khối `.article-related` (đã có sẵn).
 - **Cross-link inline** tới bài liên quan trong **cùng** và **khác** series, ngay tại đoạn nhắc khái niệm. Bản đồ liên kết chéo gợi ý:
 
-| Từ series               | Liên kết tới                                    | Vì khái niệm chung                              |
-| ----------------------- | ----------------------------------------------- | ----------------------------------------------- |
-| WebGPU · Compute Shader | WASM · Đa luồng; DSA · Pathfinding              | Song song hoá / GPGPU                           |
-| WASM · SIMD/Threading   | Canvas · Pixel; WebGL · Performance             | Tối ưu pixel/vector                             |
-| Toy JS Engine           | JS · Engine & Execution; JS · Scope             | Call stack, closure, AST                        |
-| DSA · Hash/B-Tree       | SQL · Index & Query Plan; C · Data Structures   | B-Tree, hashing                                 |
-| Web Audio · FFT         | Canvas · Data Visualization; WebGPU · Particles | Vẽ phổ, reactive                                |
-| CSS · Transform 3D      | WebGL · Coordinate & Math                       | Ma trận biến đổi                                |
-| Git · Object Model      | C · Pointers; DSA · Huffman                     | DAG, content-address, nén                       |
-| Điện tử · Logic/MCU     | VLSI · RTL/FPGA; C · Pointers                   | Cổng logic mức vật lý vs RTL, memory-mapped I/O |
-| VLSI · VeriLite engine  | DSA · Graph                                     | Event scheduler, critical path                  |
-| AI · Tensor engine      | WebGPU · Compute Shader; WASM · SIMD            | Matmul, vectorization, GPU                      |
-| AI · Backprop/autograd  | DSA · Graph (topo sort); Toy JS Engine · AST    | Computation graph, duyệt đồ thị                 |
-| AI · MNIST/CNN          | Canvas · Pixel & ImageData                      | Đọc/vẽ pixel, tiền xử lý ảnh                    |
-| AI · Embedding/PCA      | DSA · Độ phức tạp; SQL · FTS5 (BM25)            | Vector hoá, đo tương đồng, tìm kiếm ngữ nghĩa   |
+| Từ series                                          | Liên kết tới                                    | Vì khái niệm chung                                                      |
+| -------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| WebGPU · Compute Shader                            | WASM · Đa luồng; DSA · Pathfinding              | Song song hoá / GPGPU                                                   |
+| WASM · SIMD/Threading                              | Canvas · Pixel; WebGL · Performance             | Tối ưu pixel/vector                                                     |
+| Toy JS Engine                                      | JS · Engine & Execution; JS · Scope             | Call stack, closure, AST                                                |
+| DSA · Hash/B-Tree                                  | SQL · Index & Query Plan; C · Data Structures   | B-Tree, hashing                                                         |
+| Web Audio · FFT                                    | Canvas · Data Visualization; WebGPU · Particles | Vẽ phổ, reactive                                                        |
+| CSS · Transform 3D                                 | WebGL · Coordinate & Math                       | Ma trận biến đổi                                                        |
+| Git · Object Model                                 | C · Pointers; DSA · Huffman                     | DAG, content-address, nén                                               |
+| Điện tử · Logic/MCU                                | VLSI · RTL/FPGA; C · Pointers                   | Cổng logic mức vật lý vs RTL, memory-mapped I/O                         |
+| VLSI · VeriLite engine                             | DSA · Graph                                     | Event scheduler, critical path                                          |
+| AI · Tensor engine                                 | WebGPU · Compute Shader; WASM · SIMD            | Matmul, vectorization, GPU                                              |
+| AI · Backprop/autograd                             | DSA · Graph (topo sort); Toy JS Engine · AST    | Computation graph, duyệt đồ thị                                         |
+| AI · MNIST/CNN                                     | Canvas · Pixel & ImageData                      | Đọc/vẽ pixel, tiền xử lý ảnh                                            |
+| AI · Embedding/PCA                                 | DSA · Độ phức tạp; SQL · FTS5 (BM25)            | Vector hoá, đo tương đồng, tìm kiếm ngữ nghĩa                           |
+| AI Hệ Thống · Data Pipeline (Series 18)            | AI · Từ Neuron Đến LLM (Series 12)              | Model training thật vs mô phỏng khái niệm                               |
+| AI Hệ Thống · Memory/Tool-calling (Series 18)      | Kỹ Sư AI Thực Chiến · RAG/Agents (Series 16)    | Vector recall rút gọn vs embedding thật, ReAct đơn agent vs multi-agent |
+| AI Hệ Thống · Blackboard/Orchestration (Series 18) | VLSI · Event scheduler; DSA · Graph             | Shared state, điều phối nhiều tiến trình song song                      |
+| AI Hệ Thống · Huấn luyện phân tán (Series 18)      | WebGPU · Compute Shader; WASM · Đa luồng        | Song song hoá, đồng bộ giữa các worker                                  |
 
 **Ngoài (nâng cấp mới):** khối `.article-refs` cuối bài, **≥ 3** nguồn uy tín (MDN, WHATWG/W3C spec, caniuse, paper gốc như SPH/Huffman). Bắt buộc `target="_blank" rel="noopener noreferrer"`; ghi rõ tên nguồn, không dán URL trần.
 
