@@ -29,7 +29,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | Series 14                             | Xử Lý Tín Hiệu Số: Từ Mẫu Đến Phổ       | 15/15          | 15       | 100%        |
 | 🎉 **Series 15: Kiến Trúc Máy Tính**  | **Từ Logic Đến Lượng Tử**               | **12/12**      | **12**   | **100%** ✅ |
 | 🎉 **Series 16: Kỹ Sư AI Thực Chiến** | **Lộ Trình Lập Trình Viên Web**         | **20/20**      | **20**   | **100%** ✅ |
-| Series 17: Chẩn Đoán &amp; Sửa Chữa Mạch | Từ Đo Kiểm Đến Sửa Chữa Thực Chiến   | 7/8            | 8        | 87.5%       |
+| 🎉 **Series 17: Chẩn Đoán &amp; Sửa Chữa Mạch** | **Từ Đo Kiểm Đến Sửa Chữa Thực Chiến** | **8/8** | **8** | **100%** ✅ |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
@@ -50,6 +50,10 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 >
 > **2026-07-24:** Đã gỡ tương tự phần thiết kế chi tiết của **Series 15 (Kiến Trúc Máy Tính)** sau khi
 > hoàn thành 12/12 (100%) — bản đầy đủ vẫn còn trong lịch sử git trước commit này nếu cần tham chiếu lại.
+>
+> **2026-07-15:** Đã gỡ tương tự phần thiết kế chi tiết (tech stack, đề cương, syllabus H2, Quality
+> Contract riêng) của **Series 17 (Chẩn Đoán &amp; Sửa Chữa Mạch Điện Tử)** sau khi hoàn thành 8/8
+> (100%) — bản đầy đủ vẫn còn trong lịch sử git trước commit này nếu cần tham chiếu lại.
 
 ---
 
@@ -417,46 +421,6 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 8. **WASM & Rust** — giá trị cao nhưng cần build artifact offline → setup nặng hơn.
 9. **WebRTC & WebSocket** — cần xử lý signaling/NAT, demo phức tạp nhất → làm cuối.
    > Gợi ý cho agent thực thi: làm **trọn 1 series hoàn chỉnh (hub + visualizer + 1–2 bài mẫu)** trước, để chủ dự án duyệt khung & văn phong, rồi mới nhân ra các bài còn lại.
-
-## 🛠️ Series 17: Chẩn Đoán & Sửa Chữa Mạch Điện Tử Thực Chiến (Troubleshooting & Repair)
-
-### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
-
-- **Frontend:** HTML5, CSS3 (Vanilla Grid/Flexbox), Javascript (ES6+).
-- **Đồ họa & Mô phỏng:** SVG tương tác (vẽ sơ đồ mạch điện chi tiết, hiển thị các linh kiện) kết hợp HTML5 Canvas (vẽ dạng sóng oscilloscope).
-- **Toán học:** `KaTeX` tích hợp cục bộ để hiển thị các công thức tính tỷ lệ cầu phân áp, sụt áp diode, dòng điện quá tải, giúp đối chiếu nhanh giá trị đo được.
-
-### 2. Thiết kế Demo tương tác cốt lõi (Core Visualizer Demo)
-
-- **Tên:** "Virtual Circuit Troubleshooter Lab" (Phòng thí nghiệm chẩn đoán lỗi mạch điện ảo)
-- **Mô tả giao diện:**
-  - **Khung chọn thiết bị (Top Bar):** Người dùng chọn một thiết bị cần sửa (ví dụ: _Nguồn tuyến tính 12V_ gặp triệu chứng "sụt áp không tải", hoặc _Mạch khuếch đại âm thanh_ gặp triệu chứng "ngõ ra bị rè méo tiếng").
-  - **Khung sơ đồ mạch tương tác (Middle Workspace):** Sơ đồ nguyên lý hiển thị dưới dạng đồ họa SVG sắc nét. Mạch có sẵn các **Điểm đo kiểm (Test Points: TP1, TP2, TP3...)** và cực GND chung. Người dùng có thể kéo thả que đo màu đỏ/đen của đồng hồ vạn năng ảo (Multimeter) vào các Test Point này.
-  - **Khung hình ảnh linh kiện & Trực quan lỗi ngoại quan (Visual Inspection Panel):** Khi nhấp vào bất kỳ linh kiện nào, hệ thống sẽ hiển thị hình ảnh chụp thực tế chất lượng cao của linh kiện đó ở trạng thái tốt hoặc hỏng để rèn luyện kỹ năng quan sát mắt thường:
-    - _Tụ điện hóa:_ Hình ảnh phồng rộp nắp nhôm chữ K phía trên, rò rỉ hóa chất electrolyte màu vàng nâu làm hoen rỉ chân mạch.
-    - _Transistor/IC công suất:_ Hình ảnh cháy sém, nứt đôi vỏ nhựa bán dẫn hoặc nổ bong chân.
-    - _Điện trở công suất:_ Thân gốm bị cháy đen thui, mất các vòng màu định dạng trị số.
-    - _Cầu chì:_ Dây kim loại bảo vệ bên trong ống thủy tinh bị đứt lìa hoặc ống bị ám khói đen kịt.
-  - **Khung đồng hồ đo & Bảng điều khiển (Right Panel):**
-    - Hiển thị màn hình LED của đồng hồ đo ảo (đo điện áp V, dòng điện I, hoặc trở kháng R/đo diode thông mạch).
-    - Cần bật/tắt nguồn ảo của mạch để đo tương ứng (đo R phải tắt nguồn mạch, đo V phải bật nguồn).
-    - Nút **"Thay thế linh kiện" (Replace Component)**: Khi người dùng nghi ngờ linh kiện nào hỏng (ví dụ: tụ C1 chập, diode D2 đứt), họ nhấp chọn linh kiện đó trên sơ đồ và nhấn Thay thế. Hệ thống tính chi phí sửa chữa (tiền phạt nếu đoán mò thay bừa linh kiện tốt!).
-  - **Mục tiêu học thuật:** Giúp học viên nắm vững quy trình chẩn đoán "Chia để trị", kết hợp quan sát ngoại quan bằng mắt thường và đo kiểm điện áp tĩnh để cô lập khối hỏng hóc, tránh việc thay linh kiện mò mẫm.
-
-### 3. Đề cương lộ trình học tập tổng quan (Syllabus Overview Table)
-
-| Bài | Tên bài học                                          | Nội dung CS/EE chuyên sâu                                                                                                                                 | Dự án/Demo tương tác đi kèm                                                                 | Kiến thức cần có trước     |
-| :-- | :--------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------ | :------------------------- |
-| 1   | **Đọc hiểu Sơ đồ nguyên lý & Sơ đồ khối**            | Phân tích cấu trúc khối chức năng của mạch; Cách dòng điện/tín hiệu chạy qua các linh kiện; Dò sơ đồ khối để định vị vùng lỗi.                            | Bộ định vị dòng chảy tín hiệu ảo (Signal Flow Tracer).                                      | Điện tử cơ bản (Series 10) |
-| 2   | **Làm chủ Đồng hồ vạn năng (Multimeter)**            | Trở kháng trong của đồng hồ đo; Đo điện áp tĩnh (V) khi mạch hoạt động; Đo nguội điện trở (R), diode/thông mạch; Cạm bẫy đo trở kháng khi mạch còn nguồn. | Sử dụng đồng hồ đo ảo đo điện thế các điểm trên cầu phân áp.                                | Bài 1                      |
-| 3   | **Chẩn đoán linh kiện thụ động (R, C, L, Cầu chì)**  | Các trạng thái hỏng của tụ điện (chập, đứt, rò, khô giảm dung lượng); Điện trở bị tăng trị số hoặc cháy đứt; Cầu chì đứt bảo vệ.                          | Bộ kiểm tra đo thông mạch và đo điện dung/điện trở linh kiện hỏng.                          | Bài 2                      |
-| 4   | **Chẩn đoán linh kiện bán dẫn (Diode & Transistor)** | Bản chất tiếp giáp bán dẫn P-N; Phép đo diode một chiều mở - một chiều chặn; Cách kiểm tra transistor BJT/MOSFET bị chập/đứt chân.                        | Dùng thang đo Diode kiểm tra tiếp giáp P-N của Transistor hỏng.                             | Bài 2, Bài 3               |
-| 5   | **Khối Nguồn tuyến tính: Chẩn đoán & Sửa chữa**      | Biến áp hạ áp AC -> Cầu Diode chỉnh lưu -> Tụ lọc nguồn -> IC ổn áp (78xx/79xx). Hiện tượng sụt áp, gợn sóng AC lớn do khô tụ lọc.                        | Mô phỏng nguồn 12VDC bị sụt áp, đo gợn sóng AC trên tụ lọc bằng oscilloscope.               | Bài 3, Bài 4               |
-| 6   | **Khối Nguồn xung (SMPS): Các điểm chết kinh điển**  | Nguyên lý biến đổi DC-AC tần số cao; Transistor switching công suất; Optocoupler hồi tiếp cách ly và IC điều chế độ rộng xung PWM.                        | Sơ đồ khối nguồn xung và quy trình đo điện áp 300VDC trên tụ lọc sơ cấp.                    | Bài 5                      |
-| 7   | **Khối Khuếch đại Âm thanh: Nhiễu & Méo tiếng**      | Mạch khuế đại công suất kéo-đẩy; Vai trò của các tụ liên lạc ngõ vào/ngõ ra cách ly DC; Hiện tượng lệch áp DC ngõ ra gây rè xè xè.                        | Mạch khuếch đại âm thanh ảo bị lệch áp phân cực làm rè âm thanh ngõ ra.                     | Bài 4, Bài 5               |
-| 8   | **Dự án tổng hợp: Troubleshooting Challenge**        | Quy trình chẩn đoán 5 bước chuẩn hóa (Ngoại quan -> Đo Nguồn -> Phân vùng khối -> Đo linh kiện -> Thay thế & Thử nghiệm).                                 | Trình sửa chữa thiết bị hoàn chỉnh (Quạt điều khiển hoặc Sạc pin thông minh) trên mô phỏng. | Tất cả các bài trước       |
-
----
 
 # 📚 PHẦN III — ĐỀ CƯƠNG CHI TIẾT MỤC H2 TỪNG BÀI
 
@@ -1064,57 +1028,6 @@ Ngay sau khi viết xong nội dung, việc tích hợp series mới vào hệ t
    - Chạy môi trường local: `npx serve -l 5500 .`.
    - Kiểm tra hiển thị responsive trên các thiết bị Mobile (<600px), Tablet (<880px) và Desktop.
    - Quét qua toàn bộ nội dung HTML để đảm bảo không còn sót bất kỳ cú pháp markdown thô nào như `**` hay `` ` `` chưa được dịch sang thẻ HTML tương ứng.
-
-## Series 17 — Chẩn Đoán & Sửa Chữa Mạch Điện Tử Thực Chiến
-
-- **Bài 1 — Đọc hiểu Sơ đồ nguyên lý & Sơ đồ khối** (`repair-schematics-blocks.html`): 1.1 Bản đồ kho báu: Đọc sơ đồ nguyên lý (Schematics) (what: sự kết nối logic giữa ký hiệu linh kiện IEC/ANSI; why: định hình dòng chảy năng lượng không bị nhiễu bởi hình dáng vật lý; when: bắt buộc trước khi cắm que đo; pitfall: nhầm lẫn vị trí sơ đồ nguyên lý với sơ đồ bố trí linh kiện layout thực tế) · 1.2 Sơ đồ khối (Block Diagram) — Chia để trị: (what: phân vùng chức năng như Nguồn, Tiền khuếch đại, Công suất; why: loại trừ nhanh 80% vùng hoạt động tốt dựa trên triệu chứng; when: bước chẩn đoán đầu tiên; pitfall: lao vào kiểm tra chi tiết linh kiện nhỏ lẻ mà chưa định vị được khối lỗi) · 1.3 Dòng chảy tín hiệu (Signal Flow) & Dòng công suất (Power Flow): (what: đường truyền năng lượng DC vs tín hiệu xoay chiều AC; why: định hướng đo kiểm theo chuỗi tín hiệu; when: mạch mất ngõ ra hoàn toàn; pitfall: đo nhầm điện áp AC ở đường nguồn DC gây sai số hoặc hỏng đồng hồ) · 1.4 Thực hành: Dò đường đi tín hiệu ảo (Signal Flow Tracer) trên sơ đồ SVG tương tác.
-
-- **Bài 2 — Làm chủ Đồng hồ vạn năng (Multimeter)** (`repair-multimeter-methods.html`): 2.1 Đo nóng (Điện áp VDC/VAC) — Quét điện áp tĩnh: (what: đo điện áp tại các Test Points so với GND khi mạch đang cắm nguồn; why: kiểm tra cấp năng lượng cho từng khối; when: kiểm tra đầu tiên khi mạch có điện; pitfall: chọn sai thang đo AC/DC gây kết quả đo ảo 0V hoặc chập cháy đồng hồ) · 2.2 Đo nguội (Điện trở R & Thông mạch) — Tìm điểm đứt chập: (what: đo trở kháng linh kiện khi đã ngắt nguồn hoàn toàn; why: phát hiện chập mạch short hoặc đứt mạch open; when: trước khi cấp điện thử nghiệm hoặc sau khi xả tụ nguồn; pitfall: đo điện trở khi mạch còn điện tích lũy trong tụ lọc gây cháy hỏng đồng hồ đo) · 2.3 Thang đo Diode — Kiểm tra tiếp giáp P-N: (what: bơm dòng nhỏ đo sụt áp thuận của bán dẫn; why: kiểm tra tính chất van dẫn điện 1 chiều của bán dẫn; when: đo nguội diode chỉnh lưu, transistor; pitfall: đảo ngược que đo vẫn thấy sụt áp bằng không 0.00V nhưng kết luận diode tốt trong khi nó đã chập) · 2.4 Thực hành: Sử dụng đồng hồ vạn năng ảo đo điện áp phân cực trên cầu phân áp.
-
-- **Bài 3 — Kiểm tra & Chẩn đoán linh kiện thụ động (R, C, L, Cầu chì)** (`repair-passive-components.html`): 3.1 Trạng thái hỏng hóc của Tụ điện (Capacitor): (what: tụ điện hóa bị phồng đầu, rò hóa chất hoen rỉ mạch hoặc khô tụ giảm dung lượng; why: tụ là linh kiện dễ suy hao nhất theo thời gian; when: chẩn đoán khi nguồn bị sụt áp, ngõ ra rè nhiễu; pitfall: đo tụ trực tiếp trên bo mạch mà không nhấc một chân tụ dẫn đến đo sai số do ảnh hưởng song song từ mạch ngoài) · 3.2 Sự cố Điện trở (Resistors) tăng trị số hoặc cháy đứt: (what: điện trở đứt hoàn toàn hoặc tăng trị số vượt vòng màu; why: dòng quá tải sinh nhiệt đốt cháy màng than; when: kiểm tra khi mất điện áp phân cực ở các cực bán dẫn; pitfall: bỏ qua việc kiểm tra điện trở xung quanh khi thấy có vết cháy sém nhẹ trên thân) · 3.3 Cuộn cảm (Inductor) & Cầu chì (Fuse) — Đứt hay Chập?: (what: cầu chì đứt dây chì bảo vệ bên trong; cuộn cảm bị om dây chập vòng; why: cầu chì nổ để bảo vệ quá dòng khi có chập tải; when: kiểm tra đầu tiên khi thiết bị mất nguồn hoàn toàn; pitfall: chỉ thay cầu chì mới mà không sửa lỗi chập mạch phía sau khiến cầu chì mới tiếp tục nổ dữ dội hơn) · 3.4 Thực hành: Đo kiểm thông mạch và đo trị số các linh kiện thụ động lỗi trên mạch ảo.
-
-- **Bài 4 — Chẩn đoán linh kiện bán dẫn (Diode & Transistor)** (`repair-semiconductors.html`): 4.1 Đo kiểm Diode chỉnh lưu & Diode Zener: (what: đo sụt áp thuận Vf và khả năng chặn dòng ngược; why: phát hiện diode chập gây cháy cầu chì hoặc zener chập kéo áp nguồn về 0V; when: mạch mất điện áp DC ngõ ra; pitfall: đo diode zener bằng thang đo trở kháng thông thường R cho kết quả không chính xác) · 4.2 Transistor BJT — Xác định chập tiếp giáp: (what: đo kiểm tra hai tiếp giáp P-N tương đương hai diode chung cực Base; why: phát hiện chập chân C-E do quá nhiệt phá hỏng khả năng đóng mở; when: mạch khuếch đại mất tín hiệu ngõ ra; pitfall: đo BJT trực tiếp trên bo mạch khi có trở shunt nhỏ giữa B-E dẫn đến chẩn đoán nhầm chập chân) · 4.3 MOSFET & IGBT — Cách đo kích mở ảo: (what: dùng áp pin đồng hồ nạp điện tích vào cực Gate để kích dẫn D-S; why: phát hiện chập Gate do quá nhiệt hoặc quá áp; when: sửa mạch công suất lớn, nguồn xung, driver; pitfall: không xả điện tích cực Gate trước khi đo nguội dẫn đến hiểu lầm MOSFET bị hỏng chập liên tục) · 4.4 Thực hành: Dùng thang đo Diode kiểm tra tiếp giáp P-N của Transistor lỗi trên bo mạch ảo.
-
-- **Bài 5 — Khối Nguồn tuyến tính: Chẩn đoán & Sửa chữa** (`repair-linear-power.html`): 5.1 Sơ đồ nguyên lý khối nguồn tuyến tính và Dòng chảy năng lượng: (what: biến áp AC -> cầu Diode -> tụ lọc -> IC ổn áp 78xx/79xx; why: cung cấp áp DC phẳng và sạch nhiễu; when: bước khảo sát đầu tiên khi mạch mất nguồn; pitfall: vội vàng thay thế IC ổn áp khi thực chất cuộn dây biến áp cấp điện AC đang bị đứt) · 5.2 Đo kiểm sóng gợn AC (Ripple Voltage) do tụ nguồn khô: (what: đo thành phần điện áp AC nhiễu đè lên đường nguồn DC; why: tụ nguồn khô giảm dung dung lượng không thể san phẳng áp gây nhiễu hum 50/100Hz ù ù ở ngõ ra âm thanh; when: điện áp ra có trị số tĩnh trung bình tốt nhưng thiết bị hoạt động lỗi rè xè; pitfall: chỉ đo áp DC thấy đủ 12V nên kết luận nguồn tốt, bỏ qua nhiễu gợn sóng AC phá hủy tín hiệu) · 5.3 Chẩn đoán IC ổn áp (78xx/79xx) chập hoặc đứt: (what: đo sụt áp giữa In-GND-Out của IC ổn áp; why: phát hiện IC đứt làm mất nguồn hoặc chập thông áp phá hủy linh kiện tải phía sau; when: áp ra mất hoàn toàn hoặc tăng vọt bằng áp vào; pitfall: thay IC ổn áp mới mà không đo kiểm tra chập tải phía sau khiến IC mới lập tức bốc khói cháy tiếp) · 5.4 Thực hành: Dò và sửa lỗi sụt áp trên mạch nguồn 12VDC ảo.
-
-- **Bài 6 — Khối Nguồn xung (SMPS): Các điểm chết kinh điển** (`repair-smps.html`): 6.1 Bản đồ khối nguồn xung (Switched-Mode Power Supply): (what: lọc EMI -> chỉnh lưu sơ cấp -> tụ 300V -> switching MOSFET -> biến áp xung -> diode thứ cấp -> optocoupler hồi tiếp; why: đạt hiệu suất cao, kích thước nhỏ nhẹ; when: chẩn đoán bộ nguồn tivi, máy tính, sạc; pitfall: chạm chập đo nhầm mass sơ cấp và mass thứ cấp dẫn đến giật điện hoặc hỏng mạch đo) · 6.2 Chẩn đoán lỗi mất nguồn sơ cấp (Hot Side): (what: đo điện áp 300VDC trên tụ nguồn sơ cấp; why: phát hiện chập MOSFET hoặc đứt cầu chì; when: toàn bộ nguồn mất hoạt động im lìm; pitfall: không xả điện tích tụ lọc 400V trước khi đo nguội làm xả dòng giật điện hoặc làm hỏng VOM) · 6.3 Lỗi khối hồi tiếp (Feedback Loop) — Áp ra dao động hoặc tăng vọt: (what: Optocoupler cách ly quang hoặc TL431 hỏng; why: mất hồi tiếp khiến PWM mở xung tối đa làm tăng vọt áp ra hoặc ngắt bảo vệ liên tục tạch tạch; when: điện áp ra dao động nhấp nháy tuần hoàn; pitfall: chỉ đo linh kiện công suất sơ cấp mà bỏ qua các điện trở phân áp nhỏ ở khối hồi tiếp thứ cấp) · 6.4 Thực hành: Đo kiểm điện áp mồi (Startup) và hồi tiếp để sửa nguồn xung ảo.
-
-- **Bài 7 — Khối Khuếch đại Âm thanh: Nhiễu & Méo tiếng** (`repair-audio-amplifier.html`): 7.1 Giải phẫu mạch khuếch đại kéo-đẩy (Push-Pull Class AB): (what: cặp transistor ngược/thuận khuếch đại hai nửa chu kỳ âm/dương; why: tăng công suất, giảm méo giao cắt; when: âm thanh ngõ ra bị méo dạng méo biên; pitfall: thay transistor công suất mới mà không kiểm tra diode phân cực bias khiến dòng tĩnh tăng vọt làm cháy linh kiện mới ngay lập tức) · 7.2 Điểm trung điểm DC (Midpoint Voltage) và lỗi lệch áp: (what: đo áp DC tại trung điểm ngõ ra loa (phải bằng 1/2 nguồn đơn hoặc 0V nguồn đôi); why: lệch áp DC sẽ bơm dòng một chiều qua cuộn dây loa gây cháy loa và méo âm thanh cực nặng; when: loa ù to, màng loa bị hút chặt hoặc đẩy ra ngoài; pitfall: cắm loa thật vào amply vừa sửa để nghe thử mà chưa đo áp trung điểm dẫn đến cháy luôn loa thử nghiệm) · 7.3 Tụ liên lạc ngõ ra/vào và bệnh rè xè xè: (what: tụ chặn DC bị rò rỉ dòng một chiều hoặc khô tụ; why: tụ rò gây dịch áp phân cực tầng sau, khô tụ làm mất dải tần trầm bass; when: loa có tiếng rè xè xè nhỏ rít chói tai; pitfall: nhầm lẫn tiếng ù nguồn 100Hz do khô tụ nguồn với tiếng rè xè do tụ liên lạc rò hoặc bán dẫn tiền khuếch đại rò dòng) · 7.4 Thực hành: Cân chỉnh trung điểm DC và sửa mạch Amply méo tiếng trên máy hiện sóng ảo.
-
-- **Bài 8 — Dự án tổng hợp: Troubleshooting Challenge** (`repair-troubleshooting-challenge.html`): 8.1 Quy trình chẩn đoán 5 bước của thợ chuyên nghiệp: (what: Quan sát -> Đo nguồn -> Phân vùng -> Đo linh kiện -> Thay thế & Đo lại; why: tối ưu hóa thời gian và ngăn ngừa hư hỏng chéo; when: bắt đầu sửa bất kỳ ca bệnh nào; pitfall: cắm điện kiểm tra ngay lập tức mà không nhìn trực quan trước để phát hiện dấu vết cháy nổ) · 8.2 Thử thách sửa chữa thiết bị 1 — Quạt điều khiển từ xa mất nguồn: (what: bo mạch hạ áp trực tiếp bằng tụ điện; why: tụ hạ áp khô làm dòng nguồn tụt không đủ nuôi vi điều khiển; when: quạt mất điện còi đèn im lìm; pitfall: kết luận vội vàng chết vi điều khiển bỏ bo mạch khi thực chất chỉ khô tụ hạ áp rẻ tiền) · 8.3 Thử thách sửa chữa thiết bị 2 — Bộ sạc pin thông minh sạc không vào: (what: mạch nguồn xung có hồi tiếp đo dòng sạc; why: diode chỉnh lưu ngõ ra chập hoặc đứt điện trở shunt đo dòng; when: nguồn sáng nhưng cắm pin không nhận sạc; pitfall: chỉ đo áp tĩnh thấy có nguồn kết luận tốt, bỏ qua kiểm tra đo dòng sạc thực tế khi tải kéo dòng) · 8.4 Thực hành: Trực quan hóa chẩn đoán, đo đạc và thay thế sửa chữa bo mạch quạt lỗi hoàn chỉnh trên giả lập.
-
-### 4. Áp dụng hợp đồng chất lượng nội dung (Quality Contract)
-
-Series 17 tuân thủ nghiêm ngặt các tiêu chuẩn của `Content Quality Contract` để đảm bảo bài học có độ sâu học thuật lớn, ví dụ trực quan và tính liên kết chặt chẽ:
-
-- **Độ dài bài viết:** Tối thiểu 1.200 từ Tiếng Việt cho mỗi bài, không sử dụng thuộc tính đa ngôn ngữ `data-lang-content` (thuần Tiếng Việt từ ngày 2026-07-03+).
-- **Mã nguồn minh họa:** Mỗi bài chứa tối thiểu 4 khối `.code-window` chứa mã mô phỏng tương ứng (ví dụ: các đoạn mã JavaScript tính toán dòng tĩnh, hoặc mã C nhúng phát hiện lỗi nút nhấn).
-- **Chú thích & Hộp thông tin:** Tối thiểu 3 callout mỗi bài (sử dụng `.callout--note`, `.callout--tip`, và bắt buộc phải có `.callout--pitfall` để cảnh báo cạm bẫy đo đạc thực tế).
-- **Bản đồ liên kết chéo nội bộ (Cross-link Map):**
-  - Liên kết từ _Bài 2 (Multimeter)_ <-> _Series 10 (Điện Tử) Bài 2 & 3_ (về Định luật Ohm và cầu phân áp).
-  - Liên kết từ _Bài 5 (Nguồn tuyến tính) & Bài 6 (Nguồn xung)_ <-> _Series 13 (Hệ thống nhúng) Bài 1 & 2_ (về đường cấp nguồn VCC và nhiễu vi điều khiển).
-  - Liên kết từ _Bài 6 (SMPS / PWM)_ <-> _Series 13 (Hệ thống nhúng) Bài 6_ (về cách phát xung PWM đóng cắt MOSFET).
-  - Liên kết từ _Bài 7 (Khuếch đại âm thanh)_ <-> _Series 8 (Web Audio API) Bài 1_ (về dạng sóng âm và hiện tượng xén ngọn biên độ clipping).
-
-### 5. Danh sách triển khai & Tích hợp toàn cục (Implementation Checklist)
-
-Học viên thực hiện tích hợp Series 17 vào toàn bộ mã nguồn của trang web theo đúng quy chuẩn hạ tầng:
-
-- **Tạo cấu trúc thư mục:**
-  - Khởi tạo thư mục `blog/repair/` chứa toàn bộ bài học và kịch bản mô phỏng.
-  - Trang Hub lộ trình: `blog/repair/circuit-repair-series.html` (chứa danh sách bài học và bảng thuật ngữ Glossary).
-  - Các trang bài học: `blog/repair/repair-*.html` (không chứa đuôi `.html` trong liên kết nội bộ).
-- **Hạ tầng CSS & Đăng ký màu:**
-  - Thêm nhãn màu `.blog-card__tag--repair` trong `blog/blog.css` sử dụng biến màu chủ đạo Rose Red `#f43f5e`.
-  - Sử dụng cấu trúc hiển thị mã nguồn `.code-tabs` thế hệ mới (Xem trước | Đoạn mã chẩn đoán | JavaScript mô phỏng), không dùng nút xem code dạng cũ.
-- **Tích hợp trang chủ & trang Blog:**
-  - Thêm thẻ `a.blog-card` đại diện lộ trình vào `blog/index.html`.
-  - Thêm thẻ `a.learn-card` đại diện lộ trình vào trang chủ gốc `index.html` (khớp số lượng với trang blog).
-- **SEO & Tìm kiếm:**
-  - Đăng ký 9 đường dẫn tĩnh mới (1 trang Hub + 8 trang bài viết) vào `sitemap.xml` với đúng độ ưu tiên `priority` và `changefreq`.
-  - Đăng ký các từ khóa tiếng Việt/tiếng Anh tương ứng của 8 bài học vào chỉ mục tìm kiếm tĩnh `blog/search-index.json`.
-- **Tài liệu nội bộ:**
-  - Cập nhật số lượng bài học và cây thư mục của Series 17 vào `README.md` và `AGENTS.md`.
 
 # 🏅 PHẦN IV — TIÊU CHUẨN CHẤT LƯỢNG NỘI DUNG (Content Quality Contract)
 
