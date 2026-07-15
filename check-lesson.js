@@ -3,7 +3,7 @@
 /**
  * js-tools.org — Automated QA Lesson Checker
  * Auto-validates HTML lesson files according to rules in check-lesson.md
- * 
+ *
  * Usage: node check-lesson.js <path/to/lesson.html>
  */
 
@@ -20,7 +20,7 @@ const colors = {
   blue: '\x1b[34m',
   magenta: '\x1b[35m',
   cyan: '\x1b[36m',
-  bold: '\x1b[1m'
+  bold: '\x1b[1m',
 };
 
 const filePath = process.argv[2];
@@ -36,13 +36,16 @@ if (!fs.existsSync(filePath)) {
   process.exit(1);
 }
 
-console.log(`${colors.cyan}${colors.bold}=== Đang tiến hành kiểm định tự động: ${path.basename(filePath)} ===${colors.reset}\n`);
+console.log(
+  `${colors.cyan}${colors.bold}=== Đang tiến hành kiểm định tự động: ${path.basename(filePath)} ===${colors.reset}\n`
+);
 
-const isLessonPage = filePath.includes('blog/') && 
-                     !filePath.endsWith('series.html') && 
-                     !filePath.endsWith('simulator.html') && 
-                     !filePath.endsWith('playground.html') && 
-                     !filePath.endsWith('index.html');
+const isLessonPage =
+  filePath.includes('blog/') &&
+  !filePath.endsWith('series.html') &&
+  !filePath.endsWith('simulator.html') &&
+  !filePath.endsWith('playground.html') &&
+  !filePath.endsWith('index.html');
 
 let hasError = false;
 
@@ -80,8 +83,14 @@ const rawHTML = fs.readFileSync(filePath, 'utf8');
 
 // Strip script, style, and comment content blocks but preserve the tags and spacing/newlines to preserve line numbers
 let cleanHTML = rawHTML;
-cleanHTML = cleanHTML.replace(/(<script[\s>][^>]*?>)([\s\S]*?)(<\/script>)/gi, (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3);
-cleanHTML = cleanHTML.replace(/(<style[\s>][^>]*?>)([\s\S]*?)(<\/style>)/gi, (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3);
+cleanHTML = cleanHTML.replace(
+  /(<script[\s>][^>]*?>)([\s\S]*?)(<\/script>)/gi,
+  (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3
+);
+cleanHTML = cleanHTML.replace(
+  /(<style[\s>][^>]*?>)([\s\S]*?)(<\/style>)/gi,
+  (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3
+);
 cleanHTML = cleanHTML.replace(/(<!--)([\s\S]*?)(-->)/g, (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3);
 
 // ----------------------------------------------------
@@ -93,8 +102,20 @@ let match;
 let nestingError = false;
 
 const voidElements = [
-  'img', 'br', 'hr', 'input', 'link', 'meta', 'source', 'embed', 'param', 
-  'track', 'wbr', 'area', 'base', 'col'
+  'img',
+  'br',
+  'hr',
+  'input',
+  'link',
+  'meta',
+  'source',
+  'embed',
+  'param',
+  'track',
+  'wbr',
+  'area',
+  'base',
+  'col',
 ];
 
 while ((match = tagRegex.exec(cleanHTML)) !== null) {
@@ -102,10 +123,14 @@ while ((match = tagRegex.exec(cleanHTML)) !== null) {
   const tagName = match[1].toLowerCase();
   const isClosing = fullTag.startsWith('</');
   const isSelfClosing = fullTag.endsWith('/>') || voidElements.includes(tagName);
-  
+
   if (isSelfClosing) {
     if (isClosing) {
-      reportError('Cân bằng thẻ HTML', `Thẻ void/self-closing <${tagName}> không được phép có thẻ đóng </${tagName}>`, getLineNumber(cleanHTML, match.index));
+      reportError(
+        'Cân bằng thẻ HTML',
+        `Thẻ void/self-closing <${tagName}> không được phép có thẻ đóng </${tagName}>`,
+        getLineNumber(cleanHTML, match.index)
+      );
       nestingError = true;
     }
     continue;
@@ -115,12 +140,20 @@ while ((match = tagRegex.exec(cleanHTML)) !== null) {
     tagsStack.push({ name: tagName, line: getLineNumber(cleanHTML, match.index) });
   } else {
     if (tagsStack.length === 0) {
-      reportError('Cân bằng thẻ HTML', `Thấy thẻ đóng </${tagName}> nhưng không có thẻ mở tương ứng`, getLineNumber(cleanHTML, match.index));
+      reportError(
+        'Cân bằng thẻ HTML',
+        `Thấy thẻ đóng </${tagName}> nhưng không có thẻ mở tương ứng`,
+        getLineNumber(cleanHTML, match.index)
+      );
       nestingError = true;
     } else {
       const last = tagsStack.pop();
       if (last.name !== tagName) {
-        reportError('Cân bằng thẻ HTML', `Thẻ mở <${last.name}> ở dòng ${last.line} lại được đóng bằng </${tagName}>`, getLineNumber(cleanHTML, match.index));
+        reportError(
+          'Cân bằng thẻ HTML',
+          `Thẻ mở <${last.name}> ở dòng ${last.line} lại được đóng bằng </${tagName}>`,
+          getLineNumber(cleanHTML, match.index)
+        );
         nestingError = true;
       }
     }
@@ -128,7 +161,7 @@ while ((match = tagRegex.exec(cleanHTML)) !== null) {
 }
 
 if (tagsStack.length > 0) {
-  tagsStack.forEach(t => {
+  tagsStack.forEach((t) => {
     reportError('Cân bằng thẻ HTML', `Thẻ mở <${t.name}> không được đóng`, t.line);
   });
   nestingError = true;
@@ -157,7 +190,7 @@ const plainTextOnly = getPlainTextOnly(rawHTML);
 // ----------------------------------------------------
 const rawBoldMatches = [...plainTextOnly.matchAll(/\*\*[^*]+\*\*/g)];
 if (rawBoldMatches.length > 0) {
-  rawBoldMatches.forEach(m => {
+  rawBoldMatches.forEach((m) => {
     const line = getLineNumber(rawHTML, rawHTML.indexOf(m[0]));
     reportError('Markdown thô', `Phát hiện cú pháp bôi đậm '**' chưa convert: "${m[0]}" (hãy dùng thẻ <strong>)`, line);
   });
@@ -167,9 +200,13 @@ if (rawBoldMatches.length > 0) {
 
 const rawBacktickMatches = [...plainTextOnly.matchAll(/`[^`]+`/g)];
 if (rawBacktickMatches.length > 0) {
-  rawBacktickMatches.forEach(m => {
+  rawBacktickMatches.forEach((m) => {
     const line = getLineNumber(rawHTML, rawHTML.indexOf(m[0]));
-    reportError('Markdown thô', `Phát hiện cú pháp code inline '\` ' chưa convert: "${m[0]}" (hãy dùng thẻ <code>)`, line);
+    reportError(
+      'Markdown thô',
+      `Phát hiện cú pháp code inline '\` ' chưa convert: "${m[0]}" (hãy dùng thẻ <code>)`,
+      line
+    );
   });
 } else {
   reportPass('Markdown thô (Backticks)', 'Không phát hiện ký tự inline code Markdown thô (`).');
@@ -180,7 +217,7 @@ if (rawBacktickMatches.length > 0) {
 // ----------------------------------------------------
 const alertMatches = [...plainTextOnly.matchAll(/\[!(NOTE|TIP|WARNING|CAUTION|IMPORTANT)\]/gi)];
 if (alertMatches.length > 0) {
-  alertMatches.forEach(m => {
+  alertMatches.forEach((m) => {
     const line = getLineNumber(rawHTML, rawHTML.indexOf(m[0]));
     reportError('GitHub Alerts', `Phát hiện cú pháp cảnh báo kiểu GitHub "${m[0]}" (hãy dùng lớp .callout)`, line);
   });
@@ -193,7 +230,7 @@ if (alertMatches.length > 0) {
 // ----------------------------------------------------
 const corruptedLaTeXMatches = [...rawHTML.matchAll(/\t(ext|imes|au|frac|circ)\{/g)];
 if (corruptedLaTeXMatches.length > 0) {
-  corruptedLaTeXMatches.forEach(m => {
+  corruptedLaTeXMatches.forEach((m) => {
     const line = getLineNumber(rawHTML, m.index);
     reportError('LaTeX Corrupted', `Phát hiện ký tự TAB bị corrupt trước lệnh LaTeX: \\${m[1]}`, line);
   });
@@ -212,7 +249,11 @@ while ((relatedLinkMatch = relatedLinkRegex.exec(rawHTML)) !== null) {
   const text = relatedLinkMatch[1];
   if (/[←→]/.test(text)) {
     const line = getLineNumber(rawHTML, relatedLinkMatch.index);
-    reportError('Related Links Arrows', `Phát hiện mũi tên viết tay "←" hoặc "→" trong liên kết bài viết liên quan: "${text.trim()}" (hãy để CSS tự vẽ)`, line);
+    reportError(
+      'Related Links Arrows',
+      `Phát hiện mũi tên viết tay "←" hoặc "→" trong liên kết bài viết liên quan: "${text.trim()}" (hãy để CSS tự vẽ)`,
+      line
+    );
     arrowError = true;
   }
 }
@@ -232,7 +273,10 @@ if (!canonicalMatch) {
   const canonicalUrl = canonicalMatch[1];
   const expectedSlug = path.basename(filePath, '.html');
   if (!canonicalUrl.endsWith(expectedSlug)) {
-    reportError('SEO Canonical', `Đường dẫn canonical "${canonicalUrl}" không khớp với tên tệp thực tế "${expectedSlug}" (bỏ .html).`);
+    reportError(
+      'SEO Canonical',
+      `Đường dẫn canonical "${canonicalUrl}" không khớp với tên tệp thực tế "${expectedSlug}" (bỏ .html).`
+    );
   } else {
     reportPass('SEO Canonical', `Khớp tên tệp: ${canonicalUrl}`);
   }
@@ -269,7 +313,10 @@ if (!jsonLdMatch) {
 const bodyMatchesCount = (rawHTML.match(/class="article-body"/g) || []).length;
 if (isLessonPage) {
   if (bodyMatchesCount !== 1) {
-    reportError('Article Body Wrapper', `Phải có duy nhất 1 thẻ div bọc nội dung có class="article-body" (phát hiện thấy: ${bodyMatchesCount}).`);
+    reportError(
+      'Article Body Wrapper',
+      `Phải có duy nhất 1 thẻ div bọc nội dung có class="article-body" (phát hiện thấy: ${bodyMatchesCount}).`
+    );
   } else {
     reportPass('Article Body Wrapper', 'Phần thân bài có đúng 1 lớp bọc class="article-body".');
   }

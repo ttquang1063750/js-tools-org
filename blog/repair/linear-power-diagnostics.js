@@ -47,7 +47,10 @@ class LinearPowerDiagnosticEngine {
         verdict: `Vout=${vout}V nằm trong dải cho phép (${minOk.toFixed(2)}V - ${maxOk.toFixed(2)}V) — IC ổn áp hoạt động bình thường.`,
       };
     }
-    return { status: 'DRIFTED', verdict: `Vout=${vout}V lệch khỏi dải cho phép, nghi ngờ IC ổn áp suy giảm hoặc quá tải.` };
+    return {
+      status: 'DRIFTED',
+      verdict: `Vout=${vout}V lệch khỏi dải cho phép, nghi ngờ IC ổn áp suy giảm hoặc quá tải.`,
+    };
   }
 }
 

@@ -30,7 +30,10 @@ class SemiconductorDiagnosticEngine {
     }
 
     if (vfForward !== null && vfForward >= 0.3 && vfForward <= 0.9 && !isReverseConducting) {
-      return { status: 'GOOD', verdict: `Diode tốt: chiều thuận sụt áp Vf=${vfForward}V, chiều ngược chặn hoàn toàn (O.L).` };
+      return {
+        status: 'GOOD',
+        verdict: `Diode tốt: chiều thuận sụt áp Vf=${vfForward}V, chiều ngược chặn hoàn toàn (O.L).`,
+      };
     }
 
     return { status: 'UNKNOWN', verdict: 'Số liệu đo không khớp mẫu hình hỏng hóc đã biết.' };

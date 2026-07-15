@@ -35,7 +35,10 @@ class AudioAmpDiagnosticEngine {
         verdict: `Rò rỉ ${dcLeakageV}V một chiều qua tụ liên lạc (lý thuyết phải gần 0V vì tụ chặn DC hoàn toàn) — làm dịch điểm phân cực tầng sau, gây rè xè xè hoặc méo tiếng nhẹ.`,
       };
     }
-    return { status: 'GOOD', verdict: `Rò rỉ chỉ ${(dcLeakageV * 1000).toFixed(0)}mV — tụ liên lạc chặn DC tốt, không ảnh hưởng phân cực tầng sau.` };
+    return {
+      status: 'GOOD',
+      verdict: `Rò rỉ chỉ ${(dcLeakageV * 1000).toFixed(0)}mV — tụ liên lạc chặn DC tốt, không ảnh hưởng phân cực tầng sau.`,
+    };
   }
 }
 
