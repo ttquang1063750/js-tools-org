@@ -240,18 +240,38 @@ if (corruptedLaTeXMatches.length > 0) {
 
 // ----------------------------------------------------
 // 6. Handwritten arrows check (←, →) in related links
+//
+// CSS (blog.css) injects the real arrow via ::before/::after, always
+// immediately adjacent to the link's visible text (before it for the
+// default/--prev case, after it for --next). A hand-typed duplicate
+// arrow bug therefore always sits at the very start or very end of the
+// text (e.g. "← Quay lại...", "Bài tiếp theo → Bài 2: ... →").
+//
+// Some lesson titles legitimately CONTAIN an arrow mid-text as real
+// content (e.g. Series 12 Bài 13 "Chuỗi: RNN → Attention" describes the
+// RNN-to-Attention topic progression) — that is not a decorative nav
+// arrow and must not be flagged. Only arrows at the trimmed text's start
+// or end (i.e. touching the CSS injection point) are real positives.
+//
+// The class matcher also excludes the plural wrapper class
+// "article-related__links" (the `<div>` around all the links), which
+// would otherwise match as a substring and swallow the first `<a>` as
+// its own bogus "match".
 // ----------------------------------------------------
-const relatedLinkRegex = /class="[^"]*article-related__link[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+const relatedLinkRegex = /class="[^"]*article-related__link(?!s)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
 let relatedLinkMatch;
 let arrowError = false;
 
 while ((relatedLinkMatch = relatedLinkRegex.exec(rawHTML)) !== null) {
   const text = relatedLinkMatch[1];
-  if (/[←→]/.test(text)) {
+  const trimmed = text.trim();
+  const startsWithArrow = /^[←→]/.test(trimmed);
+  const endsWithArrow = /[←→]$/.test(trimmed);
+  if (startsWithArrow || endsWithArrow) {
     const line = getLineNumber(rawHTML, relatedLinkMatch.index);
     reportError(
       'Related Links Arrows',
-      `Phát hiện mũi tên viết tay "←" hoặc "→" trong liên kết bài viết liên quan: "${text.trim()}" (hãy để CSS tự vẽ)`,
+      `Phát hiện mũi tên viết tay "←" hoặc "→" ở đầu/cuối liên kết bài viết liên quan: "${trimmed}" (hãy để CSS tự vẽ)`,
       line
     );
     arrowError = true;
