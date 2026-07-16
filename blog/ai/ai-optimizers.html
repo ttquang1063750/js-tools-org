@@ -296,6 +296,25 @@
                 </tr>
               </tbody>
             </table>
+            <div class="callout callout--note">
+              <div class="callout__title">
+                🔢 RMSProp KHÔNG có bước cố định như Adam — đây chính là lý do cần bias correction
+              </div>
+              <div class="callout__content">
+                Bảng trên chỉ cho $2$ bước — chạy tiếp bằng đúng công thức RMSProp tới bước $7$ (đã kiểm chứng bằng
+                Python), đo ĐỘ LỚN mỗi bước cập nhật ($w_{t-1} - w_t$) thay vì chỉ giá trị $w$:
+                <p style="font-family: Monaco, Menlo, monospace; font-size: 0.9em">
+                  Bước 1→7: $0{,}3162 \to 0{,}2294 \to 0{,}1921 \to 0{,}1705 \to 0{,}1563 \to 0{,}1461 \to 0{,}1384$
+                </p>
+                Độ lớn bước liên tục CO LẠI qua từng bước dù gradient không đổi ($g=2$ suốt) — trái ngược hoàn toàn với
+                Adam, nơi bước cập nhật gần như hằng số $0{,}1$ ngay từ đầu (bảng dưới). Nguyên nhân: $c$ của RMSProp
+                khởi tạo $0$ nên vài bước đầu bị đánh giá THẤP hơn giá trị EMA thật, khiến mẫu số $\sqrt{c}$ nhỏ hơn
+                thực tế và bước đi bị "phóng đại" — đúng cái lỗi mà bias correction của Adam được thiết kế để sửa. Đây
+                là lý do dù RMSProp đã giải quyết được vấn đề "1 learning rate chung" của Mục 1, Adam vẫn cần thêm bước
+                sửa lỗi thiên vị này để ổn định hơn ngay từ những bước đầu tiên.
+              </div>
+            </div>
+
             <p>
               <strong>Adam</strong> = Momentum + RMSProp + <strong>bias correction</strong>, đúng $3$ dòng công thức:
             </p>
@@ -368,6 +387,31 @@
                   nhau tuỳ độ lớn gradient của nó (thay vì phạt đều theo $w$ như ý định ban đầu). Đây chính xác là lý do
                   <strong>AdamW</strong> ra đời: tách weight decay ra khỏi bước chia, cộng trực tiếp $-\eta\lambda w$
                   vào cập nhật cuối thay vì trộn vào $g$ trước khi chia.
+                </p>
+                <p>
+                  Con số cụ thể lộ rõ vấn đề (đã kiểm chứng bằng Python, $10$ bước, $w_0=2{,}0$, $\lambda=0{,}1$): lấy
+                  $2$ tham số hệt nhau về giá trị khởi tạo nhưng khác hẳn về gradient — tham số $A$ có
+                  <strong>gradient luôn bằng $0$</strong> (không học được gì từ dữ liệu, chỉ nên bị weight decay kéo
+                  nhẹ), tham số $B$ có <strong>gradient lớn $=5$</strong> (đang học tích cực, cần được cập nhật mạnh
+                  theo dữ liệu).
+                </p>
+                <ul>
+                  <li>
+                    <strong>Adam + L2 trộn vào gradient:</strong> sau 10 bước, $w_A \approx 1{,}0246$ và $w_B \approx
+                    1{,}0006$ — <strong>gần như giống hệt nhau</strong>, dù $A$ hoàn toàn không có tín hiệu học còn $B$
+                    có gradient rất lớn. Bước chia adaptive đã "nuốt" mất sự khác biệt ý nghĩa giữa 2 tham số.
+                  </li>
+                  <li>
+                    <strong>AdamW (decay tách riêng):</strong> sau 10 bước, $w_A \approx 1{,}8088$ (chỉ giảm nhẹ đúng
+                    bằng $2 \times (1-\eta\lambda)^{10}$ — thuần tuý weight decay, không bị gradient nào chi phối) còn
+                    $w_B \approx 0{,}8526$ (giảm mạnh, đúng vì gradient lớn của nó chi phối). Hai tham số giờ ứng xử
+                    khác nhau đúng như bản chất dữ liệu của chúng.
+                  </li>
+                </ul>
+                <p>
+                  Đây là bằng chứng số học rõ ràng nhất cho lỗi mà AdamW sửa: trộn L2 vào bước chia adaptive làm weight
+                  decay hiệu quả phụ thuộc SAI vào độ lớn gradient của từng tham số, thay vì phạt đều theo đúng ý nghĩa
+                  "regularization" ban đầu.
                 </p>
               </div>
             </div>
@@ -509,7 +553,7 @@ function cosineDecay(epoch, totalEpochs, baseLr) {
               liệu để ước lượng ổn định — bias correction giúp một phần nhưng không loại bỏ hết nhiễu ước lượng ban đầu,
               nên $\eta$ đầy đủ ngay từ bước $1$ có thể gây bước nhảy quá lớn dựa trên một ước lượng phương sai còn
               nhiễu. Mạng càng sâu, batch càng lớn, càng cần warmup — đây là lý do gần như MỌI quy trình huấn luyện LLM
-              đều có vài nghìn bước warmup ở đầu (nếm trước <a href="#">Bài 16</a>).
+              đều có vài nghìn bước warmup ở đầu (nếm trước <a href="ai-tokenizer-llm-pretraining">Bài 16</a>).
             </p>
             <p>
               <strong>Batch normalization</strong> (mức khái niệm — KHÔNG cài đặt trong bài): chuẩn hoá activation (trừ
@@ -625,205 +669,6 @@ scheduler = optim.lr_scheduler.CosineAnnealingLR(opt_adam, T_max=1000)</code></p
                 bài huấn luyện thật sau này của series.
               </li>
             </ul>
-
-            <h2>Trắc nghiệm ôn tập</h2>
-
-            <div class="quiz-container">
-              <h3 class="quiz-title">Câu 1</h3>
-              <p class="quiz-question">
-                Trên loss $L=0{,}1x^2+2y^2$ (khe hẹp), vì sao KHÔNG có giá trị learning rate $\eta$ nào chung vừa nhanh
-                cho hướng $y$ (cong mạnh) vừa nhanh cho hướng $x$ (cong thoải) khi dùng SGD thuần?
-              </p>
-              <div class="quiz-options">
-                <button
-                  class="quiz-option"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      false,
-                      'Day khong phai loi cai dat - day la gioi han TOAN HOC cua chinh cong thuc SGD thuan khi dung 1 eta chung cho ca 2 huong co do cong khac nhau.'
-                    )
-                  "
-                >
-                  A. Vì đây là lỗi cài đặt SGD, có thể sửa bằng cách viết lại công thức cập nhật
-                </button>
-                <button
-                  class="quiz-option"
-                  data-correct="true"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      true,
-                      'Dung! Dieu kien hoi tu doi hoi eta du NHO de huong cong manh (y) khong phan ky, nhung chinh eta nho do lai lam huong cong thoai (x) tien qua cham - khong co eta nao vua an toan cho huong cong nhat vua nhanh cho huong thoai nhat, vi ca 2 dung CHUNG 1 gia tri eta.'
-                    )
-                  "
-                >
-                  B. Vì $\eta$ đủ nhỏ để hướng cong mạnh không phân kỳ luôn làm hướng cong thoải tiến quá chậm — cả 2
-                  hướng buộc phải dùng CHUNG 1 giá trị $\eta$
-                </button>
-                <button
-                  class="quiz-option"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      false,
-                      'Gradient tinh dung (dao ham rieng theo tung bien) - van de khong nam o do chinh xac cua gradient, ma o viec dung CHUNG 1 learning rate cho 2 huong co do cong khac nhau.'
-                    )
-                  "
-                >
-                  C. Vì gradient tính sai ở một trong hai hướng
-                </button>
-              </div>
-              <div class="quiz-feedback"></div>
-            </div>
-
-            <div class="quiz-container" style="margin-top: 20px">
-              <h3 class="quiz-title">Câu 2</h3>
-              <p class="quiz-question">
-                Với gradient CỐ ĐỊNH $g=2$ mỗi bước, Adam cho ra bước cập nhật gần như $0{,}1$ ở MỌI bước ($\eta=0{,}1$)
-                — không phải $0{,}2$ như SGD thuần ($\eta \cdot g$). Vì sao?
-              </p>
-              <div class="quiz-options">
-                <button
-                  class="quiz-option"
-                  data-correct="true"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      true,
-                      'Dung! Voi gradient co dinh, m_hat=g va v_hat=g^2 CHINH XAC sau bias correction (dang thuc m_t=(1-beta1^t)g khi m_0=0 trieu tieu dung he so chia) - buoc cap nhat = eta*g/sqrt(g^2) = eta*sign(g), gan nhu HANG SO eta bat ke do lon g.'
-                    )
-                  "
-                >
-                  A. Vì bước cập nhật Adam là $\eta \cdot \hat{m}/\sqrt{\hat{v}}$, và với gradient cố định thì
-                  $\hat{m}=g$, $\hat{v}=g^2$ chính xác — tỉ số $\hat{m}/\sqrt{\hat{v}}$ luôn bằng $\text{sign}(g)$
-                </button>
-                <button
-                  class="quiz-option"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      false,
-                      'Adam KHONG bo qua do lon gradient truoc khi tinh - no dung chinh gia tri g de tinh ca m lan v. Diem dac biet la CACH 2 dai luong nay duoc CHIA CHO NHAU trung hoa dung do lon cua g.'
-                    )
-                  "
-                >
-                  B. Vì Adam bỏ qua hoàn toàn độ lớn gradient, chỉ dùng dấu của nó ngay từ đầu công thức
-                </button>
-                <button
-                  class="quiz-option"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      false,
-                      'Beta1 va beta2 la hang so co dinh (0,9 va 0,999), KHONG doi theo t. Chinh he so CHIA (1-beta1^t) va (1-beta2^t) trong buoc bias correction moi la thu thay doi theo t.'
-                    )
-                  "
-                >
-                  C. Vì $\beta_1$ và $\beta_2$ tự động giảm dần về $0$ theo số bước $t$
-                </button>
-              </div>
-              <div class="quiz-feedback"></div>
-            </div>
-
-            <div class="quiz-container" style="margin-top: 20px">
-              <h3 class="quiz-title">Câu 3</h3>
-              <p class="quiz-question">
-                Một mạng $2\to H\to1$ khởi tạo TOÀN BỘ trọng số và bias bằng $0$. Sau khi train, dự đoán trên $X=[1,2]$
-                và $X=[50,-30]$ (rất khác nhau) cho ra CÙNG MỘT SỐ ($0{,}8372$). Điều này chứng tỏ gì?
-              </p>
-              <div class="quiz-options">
-                <button
-                  class="quiz-option"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      false,
-                      'Neu chi la trung hop, con so se KHAC NHAU (du chi rat nho) giua 2 input rat khac nhau. Giong het toi tung chu so la bang chung mang KHONG con phu thuoc vao input, khong phai ngau nhien.'
-                    )
-                  "
-                >
-                  A. Đây là trùng hợp ngẫu nhiên, không phản ánh vấn đề gì về cách khởi tạo
-                </button>
-                <button
-                  class="quiz-option"
-                  data-correct="true"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      true,
-                      'Dung! Voi zero-init, W1 va W2 dong bang vinh vien o 0 (chung minh bang dao ham: a1=0 lam dL/dW2=0, W2=0 lam dL/dW1=0) - mang thoai hoa thanh chi hoc dung 1 hang so qua bias dau ra, hoan toan phot lo input du train bao lau.'
-                    )
-                  "
-                >
-                  B. $W_1$ và $W_2$ đã đóng băng vĩnh viễn ở $0$ — mạng chỉ học được một hằng số qua bias, hoàn toàn
-                  phớt lờ input
-                </button>
-                <button
-                  class="quiz-option"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      false,
-                      'Learning rate anh huong TOC DO thay doi trong so, nhung o day trong so KHONG HE thay doi (dong bang o 0) - van de nam o cong thuc dao ham triet tieu lan nhau, khong phai chon sai eta.'
-                    )
-                  "
-                >
-                  C. Learning rate đang được đặt quá nhỏ, cần tăng lên để mạng học nhanh hơn
-                </button>
-              </div>
-              <div class="quiz-feedback"></div>
-            </div>
-
-            <div class="quiz-container" style="margin-top: 20px">
-              <h3 class="quiz-title">Câu 4</h3>
-              <p class="quiz-question">
-                Cho input ngẫu nhiên qua $20$ layer Linear+ReLU không bias: $\sigma=0{,}01$ cho phương sai layer $20$
-                $\approx 10^{-51}$ (vanish); $\sigma=1{,}0$ cho $\approx 10^{29}$ (explode); He cho $\approx 0{,}78$ (ổn
-                định). Ba con số này được đo ở đâu trong pipeline huấn luyện?
-              </p>
-              <div class="quiz-options">
-                <button
-                  class="quiz-option"
-                  data-correct="true"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      true,
-                      'Dung! Ca 3 con so nay do THUAN TUY tren FORWARD pass - chua he goi backward() hay optimizer nao. Day la ly do init sai gay hong mang truoc ca khi ban chon optimizer, vi gradient tinh tu 1 forward da vanish/explode cung se vanish/explode theo.'
-                    )
-                  "
-                >
-                  A. Ở forward pass — trước khi backward hay optimizer chạy, thuần tuý là hệ quả của cách nhân ma trận
-                  qua nhiều layer
-                </button>
-                <button
-                  class="quiz-option"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      false,
-                      'Vi du nay khong dung backward() hay tinh gradient nao ca - chi don gian la lan truyen input qua 20 layer va do phuong sai ket qua. Backward chi lam van de te hon (gradient cung vanish/explode theo cung co che) chu khong phai noi bat dau.'
-                    )
-                  "
-                >
-                  B. Ở bước backward — khi gradient bị nhân dồn qua các layer trong quá trình lan truyền ngược
-                </button>
-                <button
-                  class="quiz-option"
-                  onclick="
-                    checkQuiz(
-                      this,
-                      false,
-                      'Optimizer (SGD/Adam/...) hoan toan KHONG xuat hien trong vi du nay - day la phep do phuong sai activation thuan tuy qua forward pass, truoc khi bat ky optimizer nao duoc goi toi.'
-                    )
-                  "
-                >
-                  C. Ở bước cập nhật trọng số của optimizer, do learning rate chọn chưa phù hợp
-                </button>
-              </div>
-              <div class="quiz-feedback"></div>
-            </div>
 
             <div class="article-cta">
               <h3>Tải file code thực hành minh họa bài học</h3>
