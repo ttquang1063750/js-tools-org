@@ -249,6 +249,40 @@ print(x_gpu)</code></pre>
               </div>
             </div>
 
+            <p>
+              Vì cả hai đều lưu dữ liệu liên tục trong RAM theo cùng cách, PyTorch cho phép chuyển đổi qua lại giữa
+              Tensor (trên CPU) và mảng NumPy gần như miễn phí bằng <code>.numpy()</code> và
+              <code>torch.from_numpy()</code> — nhưng "gần như miễn phí" ở đây ẩn chứa một cạm bẫy quan trọng khác:
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: Tensor CPU và mảng NumPy CHIA SẺ CHUNG một vùng nhớ</div>
+              <div class="callout__content">
+                <code>tensor.numpy()</code> và <code>torch.from_numpy(array)</code> KHÔNG sao chép dữ liệu — chúng chỉ
+                tạo ra một "cửa sổ nhìn" khác trên CÙNG một vùng RAM (chỉ áp dụng cho Tensor đang ở CPU). Nếu bạn sửa
+                đổi mảng NumPy, Tensor gốc cũng bị thay đổi theo NGAY LẬP TỨC mà không có bất kỳ cảnh báo nào — đây là
+                nguồn gốc của rất nhiều bug "dữ liệu tự nhiên bị sai" cực kỳ khó truy trong pipeline tiền xử lý dữ liệu.
+              </div>
+            </div>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-dots"></span>
+                <span class="code-filename">tensor_numpy_shared_memory.py</span>
+              </div>
+              <pre><code class="language-python">import torch
+import numpy as np
+
+t = torch.ones(3)
+n = t.numpy()  # KHÔNG sao chép — n và t trỏ chung 1 vùng RAM
+
+n[0] = 99.0  # Sửa mảng NumPy...
+print(t)     # ...Tensor gốc CŨNG đổi theo: tensor([99., 1., 1.])
+
+# Muốn tách biệt hoàn toàn, phải chủ động sao chép:
+n_independent = t.numpy().copy()
+n_independent[0] = -1.0
+print(t)  # Tensor gốc KHÔNG đổi lần này</code></pre>
+            </div>
+
             <h2>4.2 Biến đổi hình dạng (Tensor Reshaping &amp; View)</h2>
             <p>
               Trong thiết kế mạng nơ-ron, việc biến đổi hình dạng (Shape/Dimension) của dữ liệu xảy ra liên tục ở từng
@@ -393,6 +427,44 @@ print(f"Đạo hàm dz/dx tại x=3 là: {x.grad.item():.1f}")</code></pre>
               </div>
             </div>
 
+            <p>
+              Một lỗi runtime khác cũng cực kỳ phổ biến với người mới: gọi <code>.backward()</code> trên một Tensor
+              KHÔNG PHẢI số vô hướng (scalar):
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-dots"></span>
+                <span class="code-filename">backward_scalar_only.py</span>
+              </div>
+              <pre><code class="language-python">import torch
+
+x = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
+y = x * 2  # y là Tensor 3 phần tử, KHÔNG phải 1 số đơn lẻ
+
+try:
+    y.backward()  # ❌ Lỗi!
+except RuntimeError as e:
+    print("Lỗi:", e)
+    # Lỗi: grad can be implicitly created only for scalar outputs
+
+# ✅ Cách sửa 1: rút gọn về scalar trước khi backward (cách phổ biến nhất — mọi
+# hàm Loss trong huấn luyện thật đều làm việc này, ví dụ .sum() hoặc .mean())
+y.sum().backward()
+print(x.grad)  # tensor([2., 2., 2.])
+
+# ✅ Cách sửa 2: nếu thực sự cần gradient riêng cho từng phần tử, truyền
+# một "vector trọng số" cùng shape với y vào backward()
+x.grad.zero_()
+y2 = x * 2
+y2.backward(torch.tensor([1.0, 1.0, 1.0]))
+print(x.grad)  # tensor([2., 2., 2.]) — tương đương .sum().backward() ở đây</code></pre>
+            </div>
+            <p>
+              Đây là lý do vì sao mọi hàm Loss trong huấn luyện thật (MSE, Cross-Entropy...) đều trả về đúng 1 con số vô
+              hướng đại diện cho toàn bộ batch — không phải ngẫu nhiên mà PyTorch yêu cầu vậy, mà vì
+              <code>.backward()</code> mặc định chỉ biết cách lan truyền ngược từ 1 điểm gốc duy nhất.
+            </p>
+
             <h2>4.4 Dự án thực hành bài 4: Xấp xỉ hàm số đa thức bằng Autograd</h2>
             <p>
               Để kiểm nghiệm sức mạnh của Autograd, chúng ta sẽ tự xây dựng một ứng dụng tối ưu hóa:
@@ -488,306 +560,12 @@ if __name__ == "__main__":
             </div>
 
             <div class="callout callout--note">
-              <div class="callout__title">💡 block with torch.no_grad() dùng để làm gì?</div>
+              <div class="callout__title">💡 Khối with torch.no_grad() dùng để làm gì?</div>
               <div class="callout__content">
-                Khi thực hiện cập nhật trọng số (dòng 52-55), ta đang thực hiện các phép toán số học thông thường chứ
-                không phải các lớp tính toán của mạng. Nếu không bọc trong <code>with torch.no_grad():</code>, PyTorch
-                sẽ tiếp tục theo dõi các phép toán này và tự vẽ thêm các nhánh vô nghĩa vào Đồ thị tính toán, làm tràn
-                bộ nhớ GPU và gây lỗi logic gradient.
-              </div>
-            </div>
-
-            <h2>Trắc nghiệm kiểm tra kiến thức</h2>
-            <div class="quiz-container" style="margin-top: 32px">
-              <!-- Question 1 -->
-              <div
-                class="quiz-question"
-                style="
-                  margin-bottom: 24px;
-                  padding: 16px;
-                  border: 1px solid #ddd;
-                  border-radius: 6px;
-                  background: #fafafa;
-                "
-              >
-                <p style="font-weight: bold; margin-top: 0">
-                  Câu 1: Lỗi RuntimeError liên quan đến "Expected all tensors to be on the same device" xảy ra khi nào?
-                </p>
-                <div class="quiz-options" style="display: flex; flex-direction: column; gap: 8px">
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        true,
-                        'Chính xác! PyTorch yêu cầu mọi Tensor tham gia phép toán phải nằm cùng trên một phần cứng (hoặc cùng CPU, hoặc cùng một card đồ họa GPU).'
-                      )
-                    "
-                  >
-                    A. Khi ta thực hiện phép toán cộng, trừ, nhân chia giữa hai Tensor nằm trên hai thiết bị khác nhau
-                    (ví dụ: một trên CPU và một trên GPU).
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        false,
-                        'Sai. Phép toán gán giá trị không bị giới hạn này nếu ta thiết lập thiết bị đúng.'
-                      )
-                    "
-                  >
-                    B. Khi ta gán giá trị từ một Tensor của GPU sang một Tensor của CPU mà không dùng thư viện NumPy.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        false,
-                        'Sai. NumPy chỉ hoạt động trên CPU, việc chuyển đổi giữa CPU Tensor và NumPy là an toàn.'
-                      )
-                    "
-                  >
-                    C. Khi ta cố tình chuyển đổi dữ liệu từ mảng NumPy sang PyTorch Tensor trên môi trường ảo conda.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="checkQuiz(this, false, 'Sai. Hãy xem lại cạm bẫy tính toán chéo thiết bị ở mục 4.1.')"
-                  >
-                    D. Khi ta chạy mô hình PyTorch trên chip đồ họa AMD mà không kích hoạt CUDA.
-                  </button>
-                </div>
-                <div class="quiz-feedback" style="margin-top: 12px; font-weight: bold; min-height: 20px"></div>
-              </div>
-
-              <!-- Question 2 -->
-              <div
-                class="quiz-question"
-                style="
-                  margin-bottom: 24px;
-                  padding: 16px;
-                  border: 1px solid #ddd;
-                  border-radius: 6px;
-                  background: #fafafa;
-                "
-              >
-                <p style="font-weight: bold; margin-top: 0">
-                  Câu 2: Tại sao gọi phương thức <code>.view()</code> đổi chiều trên một Tensor sau khi chuyển vị
-                  (<code>.t()</code>) lại có thể gây crash chương trình?
-                </p>
-                <div class="quiz-options" style="display: flex; flex-direction: column; gap: 8px">
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        false,
-                        'Sai. .view() không nhân bản dữ liệu, nó chỉ thay đổi cách lập trình viên đọc ma trận.'
-                      )
-                    "
-                  >
-                    A. Vì phép chuyển vị t() đã tự động dọn sạch bộ nhớ của Tensor làm cho hàm view() không tìm thấy dữ
-                    liệu.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        true,
-                        'Chính xác! Phép chuyển vị làm đảo lộn thứ tự chỉ số dòng/cột khiến dữ liệu không còn nằm liên tiếp (non-contiguous) trong RAM. .view() bắt buộc mảng phải contiguous mới chạy được.'
-                      )
-                    "
-                  >
-                    B. Vì phép chuyển vị làm thay đổi trật tự xếp hàng dữ liệu trong RAM khiến Tensor không còn liên tục
-                    (non-contiguous). Hàm <code>.view()</code> bắt buộc dữ liệu phải liên tục.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        false,
-                        'Sai. View và transpose là hai hàm hoàn toàn độc lập, không giới hạn loại phép toán.'
-                      )
-                    "
-                  >
-                    C. Vì PyTorch cấm sử dụng view() sau transpose() để tránh lỗi tràn số (overflow).
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(this, false, 'Sai. view() và reshape() hoạt động bình thường trên cả CPU và GPU.')
-                    "
-                  >
-                    D. Vì hàm view() chỉ chạy được trên CPU, còn phép chuyển vị t() tự động đẩy Tensor lên bộ nhớ GPU.
-                  </button>
-                </div>
-                <div class="quiz-feedback" style="margin-top: 12px; font-weight: bold; min-height: 20px"></div>
-              </div>
-
-              <!-- Question 3 -->
-              <div
-                class="quiz-question"
-                style="
-                  margin-bottom: 24px;
-                  padding: 16px;
-                  border: 1px solid #ddd;
-                  border-radius: 6px;
-                  background: #fafafa;
-                "
-              >
-                <p style="font-weight: bold; margin-top: 0">
-                  Câu 3: Trong vòng lặp tối ưu hóa mạng nơ-ron bằng PyTorch thô, tại sao ta bắt buộc phải gọi
-                  <code>.grad.zero_()</code> hoặc <code>optimizer.zero_grad()</code>?
-                </p>
-                <div class="quiz-options" style="display: flex; flex-direction: column; gap: 8px">
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(this, false, 'Sai. PyTorch không tự giải phóng hay reset đạo hàm, nó chỉ cộng dồn.')
-                    "
-                  >
-                    A. Để PyTorch tự động giải phóng RAM của GPU sau mỗi chu kỳ lan truyền ngược.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(this, false, 'Sai. zero grad không liên quan đến cơ chế tính toán forward pass.')
-                    "
-                  >
-                    B. Để thông báo cho Autograd bắt đầu lưu vết đồ thị tính toán của chu kỳ huấn luyện mới.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        true,
-                        'Chính xác! Do PyTorch tự động cộng dồn đạo hàm mới vào giá trị cũ sau mỗi lần gọi backward(), việc reset về 0 giúp thuật toán cập nhật chính xác theo đạo hàm của bước hiện tại.'
-                      )
-                    "
-                  >
-                    C. Vì mặc định PyTorch sẽ cộng dồn Gradient của bước lặp mới vào Gradient cũ. Reset về 0 giúp tính
-                    toán chính xác hướng đi của bước hiện tại.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="checkQuiz(this, false, 'Sai. Hãy xem lại giải thích cạm bẫy đạo hàm cộng dồn ở mục 4.3.')"
-                  >
-                    D. Để tắt tính năng Autograd khi bắt đầu chạy suy luận (inference) nhằm tăng tốc độ xử lý của mạng.
-                  </button>
-                </div>
-                <div class="quiz-feedback" style="margin-top: 12px; font-weight: bold; min-height: 20px"></div>
+                Khi thực hiện cập nhật trọng số ở đoạn <code>w1 -= learning_rate * w1.grad</code> phía trên, ta đang
+                thực hiện các phép toán số học thông thường chứ không phải các lớp tính toán của mạng. Nếu không bọc
+                trong <code>with torch.no_grad():</code>, PyTorch sẽ tiếp tục theo dõi các phép toán này và tự vẽ thêm
+                các nhánh vô nghĩa vào Đồ thị tính toán, làm tràn bộ nhớ GPU và gây lỗi logic gradient.
               </div>
             </div>
 

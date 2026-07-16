@@ -210,6 +210,42 @@
               </div>
             </div>
 
+            <p>Hãy chứng minh bằng con số cụ thể thay vì chỉ tin vào lý thuyết đại số ở trên:</p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-dots"></span>
+                <span class="code-filename">mse_vs_ce_gradient.py</span>
+              </div>
+              <pre><code class="language-python">import math
+
+def sigmoid(z):
+    return 1 / (1 + math.exp(-z))
+
+# Tình huống: nhãn thực tế y=1, nhưng logit z rất âm -> mô hình dự đoán RẤT SAI (gần 0)
+y_true = 1
+z = -8.0  # logit thô trước Sigmoid
+y_pred = sigmoid(z)  # ~ 0.000335 -- gần như chắc chắn dự đoán SAI (nhãn thật là 1)
+
+# Gradient của MSE Loss theo z: dL/dz = (y_pred - y_true) * sigmoid'(z)
+sigmoid_derivative = y_pred * (1 - y_pred)
+grad_mse = (y_pred - y_true) * sigmoid_derivative
+
+# Gradient của Cross-Entropy Loss theo z: dL/dz = y_pred - y_true (không có nhân tử sigmoid')
+grad_ce = y_pred - y_true
+
+print(f"Dự đoán sai gần như hoàn toàn: y_pred = {y_pred:.6f} (nhãn thật = {y_true})")
+print(f"Gradient MSE (dL/dz):           {grad_mse:.6f}")
+print(f"Gradient Cross-Entropy (dL/dz): {grad_ce:.6f}")
+# Gradient MSE  ~ -0.000335  -- CỰC NHỎ, mô hình gần như không học được gì
+# Gradient CE   ~ -0.999665  -- LỚN, mô hình sửa sai rất nhanh dù đang sai nặng nhất</code></pre>
+            </div>
+            <p>
+              Với cùng một tình huống dự đoán sai gần như tuyệt đối, gradient của MSE chỉ bằng khoảng
+              <strong>0.03%</strong> so với gradient của Cross-Entropy — đây chính xác là con số cụ thể hoá cho hiện
+              tượng "gradient saturation" đã nêu ở trên, và giải thích vì sao gần như KHÔNG có bài toán phân loại thực
+              tế nào còn dùng MSE làm hàm Loss chính.
+            </p>
+
             <div class="callout callout--pitfall">
               <div class="callout__title">
                 ⚠️ Cạm bẫy: Áp dụng Softmax hai lần trong PyTorch và lỗi mất ổn định số học
@@ -218,10 +254,10 @@
                 Hàm <code>nn.CrossEntropyLoss</code> trong PyTorch gộp chung cả hai bước <code>LogSoftmax</code> và
                 <code>NLLLoss</code> (Negative Log-Likelihood Loss) làm một. Điều này được thiết kế để giải quyết lỗi
                 tràn số (overflow/underflow) dấu phẩy động bằng cách sử dụng <strong>Log-Sum-Exp Trick</strong>: $$\log
-                \sum_i e^{z_i} = c + \log \sum_i e^{z_i - c} \quad \text{với } c = \max_i(z_i)$$ If bạn tự chèn thêm một
-                lớp <code>nn.Softmax</code> ở đầu ra mô hình trước khi đưa vào <code>nn.CrossEntropyLoss</code>, chương
-                trình sẽ tính toán Softmax hai lần, làm giảm độ chính xác số học và làm chậm tốc độ hội tụ nghiêm trọng.
-                Lớp cuối cùng của mạng phân loại đa lớp trong PyTorch luôn luôn phải xuất ra
+                \sum_i e^{z_i} = c + \log \sum_i e^{z_i - c} \quad \text{với } c = \max_i(z_i)$$ Nếu bạn tự chèn thêm
+                một lớp <code>nn.Softmax</code> ở đầu ra mô hình trước khi đưa vào <code>nn.CrossEntropyLoss</code>,
+                chương trình sẽ tính toán Softmax hai lần, làm giảm độ chính xác số học và làm chậm tốc độ hội tụ nghiêm
+                trọng. Lớp cuối cùng của mạng phân loại đa lớp trong PyTorch luôn luôn phải xuất ra
                 <strong>logits thô</strong> (không có hàm kích hoạt).
               </div>
             </div>
@@ -327,6 +363,50 @@
                 10^{-8}$.
               </div>
             </div>
+
+            <p>
+              Để thấy rõ 4 bước công thức trên hoạt động cụ thể ra sao, đây là cách tự viết Adam bằng Python thuần (chỉ
+              để MINH HỌA cơ chế — <code>torch.optim.Adam</code> đã làm việc này hiệu quả hơn nhiều):
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-dots"></span>
+                <span class="code-filename">adam_from_scratch.py</span>
+              </div>
+              <pre><code class="language-python">def adam_step(theta, grad, m, v, t, lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8, correct_bias=True):
+    # 1. Cập nhật moment bậc 1 (trung bình trượt của gradient)
+    m = beta1 * m + (1 - beta1) * grad
+    # 2. Cập nhật moment bậc 2 (trung bình trượt của gradient bình phương)
+    v = beta2 * v + (1 - beta2) * (grad ** 2)
+    # 3. Hiệu chỉnh chệch (có thể tắt để so sánh) — bù lại việc m, v khởi tạo từ 0
+    if correct_bias:
+        m_hat, v_hat = m / (1 - beta1 ** t), v / (1 - beta2 ** t)
+    else:
+        m_hat, v_hat = m, v
+    # 4. Cập nhật trọng số
+    theta_new = theta - lr * m_hat / (v_hat ** 0.5 + eps)
+    return theta_new, m, v
+
+# So sánh CÓ và KHÔNG hiệu chỉnh chệch, cùng gradient không đổi = 0.5, cùng 4 bước
+for label, correct in [("CÓ hiệu chỉnh chệch", True), ("KHÔNG hiệu chỉnh chệch", False)]:
+    print(f"--- {label} ---")
+    theta, m, v = 1.0, 0.0, 0.0
+    for t in range(1, 5):
+        theta, m, v = adam_step(theta, grad=0.5, m=m, v=v, t=t, correct_bias=correct)
+        print(f"Bước {t}: theta = {theta:.6f}")
+
+# CÓ hiệu chỉnh: mỗi bước giảm ĐỀU 0.001000 — bước đi ổn định ngay từ bước đầu tiên.
+# KHÔNG hiệu chỉnh: bước 1 đã giảm 0.003162 (gấp ~3 lần bước "đúng"), rồi các bước
+# sau còn LỚN HƠN NỮA (0.00425 -> 0.00495 -> 0.00544...) — vì thiếu hiệu chỉnh, tỉ lệ
+# m/sqrt(v) bị lệch do beta2=0.999 tích luỹ v chậm hơn hẳn beta1=0.9 tích luỹ m.</code></pre>
+            </div>
+            <p>
+              Con số thật (chạy thử ở trên) cho thấy: bỏ bước hiệu chỉnh chệch không làm bước cập nhật đầu tiên "rón
+              rén" như trực giác đơn giản hay nói — với $\beta_1=0.9$ và $\beta_2=0.999$ (giá trị mặc định thực tế), nó
+              lại khiến bước đi LỚN HƠN NHIỀU so với thiết kế ngay từ bước 1 (gấp ~3 lần), rồi tiếp tục phình to hơn nữa
+              qua từng bước thay vì ổn định — đây là lý do bias correction luôn được bật mặc định trong mọi triển khai
+              Adam thật (kể cả <code>torch.optim.Adam</code>), không phải một chi tiết tuỳ chọn có thể bỏ qua.
+            </p>
 
             <h2>6.4 Vòng lặp huấn luyện (Training Loop) chuyên sâu</h2>
             <p>
@@ -507,291 +587,6 @@ if __name__ == "__main__":
                 phép cập nhật các giá trị thống kê của batchnorm, dropout). Khi kết thúc huấn luyện, ta gọi
                 <code>model.eval()</code> và bọc phép tính trong block <code>with torch.no_grad():</code> để chạy kiểm
                 tra sai số trên tập Test mà không làm ảnh hưởng đến các trọng số đã học.
-              </div>
-            </div>
-
-            <h2>Trắc nghiệm kiểm tra kiến thức</h2>
-            <div class="quiz-container" style="margin-top: 32px">
-              <!-- Question 1 -->
-              <div
-                class="quiz-question"
-                style="
-                  margin-bottom: 24px;
-                  padding: 16px;
-                  border: 1px solid #ddd;
-                  border-radius: 6px;
-                  background: #fafafa;
-                "
-              >
-                <p style="font-weight: bold; margin-top: 0">
-                  Câu 1: Hàm mất mát nn.CrossEntropyLoss trong PyTorch yêu cầu định dạng đầu ra của lớp tuyến tính cuối
-                  cùng của mô hình như thế nào?
-                </p>
-                <div class="quiz-options" style="display: flex; flex-direction: column; gap: 8px">
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        true,
-                        'Chính xác! nn.CrossEntropyLoss trong PyTorch đã tích hợp sẵn hàm Softmax tối ưu hóa bên trong, nên ta chỉ xuất ra các giá trị logits thô (không áp dụng thêm Softmax ở lớp cuối).'
-                      )
-                    "
-                  >
-                    A. Logits thô chưa đi qua hàm kích hoạt Softmax (không gọi Softmax ở lớp cuối của mô hình).
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="checkQuiz(this, false, 'Sai. Nếu làm vậy, Softmax sẽ bị tính toán hai lần.')"
-                  >
-                    B. Các giá trị đã được chuyển đổi thành xác suất thông qua một hàm Softmax tường minh.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        false,
-                        'Sai. ReLU không được khuyến nghị đặt làm lớp kích hoạt cuối cho phân loại đa lớp.'
-                      )
-                    "
-                  >
-                    C. Toàn bộ các giá trị âm của lớp cuối đã bị triệt tiêu bằng hàm kích hoạt ReLU.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="checkQuiz(this, false, 'Sai. Hãy xem kỹ cạm bẫy sử dụng Softmax ở mục 6.1.')"
-                  >
-                    D. Toàn bộ dữ liệu đầu ra phải được nén về khoảng [0, 1] bằng hàm kích hoạt Sigmoid.
-                  </button>
-                </div>
-                <div class="quiz-feedback" style="margin-top: 12px; font-weight: bold; min-height: 20px"></div>
-              </div>
-
-              <!-- Question 2 -->
-              <div
-                class="quiz-question"
-                style="
-                  margin-bottom: 24px;
-                  padding: 16px;
-                  border: 1px solid #ddd;
-                  border-radius: 6px;
-                  background: #fafafa;
-                "
-              >
-                <p style="font-weight: bold; margin-top: 0">
-                  Câu 2: Hiện tượng gì sẽ xảy ra nếu ta quên gọi câu lệnh <code>optimizer.zero_grad()</code> trước khi
-                  gọi <code>loss.backward()</code> trong vòng lặp huấn luyện?
-                </p>
-                <div class="quiz-options" style="display: flex; flex-direction: column; gap: 8px">
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        false,
-                        'Sai. Quên reset gradient không làm crash chương trình ngay lập tức mà chỉ làm sai lệch tính toán.'
-                      )
-                    "
-                  >
-                    A. Chương trình sẽ crash lập tức vì lỗi tràn bộ nhớ đồ thị tính toán động của PyTorch.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        true,
-                        'Chính xác! Do PyTorch mặc định cộng dồn đạo hàm mới vào thuộc tính .grad, việc quên xóa gradient cũ sẽ làm đạo hàm tích lũy tăng dần, khiến bước đi cập nhật trọng số sai hướng và mô hình phân kỳ (Loss tăng vọt).'
-                      )
-                    "
-                  >
-                    B. Các đạo hàm của bước lặp hiện tại sẽ bị cộng dồn tích lũy vào đạo hàm cũ, làm hướng đi cập nhật
-                    trọng số bị sai lệch và mô hình bị phân kỳ (Loss tăng vô hạn).
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(this, false, 'Sai. zero_grad() không ảnh hưởng đến tốc độ tính lan truyền xuôi.')
-                    "
-                  >
-                    C. Mạng nơ-ron sẽ tự động chuyển sang chế độ đánh giá eval() và dừng lưu vết đạo hàm.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(this, false, 'Sai. Hãy xem lại các bước tuần tự của vòng lặp huấn luyện ở mục 6.2.')
-                    "
-                  >
-                    D. Không có ảnh hưởng nào cả vì bộ tối ưu hóa Adam có cơ chế tự động triệt tiêu gradient cũ.
-                  </button>
-                </div>
-                <div class="quiz-feedback" style="margin-top: 12px; font-weight: bold; min-height: 20px"></div>
-              </div>
-
-              <!-- Question 3 -->
-              <div
-                class="quiz-question"
-                style="
-                  margin-bottom: 24px;
-                  padding: 16px;
-                  border: 1px solid #ddd;
-                  border-radius: 6px;
-                  background: #fafafa;
-                "
-              >
-                <p style="font-weight: bold; margin-top: 0">
-                  Câu 3: Ưu điểm nổi bật nhất của bộ tối ưu cải tiến Adam so với thuật toán Stochastic Gradient Descent
-                  (SGD) truyền thống là gì?
-                </p>
-                <div class="quiz-options" style="display: flex; flex-direction: column; gap: 8px">
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        false,
-                        'Sai. Cả hai bộ tối ưu đều cập nhật trọng số trong quá trình huấn luyện ngược.'
-                      )
-                    "
-                  >
-                    A. Adam cho phép cập nhật trọng số trực tiếp ở bước lan truyền xuôi mà không cần lan truyền ngược.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="checkQuiz(this, false, 'Sai. He/Kaiming initialization là cơ chế độc lập với optimizer.')"
-                  >
-                    B. Adam tự động thực hiện He initialization cho mọi tầng tuyến tính để phá vỡ đối xứng.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="
-                      checkQuiz(
-                        this,
-                        true,
-                        'Chính xác! Adam tự điều chỉnh tốc độ học riêng biệt cho từng trọng số dựa trên moment động lượng động của gradient, giúp mô hình vượt qua các vùng phẳng và hội tụ nhanh hơn nhiều so với SGD thô.'
-                      )
-                    "
-                  >
-                    C. Adam tự động điều chỉnh tốc độ học thích nghi riêng cho từng trọng số dựa trên động lượng lịch sử
-                    gradient, giúp hội tụ nhanh và ổn định hơn.
-                  </button>
-                  <button
-                    class="quiz-option"
-                    style="
-                      text-align: left;
-                      padding: 10px 16px;
-                      border: 1px solid #ccc;
-                      border-radius: 4px;
-                      background: white;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    "
-                    onclick="checkQuiz(this, false, 'Sai. Hãy xem lại cơ chế hoạt động của Adam ở mục 6.3.')"
-                  >
-                    D. Adam tự động vô hiệu hóa quá trình tính toán đạo hàm để tiết kiệm dung lượng RAM của GPU.
-                  </button>
-                </div>
-                <div class="quiz-feedback" style="margin-top: 12px; font-weight: bold; min-height: 20px"></div>
               </div>
             </div>
 

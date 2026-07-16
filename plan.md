@@ -65,6 +65,161 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 > Mục "Quality contract & Checklist triển khai" vốn dùng chung với Series 14 (xem ghi chú
 > 2026-07-13) nay cũng đã gỡ hết vì cả hai series đều xong. Bản đầy đủ vẫn còn trong lịch sử git
 > trước commit này nếu cần tham chiếu lại.
+>
+> **2026-07-16 (quyết định bổ sung, retroactive):** Chủ dự án yêu cầu **bỏ hẳn mục quiz khỏi Series
+> 16 (Kỹ Sư AI Thực Chiến)**, dù series này đã 100% hoàn thành từ trước theo chuẩn CÓ quiz — thay
+> vào đó dành không gian cho nội dung/ví dụ sâu hơn, cùng tinh thần ngoại lệ đã áp cho Series 18 (xem
+> Phần I). Khác với Series 18 (ngoại lệ áp dụng NGAY từ đầu), đây là thay đổi HỒI TỐ trên nội dung đã
+> publish — đang làm theo lô nhỏ để kiểm chứng nhịp độ trước khi làm hết 20 bài:
+> - **Bài 1–3** (2026-07-16): `aie-js-to-python`, `aie-math-code`, `aie-numpy-pandas`.
+> - **Bài 4–6** (2026-07-16): `aie-pytorch-autograd`, `aie-mlp-neural-network`, `aie-training-backprop`.
+>
+> Cách làm mỗi bài: xoá khối `.quiz-container`, rồi bù lại bằng nội dung/ví dụ MỚI thật sự (không
+> phải chỉ diễn giải lại đáp án quiz cũ) chèn đúng vào mục H2 liên quan — ví dụ Bài 1 thêm cạm bẫy
+> "mutable default argument" + code fix `asyncio.to_thread`; Bài 2 thêm debug lỗi shape NumPy thật +
+> bảng trace tay gradient descent; Bài 3 thêm phân biệt broadcasting theo dòng vs theo cột
+> (reshape/`np.newaxis`); Bài 4 thêm cạm bẫy Tensor/NumPy chia sẻ vùng nhớ + lỗi `.backward()` trên
+> tensor không phải scalar; Bài 5 thêm ví dụ số cụ thể cho vanishing gradient của Sigmoid + code
+> chứng minh symmetry breaking khi khởi tạo trọng số bằng hằng số; Bài 6 thêm so sánh gradient MSE
+> vs Cross-Entropy bằng con số thật + tự viết Adam từng bước so sánh có/không bias correction.
+>
+> **Quan trọng — trong lúc đọc lại nội dung cũ đã phát hiện và sửa thêm 3 lỗi coherence có sẵn
+> KHÔNG liên quan đến quiz** (chứng tỏ giá trị của việc đọc kỹ thay vì chỉ xoá-thêm cơ học):
+> 1. Bài 4 (`aie-pytorch-autograd`): 1 callout tham chiếu "dòng 52-55" — số dòng mồ côi từ bản nháp
+>    cũ, không khớp code thật hiển thị ngay phía trên. Đã sửa thành tham chiếu trực tiếp đúng dòng
+>    code liên quan.
+> 2. Bài 6 (`aie-training-backprop`): 1 câu văn lẫn tiếng Anh "If bạn tự chèn thêm..." giữa đoạn
+>    tiếng Việt. Đã sửa thành "Nếu bạn...".
+> 3. **Tự phát hiện lỗi do chính mình viết** khi thêm nội dung mới cho Bài 6: đoạn diễn giải ban đầu
+>    về việc bias correction của Adam "giúp bước đầu không rón rén" hoá ra SAI khi chạy thử code thật
+>    (số liệu cho thấy điều ngược lại — thiếu bias correction làm bước đi LỚN HƠN và tiếp tục phình
+>    to, không phải nhỏ hơn). Đã chạy Python xác minh số liệu thật trước khi sửa lại diễn giải cho
+>    khớp — bài học: mọi khẳng định "chứng minh bằng số" phải chạy thử thật, không suy luận rồi viết
+>    thẳng ra, kể cả khi tự tay viết nội dung mới.
+>
+> Đã cập nhật `headingsVi`/`headingsEn` tương ứng trong `blog/search-index.json` (bỏ "Trắc nghiệm ôn
+> tập"/"Quizzes") cho cả 6 bài.
+>
+> - **Bài 7–9** (2026-07-16): `aie-cnn-convolution`, `aie-text-embeddings`, `aie-rnn-attention`. Nội
+>   dung mới thêm: Bài 7 thêm callout giải thích vì sao demo huấn luyện CNN trên MNIST giả lập chỉ đạt
+>   accuracy ~10% (mock data ngẫu nhiên không có tín hiệu học được) + code đếm tham số so sánh CNN vs
+>   MLP tương đương (4.800 vs 100.480 tham số, đã tính tay và chạy Python xác minh); Bài 8 thêm ví dụ
+>   thuật toán BPE chạy tay từng bước (đã chạy Python xác minh 4 bước gộp cặp ký tự) + khối kết quả in
+>   ra thật của script `word_similarity.py` (đã chạy xác minh, gắn với công thức đại số ngữ nghĩa Vua −
+>   Nam + Nữ ≈ Hoàng hậu ở mục 8.2 và cạm bẫy Cosine bỏ qua độ dài ở mục 8.3); Bài 9 thêm bảng con số
+>   thật cho tốc độ tiêu biến $(0.9)^N$ qua N bước (đã tính xác minh: 0.59 → 0.35 → 0.12 → 0.0052 →
+>   0.0000266) + ví dụ tính tay Dot-product Attention đầy đủ 3 bước (score → softmax → context vector,
+>   đã chạy Python xác minh toàn bộ số liệu).
+>
+> **Quan trọng — Bài 7 phát hiện thêm 1 lỗi coherence nghiêm trọng hơn 2 lỗi trước** (không chỉ sai
+> câu chữ mà sai về mặt logic của cả một demo): code huấn luyện CNN trên MNIST dùng `mock_images`
+> hoàn toàn ngẫu nhiên VÀ `mock_labels` độc lập ngẫu nhiên — tức KHÔNG có tín hiệu để học — nhưng dòng
+> `print()` kết luận "Mô hình đã học thành công cấu trúc trích xuất đặc trưng ảnh thô", một khẳng định
+> sai sự thật. Đã sửa câu print để chỉ khẳng định đúng những gì demo thật sự chứng minh (pipeline chạy
+> không lỗi), và thêm callout giải thích rõ vì sao accuracy ~10% (mức ngẫu nhiên của bài toán 10 lớp)
+> là kết quả BÌNH THƯỜNG chứ không phải lỗi. Bài 8 và Bài 9 không phát hiện thêm lỗi coherence mới khi
+> đọc lại toàn bộ nội dung.
+>
+> Đã cập nhật `headingsVi`/`headingsEn` trong `blog/search-index.json` cho cả 3 bài (Bài 7 hoá ra vẫn
+> còn sót "Quizzes"/"Trắc nghiệm ôn tập" từ lần cập nhật trước — đã sửa luôn trong lần này). Tổng cộng
+> đã hoàn thành 9/20 bài của Series 16.
+>
+> - **Bài 10–12** (2026-07-16): `aie-transformer-mechanism`, `aie-llm-api-prompting`,
+>   `aie-structured-output-tools`. Nội dung mới thêm (mọi con số đều chạy Python xác minh trước khi
+>   viết): Bài 10 thêm mô phỏng thống kê chứng minh vì sao chia $QK^T$ cho $\sqrt{d_k}$ ổn định phương
+>   sai về ~1.0 bất kể $d_k$ = 8/64/512 + callout sửa ngộ nhận phổ biến rằng Multi-Head Attention tốn
+>   thêm tham số (thực tế vẫn đúng 16.640 tham số dù 1 hay 8 Head, vì chia luồng chỉ là reshape); Bài
+>   11 thêm bảng Softmax thật ở 3 mức Temperature (T=0.1/1.0/5.0) trên cùng một vector logits + ví dụ
+>   tính tay Top-p dùng chính phân phối T=1.0 đó (cắt tại từ thứ 3 khi tích lũy vượt ngưỡng 0.9); Bài
+>   12 thêm ví dụ chạy Python chứng minh JSON Mode "hợp lệ cú pháp" (`json.loads()` thành công) nhưng
+>   vẫn có thể thiếu trường bắt buộc theo Schema, + ví dụ JSON Schema thật của tham số `tools` gửi lên
+>   API (trước đó bài học chỉ mô tả bằng lời, chưa có ví dụ cụ thể).
+>
+> Không phát hiện thêm lỗi coherence nào ở cả 3 bài khi đọc lại toàn bộ nội dung (bao gồm chạy thử demo
+> `chatbot_context.py` của Bài 11 để xác nhận cơ chế Sliding Window Context Buffer hoạt động đúng như
+> mô tả). Đã cập nhật `headingsVi`/`headingsEn` trong `blog/search-index.json` cho cả 3 bài. Tổng cộng
+> đã hoàn thành 12/20 bài của Series 16.
+>
+> - **Bài 13–15** (2026-07-16): `aie-local-llm-ollama`, `aie-rag-basics`, `aie-chunking-vector-db`. Nội
+>   dung mới thêm (mọi con số chạy Python xác minh trước khi viết): Bài 13 thêm công thức + bảng tính
+>   dung lượng mô hình theo mức lượng tử hóa (8B tham số: FP32 32GB → FP16 16GB → INT8 8GB → INT4 4GB,
+>   khớp sát mức 4.7GB thực tế của Ollama) + ví dụ ghép các chunk JSON stream thành câu trả lời hoàn
+>   chỉnh; Bài 14 thêm ví dụ tính tay TF-IDF trên kho 3 tài liệu nhỏ (từ "nghỉ" bị IDF triệt tiêu về 0
+>   vì quá phổ biến, trong khi từ "phép" cùng TF nhưng IDF≈0.405 vẫn giữ được điểm); Bài 15 thêm mô
+>   phỏng $O(N)$ so với $O(\log N)$ cho 1 triệu vector (HNSW nhanh hơn ~50.000 lần).
+>
+> **Quan trọng — Bài 14 và Bài 15 phát hiện thêm 2 lỗi coherence bằng cách CHẠY THỬ THẬT code demo**
+> (không chỉ đọc chữ):
+> 1. Bài 14 (`aie-rag-basics`): chạy thử `simple_rag.py` với đúng 2 câu hỏi trong code cho thấy câu hỏi
+>    NGOÀI tài liệu ("công ty thành lập năm nào?") lại đạt độ khớp Cosine ($0.2501$) CAO HƠN câu hỏi
+>    ĐÚNG chủ đề ($0.2414$), vì hàm truy xuất không có ngưỡng tối thiểu nào — nó luôn trả về "tốt nhất
+>    trong số hiện có" bất kể điểm cao hay thấp. Đã thêm callout giải thích đây là giới hạn thật của
+>    TF-IDF trên kho tài liệu nhỏ/đồng chủ đề, và vì sao pha Generation (lời dặn LLM tự nhận "không tìm
+>    thấy") mới là tuyến phòng thủ cuối cùng chứ không phải Retrieval.
+> 2. Bài 15 (`aie-chunking-vector-db`): phát hiện hàm `get_bow_vector` là code CHẾT (không được gọi ở
+>    đâu) và có lỗi thật nếu gọi (list không có `.get()`, dùng string làm index) — đã xoá hẳn. Đồng
+>    thời chạy thử 3 chiến thuật chunking trên văn bản NDA mẫu cho thấy Semantic Chunking và Recursive
+>    Chunking cho ra kết quả GIỐNG HỆT NHAU trên văn bản này (không minh hoạ được ưu thế như bài học ngụ
+>    ý) — đã thêm callout giải thích trung thực: ranh giới câu của văn bản mẫu này đã quá rõ ràng nên
+>    Recursive vô tình trùng khớp Semantic; ưu thế thật của Semantic Chunking chỉ lộ rõ trên văn bản có
+>    cấu trúc lộn xộn hơn.
+>
+> Đã cập nhật `headingsVi`/`headingsEn` trong `blog/search-index.json` cho cả 3 bài. Tổng cộng đã hoàn
+> thành 15/20 bài của Series 16.
+>
+> - **Bài 16–18** (2026-07-16): `aie-advanced-rag`, `aie-agents-react`, `aie-langgraph-stateful-agents`.
+>   Nội dung mới thêm (mọi con số chạy Python xác minh trước khi viết): Bài 16 thêm con số thật đo lợi
+>   ích của Query Rewriting (câu hỏi thô sai chính tả đạt Cosine $0.0714$, sau viết lại đạt $0.4677$ —
+>   gấp ~6.5 lần) + ví dụ tính tay chỉ số Jaccard dùng làm proxy Cross-Encoder (3/14 ≈ 0.2143); Bài 17
+>   thêm callout bảo mật giải thích vì sao `eval()` cần làm sạch input trước khi tính toán (đã thử
+>   chèn `__import__('os').system(...)` và xác minh bị lọc sạch thành chuỗi vô nghĩa) + vết chạy đầy đủ
+>   3 vòng ReAct với dữ liệu giả lập (tra giá AAPL → tính 15×185.50 = 2782.5 → Final Answer); Bài 18
+>   thêm ví dụ tính tay Reducer `operator.add` chứng minh khác biệt giữa cộng dồn lịch sử chat và ghi đè
+>   mất dữ liệu.
+>
+> **Quan trọng — Bài 18 phát hiện 1 lỗi coherence nghiêm trọng bằng cách CHẠY THỬ THẬT code demo**: hàm
+> `coder_node` trong `langgraph_agent.py` gọi `re.search(...)` nhưng phần import ở đầu file thiếu hẳn
+> `import re`. Khi Ollama không chạy, lỗi kết nối xảy ra trước khi chạm dòng `re.search` nên bug bị che
+> khuất hoàn toàn (nhìn như vẫn hoạt động nhờ fallback). Nhưng khi Ollama chạy thành công, `re.search` sẽ
+> ném `NameError`, bị khối `except Exception` nuốt lặng lẽ và âm thầm thay code thật của LLM bằng hàm
+> giả cố tình lỗi — khiến Agent LUÔN thất bại sau đúng 3 lần thử bất kể LLM viết đúng hay sai, vì code
+> thật không bao giờ được dùng tới. Đã thêm `import re` vào đầu file để khắc phục triệt để, và thêm
+> callout giải thích hiện tượng này như một bài học về việc khối `except Exception` quá rộng có thể che
+> giấu cả lỗi lập trình cơ bản nhất. Bài 16 và Bài 17 không phát hiện thêm lỗi coherence nào khi đọc lại
+> và chạy thử toàn bộ nội dung.
+>
+> Đã cập nhật `headingsVi`/`headingsEn` trong `blog/search-index.json` cho cả 3 bài. Tổng cộng đã hoàn
+> thành 18/20 bài của Series 16.
+>
+> - **Bài 19–20** (2026-07-16, lô cuối cùng): `aie-fine-tuning-lora`, `aie-mlops-eval`. Nội dung mới
+>   thêm (mọi con số chạy Python xác minh trước khi viết): Bài 19 thêm callout giải thích vì sao demo
+>   NumPy dùng kích thước ma trận nhỏ ($d=8, r=2$) chỉ giảm được 2 lần tham số thay vì 250 lần như quy
+>   mô thật ($d=4096$) — vì tiết kiệm tăng theo cấp số nhân với kích thước ma trận gốc — cùng vết chạy
+>   thật của vòng lặp huấn luyện (Loss giảm từ 1.740512 → 0.001004 qua 100 epochs, ~1735 lần); Bài 20
+>   thêm kết quả chạy thật xác nhận bộ 3 chỉ số Ragas mô phỏng bắt đúng câu trả lời ảo tưởng (Faithfulness
+>   giảm từ 75.00% xuống 17.65% khi câu trả lời sai hoàn toàn, trong khi Context Recall vẫn cao 69.57% vì
+>   lỗi nằm ở Generation chứ không phải Retrieval).
+>
+> **Quan trọng — Bài 20 phát hiện 1 giới hạn đáng chú ý bằng cách chạy thử thật code demo**: chỉ số
+> Answer Relevance kiểu Jaccard chấm một câu trả lời HOÀN TOÀN ĐÚNG chỉ $8.00\%$ — trông như lạc đề —
+> vì câu trả lời tốt thường diễn đạt lại ý bằng từ ngữ khác hẳn câu hỏi nên đếm từ trùng lặp thô thất
+> bại. Đã thêm callout giải thích đây chính là lý do Ragas thật dùng phương pháp phức tạp hơn (LLM tự
+> sinh câu hỏi ngược rồi so Cosine Similarity ngữ nghĩa) thay vì đếm từ khóa, và cảnh báo rằng một phép
+> đo giả lập đơn giản hóa để dễ dạy có thể cho ra con số gây hiểu lầm nếu đem so với ngưỡng thực tế. Bài
+> 19 không phát hiện thêm lỗi coherence nào khi đọc lại và chạy thử toàn bộ nội dung.
+>
+> Đã cập nhật `headingsVi`/`headingsEn` trong `blog/search-index.json` cho cả 2 bài.
+>
+> **✅ HOÀN THÀNH TOÀN BỘ 20/20 bài của Series 16** — dự án bỏ quiz và thay bằng nội dung/ví dụ sâu hơn
+> (khởi động 2026-07-16, hoàn thành cùng ngày qua 7 lô nhỏ: 1–3, 4–6, 7–9, 10–12, 13–15, 16–18, 19–20).
+> Tổng kết các lỗi coherence có sẵn phát hiện được trong quá trình đọc lại + chạy thử toàn bộ 20 bài
+> (không liên quan trực tiếp đến việc xoá quiz, nhưng được sửa nhân tiện theo yêu cầu kiểm tra tính mạch
+> lạc của chủ dự án): số dòng mồ côi (Bài 4), câu văn lẫn tiếng Anh (Bài 6), khẳng định sai về hướng
+> bias correction của Adam (Bài 6, tự phát hiện), demo CNN tuyên bố "học thành công" trên dữ liệu ngẫu
+> nhiên vô nghĩa (Bài 7), retrieval RAG không có ngưỡng khiến câu hỏi ngoài chủ đề khớp cao hơn câu đúng
+> (Bài 14), hàm code chết kèm lỗi thật `get_bow_vector` (Bài 15), thiếu `import re` khiến Agent LangGraph
+> luôn thất bại âm thầm (Bài 18). Bài học chung: đọc lại kỹ + **chạy thử thật** mọi demo code (không chỉ
+> đọc chữ) là kỹ thuật hiệu quả nhất để phát hiện lỗi tồn tại từ trước, vượt xa việc chỉ rà soát văn bản.
 
 ---
 
