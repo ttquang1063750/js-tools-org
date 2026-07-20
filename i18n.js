@@ -289,6 +289,9 @@ const TRANSLATIONS = {
     'learn.aisys.title': 'AI Systems Engineering',
     'learn.aisys.desc':
       'Go beyond training a model: the real industrial lifecycle (data pipeline, distributed training, RLHF, red-teaming, rollout), hand-write your own agent framework, and orchestrate a multi-agent system with a blackboard and deadlock handling.',
+    'learn.vdb.title': 'Vector Databases',
+    'learn.vdb.desc':
+      'Embeddings pipelines, geometric similarity metrics, hybrid storage, IVF indexing, HNSW graphs, Product Quantization, and a capstone local RAG search engine.',
   },
   vi: {
     'nav.imageOptimizer': 'Tối ưu ảnh',
@@ -580,6 +583,9 @@ const TRANSLATIONS = {
     'learn.aisys.title': 'Kỹ Thuật Hệ Thống AI',
     'learn.aisys.desc':
       'Vượt xa việc huấn luyện model: vòng đời công nghiệp thật (data pipeline, huấn luyện phân tán, RLHF, red-team, rollout), tự tay viết framework agent và điều phối hệ multi-agent với blackboard, xử lý deadlock.',
+    'learn.vdb.title': 'Cơ Sở Dữ Liệu Vector',
+    'learn.vdb.desc':
+      'Pipeline nhúng dữ liệu, độ đo tương đồng hình học, lưu trữ hybrid, chỉ mục IVF, cấu trúc đồ thị HNSW, lượng tử hóa Product Quantization, bộ lọc metadata và capstone project RAG Search Engine.',
   },
 };
 

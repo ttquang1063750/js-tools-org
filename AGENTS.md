@@ -169,6 +169,13 @@ js-tools-org/
 │           ├── aie-programming-series.html   # Curriculum hub
 │           ├── data_cleaner.py               # Practice code file
 │           └── ... AIE lesson files ...
+│
+│   └── # ── Vector Database Series (Vietnamese, HTML & files co-located) ──
+│       └── vectordb/
+│           ├── vectordb-programming-series.html # Curriculum hub
+│           ├── vdb-sandbox.html              # Interactive 2D Vector Search Sandbox
+│           ├── vdb-engine.js                 # Shared algorithms engine (K-Means, HNSW, PQ)
+│           └── ... Vector DB lesson files & scripts ...
 └── README.md
 ```
 

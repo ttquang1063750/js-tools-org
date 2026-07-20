@@ -31,6 +31,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 16: Kỹ Sư AI Thực Chiến**           | **Lộ Trình Lập Trình Viên Web**         | **20/20**      | **20**   | **100%** ✅ |
 | 🎉 **Series 17: Chẩn Đoán &amp; Sửa Chữa Mạch** | **Từ Đo Kiểm Đến Sửa Chữa Thực Chiến**  | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 18: Kỹ Thuật Hệ Thống AI**          | **Từ Pipeline Đến Đội Ngũ Agent**       | **13/13**      | **13**   | **100%** ✅ |
+| Series 19                                       | Cơ Sở Dữ Liệu Vector                    | 0/9            | 9        | 0%          |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
@@ -278,6 +279,77 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 - [ ] Tích hợp toàn cục sau khi xong: `blog/index.html` (`a.blog-card` + `.blog-card__tag--aisys`), ROOT `index.html` (`a.learn-card`, đối chiếu số lượng khớp `blog/index.html`), `sitemap.xml` (hub priority 0.8 + 13 bài + visualizer priority 0.7), `blog/search-index.json` (13 entry, `headingsVi` khớp H2 thật), `README.md`/`AGENTS.md` (cập nhật số series/bài + Last Updated), và cập nhật bảng tiến độ đầu `plan.md` (`X/13`).
 - [ ] Chạy đủ `check-lesson.md` PHẦN C cho từng bài trước khi báo "xong" — **bỏ qua duy nhất** lệnh đếm `quiz-container`/`quiz-question` (Phần C1 mục 6) vì series này không có quiz; mọi lệnh C1 khác vẫn chạy đầy đủ.
 
+---
+
+## 🗄️ Series 19: Cơ Sở Dữ Liệu Vector (Từ Thuật Toán Đến Ứng Dụng RAG)
+
+### 1. Ngăn xếp công nghệ & Công cụ (Tech Stack)
+
+- **Ngôn ngữ:** Pure JavaScript (ES6+), HTML5, CSS3.
+- **Thư viện/API:** HTML5 Canvas & SVG (trực quan hóa), KaTeX local (hiển thị công thức toán học).
+- **Engine dùng chung (co-located, viết 1 lần dùng chung cho cả series):**
+  - `vdb-engine.js` — Thư viện động cơ vector in-browser:
+    - Định nghĩa các độ đo khoảng cách: Cosine Similarity, Euclidean Distance (\(L_2\)), Manhattan Distance (\(L_1\)), Dot Product.
+    - Flat Index: Tìm kiếm KNN brute-force tuyến tính.
+    - IVF (Inverted File Index): Phân cụm k-means để gom nhóm và tạo chỉ mục ngược.
+    - HNSW (Hierarchical Navigable Small World) rút gọn: Xây dựng skip list đồ thị trên không gian metric.
+    - Product Quantization (PQ): Phân đoạn vector, học codebook qua k-means, nén sang code byte ngắn.
+
+### 2. Thiết kế Demo tương tác cốt lõi (Core Visualizer Demo)
+
+- **Tên: "Vector Search & Indexing Lab" (Phòng Thử Nghiệm Chỉ Mục & Tìm Kiếm Vector)** — file `vdb-sandbox.html`
+- **Mô tả giao diện (3 panel):**
+  1. **Trái — Control Panel (Bảng điều khiển):**
+     - Dropdown chọn kiểu chỉ mục: Flat (KNN), IVF, HNSW, PQ.
+     - Slider cấu hình tham số: số chiều vector (\(d=2\) hoặc \(d=3\) để vẽ được trực quan), số lượng vector (\(N=100 - 1000\)), số lân cận \(k\), số centroid (cho IVF), số tầng & tỷ lệ kết nối (cho HNSW), số segment & số centroid con (cho PQ).
+     - Nút "Tạo ngẫu nhiên dữ liệu", "Bắt đầu tìm kiếm", "Đưa thêm vector mới".
+  2. **Giữa — Visualizer Space (Không gian trực quan hóa):**
+     - Canvas vẽ không gian 2D (hoặc 3D giả lập xoay được) chứa các điểm vector.
+     - Khi chọn **HNSW**: Vẽ các layer đồ thị xếp chồng lên nhau. Khi tìm kiếm, vẽ đường đi (greedy path) bằng một "hạt sáng" di chuyển qua các node từ layer cao nhất xuống layer 0.
+     - Khi chọn **IVF**: Vẽ các ô Voronoi bao quanh các centroid. Khi tìm kiếm, highlight ô được kích hoạt.
+     - Khi chọn **PQ**: Hiển thị bảng codebook và cách ánh xạ vector gốc thành các code ngắn.
+  3. **Phải — Benchmark & Analytics (Báo cáo hiệu năng):**
+     - So sánh thời gian thực thi (ms) và số phép tính khoảng cách (Distance calculations) giữa chỉ mục đang chọn và Flat Index (brute-force).
+     - Đo lường độ chính xác thực tế (Recall@K).
+     - Biểu đồ so sánh động và bảng so sánh Trade-off giữa Speed (Tốc độ) - Memory (Bộ nhớ) - Recall (Độ chính xác).
+
+### 3. Đề cương tổng quan (Overview Syllabus)
+
+| Bài | Tên bài học                                | Nội dung CS chuyên sâu                                                                                                                                              | Dự án/Demo đi kèm                                                                                                                      |
+| --- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Khái niệm & Vai trò của Vector DB**      | Phân biệt CSDL quan hệ/tài liệu vs CSDL Vector (Metric space vs Relational model); Curse of Dimensionality khi tìm kiếm tương đồng trên số chiều lớn.               | Bộ tạo điểm vector 2D ngẫu nhiên và truy vấn khoảng cách tuyến tính thô hiển thị vòng quét trực quan.                                  |
+| 2   | **Pipeline Nhúng Dữ Liệu (Embeddings)**    | Quá trình chuyển đổi dữ liệu phi cấu trúc (text/image/audio) thành dense vector; bản chất toán học của vector không gian biểu diễn (feature spaces).                | Trình mô phỏng Tokenizer và đếm tần suất/từ khóa để chuyển văn bản thô thành vector biểu diễn.                                         |
+| 3   | **Độ Đo Khoảng Cách & So Khớp Tương Đồng** | Bản chất hình học và sự đánh đổi của các độ đo: Cosine Similarity, Euclidean Distance (\(L_2\)), Manhattan Distance (\(L_1\)), Dot Product (Inner Product).         | Bàn tính toán khoảng cách tương tác trong không gian 2D/3D, hiển thị các vector và độ đo thay đổi theo vị trí điểm.                    |
+| 4   | **Lưu Trữ Hybrid: Vector & Metadata**      | Cách lưu trữ nhị phân cho vector hiệu năng cao kết hợp CSDL Key-Value cho structured metadata để đảm bảo truy vấn độ trễ thấp và lọc nhanh.                         | Database engine đơn giản quản lý cấu trúc bản ghi gồm Vector ID + Embedding Array + Metadata JSON, hỗ trợ thêm/xóa/truy vấn.           |
+| 5   | **Chỉ Mục IVF (Inverted File Index)**      | Phân cụm không gian bằng thuật toán K-Means; phân hoạch không gian bằng Voronoi cells; xây dựng Inverted File (danh sách ngược) để thu hẹp tìm kiếm.                | Sơ đồ phân hoạch Voronoi tương tác: kéo thả tâm cụm (centroids) và xem các điểm vector tự động gom cụm trên Canvas.                    |
+| 6   | **Chỉ Mục Đồ Thị HNSW**                    | Cấu trúc đồ thị đa tầng (Multi-layer Graph); Small World Network; thuật toán Greedy Search trên đồ thị; skip lists cho không gian metric đa chiều.                  | Trực quan hóa HNSW 3 tầng: Nhập query, xem quá trình greedy search nhảy qua các layer đồ thị xếp chồng đến node gần nhất.              |
+| 7   | **Nén Vector Product Quantization (PQ)**   | Kỹ thuật lượng tử hóa (Quantization); phân rã không gian (subspaces); huấn luyện codebook; tính khoảng cách xấp xỉ bằng Asymmetric Distance (ADC) qua lookup table. | Trình nén vector PQ: cấu hình số segment, xem codebook được học và so sánh sai số khoảng cách nén vs dung lượng tiết kiệm.             |
+| 8   | **Lọc Metadata (Metadata Filtering)**      | So sánh Pre-filtering (lọc trước), Post-filtering (lọc sau), và Single-stage/Joint filtering (lọc đồng thời trong quá trình duyệt chỉ mục đồ thị).                  | Trình duyệt chỉ mục kết hợp lọc thuộc tính (ví dụ: `price < 100` AND `category == "book"`) và tìm kiếm tương đồng vector trên Canvas.  |
+| 9   | **Dự Án Capstone: RAG Search Engine**      | Kiến trúc Retrieval-Augmented Generation (RAG) toàn diện; tích hợp hybrid search; phân tích trade-off và so sánh các giải pháp (Pinecone, Milvus, Qdrant, Chroma).  | Công cụ tìm kiếm ngữ nghĩa (Semantic Search Engine) hoàn chỉnh chạy in-browser dùng `vdb-engine.js` để tìm đoạn tài liệu phù hợp nhất. |
+
+### 4. Quy ước chất lượng (Quality Contract - Series 19)
+
+- **Ngoại lệ bỏ Quiz (giống Series 18):** KHÔNG bắt buộc có mục "Câu hỏi trắc nghiệm ôn tập" ở cuối mỗi bài. Bỏ quiz để dành không gian cho nội dung học thuật sâu và dài hơn. Mọi định mức khác trong `references/quality-contract.md` vẫn áp dụng đầy đủ.
+- **Nội dung chuyên sâu:** Mỗi bài học tối thiểu 1200 từ tiếng Việt. Tối thiểu 4 `.code-window` (chứa ví dụ code cài đặt logic hoặc json minh họa).
+- **Chú thích & Học thuật:** Tối thiểu 3 callout (bắt buộc ≥1 `--pitfall` cảnh báo các cạm bẫy thiết kế), glossary đầy đủ định nghĩa trên trang hub, KaTeX cục bộ vẽ đầy đủ công thức toán học tính khoảng cách có giải thích ký hiệu đi kèm.
+- **Tính thực tiễn:** Có ít nhất 1 bảng so sánh khi xuất hiện các khái niệm đối lập (ví dụ: Relational vs Vector DB, L2 vs Cosine, Pre vs Post Filtering), và có liên kết tải code mẫu tự chạy bằng Node.js độc lập cho mỗi bài.
+
+### 5. Danh sách công việc triển khai & tích hợp (Series 19)
+
+- [ ] **Tạo thư mục & Cấu hình:** Tạo thư mục `blog/vectordb/`. Đăng ký màu tag `.blog-card__tag--vdb` (color: `#4f46e5`, background: `rgba(79, 70, 229, 0.08)`) trong file `blog/blog.css`.
+- [ ] **Engine dùng chung:** Phát triển file `vdb-engine.js` co-located trong thư mục series để làm thư viện xử lý vector chung cho cả series.
+- [ ] **Trang Visualizer chính:** Thiết kế `vdb-sandbox.html` làm demo cốt lõi nhúng iframe (3 panel điều khiển, trực quan hóa HNSW/Voronoi/PQ, benchmark so sánh).
+- [ ] **Trang Hub chương trình:** Thiết kế trang chủ khóa học `vectordb-programming-series.html` (hub curriculum, glossary EN-VI đầy đủ).
+- [ ] **9 trang bài học độc lập:** Viết 9 file bài học HTML tương ứng theo đúng đề cương H2 (KHÔNG có phần quiz), cấu trúc `.code-tabs`, references chuẩn, liên kết related, comments Giscus (đầy đủ thẻ H2 Bình luận phía trên).
+- [ ] **Tích hợp toàn cục:**
+  - Thêm thẻ `a.blog-card` vào `blog/index.html`.
+  - Thêm thẻ `a.learn-card` vào ROOT `index.html`.
+  - Đăng ký sitemap.xml (9 bài + 1 hub + 1 visualizer).
+  - Đăng ký search-index.json (9 entry mới, headingsVi khớp H2 thực tế).
+  - Cập nhật tiến độ `plan.md` (`X/9` ở bảng trạng thái đầu file).
+  - Cập nhật README.md và AGENTS.md.
+- [ ] **Kiểm thử QA tự động:** Chạy `node check-lesson.js` và `npx prettier --check` trên từng file bài viết trước khi báo cáo hoàn thành.
+
 > Tài liệu bàn giao cho người/agent thực thi. Phần I ở trên là **thiết kế nội dung**; phần II này là **danh sách công việc kỹ thuật** bám đúng khung (template) thật của dự án. Đọc kèm `AGENTS.md`.
 >
 > **Nguyên tắc bất di bất dịch:** Pure HTML + CSS + vanilla JS, **không framework, không build step**. Song ngữ EN/VI. Header + Footer phải **giống hệt** mọi trang blog hiện có (copy từ một file `webgl/*.html` làm chuẩn). Mọi link nội bộ dùng URL **không có đuôi `.html`** (Cloudflare Pages tự rewrite).
@@ -315,6 +387,7 @@ Khối lượng cả dự án rất lớn. Để không cạn hạn mức trong 
 | 11  | Thiết Kế Vi Mạch Số & FPGA | `blog/vlsi/`        | `vlsi-programming-series.html`        | `--vlsi`        | 14     |
 | 15  | Kiến Trúc Máy Tính         | `blog/cpu/`         | `cpu-programming-series.html`         | `--cpu`         | 12     |
 | 18  | Kỹ Thuật Hệ Thống AI       | `blog/aisys/`       | `aisys-programming-series.html`       | `--aisys`       | 13     |
+| 19  | Cơ Sở Dữ Liệu Vector       | `blog/vectordb/`    | `vectordb-programming-series.html`    | `--vdb`         | 9      |
 
 > Slug từng bài đặt theo mẫu sẵn có: `<series>-<chu-de>.html` (vd `wasm-linear-memory.html`, `webgpu-compute-shaders.html`). Đặt tên kebab-case, không dấu.
 
@@ -461,6 +534,20 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
 - **Bài 12 — Orchestration Nâng Cao: Xung Đột & Deadlock:** 12.1 Deadlock giữa agent (2 agent chờ nhau) — điều kiện xảy ra & cách phát hiện · 12.2 Livelock — vòng lặp "nhường nhau" không tiến triển · 12.3 Timeout/circuit-breaker để phá vỡ deadlock/livelock · 12.4 So sánh kiến trúc AutoGen (group chat) vs CrewAI (hierarchical crew) — khi nào chọn kiểu nào.
 - **Bài 13 — Dự án: AI Ops Center:** 13.1 Kiến trúc tổng thể — ghép pipeline (Bài 1–6) + framework (Bài 7–9) + orchestration (Bài 10–12) thành 1 hệ thống · 13.2 Agent giám sát tự động — phát hiện regression từ benchmark (Bài 5–6), tự kích hoạt rollback bằng ReAct loop (Bài 9) & orchestration (Bài 12) · 13.3 Dashboard vận hành — theo dõi sức khoẻ hệ thống thời gian thực, log quyết định từng agent · 13.4 Giới hạn của mô phỏng — những gì hệ thống đồ chơi này CHƯA thể hiện được so với vận hành AI production thật (quy mô, chi phí thật, rủi ro pháp lý).
 
+## Series 19 — Cơ Sở Dữ Liệu Vector
+
+> **Ngoại lệ áp dụng cho toàn bộ series này (tương tự Series 18):** KHÔNG cần mục "Câu hỏi trắc nghiệm ôn tập" cuối bài để dành không gian cho nội dung chuyên sâu và dài hơn, tiết kiệm ngữ cảnh khi triển khai. Mọi mục H2 dưới đây vẫn phải trả lời đủ 4 câu hỏi What/Why/When/Pitfall như chuẩn chung.
+
+- **Bài 1 — Khái niệm & Vai trò của Vector DB:** 1.1 Sự trỗi dậy của Dữ liệu phi cấu trúc và Vector nhúng (Embeddings) — Định nghĩa dữ liệu phi cấu trúc, sự bùng nổ của các mô hình học sâu sinh ra biểu diễn vector dày đặc (dense vector) thay thế cho trích xuất thuộc tính thủ công. 1.2 Phân biệt CSDL truyền thống vs CSDL Vector — Đối chiếu mô hình quan hệ/tài liệu (so khớp chính xác, lập chỉ mục B-Tree) với CSDL không gian metric (so khớp xấp xỉ tương đồng, lập chỉ mục ANN), tại sao SQL truyền thống thất bại khi truy vấn khoảng cách đa chiều. 1.3 Lời nguyền chiều kích (Curse of Dimensionality) — Hiện tượng hình học kỳ lạ trong không gian đa chiều (khoảng cách giữa mọi điểm đều tiến gần nhau, phân bố xác suất thay đổi), và tại sao tìm kiếm vét cạn (brute-force) trở nên bất khả thi khi số chiều vượt quá hàng trăm. 1.4 Giải thuật lân cận gần nhất: KNN thô vs Tìm kiếm xấp xỉ ANN — Khái niệm K-Nearest Neighbors và Approximate Nearest Neighbor (ANN), trade-off giữa độ chính xác (Recall), tốc độ (Latency) và chi phí tài nguyên (Memory/Compute). 1.5 Ứng dụng thực tế: Cách các doanh nghiệp công nghệ lớn ứng dụng Vector DB trong Hệ gợi ý (Recommendation Systems) và Tìm kiếm ngữ nghĩa (Semantic Search).
+- **Bài 2 — Pipeline Nhúng Dữ Liệu (Embeddings):** 2.1 Từ dữ liệu thô đến không gian vector: Cơ chế hoạt động của Embedding Model — Cách mà một mô hình học sâu biến đổi chữ, ảnh, âm thanh thành một mảng số thực có độ dài cố định. 2.2 Không gian biểu diễn ngữ nghĩa (Semantic Feature Spaces) & Biểu diễn toán học — Khái niệm về các chiều biểu diễn đặc trưng ẩn (latent features), ý nghĩa của khoảng cách nhỏ giữa 2 vector trên không gian ngữ nghĩa. 2.3 Quá trình Token hóa (Tokenization) và Vector hóa tần suất từ — Cơ chế Tokenization đơn giản và các kỹ thuật thống kê cổ điển như TF-IDF/Bag-of-Words để người học hiểu gốc rễ của vector hóa từ số 0. 2.4 Quản lý và xử lý Batch Embedding — Kỹ thuật ghép lô (batching) khi gọi API/mô hình chạy cục bộ để tối ưu hiệu năng, xử lý hàng đợi (queue) và quản lý tài nguyên bộ nhớ đệm (cache) khi lưu trữ tạm thời embeddings trên client. 2.5 Case study: Xử lý nghẽn cổ chai (bottleneck) hiệu năng khi xử lý Embedding thời gian thực trên các thiết bị Edge/Mobile.
+- **Bài 3 — Độ Đo Khoảng Cách & So Khớp Tương Đồng:** 3.1 Khoảng cách Euclidean (L2 Metric) — Định nghĩa toán học của khoảng cách Euclid thẳng trong không gian đa chiều, ứng dụng khi độ dài/độ lớn tuyệt đối của vector mang thông tin quan trọng. 3.2 Tương đồng Cosine (Cosine Similarity) — Bản chất góc giữa hai vector, công thức chuẩn hóa chuẩn L2, lý do vì sao độ đo này tối ưu cho so khớp văn bản bất kể độ dài ngắn khác nhau. 3.3 Tích vô hướng (Dot Product/Inner Product) — Công thức nhân ma trận tương ứng, mối quan hệ với khoảng cách Euclidean và tương đồng Cosine khi các vector đã được chuẩn hóa (normalized vector). 3.4 Khoảng cách Manhattan (L1 Metric) — Định nghĩa khoảng cách di chuyển theo lưới trục tọa độ, trường hợp sử dụng tối ưu trên một số kiểu dữ liệu rời rạc/đặc trưng phân tán cao. 3.5 Phân tích so khớp thực tế: Tại sao Dot Product chuẩn hóa lại nhanh hơn Cosine Similarity truyền thống trên tập dữ liệu lớn.
+- **Bài 4 — Lưu Trữ Hybrid: Vector & Metadata:** 4.1 Thách thức của việc lưu trữ Vector đa chiều — Tại sao cấu trúc lưu trữ dạng hàng (row-store) hay dạng cột (column-store) truyền thống không hiệu quả cho các mảng số thực kích thước lớn. 4.2 Kiến trúc lưu trữ Hybrid (Hybrid Storage Architecture) — Cơ chế phân tách vật lý giữa vector nhị phân (flat binary array) phục vụ tính toán và dữ liệu thuộc tính (metadata JSON) phục vụ tra cứu. 4.3 Quản lý ID và liên kết dữ liệu — Thiết kế bảng ánh xạ ánh xạ (mapping table) hai chiều giữa Vector ID và Key-Value store lưu trữ payload. 4.4 Cạm bẫy: Sự phân mảnh dữ liệu (Data fragmentation) và overhead khi truy xuất metadata ngẫu nhiên trong đĩa/bộ nhớ. 4.5 Kiến trúc phân tầng lưu trữ (Multi-tiered storage) trong các hệ thống Vector DB hiện đại để tối ưu hóa chi phí phần cứng.
+- **Bài 5 — Chỉ Mục IVF (Inverted File Index):** 5.1 Giải quyết bài toán phân mảnh không gian: Thuật toán K-Means Clustering — Ý nghĩa toán học của việc tìm các tâm cụm (centroids) đại diện để thu hẹp vùng tìm kiếm từ toàn bộ dữ liệu xuống một vài cụm. 5.2 Cấu trúc danh sách ngược (Inverted File) trong không gian vector — Cơ chế xây dựng bảng tra cứu từ Centroid ID sang danh sách các Vector ID thuộc cụm đó (Voronoi Cell). 5.3 Quy trình truy vấn IVF: nprobe parameter — Khái niệm `nprobe` (số lượng cụm lân cận cần duyệt), sự đánh đổi giữa tốc độ tìm kiếm và độ chính xác (Recall vs Latency). 5.4 Cạm bẫy: Cụm không cân bằng (Imbalanced clusters) dẫn đến thời gian tìm kiếm không ổn định và cách giải quyết bằng phân cụm lặp (Iterative clustering). 5.5 Kỹ thuật Warm-up và tối ưu số lượng Centroid linh hoạt theo kích thước dữ liệu thực tế.
+- **Bài 6 — Chỉ Mục Đồ Thị HNSW:** 6.1 Khái niệm mạng thế giới nhỏ (Small World Network) và đồ thị điều hướng NSW — Bản chất liên kết cục bộ dày đặc kết hợp vài liên kết xa giúp tìm kiếm đạt độ phức tạp logarit. 6.2 Cấu trúc phân tầng Hierarchical HNSW — Thiết kế đồ thị đa lớp tương tự cấu trúc Skip List, lớp trên thưa thớt định hướng chung, lớp dưới dày đặc định vị chi tiết. 6.3 Thuật toán Greedy Search trên đồ thị đa lớp và tham số efSearch/efConstruction — Cơ chế duyệt đồ thị bằng cách giữ hàng đợi ưu tiên các node gần query nhất. 6.4 Cạm bẫy: Chi phí bộ nhớ RAM cực lớn khi lưu trữ cấu trúc đồ thị đa tầng và thời gian xây dựng chỉ mục (Index building time) tăng phi tuyến tính. 6.5 Tối ưu hóa bộ nhớ HNSW bằng kỹ thuật loại bỏ các liên kết dư thừa (Heuristic-based pruning algorithm).
+- **Bài 7 — Nén Vector bằng Product Quantization (PQ):** 7.1 Lượng tử hóa vector (Vector Quantization) — Khái niệm cơ bản về nén dữ liệu có tổn hao (lossy compression) bằng cách gom nhóm đại diện và ánh xạ vector sang số hiệu nhóm. 7.2 Cơ chế Product Quantization: Chia để trị không gian — Cách phân rã vector có số chiều \(d\) lớn thành \(m\) phân đoạn (subspaces), chạy k-means độc lập trên từng subspace để tạo ra codebook con. 7.3 Tính khoảng cách xấp xỉ không đối xứng (Asymmetric Distance Computation - ADC) — Kỹ thuật tính khoảng cách cực nhanh giữa query vector gốc và các vector nén bằng cách tra cứu bảng khoảng cách (lookup table) thay vì thực hiện phép toán số thực dấu phẩy động. 7.4 Cạm bẫy: Sai số lượng tử hóa (Quantization error) làm giảm độ chính xác Recall và cách cân đối tham số nén. 7.5 Tối ưu hóa tính toán lượng tử hóa: Sử dụng kỹ thuật Asymmetric Distance Computation nâng cao với SIMD trên CPU.
+- **Bài 8 — Lọc Metadata (Metadata Filtering):** 8.1 Nhu cầu lọc kết hợp trong ứng dụng thực tế — Tại sao việc chỉ tìm kiếm tương đồng vector là chưa đủ mà phải kết hợp lọc điều kiện logic (như thời gian, chuyên mục, quyền truy cập). 8.2 Pre-filtering vs Post-filtering — Đánh giá hai hướng tiếp cận kinh điển: lọc thuộc tính trước (thu hẹp tập điểm rồi tìm KNN) vs lọc thuộc tính sau (tìm KNN rồi loại bỏ điểm không khớp), và tại sao cả hai đều dẫn đến hiện tượng thiếu kết quả (recall collapse) hoặc hiệu năng kém. 8.3 Kỹ thuật lọc đồng thời Single-Stage/Joint Filtering — Cách kết hợp lọc logic trực tiếp trong quá trình duyệt đồ thị HNSW hoặc danh sách IVF để loại bỏ node không thỏa mãn điều kiện ngay lập tức. 8.4 Cạm bẫy: Sự không tương thích giữa độ chọn lọc (selectivity) thuộc tính và cấu trúc liên kết đồ thị (graph connectivity) dẫn đến đứt gãy đường đi tìm kiếm. 8.5 Kiến trúc đồ thị lọc Single-Stage: Thiết kế cấu trúc dữ liệu để vượt qua điểm nghẽn ngắt kết nối đồ thị khi độ chọn lọc (selectivity) thuộc tính cao.
+- **Bài 9 — Dự Án Capstone: RAG Search Engine:** 9.1 Kiến trúc Retrieval-Augmented Generation (RAG) toàn diện — Quy trình đồng bộ dữ liệu từ văn bản -> chunks -> embeddings -> Vector DB và quá trình truy vấn ngữ cảnh để trả về cho LLM. 9.2 Thiết kế Engine tìm kiếm hỗn hợp Hybrid Search — Kỹ thuật kết hợp điểm số của tìm kiếm từ khóa (BM25/FTS5) và tìm kiếm ngữ nghĩa (Dense Retrieval) bằng phương pháp Reciprocal Rank Fusion (RRF). 9.3 Đánh giá và so sánh thực tế các CSDL Vector phổ biến — Phân tích ưu và nhược điểm của các giải pháp chuyên dụng (Pinecone, Milvus, Qdrant, Chroma) và các phần mở rộng cho CSDL truyền thống (pgvector trong PostgreSQL). 9.4 Cạm bẫy: Ảo giác ngữ cảnh (Context hallucination) do chất lượng embedding kém, giới hạn kích thước context window của LLM và vấn đề chi phí băng thông API. 9.5 Đánh giá kiến trúc RAG nâng cao: Tối ưu hóa Chunking Strategy và Prompt Context Injection để ngăn chặn triệt để hiện tượng ảo giác (hallucination).
+
 > **Ưu tiên chất lượng hơn số lượng bài.** Một bài chỉ được coi là "xong" khi đạt **toàn bộ** rubric dưới đây. Thà ít bài mà mỗi bài sâu — đủ thông tin, đủ ví dụ, đủ liên kết, đủ chú thích — còn hơn nhiều bài hời hợt. Tiêu chuẩn này áp cho cả 9 series.
 
 ## 1. Triết lý mỗi mục H2: trả lời đủ 4 câu hỏi
@@ -488,7 +575,7 @@ Mỗi mục H2 KHÔNG chỉ mô tả "cái gì". Phải bao trùm:
 | Quiz                         | **≥ 3 câu** (`ide.js`) + giải thích đáp án        | Có feedback đúng/sai.                        |
 | File code tải về             | **≥ 1** file co-located                           | Link "Tải file code thực hành".              |
 
-> **Ngoại lệ Series 18:** dòng "Quiz" ở trên **không áp dụng** cho Series 18 (Kỹ Thuật Hệ Thống AI) — series này bỏ hẳn mục quiz để dành không gian cho nội dung sâu hơn (chốt cùng chủ dự án 2026-07-16, xem định danh series ở Phần I). Mọi dòng rubric khác trong bảng vẫn áp dụng đầy đủ, không được nới lỏng thêm.
+> **Ngoại lệ Series 18 & 19:** dòng "Quiz" ở trên **không áp dụng** cho Series 18 (Kỹ Thuật Hệ Thống AI) và Series 19 (Cơ Sở Dữ Liệu Vector) — các series này bỏ hẳn mục quiz để dành không gian cho nội dung học thuật sâu và dài hơn (chốt 2026-07-20). Mọi dòng rubric khác trong bảng vẫn áp dụng đầy đủ, không được nới lỏng thêm.
 
 ## 3. "Đủ ví dụ" — quy tắc ví dụ
 
@@ -505,25 +592,28 @@ Mỗi mục H2 KHÔNG chỉ mô tả "cái gì". Phải bao trùm:
 - `prev`/`next` + khối `.article-related` (đã có sẵn).
 - **Cross-link inline** tới bài liên quan trong **cùng** và **khác** series, ngay tại đoạn nhắc khái niệm. Bản đồ liên kết chéo gợi ý:
 
-| Từ series                                          | Liên kết tới                                    | Vì khái niệm chung                                                      |
-| -------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
-| WebGPU · Compute Shader                            | WASM · Đa luồng; DSA · Pathfinding              | Song song hoá / GPGPU                                                   |
-| WASM · SIMD/Threading                              | Canvas · Pixel; WebGL · Performance             | Tối ưu pixel/vector                                                     |
-| Toy JS Engine                                      | JS · Engine & Execution; JS · Scope             | Call stack, closure, AST                                                |
-| DSA · Hash/B-Tree                                  | SQL · Index & Query Plan; C · Data Structures   | B-Tree, hashing                                                         |
-| Web Audio · FFT                                    | Canvas · Data Visualization; WebGPU · Particles | Vẽ phổ, reactive                                                        |
-| CSS · Transform 3D                                 | WebGL · Coordinate & Math                       | Ma trận biến đổi                                                        |
-| Git · Object Model                                 | C · Pointers; DSA · Huffman                     | DAG, content-address, nén                                               |
-| Điện tử · Logic/MCU                                | VLSI · RTL/FPGA; C · Pointers                   | Cổng logic mức vật lý vs RTL, memory-mapped I/O                         |
-| VLSI · VeriLite engine                             | DSA · Graph                                     | Event scheduler, critical path                                          |
-| AI · Tensor engine                                 | WebGPU · Compute Shader; WASM · SIMD            | Matmul, vectorization, GPU                                              |
-| AI · Backprop/autograd                             | DSA · Graph (topo sort); Toy JS Engine · AST    | Computation graph, duyệt đồ thị                                         |
-| AI · MNIST/CNN                                     | Canvas · Pixel & ImageData                      | Đọc/vẽ pixel, tiền xử lý ảnh                                            |
-| AI · Embedding/PCA                                 | DSA · Độ phức tạp; SQL · FTS5 (BM25)            | Vector hoá, đo tương đồng, tìm kiếm ngữ nghĩa                           |
-| AI Hệ Thống · Data Pipeline (Series 18)            | AI · Từ Neuron Đến LLM (Series 12)              | Model training thật vs mô phỏng khái niệm                               |
-| AI Hệ Thống · Memory/Tool-calling (Series 18)      | Kỹ Sư AI Thực Chiến · RAG/Agents (Series 16)    | Vector recall rút gọn vs embedding thật, ReAct đơn agent vs multi-agent |
-| AI Hệ Thống · Blackboard/Orchestration (Series 18) | VLSI · Event scheduler; DSA · Graph             | Shared state, điều phối nhiều tiến trình song song                      |
-| AI Hệ Thống · Huấn luyện phân tán (Series 18)      | WebGPU · Compute Shader; WASM · Đa luồng        | Song song hoá, đồng bộ giữa các worker                                  |
+| Từ series                                          | Liên kết tới                                     | Vì khái niệm chung                                                      |
+| -------------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------- |
+| WebGPU · Compute Shader                            | WASM · Đa luồng; DSA · Pathfinding               | Song song hoá / GPGPU                                                   |
+| WASM · SIMD/Threading                              | Canvas · Pixel; WebGL · Performance              | Tối ưu pixel/vector                                                     |
+| Toy JS Engine                                      | JS · Engine & Execution; JS · Scope              | Call stack, closure, AST                                                |
+| DSA · Hash/B-Tree                                  | SQL · Index & Query Plan; C · Data Structures    | B-Tree, hashing                                                         |
+| Web Audio · FFT                                    | Canvas · Data Visualization; WebGPU · Particles  | Vẽ phổ, reactive                                                        |
+| CSS · Transform 3D                                 | WebGL · Coordinate & Math                        | Ma trận biến đổi                                                        |
+| Git · Object Model                                 | C · Pointers; DSA · Huffman                      | DAG, content-address, nén                                               |
+| Điện tử · Logic/MCU                                | VLSI · RTL/FPGA; C · Pointers                    | Cổng logic mức vật lý vs RTL, memory-mapped I/O                         |
+| VLSI · VeriLite engine                             | DSA · Graph                                      | Event scheduler, critical path                                          |
+| AI · Tensor engine                                 | WebGPU · Compute Shader; WASM · SIMD             | Matmul, vectorization, GPU                                              |
+| AI · Backprop/autograd                             | DSA · Graph (topo sort); Toy JS Engine · AST     | Computation graph, duyệt đồ thị                                         |
+| AI · MNIST/CNN                                     | Canvas · Pixel & ImageData                       | Đọc/vẽ pixel, tiền xử lý ảnh                                            |
+| AI · Embedding/PCA                                 | DSA · Độ phức tạp; SQL · FTS5 (BM25)             | Vector hoá, đo tương đồng, tìm kiếm ngữ nghĩa                           |
+| AI Hệ Thống · Data Pipeline (Series 18)            | AI · Từ Neuron Đến LLM (Series 12)               | Model training thật vs mô phỏng khái niệm                               |
+| AI Hệ Thống · Memory/Tool-calling (Series 18)      | Kỹ Sư AI Thực Chiến · RAG/Agents (Series 16)     | Vector recall rút gọn vs embedding thật, ReAct đơn agent vs multi-agent |
+| AI Hệ Thống · Blackboard/Orchestration (Series 18) | VLSI · Event scheduler; DSA · Graph              | Shared state, điều phối nhiều tiến trình song song                      |
+| AI Hệ Thống · Huấn luyện phân tán (Series 18)      | WebGPU · Compute Shader; WASM · Đa luồng         | Song song hoá, đồng bộ giữa các worker                                  |
+| Vector DB · Độ đo khoảng cách (Series 19)          | AI · Embedding (Series 12)                       | Trực quan hoá biểu diễn toán học của embeddings                         |
+| Vector DB · Chỉ mục IVF/HNSW (Series 19)           | DSA · Đồ thị/Phân cụm; SQL · Index (Series 3, 7) | Cấu trúc dữ liệu chỉ mục, Voronoi, và so khớp tối ưu                    |
+| Vector DB · RAG Capstone (Series 19)               | Kỹ Sư AI Thực Chiến · RAG (Series 16)            | Tích hợp cơ sở dữ liệu vector vào ứng dụng LLM thực tế                  |
 
 **Ngoài (nâng cấp mới):** khối `.article-refs` cuối bài, **≥ 3** nguồn uy tín (MDN, WHATWG/W3C spec, caniuse, paper gốc như SPH/Huffman). Bắt buộc `target="_blank" rel="noopener noreferrer"`; ghi rõ tên nguồn, không dán URL trần.
 
