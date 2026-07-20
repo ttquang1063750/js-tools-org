@@ -385,6 +385,76 @@ function computeAdc(codes, lut, m) {
               </tbody>
             </table>
 
+            <h2>7.6 Thực hành: Trực quan hóa nén Product Quantization</h2>
+            <p>
+              Demo dưới đây huấn luyện (train) một <code>ProductQuantization</code> thật (engine
+              <code>vdb-engine.js</code>) với $m=2$ subspaces trên 40 vector 4 chiều ngẫu nhiên. Vì mỗi subspace chỉ còn
+              2 chiều nên có thể vẽ trực tiếp lên mặt phẳng: mỗi ô màu là vùng ảnh hưởng của một centroid trong
+              codebook, các chấm nhạt là vector con huấn luyện được gán (quantize) về centroid gần nhất. Bấm nút bên
+              dưới để sinh một vector truy vấn 4 chiều mới và xem PQ nén nó thành 2 bytes như thế nào:
+            </p>
+
+            <div class="code-tabs" id="pq-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🧩 Product Quantization — vdb-engine.js thật (m=2, k=6)</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <canvas
+                    id="pq-canvas"
+                    width="640"
+                    height="320"
+                    style="width: 100%; height: 320px; background: #0b0f19; border-radius: 6px"
+                  ></canvas>
+                  <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap">
+                    <button class="mux-input-btn" type="button" id="pq-query-btn">🎲 Vector truy vấn mới</button>
+                  </div>
+                  <div id="pq-status" class="mux-demo__output">Đang huấn luyện codebook…</div>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">pq_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { ProductQuantization } from './vdb-engine.js';
+
+// m = 2 subspaces, moi subspace 2 chieu (vector goc 4 chieu),
+// k = 6 centroids moi subspace (nho, de truc quan hoa)
+const pq = new ProductQuantization(2, 6, 'euclidean');
+
+// Sinh 40 vector 4 chieu ngau nhien lam du lieu huan luyen
+const trainingVectors = Array.from({ length: 40 }, () => [
+  Math.random() * 300,
+  Math.random() * 300,
+  Math.random() * 300,
+  Math.random() * 300,
+]);
+
+// Train K-means rieng cho tung subspace -> ra 2 codebook doc lap
+pq.train(trainingVectors);
+
+// Chen san mot vai vector vao "CSDL" de demo tim kiem ADC
+trainingVectors.slice(0, 8).forEach((v, i) => pq.insert(i, v));
+
+// Sinh vector truy van moi va nen no
+const query = [Math.random() * 300, Math.random() * 300, Math.random() * 300, Math.random() * 300];
+const code = pq.compress(query); // Uint8Array(2) — vi du [3, 5]
+
+// Tim kiem xap xi (Asymmetric Distance Computation) tren du lieu da nen
+const results = pq.search(query, 1);
+
+console.log('Ma nen (2 bytes):', Array.from(code));
+console.log('Ket qua ADC gan nhat:', results[0]);</code></pre>
+                </div>
+              </div>
+            </div>
+
             <!-- References Block -->
             <section class="article-refs">
               <h2>📖 Tài liệu tham khảo</h2>
@@ -693,5 +763,163 @@ function computeAdc(codes, lut, m) {
 
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
+
+    <script type="module">
+      import { ProductQuantization } from './vdb-engine.js';
+
+      const M = 2;
+      const K = 6;
+      const DIM = 4;
+      const SUB_DIM = DIM / M; // = 2, moi subspace ve duoc nhu mat phang 2D
+      const N_TRAIN = 40;
+      const CENTROID_COLORS = ['#f87171', '#fbbf24', '#4ade80', '#38bdf8', '#a78bfa', '#f472b6'];
+
+      const canvas = document.getElementById('pq-canvas');
+      const ctx = canvas.getContext('2d');
+      const statusEl = document.getElementById('pq-status');
+
+      const pq = new ProductQuantization(M, K, 'euclidean');
+
+      // Sinh du lieu huan luyen: 40 vector 4 chieu ngau nhien
+      const trainingVectors = Array.from({ length: N_TRAIN }, () => [
+        Math.random() * 300,
+        Math.random() * 300,
+        Math.random() * 300,
+        Math.random() * 300,
+      ]);
+
+      pq.train(trainingVectors);
+
+      // Chen san 8 vector vao "CSDL" de minh hoa tim kiem ADC
+      trainingVectors.slice(0, 8).forEach((v, i) => pq.insert(i, v));
+
+      let queryVector = null;
+
+      // Panel layout: 2 subspace, moi panel ~300x300, cach nhau 1 khoang gap
+      const PANEL_SIZE = 300;
+      const GAP = 40;
+      const panelOrigin = [0, PANEL_SIZE + GAP];
+
+      function subToPanel(subVec, panelIdx) {
+        // subVec nam trong [0, 300], anh xa truc tiep vao khong gian panel (co le nho)
+        const scale = PANEL_SIZE / 300;
+        return { x: panelOrigin[panelIdx] + subVec[0] * scale, y: subVec[1] * scale };
+      }
+
+      function closestCentroid(subVec, codebook) {
+        let best = 0;
+        let bestDist = Infinity;
+        codebook.forEach((c, i) => {
+          const d = Math.hypot(subVec[0] - c[0], subVec[1] - c[1]);
+          if (d < bestDist) {
+            bestDist = d;
+            best = i;
+          }
+        });
+        return best;
+      }
+
+      function render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        for (let s = 0; s < M; s++) {
+          const codebook = pq.codebooks[s];
+          const scale = PANEL_SIZE / 300;
+
+          // Khung panel
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(panelOrigin[s], 0, PANEL_SIZE, PANEL_SIZE);
+          ctx.fillStyle = 'rgba(255,255,255,0.5)';
+          ctx.font = '11px monospace';
+          ctx.fillText(
+            'Subspace ' + (s + 1) + ' (chiều ' + (s * SUB_DIM + 1) + '-' + (s * SUB_DIM + 2) + ')',
+            panelOrigin[s] + 6,
+            14
+          );
+
+          // Cac vector con huan luyen, to mau theo centroid gan nhat
+          trainingVectors.forEach((v) => {
+            const subVec = v.slice(s * SUB_DIM, (s + 1) * SUB_DIM);
+            const idx = closestCentroid(subVec, codebook);
+            const p = subToPanel(subVec, s);
+            ctx.fillStyle = CENTROID_COLORS[idx % CENTROID_COLORS.length] + '55';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3, 0, 2 * Math.PI);
+            ctx.fill();
+          });
+
+          // Cac centroid codebook
+          codebook.forEach((c, idx) => {
+            const p = subToPanel(c, s);
+            ctx.fillStyle = CENTROID_COLORS[idx % CENTROID_COLORS.length];
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 6, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          });
+
+          // Vector truy van + duong noi den centroid duoc gan
+          if (queryVector) {
+            const subVec = queryVector.slice(s * SUB_DIM, (s + 1) * SUB_DIM);
+            const idx = closestCentroid(subVec, codebook);
+            const qp = subToPanel(subVec, s);
+            const cp = subToPanel(codebook[idx], s);
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(qp.x, qp.y);
+            ctx.lineTo(cp.x, cp.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            const r = 6;
+            ctx.beginPath();
+            ctx.moveTo(qp.x - r, qp.y - r);
+            ctx.lineTo(qp.x + r, qp.y + r);
+            ctx.moveTo(qp.x + r, qp.y - r);
+            ctx.lineTo(qp.x - r, qp.y + r);
+            ctx.stroke();
+          }
+        }
+      }
+
+      function newQuery() {
+        queryVector = [Math.random() * 300, Math.random() * 300, Math.random() * 300, Math.random() * 300];
+        const code = pq.compress(queryVector);
+        const results = pq.search(queryVector, 1);
+        render();
+
+        let msg =
+          'Vector gốc 4 chiều → nén còn 2 bytes: code = [' +
+          Array.from(code).join(', ') +
+          ']. Mỗi centroid con chỉ cần đúng 1 byte để lưu, so với việc lưu 4 số thực (float32) ban đầu.';
+        if (results.length > 0) {
+          msg +=
+            ' Kết quả ADC gần nhất trong CSDL nén: id=' +
+            results[0].id +
+            ', khoảng cách xấp xỉ ≈ ' +
+            results[0].distance.toFixed(1) +
+            '.';
+        }
+        statusEl.textContent = msg;
+      }
+
+      document.getElementById('pq-query-btn').addEventListener('click', newQuery);
+
+      render();
+      statusEl.textContent =
+        'Codebook đã huấn luyện xong: ' +
+        M +
+        ' subspace × ' +
+        K +
+        ' centroids. Bấm "Vector truy vấn mới" để xem quá trình nén.';
+    </script>
   </body>
 </html>

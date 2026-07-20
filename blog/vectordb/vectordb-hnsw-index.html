@@ -375,6 +375,111 @@ function updateNeighbors(node, newNeighbor, layer, maxM) {
               </tbody>
             </table>
 
+            <!-- Section 6.6 -->
+            <h2>6.6 Thực hành: Duyệt đồ thị HNSW từng bước</h2>
+            <p>
+              Demo dưới đây dựng một đồ thị HNSW <strong>thật</strong> (dùng đúng lớp <code>HNSWIndex</code> của
+              <code>vdb-engine.js</code>) từ 30 điểm 2D ngẫu nhiên với $M=4$, $efConstruction=16$ — số nhỏ để đồ thị còn
+              đơn giản, dễ nhìn. Các cạnh Layer 0 (đồ thị nền dày đặc, Mục 6.2) được vẽ mờ màu xám, còn các cạnh Layer 1
+              trở lên (các "xa lộ" thưa thớt, Mục 6.1) được tô màu tím sáng — node nào tồn tại ở tầng cao hơn cũng được
+              vẽ to hơn để thấy rõ vai trò node trung chuyển. Bấm "▶ Bước tiếp theo" để duyệt từng bước Greedy Search y
+              hệt giải thuật ở Mục 6.3: bắt đầu tại điểm vào (Enter Point) ở tầng cao nhất, di chuyển tham lam sang láng
+              giềng gần hơn, rớt tầng khi kẹt cực trị địa phương, cho tới khi chạm Layer 0 — lúc đó demo gọi
+              <code>search()</code> chính thức để đối chiếu kết quả Top-K:
+            </p>
+
+            <div class="code-tabs" id="hnsw-walk-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🕸️ Duyệt Greedy Search trên đồ thị HNSW thật (HNSWIndex)</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <canvas
+                    id="hnsw-walk-canvas"
+                    width="640"
+                    height="320"
+                    style="width: 100%; height: 320px; background: #0b0f19; border-radius: 6px"
+                  ></canvas>
+                  <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap">
+                    <button class="mux-input-btn" type="button" id="hnsw-walk-next-btn">▶ Bước tiếp theo</button>
+                    <button class="mux-input-btn" type="button" id="hnsw-walk-query-btn">🎲 Điểm truy vấn mới</button>
+                    <button class="mux-input-btn" type="button" id="hnsw-walk-reset-btn">↺ Reset</button>
+                  </div>
+                  <div id="hnsw-walk-status" class="mux-demo__output">Đang khởi tạo đồ thị HNSW…</div>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">hnsw_walk_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { HNSWIndex, calculateDistance } from './vdb-engine.js';
+
+const CANVAS_W = 640, CANVAS_H = 320, PADDING = 28, NUM_POINTS = 30;
+
+function randomPoint() {
+  return [PADDING + Math.random() * (CANVAS_W - 2 * PADDING), PADDING + Math.random() * (CANVAS_H - 2 * PADDING)];
+}
+
+// Dung Index THAT: M=4, efConstruction=16 - nho de do thi con don gian de quan sat
+let points, index, query, walk;
+
+function buildIndex() {
+  points = Array.from({ length: NUM_POINTS }, (_, i) => ({ id: i, vector: randomPoint() }));
+  index = new HNSWIndex(4, 16, 'euclidean');
+  for (const p of points) index.insert(p.id, p.vector);
+}
+
+// Khoi tao trang thai duyet: bat dau tai enterPointId, o tang maxLayer
+function initWalk() {
+  const startId = index.enterPointId;
+  const startDist = calculateDistance(query, index.nodes[startId].vector, index.metric);
+  walk = { currentId: startId, currentLayer: index.maxLayer, currentDist: startDist, trail: [{ id: startId, layer: index.maxLayer }], done: false, results: null };
+}
+
+// Mot buoc Greedy Search - phong theo dung logic cua HNSWIndex.search():
+// tai moi tang, di chuyen sang lang gieng gan hon; het cai thien thi rot tang;
+// den Layer 0 thi goi search() that de lay Top-K chinh thuc.
+function stepWalk() {
+  if (!walk || walk.done) return;
+  const node = index.nodes[walk.currentId];
+  const neighbors = node.layers[walk.currentLayer] || [];
+
+  let bestId = null, bestDist = walk.currentDist;
+  for (const neighborId of neighbors) {
+    const d = calculateDistance(query, index.nodes[neighborId].vector, index.metric);
+    if (d < bestDist) { bestDist = d; bestId = neighborId; }
+  }
+
+  if (bestId !== null) {
+    // Tim thay lang gieng gan hon -> di chuyen ngang tai tang hien tai
+    walk.currentId = bestId;
+    walk.currentDist = bestDist;
+    walk.trail.push({ id: bestId, layer: walk.currentLayer });
+  } else if (walk.currentLayer > 0) {
+    // Cuc tri dia phuong tai tang nay -> rot xuong tang duoi
+    walk.currentLayer -= 1;
+    walk.trail.push({ id: walk.currentId, layer: walk.currentLayer });
+  } else {
+    // Da cham Layer 0 va hoi tu -> doi chieu voi search() CHINH THUC
+    walk.results = index.search(query, 3, 32);
+    walk.done = true;
+  }
+}
+
+// render(ctx) ve: canh Layer 0 mo xam, canh Layer 1+ mau tim (#a855f7, node
+// to hon), duong di walk.trail mau indigo (#4f46e5), node hien tai khoanh
+// cyan (#06b6d4), diem truy van hinh kim cuong vang, Top-K cuoi cung khoanh
+// xanh la khi walk.done === true.</code></pre>
+                </div>
+              </div>
+            </div>
+
             <!-- References Block -->
             <section class="article-refs">
               <h2>📖 Tài liệu tham khảo</h2>
@@ -675,5 +780,237 @@ function updateNeighbors(node, newNeighbor, layer, maxM) {
 
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
+    <script type="module">
+      import { HNSWIndex, calculateDistance } from './vdb-engine.js';
+
+      // --- Duyet Greedy Search tren do thi HNSW that (Muc 6.6) ---
+      const CANVAS_W = 640;
+      const CANVAS_H = 320;
+      const PADDING = 28;
+      const NUM_POINTS = 30;
+
+      const canvas = document.getElementById('hnsw-walk-canvas');
+      const ctx = canvas.getContext('2d');
+      const statusEl = document.getElementById('hnsw-walk-status');
+
+      let points, index, query, walk;
+
+      function randomPoint() {
+        return [PADDING + Math.random() * (CANVAS_W - 2 * PADDING), PADDING + Math.random() * (CANVAS_H - 2 * PADDING)];
+      }
+
+      function buildIndex() {
+        points = Array.from({ length: NUM_POINTS }, (_, i) => ({ id: i, vector: randomPoint() }));
+        index = new HNSWIndex(4, 16, 'euclidean');
+        for (const p of points) {
+          index.insert(p.id, p.vector);
+        }
+      }
+
+      function initWalk() {
+        const startId = index.enterPointId;
+        const startDist = calculateDistance(query, index.nodes[startId].vector, index.metric);
+        walk = {
+          currentId: startId,
+          currentLayer: index.maxLayer,
+          currentDist: startDist,
+          trail: [{ id: startId, layer: index.maxLayer }],
+          done: false,
+          results: null,
+        };
+      }
+
+      function resetAll() {
+        buildIndex();
+        query = randomPoint();
+        initWalk();
+        render();
+        statusEl.textContent =
+          'Đồ thị mới: ' +
+          NUM_POINTS +
+          ' node, M=4, efConstruction=16, maxLayer hiện tại = ' +
+          index.maxLayer +
+          '. Điểm vào (enter point) là node #' +
+          index.enterPointId +
+          '. Bấm "▶ Bước tiếp theo" để bắt đầu Greedy Search.';
+      }
+
+      function newQuery() {
+        query = randomPoint();
+        initWalk();
+        render();
+        statusEl.textContent =
+          'Điểm truy vấn mới. Điểm vào là node #' +
+          index.enterPointId +
+          ' ở layer ' +
+          index.maxLayer +
+          '. Bấm "▶ Bước tiếp theo" để duyệt.';
+      }
+
+      function stepWalk() {
+        if (!walk || walk.done) return;
+
+        const node = index.nodes[walk.currentId];
+        const neighbors = node.layers[walk.currentLayer] || [];
+
+        let bestId = null;
+        let bestDist = walk.currentDist;
+        for (const neighborId of neighbors) {
+          const d = calculateDistance(query, index.nodes[neighborId].vector, index.metric);
+          if (d < bestDist) {
+            bestDist = d;
+            bestId = neighborId;
+          }
+        }
+
+        if (bestId !== null) {
+          statusEl.textContent =
+            'Đang ở layer ' +
+            walk.currentLayer +
+            ', node #' +
+            walk.currentId +
+            ' (dist=' +
+            walk.currentDist.toFixed(2) +
+            '). Tìm thấy hàng xóm #' +
+            bestId +
+            ' gần hơn (dist=' +
+            bestDist.toFixed(2) +
+            ') → di chuyển tới #' +
+            bestId +
+            '.';
+          walk.currentId = bestId;
+          walk.currentDist = bestDist;
+          walk.trail.push({ id: bestId, layer: walk.currentLayer });
+        } else if (walk.currentLayer > 0) {
+          statusEl.textContent =
+            'Đang ở layer ' +
+            walk.currentLayer +
+            ', node #' +
+            walk.currentId +
+            ' (dist=' +
+            walk.currentDist.toFixed(2) +
+            '). Không còn hàng xóm nào gần hơn ở tầng này (cực trị địa phương) → rớt xuống layer ' +
+            (walk.currentLayer - 1) +
+            '.';
+          walk.currentLayer -= 1;
+          walk.trail.push({ id: walk.currentId, layer: walk.currentLayer });
+        } else {
+          const results = index.search(query, 3, 32);
+          walk.done = true;
+          walk.results = results;
+          statusEl.textContent =
+            'Đã đến layer 0, hội tụ tại node #' +
+            walk.currentId +
+            '. Kết quả tìm kiếm chính thức search(query, 3, efSearch=32): ' +
+            results.map((r) => '#' + r.id + ' (dist=' + r.distance.toFixed(2) + ')').join(', ') +
+            '.';
+        }
+
+        render();
+      }
+
+      function render() {
+        ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+        // 1. Canh Layer 0 - do thi nen, ve mo
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.lineWidth = 1;
+        for (const id in index.nodes) {
+          const node = index.nodes[id];
+          const neighbors = node.layers[0] || [];
+          for (const nId of neighbors) {
+            if (Number(nId) < Number(id)) continue; // tranh ve trung 2 lan
+            const other = index.nodes[nId];
+            ctx.beginPath();
+            ctx.moveTo(node.vector[0], node.vector[1]);
+            ctx.lineTo(other.vector[0], other.vector[1]);
+            ctx.stroke();
+          }
+        }
+
+        // 2. Canh Layer 1+ - "xa lo" thua thot, mau tim sang
+        ctx.strokeStyle = 'rgba(168,85,247,0.55)';
+        ctx.lineWidth = 1.5;
+        for (const id in index.nodes) {
+          const node = index.nodes[id];
+          for (let l = 1; l < node.layers.length; l++) {
+            const neighbors = node.layers[l] || [];
+            for (const nId of neighbors) {
+              if (Number(nId) < Number(id)) continue;
+              const other = index.nodes[nId];
+              ctx.beginPath();
+              ctx.moveTo(node.vector[0], node.vector[1]);
+              ctx.lineTo(other.vector[0], other.vector[1]);
+              ctx.stroke();
+            }
+          }
+        }
+
+        // 3. Duong di Greedy Search da duyet qua - mau indigo
+        ctx.strokeStyle = '#4f46e5';
+        ctx.lineWidth = 2.5;
+        for (let i = 1; i < walk.trail.length; i++) {
+          const a = index.nodes[walk.trail[i - 1].id].vector;
+          const b = index.nodes[walk.trail[i].id].vector;
+          ctx.beginPath();
+          ctx.moveTo(a[0], a[1]);
+          ctx.lineTo(b[0], b[1]);
+          ctx.stroke();
+        }
+
+        // 4. Cac node - node ton tai o tang cao hon (highway) ve to hon
+        for (const id in index.nodes) {
+          const node = index.nodes[id];
+          const isHighway = node.layers.length > 1;
+          const [x, y] = node.vector;
+          ctx.beginPath();
+          ctx.arc(x, y, isHighway ? 5 : 3, 0, Math.PI * 2);
+          ctx.fillStyle = isHighway ? '#a855f7' : 'rgba(255,255,255,0.55)';
+          ctx.fill();
+        }
+
+        // 5. Top-K ket qua chinh thuc (khi da hoi tu) - khoanh xanh la
+        if (walk.done && walk.results) {
+          ctx.strokeStyle = '#22c55e';
+          ctx.lineWidth = 2;
+          for (const r of walk.results) {
+            const [x, y] = index.nodes[r.id].vector;
+            ctx.beginPath();
+            ctx.arc(x, y, 9, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+
+        // 6. Node hien tai cua walk - khoanh cyan, kem nhan layer
+        {
+          const [x, y] = index.nodes[walk.currentId].vector;
+          ctx.beginPath();
+          ctx.arc(x, y, 8, 0, Math.PI * 2);
+          ctx.strokeStyle = '#06b6d4';
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+          ctx.fillStyle = '#06b6d4';
+          ctx.font = '11px monospace';
+          ctx.fillText('#' + walk.currentId + ' (L' + walk.currentLayer + ')', x + 10, y - 8);
+        }
+
+        // 7. Diem truy van - hinh kim cuong vang
+        ctx.save();
+        ctx.translate(query[0], query[1]);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(-5, -5, 10, 10);
+        ctx.restore();
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.font = '11px monospace';
+        ctx.fillText('Q', query[0] + 8, query[1] + 4);
+      }
+
+      document.getElementById('hnsw-walk-next-btn').addEventListener('click', stepWalk);
+      document.getElementById('hnsw-walk-reset-btn').addEventListener('click', resetAll);
+      document.getElementById('hnsw-walk-query-btn').addEventListener('click', newQuery);
+
+      resetAll();
+    </script>
   </body>
 </html>

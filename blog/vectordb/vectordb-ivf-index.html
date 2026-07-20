@@ -394,6 +394,85 @@ function searchIVF(query, index, nprobe = 2, limit = 5, database) {
               </tbody>
             </table>
 
+            <h2>5.6 Thực hành: Trực quan hóa phân hoạch Voronoi &amp; nprobe</h2>
+            <p>
+              Demo bên dưới sinh ngẫu nhiên khoảng 70 điểm dữ liệu 2D, phân cụm bằng <code>kMeans</code> qua lớp
+              <code>IVFIndex(6, 'euclidean')</code> thật của <code>vdb-engine.js</code>, sau đó gọi
+              <code>build()</code> để đổ dữ liệu vào 6 bucket (danh sách đảo ngược). Kéo thanh trượt
+              <strong>nprobe</strong> để thay đổi số cụm được quét khi tìm kiếm — các cụm
+              <strong>được quét</strong> (probed) hiển thị sáng rõ, các cụm <strong>bị bỏ qua</strong> (skipped) hiển
+              thị mờ xám. Chỉ số <code>scannedPercent</code> hiển thị bên dưới là số thật trả về từ
+              <code>index.search()</code>, không phải số ước lượng.
+            </p>
+
+            <div class="code-tabs" id="ivf-voronoi-demo">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🗺️ Voronoi Partitions &amp; nprobe — IVFIndex thật</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Xem trước</button>
+                  <button class="code-tabs__tab" type="button" data-tab="js">JavaScript</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="mux-demo">
+                  <canvas
+                    id="ivf-voronoi-canvas"
+                    width="640"
+                    height="320"
+                    style="width: 100%; height: 320px; background: #0b0f19; border-radius: 6px"
+                  ></canvas>
+                  <div style="display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap">
+                    <label for="ivf-nprobe-slider" style="font-size: 14px"
+                      >nprobe: <strong id="ivf-nprobe-value">2</strong> / 6</label
+                    >
+                    <input
+                      type="range"
+                      id="ivf-nprobe-slider"
+                      min="1"
+                      max="6"
+                      step="1"
+                      value="2"
+                      style="max-width: 220px; flex: 1"
+                    />
+                    <button class="mux-input-btn" type="button" id="ivf-new-query-btn">🎯 Điểm truy vấn mới</button>
+                  </div>
+                  <div id="ivf-voronoi-status" class="mux-demo__output">Đang khởi tạo chỉ mục IVF...</div>
+                </div>
+              </div>
+              <div class="code-tabs__panel" data-panel="js">
+                <div class="code-window" style="margin: 0; border-radius: 0">
+                  <div class="code-header">
+                    <span class="code-filename">ivf_voronoi_demo.js (đúng logic đang chạy ở tab Xem trước)</span>
+                    <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+                  </div>
+                  <pre><code class="language-js">import { IVFIndex } from './vdb-engine.js';
+
+// Sinh ngau nhien ~70 diem du lieu 2D trong khong gian canvas (co le)
+const PADDING = 24;
+const dataset = Array.from({ length: 70 }, (_, i) => ({
+  id: i,
+  vector: [
+    PADDING + Math.random() * (640 - 2 * PADDING),
+    PADDING + Math.random() * (320 - 2 * PADDING),
+  ],
+}));
+
+// Xay dung chi muc IVF that: 6 centroids, do do Euclidean
+const ivfIndex = new IVFIndex(6, 'euclidean');
+dataset.forEach((p) => ivfIndex.insert(p.id, p.vector));
+ivfIndex.build(); // chay kMeans that va do du lieu vao 6 buckets
+
+// Moi lan keo slider nprobe -> goi lai search() that, khong mo phong
+function onNprobeChange(nprobe) {
+  const results = ivfIndex.search(queryPoint, 8, nprobe);
+  // results[i].scannedPercent la % du lieu THAT da duoc quet qua
+  console.log(`nprobe=${nprobe} -> quet ${results[0].scannedPercent}% du lieu`);
+  return results;
+}</code></pre>
+                </div>
+              </div>
+            </div>
+
             <!-- References Block -->
             <section class="article-refs">
               <h2>📖 Tài liệu tham khảo</h2>
@@ -698,5 +777,164 @@ function searchIVF(query, index, nprobe = 2, limit = 5, database) {
 
     <script src="../../i18n.js" defer></script>
     <script src="../blog.js" defer></script>
+    <script type="module">
+      import { IVFIndex, calculateDistance } from './vdb-engine.js';
+
+      const CENTROIDS_COUNT = 6;
+      const K = 8;
+      const PADDING = 24;
+      const CLUSTER_COLORS = ['#06b6d4', '#a855f7', '#f59e0b', '#10b981', '#ef4444', '#eab308'];
+
+      const canvas = document.getElementById('ivf-voronoi-canvas');
+      const ctx = canvas.getContext('2d');
+      const statusEl = document.getElementById('ivf-voronoi-status');
+      const slider = document.getElementById('ivf-nprobe-slider');
+      const nprobeValueEl = document.getElementById('ivf-nprobe-value');
+      const newQueryBtn = document.getElementById('ivf-new-query-btn');
+
+      let ivfIndex;
+      let queryPoint;
+      let pointCluster; // Map: id -> chi so bucket/centroid
+
+      function randomPoint() {
+        return [
+          PADDING + Math.random() * (canvas.width - 2 * PADDING),
+          PADDING + Math.random() * (canvas.height - 2 * PADDING),
+        ];
+      }
+
+      function buildIndex() {
+        ivfIndex = new IVFIndex(CENTROIDS_COUNT, 'euclidean');
+        const n = 70 + Math.floor(Math.random() * 11); // 70-80 diem
+        for (let i = 0; i < n; i++) {
+          ivfIndex.insert(i, randomPoint());
+        }
+        ivfIndex.build();
+
+        pointCluster = {};
+        for (const cIdx in ivfIndex.buckets) {
+          ivfIndex.buckets[cIdx].forEach((item) => {
+            pointCluster[item.id] = Number(cIdx);
+          });
+        }
+      }
+
+      // Xac dinh cac centroid se duoc "probe" cho 1 nprobe cho truoc - dung
+      // dung logic sap xep theo khoang cach ma IVFIndex.search() dung noi bo.
+      function getProbedCentroids(nprobe) {
+        const centroidDists = ivfIndex.centroids.map((centroid, idx) => ({
+          idx,
+          distance: calculateDistance(queryPoint, centroid, ivfIndex.metric),
+        }));
+        centroidDists.sort((a, b) => a.distance - b.distance);
+        return new Set(centroidDists.slice(0, nprobe).map((c) => c.idx));
+      }
+
+      function render(nprobe) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const probed = getProbedCentroids(nprobe);
+        const results = ivfIndex.search(queryPoint, K, nprobe);
+        const resultIds = new Set(results.map((r) => r.id));
+
+        // 1. Ve duong lien ket tu centroid toi cac diem thanh vien (chi cum duoc probe)
+        for (const cIdx in ivfIndex.buckets) {
+          if (!probed.has(Number(cIdx))) continue;
+          const centroid = ivfIndex.centroids[cIdx];
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.12)';
+          ctx.lineWidth = 0.5;
+          ivfIndex.buckets[cIdx].forEach((item) => {
+            ctx.beginPath();
+            ctx.moveTo(centroid[0], centroid[1]);
+            ctx.lineTo(item.vector[0], item.vector[1]);
+            ctx.stroke();
+          });
+        }
+
+        // 2. Ve tat ca cac diem du lieu, mau theo cum - cum bi bo qua thi mo xam
+        for (const cIdx in ivfIndex.buckets) {
+          const isProbed = probed.has(Number(cIdx));
+          const color = CLUSTER_COLORS[cIdx % CLUSTER_COLORS.length];
+          ivfIndex.buckets[cIdx].forEach((item) => {
+            ctx.fillStyle = isProbed ? color : 'rgba(148, 163, 184, 0.25)';
+            ctx.beginPath();
+            ctx.arc(item.vector[0], item.vector[1], 4, 0, 2 * Math.PI);
+            ctx.fill();
+          });
+        }
+
+        // 3. Highlight cac ket qua Top K tim duoc (vien xanh la)
+        results.forEach((res, i) => {
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(res.vector[0], res.vector[1], 8, 0, 2 * Math.PI);
+          ctx.stroke();
+        });
+
+        // 4. Ve cac centroid - centroid duoc probe sang ro, centroid bi bo qua mo xam
+        ivfIndex.centroids.forEach((centroid, cIdx) => {
+          const isProbed = probed.has(cIdx);
+          ctx.fillStyle = isProbed ? CLUSTER_COLORS[cIdx % CLUSTER_COLORS.length] : 'rgba(148, 163, 184, 0.35)';
+          ctx.beginPath();
+          ctx.arc(centroid[0], centroid[1], 7, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        });
+
+        // 5. Ve query point (ngoi sao do)
+        ctx.fillStyle = '#ef4444';
+        drawStar(queryPoint[0], queryPoint[1], 5, 9, 4);
+
+        // Cap nhat trang thai bang so lieu THAT tra ve tu search()
+        const scannedPercent = results.length > 0 ? results[0].scannedPercent : '0.0';
+        statusEl.textContent =
+          `nprobe=${nprobe} → chỉ quét ~${scannedPercent}% dữ liệu (${probed.size}/${CENTROIDS_COUNT} cụm), ` +
+          `tìm được ${results.length} kết quả gần nhất.`;
+      }
+
+      function drawStar(cx, cy, spikes, outerRadius, innerRadius) {
+        let rot = (Math.PI / 2) * 3;
+        const step = Math.PI / spikes;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - outerRadius);
+        for (let i = 0; i < spikes; i++) {
+          let x = cx + Math.cos(rot) * outerRadius;
+          let y = cy + Math.sin(rot) * outerRadius;
+          ctx.lineTo(x, y);
+          rot += step;
+          x = cx + Math.cos(rot) * innerRadius;
+          y = cy + Math.sin(rot) * innerRadius;
+          ctx.lineTo(x, y);
+          rot += step;
+        }
+        ctx.lineTo(cx, cy - outerRadius);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function reset() {
+        buildIndex();
+        queryPoint = randomPoint();
+        slider.value = '2';
+        nprobeValueEl.textContent = '2';
+        render(2);
+      }
+
+      slider.addEventListener('input', () => {
+        const nprobe = Number(slider.value);
+        nprobeValueEl.textContent = String(nprobe);
+        render(nprobe);
+      });
+
+      newQueryBtn.addEventListener('click', () => {
+        queryPoint = randomPoint();
+        render(Number(slider.value));
+      });
+
+      reset();
+    </script>
   </body>
 </html>
