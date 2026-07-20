@@ -304,7 +304,69 @@ Trả lời:`;
                 cosine giữa các câu liên tục. Khi khoảng cách vượt quá một ngưỡng giới hạn, hệ thống nhận biết chủ đề đã
                 thay đổi và ngắt chunk tại đó.
               </li>
+              <li>
+                <strong>Hybrid Search (Tìm kiếm kết hợp)</strong>: Tìm kiếm Vector thuần (dense retrieval) rất giỏi nắm
+                bắt ý nghĩa nhưng lại yếu với truy vấn đòi hỏi khớp chính xác từ khóa hiếm gặp (mã lỗi, số hiệu sản
+                phẩm, tên riêng chưa từng xuất hiện trong dữ liệu huấn luyện embedding). Hybrid Search chạy song song
+                <strong>hai</strong> công cụ tìm kiếm độc lập trên cùng một câu hỏi — tìm kiếm từ khóa cổ điển (thường
+                dùng BM25/full-text index) và tìm kiếm Vector ngữ nghĩa — rồi hợp nhất hai danh sách kết quả riêng biệt
+                đó thành một bảng xếp hạng cuối cùng duy nhất.
+              </li>
             </ul>
+
+            <p>
+              Vấn đề của việc hợp nhất là: điểm số BM25 (thường vài chục) và điểm Cosine Similarity (từ 0 đến 1) nằm
+              trên hai thang đo hoàn toàn khác nhau, không thể cộng trực tiếp. Kỹ thuật phổ biến nhất để giải quyết là
+              <strong>Reciprocal Rank Fusion (RRF)</strong> — thay vì hợp nhất theo điểm số thô, RRF chỉ dựa vào
+              <strong>thứ hạng (rank)</strong> của tài liệu trong mỗi danh sách kết quả riêng lẻ:
+            </p>
+
+            <p style="text-align: center">
+              $\text{RRFScore}(d) = \sum_{r \in \text{rankers}} \frac{1}{k + \text{rank}_r(d)}$
+            </p>
+
+            <p>
+              Trong đó $d$ là một tài liệu ứng viên, $\text{rankers}$ là tập các công cụ tìm kiếm tham gia hợp nhất (ở
+              đây là 2: BM25 và Vector Search), $\text{rank}_r(d)$ là thứ hạng của tài liệu $d$ trong danh sách kết quả
+              của công cụ $r$ (hạng 1 là tốt nhất), và $k$ là một hằng số làm mượt (thường chọn $k = 60$) để tránh tài
+              liệu đứng hạng 1 lấn át quá mức các tài liệu đứng gần đó.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">reciprocal_rank_fusion.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Hop nhat 2 danh sach ket qua (BM25 keyword search + Vector search) bang RRF
+function reciprocalRankFusion(keywordResults, vectorResults, k = 60) {
+  const scores = new Map(); // docId -> diem RRF cong don
+
+  // Moi danh sach dong gop 1/(k + rank) cho tung tai lieu, rank bat dau tu 1
+  [keywordResults, vectorResults].forEach((resultList) => {
+    resultList.forEach((docId, index) => {
+      const rank = index + 1;
+      const prev = scores.get(docId) || 0;
+      scores.set(docId, prev + 1 / (k + rank));
+    });
+  });
+
+  // Sap xep giam dan theo diem RRF tong hop - tai lieu xuat hien tot o CA HAI
+  // danh sach se co diem cao hon tai lieu chi tot o mot danh sach duy nhat
+  return Array.from(scores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([docId]) => docId);
+}</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Vì sao không chỉ dùng Vector Search thuần?</div>
+              <p>
+                Tài liệu chứa đúng số hiệu sản phẩm "XJ-4471B" mà người dùng gõ gần như chắc chắn sẽ có thứ hạng khớp từ
+                khóa (BM25) rất cao, nhưng embedding của chuỗi này có thể không nằm gần embedding câu hỏi trong không
+                gian ngữ nghĩa (mô hình nhúng không "học" được ý nghĩa của một mã sản phẩm ngẫu nhiên). RRF đảm bảo tài
+                liệu đó vẫn được đẩy lên cao nhờ điểm BM25, dù điểm Vector Search thấp.
+              </p>
+            </div>
 
             <div class="callout callout--tip">
               <div class="callout__title">💡 Mẹo tăng tốc RAG bằng nén dữ liệu</div>
