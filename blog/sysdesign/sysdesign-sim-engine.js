@@ -664,6 +664,7 @@ export class Simulator {
             busy: r.busy,
             servers: r.servers,
             queueDepth: r.queueDepth,
+            queueLimit: r.queueLimit,
             utilization: r.alive && r.servers > 0 ? r.busy / r.servers : 0,
           })),
         };
