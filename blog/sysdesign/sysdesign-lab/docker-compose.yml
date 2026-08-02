@@ -1,0 +1,140 @@
+# docker-compose.yml — Traffic Lab dùng chung cho cả Series 20 (Thiết Kế Hệ Thống).
+#
+# TRIẾT LÝ: MỘT stack duy nhất, mở rộng dần qua các bài học bằng Docker Compose
+# `profiles`. Bạn không phải dựng lại môi trường mới ở mỗi bài — chỉ bật thêm profile.
+#
+#   Bài 2  →  docker compose --profile base up -d      (1 app server, đo giới hạn)
+#   Bài 3  →  docker compose --profile lb up -d        (nginx + 3 app replica)
+#   Bài 5  →  docker compose --profile cache up -d     (thêm Redis)
+#   Bài 7  →  docker compose --profile db up -d        (thêm PostgreSQL)
+#
+# KHÔNG có Dockerfile và KHÔNG cần `npm install`: code được bind-mount thẳng vào image
+# node chính thức, nên bạn sửa file là chạy lại thấy ngay, và đọc được toàn bộ code.
+
+name: sysdesign-lab
+
+# Cấu hình chung cho mọi app server — YAML anchor để không lặp lại 3 lần.
+x-app-base: &app-base
+  image: node:22-alpine
+  working_dir: /app
+  volumes:
+    - ./app:/app:ro
+  command: ['node', 'app.js']
+  environment:
+    PORT: '3000'
+    DB_DELAY_MS: '40' # độ trễ "database" giả lập, để thấy giá trị của cache (Bài 5)
+    GRACEFUL: '1' # đặt '0' để xem hậu quả khi thiếu graceful shutdown (Bài 3)
+  restart: unless-stopped
+  # Giới hạn tài nguyên để kết quả đo ổn định và không phụ thuộc máy bạn mạnh cỡ nào.
+  # QUAN TRỌNG: 1 CPU cho mỗi app là chủ ý — Node chỉ có một luồng JS, và ta muốn
+  # thấy đúng hiện tượng nghẽn ở tầng ứng dụng (Bài 2 mục 2.2).
+  deploy:
+    resources:
+      limits:
+        cpus: '1.0'
+        memory: 256M
+
+services:
+  # ─────────────────────────────────────────────────────────────
+  # APP SERVERS
+  # ─────────────────────────────────────────────────────────────
+  # INSTANCE được đặt riêng cho từng replica: nhờ đó `/whoami` và header `X-Instance`
+  # cho biết chính xác replica nào đã phục vụ request — cách đơn giản nhất để thấy
+  # load balancer phân phối thật sự ra sao (Bài 3).
+  app1:
+    <<: *app-base
+    profiles: ['base', 'lb', 'cache', 'db']
+    environment:
+      PORT: '3000'
+      DB_DELAY_MS: '40'
+      GRACEFUL: '1'
+      INSTANCE: 'app1'
+      REDIS_URL: 'redis://redis:6379'
+    ports:
+      # Chỉ app1 mở cổng ra host, để Bài 2 gọi trực tiếp không qua LB.
+      - '3001:3000'
+
+  app2:
+    <<: *app-base
+    profiles: ['lb', 'cache', 'db']
+    environment:
+      PORT: '3000'
+      DB_DELAY_MS: '40'
+      GRACEFUL: '1'
+      INSTANCE: 'app2'
+      REDIS_URL: 'redis://redis:6379'
+
+  app3:
+    <<: *app-base
+    profiles: ['lb', 'cache', 'db']
+    environment:
+      PORT: '3000'
+      DB_DELAY_MS: '40'
+      GRACEFUL: '1'
+      INSTANCE: 'app3'
+      REDIS_URL: 'redis://redis:6379'
+
+  # ─────────────────────────────────────────────────────────────
+  # LOAD BALANCER (Bài 3, Bài 4)
+  # ─────────────────────────────────────────────────────────────
+  lb:
+    image: nginx:1.27-alpine
+    profiles: ['lb', 'cache', 'db']
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./nginx/lb.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/logformat.conf:/etc/nginx/conf.d/00-logformat.conf:ro
+    depends_on:
+      - app1
+      - app2
+      - app3
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # CACHE (Bài 5)
+  # ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    profiles: ['cache', 'db']
+    ports:
+      - '6379:6379'
+    # maxmemory nhỏ có chủ ý: để bạn tự gây ra tình trạng eviction và quan sát
+    # chính sách LRU hoạt động (Bài 5, mục 5.5).
+    command: ['redis-server', '--maxmemory', '64mb', '--maxmemory-policy', 'allkeys-lru', '--appendonly', 'no']
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # DATABASE (Bài 7 — hiện là một node; cấu hình primary/replica sẽ thêm ở Bài 7)
+  # ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    profiles: ['db']
+    environment:
+      POSTGRES_PASSWORD: labpass
+      POSTGRES_USER: lab
+      POSTGRES_DB: lab
+    ports:
+      - '5432:5432'
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # BỘ ĐO TẢI
+  #
+  # Không tự chạy (`profiles: [tools]`) — bạn gọi thủ công khi muốn đo:
+  #   docker compose run --rm loadgen node loadgen.js --url http://lb:8080/fast -c 20 -d 15
+  # ─────────────────────────────────────────────────────────────
+  loadgen:
+    image: node:22-alpine
+    profiles: ['tools']
+    working_dir: /loadgen
+    volumes:
+      - ./loadgen:/loadgen:ro
+    entrypoint: ['node']
+    command: ['loadgen.js', '--help']
+    deploy:
+      resources:
+        limits:
+          # Cho loadgen nhiều CPU hơn app để chính nó không thành nút cổ chai.
+          # Nếu thấy container này chạm 100% CPU thì số đo đã vô nghĩa (xem loadgen.js).
+          cpus: '2.0'
