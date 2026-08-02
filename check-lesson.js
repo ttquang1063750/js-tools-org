@@ -40,11 +40,16 @@ console.log(
   `${colors.cyan}${colors.bold}=== Đang tiến hành kiểm định tự động: ${path.basename(filePath)} ===${colors.reset}\n`
 );
 
+// Trang "bài học" mới cần canonical/JSON-LD/article-body. Các trang hub, simulator,
+// playground và sandbox là công cụ tương tác (thường nhúng iframe) nên được miễn.
+// `sandbox.html`: đặt tên theo `vdb-sandbox.html` (Series 19) và `sysdesign-sandbox.html`
+// (Series 20).
 const isLessonPage =
   filePath.includes('blog/') &&
   !filePath.endsWith('series.html') &&
   !filePath.endsWith('simulator.html') &&
   !filePath.endsWith('playground.html') &&
+  !filePath.endsWith('sandbox.html') &&
   !filePath.endsWith('index.html');
 
 let hasError = false;

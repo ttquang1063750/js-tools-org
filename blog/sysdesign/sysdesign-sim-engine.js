@@ -353,6 +353,15 @@ export class Simulator {
       rollingWindowMs: 5000,
       rollingSamples: [], // [{ t, lat }] — đã sắp tăng dần theo t
       rollingDropEvents: [], // [t] các lần drop, cũng trong cửa sổ
+      // Trần số mẫu giữ lại: ở RPS cao, cửa sổ 5s có thể chứa hàng chục nghìn mẫu và việc
+      // sắp xếp chúng mỗi khung hình sẽ làm tụt frame rate. Giữ tối đa `rollingCap` mẫu
+      // MỚI NHẤT — percentile vẫn đại diện đúng cho hiện tại.
+      rollingCap: 6000,
+      // Cache số liệu latency: chỉ tính lại mỗi `statsEveryMs` (thời gian mô phỏng) thay vì
+      // mỗi khung hình. Hàng đợi / inFlight vẫn luôn lấy tươi vì chúng rẻ.
+      statsEveryMs: 200,
+      statsCache: null,
+      statsCacheAt: -Infinity,
     };
     // Request đầu tiên. Khoảng cách giữa các request theo phân phối exponential với
     // trung bình 1000/rps (ms) => đúng định nghĩa tiến trình Poisson cường độ lambda.
@@ -452,7 +461,12 @@ export class Simulator {
     st.completed++;
     const lat = now - req.t0;
     if (now >= st.warmupMs) st.latencies.push(lat);
-    if (st.live) st.rollingSamples.push({ t: now, lat });
+    if (st.live) {
+      st.rollingSamples.push({ t: now, lat });
+      // Chặn trần để chi phí tính percentile không tăng theo RPS.
+      const over = st.rollingSamples.length - st.rollingCap;
+      if (over > 0) st.rollingSamples.splice(0, over);
+    }
   }
 
   /**
@@ -573,6 +587,17 @@ export class Simulator {
     return this;
   }
 
+  /**
+   * Mảng latency thô trong cửa sổ trượt — dùng để vẽ histogram.
+   * Trả về mảng mới (an toàn để sắp xếp), nên hãy gọi có tiết chế (vài lần/giây là đủ),
+   * đừng gọi mỗi khung hình.
+   */
+  getRollingLatencies() {
+    if (!this._st) return [];
+    this._trimRollingWindow(this._st.now);
+    return this._st.rollingSamples.map((s) => s.lat);
+  }
+
   /** Đổi tốc độ request đến giữa lúc đang chạy (slider RPS). */
   setRps(rps) {
     if (!this._st) throw new Error('Phải gọi beginLive() trước');
@@ -627,26 +652,37 @@ export class Simulator {
     const st = this._st;
     if (!st) return null;
     this._trimRollingWindow(st.now);
-    const lats = st.rollingSamples.map((s) => s.lat);
-    const nDrop = st.rollingDropEvents.length;
-    const rollDropRate = lats.length + nDrop === 0 ? 0 : nDrop / (lats.length + nDrop);
-    const windowSec = st.rollingWindowMs / 1000;
+
+    // Số liệu latency được cache: sắp xếp lại mảng mỗi khung hình là chi phí lớn nhất của
+    // vòng lặp vẽ, mà mắt người cũng không đọc nổi con số đổi 60 lần/giây.
+    if (!st.statsCache || st.now - st.statsCacheAt >= st.statsEveryMs) {
+      const lats = st.rollingSamples.map((s) => s.lat);
+      const nDrop = st.rollingDropEvents.length;
+      st.statsCache = {
+        latency: {
+          count: lats.length,
+          p50: percentile(lats, 50),
+          p95: percentile(lats, 95),
+          p99: percentile(lats, 99),
+          mean: lats.length === 0 ? 0 : lats.reduce((a, b) => a + b, 0) / lats.length,
+        },
+        dropRate: lats.length + nDrop === 0 ? 0 : nDrop / (lats.length + nDrop),
+        throughput: lats.length / (st.rollingWindowMs / 1000),
+      };
+      st.statsCacheAt = st.now;
+    }
+    const cached = st.statsCache;
+
     return {
       t: st.now,
       rps: st.rps,
       completed: st.completed,
       dropped: st.dropped,
-      dropRate: rollDropRate,
+      dropRate: cached.dropRate,
       // Throughput thực nhận trong cửa sổ vừa rồi — so với `rps` gửi vào sẽ thấy phần bị mất.
-      throughput: lats.length / windowSec,
+      throughput: cached.throughput,
       windowMs: st.rollingWindowMs,
-      latency: {
-        count: lats.length,
-        p50: percentile(lats, 50),
-        p95: percentile(lats, 95),
-        p99: percentile(lats, 99),
-        mean: lats.length === 0 ? 0 : lats.reduce((a, b) => a + b, 0) / lats.length,
-      },
+      latency: cached.latency,
       stages: this.stages.map((s, idx) => {
         const servers = s.replicas.reduce((sum, r) => sum + (r.alive ? r.servers : 0), 0);
         const busy = s.replicas.reduce((sum, r) => sum + r.busy, 0);

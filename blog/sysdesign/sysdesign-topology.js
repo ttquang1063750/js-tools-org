@@ -150,6 +150,15 @@ export class TopologyRenderer {
   }
 
   /**
+   * Mức chiếm dụng đã làm mượt của một tầng — chính con số đang hiển thị trên canvas.
+   * Trang gọi hàm này khi cần viết nhận xét, để chữ và hình KHÔNG nói hai số khác nhau
+   * (giá trị tức thời trong snapshot nhảy 0↔100% nên không dùng để kết luận được).
+   */
+  smoothedUtilization(stageId) {
+    return this._emaUtil.has(stageId) ? this._emaUtil.get(stageId) : null;
+  }
+
+  /**
    * Vẽ một khung hình. `snapshot` là kết quả của Simulator.liveSnapshot().
    * Trả về false nếu bỏ qua khung hình (canvas đang bị ẩn) để người gọi biết mà vẽ lại sau.
    */
@@ -546,10 +555,15 @@ export class UtilLatencyChart {
 
   /**
    * @param {number} muPerSec - tốc độ phục vụ tối đa (request/giây), để vẽ đường lý thuyết
-   * @param {number} yMaxMs   - trần trục Y; mặc định tự chọn theo dữ liệu
+   * @param {number} yMaxMs   - trần trục Y; mặc định 8 lần thời gian phục vụ
+   * @param {boolean} showTheory - có vẽ đường lý thuyết M/M/1 hay không.
+   *   ĐẶT false khi tầng đang đo có NHIỀU server song song: lúc đó hệ là M/M/c chứ không
+   *   phải M/M/1, và ở cùng một mức rho thì M/M/c cho độ trễ thấp hơn hẳn. Vẽ đường M/M/1
+   *   chồng lên số đo M/M/c sẽ khiến người học tưởng mô phỏng sai, trong khi thực ra là
+   *   so sai mô hình.
    */
-  render(muPerSec, yMaxMs = null) {
-    this._lastArgs = [muPerSec, yMaxMs];
+  render(muPerSec, yMaxMs = null, showTheory = true) {
+    this._lastArgs = [muPerSec, yMaxMs, showTheory];
     const dims = setupHiDpi(this.canvas);
     if (!dims) return false;
     const { ctx, w, h } = dims;
@@ -604,7 +618,7 @@ export class UtilLatencyChart {
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     let started = false;
-    for (let px = 0; px <= plotW; px++) {
+    for (let px = 0; showTheory && px <= plotW; px++) {
       const rho = px / plotW;
       if (rho >= 0.999) break;
       const lambda = rho * muPerSec;
@@ -664,11 +678,19 @@ export class UtilLatencyChart {
     // Chú giải
     ctx.font = '9px system-ui, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillStyle = THEME.accent;
-    ctx.fillText('— lý thuyết W = 1/(μ−λ)', padL + 4, padT + 10);
+    let legendY = padT + 10;
+    if (showTheory) {
+      ctx.fillStyle = THEME.accent;
+      ctx.fillText('— lý thuyết W = 1/(μ−λ)', padL + 4, legendY);
+      legendY += 11;
+    } else {
+      ctx.fillStyle = THEME.textMuted;
+      ctx.fillText('nhiều server song song (M/M/c)', padL + 4, legendY);
+      legendY += 11;
+    }
     if (this.points.length > 0) {
       ctx.fillStyle = THEME.warn;
-      ctx.fillText('● đo từ mô phỏng', padL + 4, padT + 21);
+      ctx.fillText('● đo từ mô phỏng', padL + 4, legendY);
     }
     ctx.fillStyle = THEME.textMuted;
     ctx.textAlign = 'center';

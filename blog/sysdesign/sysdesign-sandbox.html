@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Traffic Lab — Phòng Lab Lưu Lượng | Thiết Kế Hệ Thống</title>
+    <meta
+      name="description"
+      content="Phòng lab lưu lượng tương tác: kéo thanh RPS và xem p99 bùng nổ khi mức chiếm dụng tiến tới 100%. Mô phỏng load balancer, cache, DB replica và tiêm sự cố ngay trên trình duyệt."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-sandbox" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-sandbox" />
+    <meta property="og:title" content="Traffic Lab — Phòng Lab Lưu Lượng | Thiết Kế Hệ Thống" />
+    <meta
+      property="og:description"
+      content="Phòng lab lưu lượng tương tác: kéo thanh RPS và xem p99 bùng nổ khi mức chiếm dụng tiến tới 100%."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-dark: #0b0f19;
+        --bg-card: #151d30;
+        --border-color: #24324f;
+        --text-main: #f3f4f6;
+        --text-muted: #9ca3af;
+        --primary: #38bdf8;
+        --primary-hover: #0ea5e9;
+        --accent-green: #22c55e;
+        --accent-amber: #f59e0b;
+        --accent-red: #ef4444;
+        --accent-indigo: #818cf8;
+        --font-body: 'Inter', sans-serif;
+        --font-title: 'Outfit', sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background-color: var(--bg-dark);
+        color: var(--text-main);
+        font-family: var(--font-body);
+        padding: 16px;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 10px;
+        margin-bottom: 14px;
+        flex-shrink: 0;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      h1 {
+        font-family: var(--font-title);
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.3px;
+        background: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 55%, #0ea5e9 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .subtitle {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 3px;
+        max-width: 620px;
+        line-height: 1.5;
+      }
+
+      .lab-container {
+        display: grid;
+        grid-template-columns: 270px 1fr 300px;
+        gap: 14px;
+        flex-grow: 1;
+        align-items: start;
+      }
+
+      @media (max-width: 1100px) {
+        .lab-container {
+          grid-template-columns: 250px 1fr;
+        }
+        .right-panel {
+          grid-column: span 2;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .lab-container {
+          grid-template-columns: 1fr;
+        }
+        .right-panel,
+        .left-panel {
+          grid-column: span 1;
+        }
+      }
+
+      .panel {
+        background-color: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 14px;
+      }
+
+      .panel-title {
+        font-family: var(--font-title);
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: var(--text-muted);
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border-color);
+      }
+
+      .field {
+        margin-bottom: 13px;
+      }
+
+      .field label {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 5px;
+      }
+
+      .field label b {
+        color: var(--primary);
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+      }
+
+      input[type='range'] {
+        width: 100%;
+        accent-color: var(--primary);
+        height: 18px;
+      }
+
+      select {
+        width: 100%;
+        background: #0f1626;
+        color: var(--text-main);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-family: var(--font-body);
+        font-size: 12px;
+      }
+
+      .btn-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 4px;
+      }
+
+      button {
+        background: #0f1626;
+        color: var(--text-main);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 6px 9px;
+        font-family: var(--font-body);
+        font-size: 11.5px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+
+      button:hover {
+        background: #1b2740;
+        border-color: var(--primary);
+      }
+
+      button.danger:hover {
+        border-color: var(--accent-red);
+        color: #fecaca;
+      }
+
+      button.primary {
+        background: var(--primary);
+        color: #04263a;
+        font-weight: 600;
+        border-color: var(--primary);
+      }
+
+      button.primary:hover {
+        background: var(--primary-hover);
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        border-radius: 8px;
+      }
+
+      #topoCanvas {
+        height: 340px;
+      }
+
+      #histCanvas {
+        height: 130px;
+      }
+
+      #chartCanvas {
+        height: 168px;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .metric {
+        background: #0f1626;
+        border: 1px solid var(--border-color);
+        border-radius: 7px;
+        padding: 8px 9px;
+      }
+
+      .metric span {
+        display: block;
+        font-size: 10px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+
+      .metric b {
+        display: block;
+        font-family: var(--font-title);
+        font-size: 17px;
+        font-weight: 600;
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .sub-title {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin: 12px 0 5px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .note {
+        font-size: 11px;
+        line-height: 1.55;
+        color: var(--text-muted);
+        background: rgba(56, 189, 248, 0.06);
+        border-left: 2px solid var(--primary);
+        padding: 8px 10px;
+        border-radius: 0 6px 6px 0;
+        margin-top: 12px;
+      }
+
+      .note b {
+        color: var(--text-main);
+      }
+
+      #verdict {
+        font-size: 11.5px;
+        line-height: 1.55;
+        margin-top: 10px;
+        padding: 9px 10px;
+        border-radius: 7px;
+        border: 1px solid var(--border-color);
+        background: #0f1626;
+      }
+
+      #verdict.ok {
+        border-color: rgba(34, 197, 94, 0.5);
+      }
+      #verdict.warn {
+        border-color: rgba(245, 158, 11, 0.5);
+      }
+      #verdict.bad {
+        border-color: rgba(239, 68, 68, 0.55);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Traffic Lab — Phòng Lab Lưu Lượng</h1>
+        <p class="subtitle">
+          Kéo thanh <b>RPS</b> lên và quan sát <b>p99</b>: độ trễ không tăng tuyến tính theo tải mà bùng nổ khi mức
+          chiếm dụng tiến tới 100%. Toàn bộ số liệu do bộ mô phỏng sự kiện rời rạc sinh ra và đã được đối chiếu với công
+          thức hàng đợi M/M/1.
+        </p>
+      </div>
+      <div class="btn-row">
+        <button id="btnPause" class="primary">⏸ Tạm dừng</button>
+        <button id="btnReset">↺ Dựng lại</button>
+      </div>
+    </header>
+
+    <div class="lab-container">
+      <!-- ==================== TRÁI: ĐIỀU KHIỂN ==================== -->
+      <div class="panel left-panel">
+        <div class="panel-title">Cấu hình</div>
+
+        <div class="field">
+          <label for="preset">Kiến trúc</label>
+          <select id="preset">
+            <option value="single">1. Một server duy nhất</option>
+            <option value="lb" selected>2. LB + nhiều app server</option>
+            <option value="cache">3. Thêm tầng cache</option>
+            <option value="full">4. Thêm DB replica đọc</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="rps">Tải đưa vào <b id="rpsVal">120 rps</b></label>
+          <input id="rps" type="range" min="10" max="2000" step="10" value="120" />
+        </div>
+
+        <div class="field" id="fReplicas">
+          <label for="replicas">Số app replica <b id="replicasVal">3</b></label>
+          <input id="replicas" type="range" min="1" max="8" step="1" value="3" />
+        </div>
+
+        <div class="field" id="fLb">
+          <label for="lb">Thuật toán phân phối</label>
+          <select id="lb">
+            <option value="round-robin" selected>Round Robin</option>
+            <option value="least-connections">Least Connections</option>
+            <option value="random">Random</option>
+            <option value="random-two-choices">Random of 2 choices</option>
+          </select>
+        </div>
+
+        <div class="field" id="fHit">
+          <label for="hit">Cache hit ratio <b id="hitVal">80%</b></label>
+          <input id="hit" type="range" min="0" max="100" step="1" value="80" />
+        </div>
+
+        <div class="field">
+          <label for="qlimit">Hàng đợi tối đa / replica <b id="qlimitVal">100</b></label>
+          <input id="qlimit" type="range" min="10" max="500" step="10" value="100" />
+        </div>
+
+        <div class="sub-title">Tiêm sự cố</div>
+        <div class="btn-row">
+          <button id="btnKill" class="danger">✖ Giết 1 app server</button>
+          <button id="btnSlow" class="danger">🐌 DB chậm 10×</button>
+          <button id="btnCacheDown" class="danger">💥 Cache sập</button>
+          <button id="btnHeal">✚ Hồi phục hết</button>
+        </div>
+
+        <div class="note">
+          <b>Cách đọc:</b> ô nhỏ trong mỗi tầng là một replica; vạch tím dồn ở mép phải là hàng đợi (đỏ = gần đầy, sắp
+          drop); điểm sáng là request đang được xử lý. Phần trăm ở đầu mỗi tầng là mức chiếm dụng đã làm mượt.
+        </div>
+      </div>
+
+      <!-- ==================== GIỮA: TOPOLOGY ==================== -->
+      <div class="panel">
+        <div class="panel-title">Đường đi của request</div>
+        <canvas id="topoCanvas"></canvas>
+        <div id="verdict">Đang khởi động mô phỏng…</div>
+      </div>
+
+      <!-- ==================== PHẢI: SỐ LIỆU ==================== -->
+      <div class="panel right-panel">
+        <div class="panel-title">Số liệu (cửa sổ 5 giây)</div>
+        <div class="metric-grid">
+          <div class="metric"><span>p50</span><b id="mP50">—</b></div>
+          <div class="metric"><span>p99</span><b id="mP99">—</b></div>
+          <div class="metric"><span>Throughput</span><b id="mTp">—</b></div>
+          <div class="metric"><span>Tỉ lệ drop</span><b id="mDrop">—</b></div>
+        </div>
+
+        <div class="sub-title">Phân phối latency</div>
+        <canvas id="histCanvas"></canvas>
+
+        <div class="sub-title">Mức chiếm dụng ↔ độ trễ</div>
+        <canvas id="chartCanvas"></canvas>
+        <div class="note">
+          Điểm vàng là số đo thật của tầng đang nghẽn, chấm dần theo thời gian. Càng gần <b>ρ = 1</b> độ trễ càng dựng
+          đứng — đó là lý do một server "còn 20% CPU rảnh" vẫn có thể đang chết. Chọn kiến trúc
+          <b>"Một server duy nhất"</b> để thấy thêm đường lý thuyết <b>W = 1/(μ−λ)</b> vẽ chồng lên: đường này chỉ đúng
+          cho <b>một</b> server (M/M/1), nên với nhiều server song song nó được ẩn đi thay vì so sai mô hình.
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { Simulator } from './sysdesign-sim-engine.js';
+      import { TopologyRenderer, LatencyHistogram, UtilLatencyChart, formatMs } from './sysdesign-topology.js';
+
+      const $ = (id) => document.getElementById(id);
+
+      // ------------------------------------------------------------------
+      // Các kiến trúc mẫu. Mỗi preset khớp với một chặng trong lộ trình bài học:
+      // 1 server (Bài 1-2) -> LB + replica (Bài 3) -> cache (Bài 5) -> replica DB (Bài 7).
+      // `bottleneck` chỉ ra tầng dùng để chấm điểm lên đồ thị ρ↔W.
+      // ------------------------------------------------------------------
+      const PRESETS = {
+        single: {
+          label: 'Một server duy nhất',
+          uses: { replicas: false, lb: false, hit: false },
+          bottleneck: 'app',
+          build: (cfg) => [
+            { id: 'app', replicas: 1, servers: 1, serviceMs: 20, queueLimit: cfg.qlimit, lb: 'round-robin' },
+          ],
+        },
+        lb: {
+          label: 'LB + nhiều app server',
+          uses: { replicas: true, lb: true, hit: false },
+          bottleneck: 'app',
+          build: (cfg) => [
+            { id: 'lb', replicas: 1, servers: 64, serviceMs: 0.3, queueLimit: 5000 },
+            {
+              id: 'app',
+              replicas: cfg.replicas,
+              servers: 1,
+              serviceMs: 20,
+              queueLimit: cfg.qlimit,
+              lb: cfg.lb,
+            },
+          ],
+        },
+        cache: {
+          label: 'Thêm tầng cache',
+          uses: { replicas: true, lb: true, hit: true },
+          bottleneck: 'db',
+          build: (cfg) => [
+            { id: 'lb', replicas: 1, servers: 64, serviceMs: 0.3, queueLimit: 5000 },
+            { id: 'app', replicas: cfg.replicas, servers: 4, serviceMs: 4, queueLimit: cfg.qlimit, lb: cfg.lb },
+            {
+              id: 'cache',
+              replicas: 1,
+              servers: 32,
+              serviceMs: 0.6,
+              hitRatio: cfg.hit,
+              shortCircuit: true,
+              queueLimit: 2000,
+            },
+            { id: 'db', replicas: 1, servers: 8, serviceMs: 18, queueLimit: 400 },
+          ],
+        },
+        full: {
+          label: 'Thêm DB replica đọc',
+          uses: { replicas: true, lb: true, hit: true },
+          bottleneck: 'db',
+          build: (cfg) => [
+            { id: 'lb', replicas: 1, servers: 64, serviceMs: 0.3, queueLimit: 5000 },
+            { id: 'app', replicas: cfg.replicas, servers: 4, serviceMs: 4, queueLimit: cfg.qlimit, lb: cfg.lb },
+            {
+              id: 'cache',
+              replicas: 1,
+              servers: 32,
+              serviceMs: 0.6,
+              hitRatio: cfg.hit,
+              shortCircuit: true,
+              queueLimit: 2000,
+            },
+            { id: 'db', replicas: 3, servers: 8, serviceMs: 18, queueLimit: 400, lb: 'least-connections' },
+          ],
+        },
+      };
+
+      const LABELS = {
+        lb: 'Load Balancer',
+        app: 'App Server',
+        cache: 'Cache',
+        db: 'Database',
+      };
+
+      // ------------------------------------------------------------------
+      // Trạng thái trang
+      // ------------------------------------------------------------------
+      const topo = new TopologyRenderer($('topoCanvas'), { labels: LABELS });
+      const hist = new LatencyHistogram($('histCanvas'));
+      const chart = new UtilLatencyChart($('chartCanvas'));
+
+      let sim = null;
+      let paused = false;
+      let presetKey = 'lb';
+      let lastHistAt = 0;
+      let lastChartAt = 0;
+
+      const readCfg = () => ({
+        rps: +$('rps').value,
+        replicas: +$('replicas').value,
+        lb: $('lb').value,
+        hit: +$('hit').value / 100,
+        qlimit: +$('qlimit').value,
+      });
+
+      /** Ẩn/hiện các ô điều khiển không áp dụng cho kiến trúc đang chọn. */
+      function syncControlVisibility() {
+        const uses = PRESETS[presetKey].uses;
+        $('fReplicas').style.display = uses.replicas ? '' : 'none';
+        $('fLb').style.display = uses.lb ? '' : 'none';
+        $('fHit').style.display = uses.hit ? '' : 'none';
+      }
+
+      /**
+       * Dựng lại mô phỏng. Phải dựng lại (không sửa nóng) khi đổi số replica / thuật toán LB /
+       * hàng đợi, vì đó là thay đổi cấu trúc hạ tầng — giống việc deploy lại thật.
+       * Riêng RPS và cache hit ratio thì đổi nóng được.
+       */
+      function rebuild() {
+        const cfg = readCfg();
+        sim = new Simulator({ seed: 2024 });
+        for (const stage of PRESETS[presetKey].build(cfg)) sim.addStage(stage);
+        sim.beginLive({ rps: cfg.rps });
+        chart.clearPoints();
+        lastChartAt = 0;
+        lastHistAt = 0;
+      }
+
+      // ------------------------------------------------------------------
+      // Nhận xét tự động — biến số liệu thành câu kết luận có nghĩa
+      // ------------------------------------------------------------------
+      function verdict(snap) {
+        const el = $('verdict');
+        const bn = PRESETS[presetKey].bottleneck;
+        const stage = snap.stages.find((s) => s.id === bn) || snap.stages[snap.stages.length - 1];
+        // Dùng ĐÚNG con số đang hiển thị trên canvas (đã làm mượt). Nếu lấy giá trị tức thời
+        // trong snapshot thì chữ và hình sẽ nói hai số khác nhau — vd hình 75% mà chữ 100%.
+        const util = topo.smoothedUtilization(stage.id) ?? stage.utilization;
+        const dead = snap.stages.some((s) => s.replicas.some((r) => !r.alive));
+        const drop = snap.dropRate;
+
+        let cls = 'ok';
+        let msg;
+        if (drop > 0.01) {
+          cls = 'bad';
+          msg = `<b>Đang mất ${(drop * 100).toFixed(1)}% request.</b> Hàng đợi đã đầy nên hệ thống từ chối thẳng — đây là lúc người dùng thấy lỗi, không chỉ là chậm. Giảm tải, thêm replica, hoặc bật cache.`;
+        } else if (util >= 0.9) {
+          cls = 'bad';
+          msg = `<b>Tầng "${LABELS[stage.id] || stage.id}" đã chiếm dụng ${(util * 100).toFixed(0)}%.</b> p99 hiện ${formatMs(snap.latency.p99)} và sẽ tăng rất nhanh nếu tải nhích thêm — vùng này latency gần như dựng đứng.`;
+        } else if (util >= 0.7) {
+          cls = 'warn';
+          msg = `<b>Tầng "${LABELS[stage.id] || stage.id}" ở ${(util * 100).toFixed(0)}%.</b> Nhìn còn dư công suất, nhưng p99 (${formatMs(snap.latency.p99)}) đã cao hơn hẳn p50 (${formatMs(snap.latency.p50)}) — hàng đợi bắt đầu hình thành.`;
+        } else {
+          msg = `Hệ thống thoải mái: tầng nghẽn nhất mới ${(util * 100).toFixed(0)}%, p50 ${formatMs(snap.latency.p50)} và p99 ${formatMs(snap.latency.p99)} còn gần nhau.`;
+        }
+        if (dead) msg += ' <b style="color:#fca5a5">Có replica đã chết</b> — tải dồn sang các replica còn sống.';
+        el.className = cls;
+        el.innerHTML = msg;
+      }
+
+      // ------------------------------------------------------------------
+      // Vòng lặp vẽ
+      // ------------------------------------------------------------------
+      function frame() {
+        if (sim && !paused) {
+          const snap = sim.advance(16);
+
+          topo.render(snap);
+
+          $('mP50').textContent = formatMs(snap.latency.p50);
+          $('mP99').textContent = formatMs(snap.latency.p99);
+          $('mTp').textContent = Math.round(snap.throughput) + '/s';
+          $('mDrop').textContent = (snap.dropRate * 100).toFixed(1) + '%';
+          $('mDrop').style.color = snap.dropRate > 0.01 ? 'var(--accent-red)' : 'var(--text-main)';
+          $('mP99').style.color =
+            snap.latency.p99 > 8 * Math.max(1, snap.latency.p50) ? 'var(--accent-amber)' : 'var(--text-main)';
+
+          // Histogram: tính lại 4 lần/giây là đủ (mảng latency phải sắp xếp lại).
+          if (snap.t - lastHistAt > 250) {
+            lastHistAt = snap.t;
+            hist.render(sim.getRollingLatencies(), snap.latency);
+            verdict(snap);
+          }
+
+          // Đồ thị ρ↔W: chấm một điểm mỗi giây mô phỏng để thấy quỹ đạo khi kéo slider.
+          if (snap.t - lastChartAt > 1000) {
+            lastChartAt = snap.t;
+            const bn = PRESETS[presetKey].bottleneck;
+            const stage = snap.stages.find((s) => s.id === bn);
+            if (stage && snap.latency.count > 0) {
+              chart.addPoint(Math.min(1, stage.utilization), snap.latency.mean);
+              if (chart.points.length > 60) chart.points.shift();
+            }
+            // μ của tầng nghẽn = tổng số server / thời gian phục vụ mỗi request.
+            // Đường lý thuyết M/M/1 CHỈ đúng khi tầng đó có duy nhất 1 server; nhiều server
+            // song song là M/M/c và ở cùng ρ sẽ nhanh hơn M/M/1, nên khi đó ta ẩn đường
+            // lý thuyết đi thay vì vẽ một đường sai mô hình rồi để người học tự hoang mang.
+            const stageCfg = PRESETS[presetKey].build(readCfg()).find((s) => s.id === bn);
+            if (stageCfg) {
+              const servers = (stageCfg.replicas || 1) * (stageCfg.servers || 1);
+              const muPerSec = 1000 / (stageCfg.serviceMs / servers);
+              chart.render(muPerSec, null, servers === 1);
+            }
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+
+      // ------------------------------------------------------------------
+      // Gắn sự kiện
+      // ------------------------------------------------------------------
+      $('rps').addEventListener('input', () => {
+        const v = +$('rps').value;
+        $('rpsVal').textContent = v + ' rps';
+        if (sim) sim.setRps(v); // đổi nóng, không dựng lại
+      });
+
+      $('hit').addEventListener('input', () => {
+        const v = +$('hit').value;
+        $('hitVal').textContent = v + '%';
+        if (sim) {
+          const st = sim.getStage('cache');
+          if (st) st.hitRatio = v / 100; // đổi nóng
+        }
+      });
+
+      $('replicas').addEventListener('input', () => {
+        $('replicasVal').textContent = $('replicas').value;
+        rebuild();
+      });
+
+      $('qlimit').addEventListener('input', () => {
+        $('qlimitVal').textContent = $('qlimit').value;
+        rebuild();
+      });
+
+      $('lb').addEventListener('change', rebuild);
+
+      $('preset').addEventListener('change', () => {
+        presetKey = $('preset').value;
+        syncControlVisibility();
+        rebuild();
+      });
+
+      $('btnPause').addEventListener('click', () => {
+        paused = !paused;
+        $('btnPause').textContent = paused ? '▶ Tiếp tục' : '⏸ Tạm dừng';
+      });
+
+      $('btnReset').addEventListener('click', rebuild);
+
+      $('btnKill').addEventListener('click', () => {
+        if (!sim) return;
+        // Giết replica sống đầu tiên của tầng app (hoặc tầng cuối nếu preset chỉ có 1 tầng).
+        const stage = sim.getStage('app') || sim.stages[sim.stages.length - 1];
+        const victim = stage.replicas.find((r) => r.alive);
+        if (victim) sim.injectNow({ action: 'kill', stageId: stage.id, replicaIndex: victim.index });
+      });
+
+      $('btnSlow').addEventListener('click', () => {
+        if (!sim) return;
+        const stage = sim.getStage('db') || sim.getStage('app') || sim.stages[sim.stages.length - 1];
+        sim.injectNow({ action: 'slow', stageId: stage.id, factor: 10 });
+      });
+
+      $('btnCacheDown').addEventListener('click', () => {
+        if (!sim || !sim.getStage('cache')) return;
+        sim.injectNow({ action: 'cache-down', stageId: 'cache' });
+        $('hit').value = 0;
+        $('hitVal').textContent = '0%';
+      });
+
+      $('btnHeal').addEventListener('click', () => {
+        if (!sim) return;
+        sim.healAll();
+      });
+
+      // ------------------------------------------------------------------
+      // Khởi động
+      // ------------------------------------------------------------------
+      syncControlVisibility();
+      rebuild();
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>
