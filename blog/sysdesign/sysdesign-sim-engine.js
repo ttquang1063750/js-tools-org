@@ -323,133 +323,359 @@ export class Simulator {
    *                              Đây chính là "warm-up" mà Bài 2 dạy khi đo tải thật.
    * @param {number} sampleEveryMs - chu kỳ lấy mẫu queue depth để vẽ đồ thị.
    */
+  // ---- Trạng thái chạy dùng chung cho cả run() (batch) và chế độ live ----
+
+  _initState({ rps, durationMs, warmupMs, sampleEveryMs, live }) {
+    this.queueSamples = [];
+    this._st = {
+      events: new EventQueue(),
+      latencies: [],
+      offered: 0,
+      completed: 0,
+      dropped: 0,
+      nextSampleAt: sampleEveryMs,
+      sampleEveryMs,
+      warmupMs,
+      durationMs,
+      rps,
+      live: !!live,
+      now: 0,
+      pendingFaults: [...this.faults].sort((a, b) => a.atMs - b.atMs),
+      faultCursor: 0,
+      tArrival: 0,
+      // Chỉ theo dõi ở chế độ live: các request đang được phục vụ, để renderer vẽ
+      // được "hạt sáng" đang đi qua từng tầng. Batch mode bỏ qua cho nhanh.
+      activeServices: [],
+      nextReqId: 1,
+      // Cửa sổ trượt THEO THỜI GIAN cho số liệu live: p99 phải phản ánh "mấy giây vừa rồi",
+      // giống dashboard thật. Nếu dùng cửa sổ theo số mẫu thì ở RPS thấp nó sẽ còn giữ dữ liệu
+      // của giai đoạn quá tải rất lâu, khiến p99 hiển thị sai lệch sau khi hệ đã hồi phục.
+      rollingWindowMs: 5000,
+      rollingSamples: [], // [{ t, lat }] — đã sắp tăng dần theo t
+      rollingDropEvents: [], // [t] các lần drop, cũng trong cửa sổ
+    };
+    // Request đầu tiên. Khoảng cách giữa các request theo phân phối exponential với
+    // trung bình 1000/rps (ms) => đúng định nghĩa tiến trình Poisson cường độ lambda.
+    const st = this._st;
+    st.tArrival = this.rng.exponential(1000 / rps);
+    if (st.tArrival < durationMs) {
+      st.events.push({
+        t: st.tArrival,
+        type: 'arrival',
+        stageIdx: 0,
+        gen: true,
+        req: { t0: st.tArrival, id: st.nextReqId++ },
+      });
+      st.offered++;
+    }
+  }
+
+  _startService(stage, replica, req, now) {
+    const st = this._st;
+    const serviceMs = stage.sampleServiceMs(this.rng);
+    replica.busy++;
+    replica.busyTimeMs += serviceMs;
+    const stageIdx = this.stages.indexOf(stage);
+    const ev = { t: now + serviceMs, type: 'departure', stageIdx, replica, req };
+    st.events.push(ev);
+    if (st.live) {
+      st.activeServices.push({
+        reqId: req.id,
+        stageIdx,
+        replicaIndex: replica.index,
+        tStart: now,
+        tEnd: now + serviceMs,
+      });
+    }
+  }
+
+  _admit(stageIdx, req, now) {
+    const st = this._st;
+    const stage = this.stages[stageIdx];
+    const replica = stage.pickReplica(this.rng);
+    // Không còn replica sống => request bị drop (toàn tầng chết).
+    if (!replica) {
+      stage.dropped++;
+      st.dropped++;
+      if (st.live) st.rollingDropEvents.push(now);
+      return;
+    }
+    if (replica.hasFreeServer) {
+      this._startService(stage, replica, req, now);
+    } else if (replica.hasQueueRoom) {
+      replica.queue.push(req);
+      if (replica.queueDepth > replica.maxQueueSeen) replica.maxQueueSeen = replica.queueDepth;
+    } else {
+      // Hàng đợi đầy => drop. Thà từ chối nhanh còn hơn để client chờ tới timeout (Bài 13).
+      stage.dropped++;
+      st.dropped++;
+      if (st.live) st.rollingDropEvents.push(now);
+    }
+  }
+
+  /** Loại bỏ mẫu đã ra khỏi cửa sổ thời gian (chỉ dùng ở chế độ live). */
+  _trimRollingWindow(now) {
+    const st = this._st;
+    const cutoff = now - st.rollingWindowMs;
+    let i = 0;
+    while (i < st.rollingSamples.length && st.rollingSamples[i].t < cutoff) i++;
+    if (i > 0) st.rollingSamples.splice(0, i);
+    let j = 0;
+    while (j < st.rollingDropEvents.length && st.rollingDropEvents[j] < cutoff) j++;
+    if (j > 0) st.rollingDropEvents.splice(0, j);
+  }
+
+  _applyDueFaults(now) {
+    const st = this._st;
+    while (st.faultCursor < st.pendingFaults.length && st.pendingFaults[st.faultCursor].atMs <= now) {
+      this.applyFault(st.pendingFaults[st.faultCursor]);
+      st.faultCursor++;
+    }
+  }
+
+  _maybeSample(now) {
+    const st = this._st;
+    while (now >= st.nextSampleAt && st.nextSampleAt <= st.durationMs) {
+      this.queueSamples.push({
+        t: st.nextSampleAt,
+        depths: this.stages.map((s) => ({
+          id: s.id,
+          depth: s.replicas.reduce((sum, r) => sum + r.queueDepth, 0),
+        })),
+      });
+      st.nextSampleAt += st.sampleEveryMs;
+    }
+  }
+
+  _recordCompletion(now, req) {
+    const st = this._st;
+    st.completed++;
+    const lat = now - req.t0;
+    if (now >= st.warmupMs) st.latencies.push(lat);
+    if (st.live) st.rollingSamples.push({ t: now, lat });
+  }
+
+  /**
+   * Xử lý MỘT sự kiện. Dùng chung cho batch và live để hai chế độ không thể phân kỳ logic.
+   * Thứ tự gọi RNG bên trong được giữ nguyên tuyệt đối (pickReplica → sampleServiceMs →
+   * arrival kế tiếp; ở departure: hit/miss → kéo hàng đợi) vì đổi thứ tự sẽ làm mọi con số
+   * đã kiểm chứng trong bài học lệch đi.
+   */
+  _processEvent(ev) {
+    const st = this._st;
+    const now = ev.t;
+    st.now = now;
+
+    if (ev.type === 'arrival') {
+      this._admit(ev.stageIdx, ev.req, now);
+
+      // CHỈ request do bộ sinh tải tạo ra (`gen: true`) mới kéo theo request kế tiếp.
+      // Các chặng nội bộ (tầng k -> k+1) cũng dùng event 'arrival' nhưng KHÔNG được sinh
+      // thêm tải mới — nếu không, một hệ 3 tầng sẽ tự nhân tải lên 3 lần.
+      if (ev.gen) {
+        st.tArrival += this.rng.exponential(1000 / st.rps);
+        if (st.tArrival < st.durationMs) {
+          st.events.push({
+            t: st.tArrival,
+            type: 'arrival',
+            stageIdx: 0,
+            gen: true,
+            req: { t0: st.tArrival, id: st.nextReqId++ },
+          });
+          st.offered++;
+        }
+      }
+      return;
+    }
+
+    if (ev.type === 'departure') {
+      const stage = this.stages[ev.stageIdx];
+      const replica = ev.replica;
+      replica.busy--;
+      replica.completed++;
+      if (st.live) {
+        const i = st.activeServices.findIndex((a) => a.reqId === ev.req.id && a.stageIdx === ev.stageIdx);
+        if (i !== -1) st.activeServices.splice(i, 1);
+      }
+
+      // Tầng cache: quyết định hit/miss SAU khi đã trả phí thời gian tra cache.
+      let finishHere = ev.stageIdx === this.stages.length - 1;
+      if (stage.shortCircuit && stage.hitRatio > 0) {
+        if (this.rng.next() < stage.hitRatio) {
+          stage.hits++;
+          finishHere = true; // HIT => không đi xuống tầng sau nữa.
+        } else {
+          stage.misses++;
+        }
+      } else if (stage.shortCircuit) {
+        stage.misses++;
+      }
+
+      if (finishHere) {
+        this._recordCompletion(now, ev.req);
+      } else {
+        st.events.push({ t: now, type: 'arrival', stageIdx: ev.stageIdx + 1, req: ev.req });
+      }
+
+      // Server vừa rảnh => kéo việc kế tiếp trong hàng đợi ra làm.
+      if (replica.queue.length > 0 && replica.hasFreeServer) {
+        const nextReq = replica.queue.shift();
+        this._startService(stage, replica, nextReq, now);
+      }
+    }
+  }
+
   run({ rps, durationMs, warmupMs = 0, sampleEveryMs = 100 }) {
     if (this.stages.length === 0) throw new Error('Chưa khai báo tầng nào (addStage)');
     if (!(rps > 0)) throw new Error('rps phải > 0');
     if (!(durationMs > 0)) throw new Error('durationMs phải > 0');
 
-    const rng = this.rng;
-    const events = new EventQueue();
-    const latencies = [];
-    let offered = 0;
-    let completed = 0;
-    let dropped = 0;
-    let nextSampleAt = sampleEveryMs;
-    this.queueSamples = [];
+    this._initState({ rps, durationMs, warmupMs, sampleEveryMs, live: false });
+    const st = this._st;
 
-    const pendingFaults = [...this.faults].sort((a, b) => a.atMs - b.atMs);
-    let faultCursor = 0;
-
-    // Sinh sự kiện đến đầu tiên. Khoảng cách giữa các request theo phân phối exponential
-    // với trung bình 1000/rps (ms) => đúng định nghĩa tiến trình Poisson cường độ lambda.
-    const meanInterArrivalMs = 1000 / rps;
-    let tArrival = rng.exponential(meanInterArrivalMs);
-    if (tArrival < durationMs) {
-      events.push({ t: tArrival, type: 'arrival', stageIdx: 0, req: { t0: tArrival } });
-      offered++;
+    while (st.events.size > 0) {
+      const ev = st.events.pop();
+      if (ev.t > durationMs) break;
+      this._applyDueFaults(ev.t);
+      this._maybeSample(ev.t);
+      this._processEvent(ev);
     }
 
-    const startService = (stage, replica, req, now) => {
-      const serviceMs = stage.sampleServiceMs(rng);
-      replica.busy++;
-      replica.busyTimeMs += serviceMs;
-      events.push({
-        t: now + serviceMs,
-        type: 'departure',
-        stageIdx: this.stages.indexOf(stage),
-        replica,
-        req,
-      });
-    };
+    return this.buildMetrics({
+      latencies: st.latencies,
+      offered: st.offered,
+      completed: st.completed,
+      dropped: st.dropped,
+      durationMs,
+      warmupMs,
+      rps,
+    });
+  }
 
-    const admit = (stageIdx, req, now) => {
-      const stage = this.stages[stageIdx];
-      const replica = stage.pickReplica(rng);
-      // Không còn replica sống => request bị drop (toàn tầng chết).
-      if (!replica) {
-        stage.dropped++;
-        dropped++;
-        return;
-      }
-      if (replica.hasFreeServer) {
-        startService(stage, replica, req, now);
-      } else if (replica.hasQueueRoom) {
-        replica.queue.push(req);
-        if (replica.queueDepth > replica.maxQueueSeen) replica.maxQueueSeen = replica.queueDepth;
-      } else {
-        // Hàng đợi đầy => drop. Thà từ chối nhanh còn hơn để client chờ tới timeout (Bài 13).
-        stage.dropped++;
-        dropped++;
-      }
-    };
+  // ==========================================
+  // CHẾ ĐỘ LIVE — cho Traffic Lab animate và đổi tham số giữa lúc chạy
+  // ==========================================
 
-    while (events.size > 0) {
-      const ev = events.pop();
-      const now = ev.t;
-      if (now > durationMs) break;
+  /**
+   * Bắt đầu một phiên mô phỏng "sống": không chạy tới hết mà chờ `advance(dt)` đẩy đồng hồ.
+   * Nhờ vậy người học kéo slider là thấy hệ phản ứng ngay, không phải chạy lại từ đầu.
+   */
+  beginLive({ rps, sampleEveryMs = 250 } = {}) {
+    if (this.stages.length === 0) throw new Error('Chưa khai báo tầng nào (addStage)');
+    if (!(rps > 0)) throw new Error('rps phải > 0');
+    this._initState({
+      rps,
+      durationMs: Number.POSITIVE_INFINITY,
+      warmupMs: 0,
+      sampleEveryMs,
+      live: true,
+    });
+    return this;
+  }
 
-      // Kích hoạt các sự cố đã tới hạn.
-      while (faultCursor < pendingFaults.length && pendingFaults[faultCursor].atMs <= now) {
-        this.applyFault(pendingFaults[faultCursor]);
-        faultCursor++;
-      }
+  /** Đổi tốc độ request đến giữa lúc đang chạy (slider RPS). */
+  setRps(rps) {
+    if (!this._st) throw new Error('Phải gọi beginLive() trước');
+    if (!(rps > 0)) throw new Error('rps phải > 0');
+    this._st.rps = rps;
+    return this;
+  }
 
-      // Lấy mẫu queue depth theo chu kỳ để vẽ đồ thị.
-      while (now >= nextSampleAt && nextSampleAt <= durationMs) {
-        this.queueSamples.push({
-          t: nextSampleAt,
-          depths: this.stages.map((s) => ({
-            id: s.id,
-            depth: s.replicas.reduce((sum, r) => sum + r.queueDepth, 0),
+  /** Áp một sự cố ngay lập tức (nút "Giết 1 app server", "DB chậm 10x", "Cache sập"). */
+  injectNow(fault) {
+    this.applyFault(fault);
+    return this;
+  }
+
+  /** Hồi sinh toàn bộ replica đã bị giết và bỏ hệ số làm chậm. */
+  healAll() {
+    for (const s of this.stages) {
+      s.slowFactor = 1;
+      for (const r of s.replicas) r.alive = true;
+    }
+    return this;
+  }
+
+  /**
+   * Đẩy đồng hồ mô phỏng thêm `dtMs` và xử lý mọi sự kiện trong khoảng đó.
+   * `maxEvents` chặn trường hợp quá tải nặng sinh quá nhiều sự kiện làm treo khung hình.
+   */
+  advance(dtMs, maxEvents = 20000) {
+    if (!this._st) throw new Error('Phải gọi beginLive() trước');
+    const st = this._st;
+    const target = st.now + dtMs;
+    let n = 0;
+    while (st.events.size > 0 && n < maxEvents) {
+      const peek = st.events.items[0];
+      if (!peek || peek.t > target) break;
+      const ev = st.events.pop();
+      this._applyDueFaults(ev.t);
+      this._maybeSample(ev.t);
+      this._processEvent(ev);
+      n++;
+    }
+    st.now = target;
+    return this.liveSnapshot();
+  }
+
+  /**
+   * Ảnh chụp trạng thái hiện tại để renderer vẽ.
+   * Lưu ý: `utilization` ở đây là mức chiếm dụng TỨC THỜI (busy/servers) — đúng thứ một
+   * đồng hồ đo trực tiếp hiển thị, khác với utilization bình quân cả phiên ở buildMetrics().
+   */
+  liveSnapshot() {
+    const st = this._st;
+    if (!st) return null;
+    this._trimRollingWindow(st.now);
+    const lats = st.rollingSamples.map((s) => s.lat);
+    const nDrop = st.rollingDropEvents.length;
+    const rollDropRate = lats.length + nDrop === 0 ? 0 : nDrop / (lats.length + nDrop);
+    const windowSec = st.rollingWindowMs / 1000;
+    return {
+      t: st.now,
+      rps: st.rps,
+      completed: st.completed,
+      dropped: st.dropped,
+      dropRate: rollDropRate,
+      // Throughput thực nhận trong cửa sổ vừa rồi — so với `rps` gửi vào sẽ thấy phần bị mất.
+      throughput: lats.length / windowSec,
+      windowMs: st.rollingWindowMs,
+      latency: {
+        count: lats.length,
+        p50: percentile(lats, 50),
+        p95: percentile(lats, 95),
+        p99: percentile(lats, 99),
+        mean: lats.length === 0 ? 0 : lats.reduce((a, b) => a + b, 0) / lats.length,
+      },
+      stages: this.stages.map((s, idx) => {
+        const servers = s.replicas.reduce((sum, r) => sum + (r.alive ? r.servers : 0), 0);
+        const busy = s.replicas.reduce((sum, r) => sum + r.busy, 0);
+        return {
+          id: s.id,
+          index: idx,
+          utilization: servers === 0 ? 1 : busy / servers,
+          queueDepth: s.replicas.reduce((sum, r) => sum + r.queueDepth, 0),
+          dropped: s.dropped,
+          hitRatio: s.hits + s.misses === 0 ? null : s.hits / (s.hits + s.misses),
+          slowFactor: s.slowFactor,
+          replicas: s.replicas.map((r) => ({
+            index: r.index,
+            alive: r.alive,
+            busy: r.busy,
+            servers: r.servers,
+            queueDepth: r.queueDepth,
+            utilization: r.alive && r.servers > 0 ? r.busy / r.servers : 0,
           })),
-        });
-        nextSampleAt += sampleEveryMs;
-      }
-
-      if (ev.type === 'arrival') {
-        admit(ev.stageIdx, ev.req, now);
-
-        // Hẹn request đến tiếp theo.
-        tArrival += rng.exponential(meanInterArrivalMs);
-        if (tArrival < durationMs) {
-          events.push({ t: tArrival, type: 'arrival', stageIdx: 0, req: { t0: tArrival } });
-          offered++;
-        }
-      } else if (ev.type === 'departure') {
-        const stage = this.stages[ev.stageIdx];
-        const replica = ev.replica;
-        replica.busy--;
-        replica.completed++;
-
-        // Tầng cache: quyết định hit/miss SAU khi đã trả phí thời gian tra cache.
-        let finishHere = ev.stageIdx === this.stages.length - 1;
-        if (stage.shortCircuit && stage.hitRatio > 0) {
-          if (rng.next() < stage.hitRatio) {
-            stage.hits++;
-            finishHere = true; // HIT => không đi xuống tầng sau nữa.
-          } else {
-            stage.misses++;
-          }
-        } else if (stage.shortCircuit) {
-          stage.misses++;
-        }
-
-        if (finishHere) {
-          completed++;
-          if (now >= warmupMs) latencies.push(now - ev.req.t0);
-        } else {
-          events.push({ t: now, type: 'arrival', stageIdx: ev.stageIdx + 1, req: ev.req });
-        }
-
-        // Server vừa rảnh => kéo việc kế tiếp trong hàng đợi ra làm.
-        if (replica.queue.length > 0 && replica.hasFreeServer) {
-          const nextReq = replica.queue.shift();
-          startService(stage, replica, nextReq, now);
-        }
-      }
-    }
-
-    return this.buildMetrics({ latencies, offered, completed, dropped, durationMs, warmupMs, rps });
+        };
+      }),
+      // Các request đang được phục vụ — renderer nội suy vị trí theo (now - tStart)/(tEnd - tStart).
+      inFlight: st.activeServices.map((a) => ({
+        reqId: a.reqId,
+        stageIdx: a.stageIdx,
+        replicaIndex: a.replicaIndex,
+        progress: a.tEnd === a.tStart ? 1 : Math.min(1, Math.max(0, (st.now - a.tStart) / (a.tEnd - a.tStart))),
+      })),
+    };
   }
 
   buildMetrics({ latencies, offered, completed, dropped, durationMs, warmupMs, rps }) {
