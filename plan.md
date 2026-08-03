@@ -451,6 +451,14 @@ Cột **Cần trước** ghi số bài tiên quyết, dùng để kiểm chuỗi
 
 ### 5. Danh sách công việc triển khai & tích hợp (Series 20)
 
+> **Tiến độ hạ tầng (cập nhật 2026-08-03):** đã xong toàn bộ phần hạ tầng dùng chung —
+> `blog.css` (tag + hero accent), grammar `json` cho Prism, `sysdesign-sim-engine.js`
+> (đã đối chiếu M/M/1, sai số < 4%), `sysdesign-topology.js` (3 renderer Canvas),
+> `sysdesign-hashring.js`, `sysdesign-engine-selftest.mjs` (42 mục kiểm chứng),
+> `sysdesign-sandbox.html` (Traffic Lab), `sysdesign-lab/` (lab Docker đã chạy thật và đo
+> thật), trang hub, và tích hợp toàn cục (blog/index.html, ROOT index.html, i18n.js,
+> sitemap.xml, search-index.json, AGENTS.md). Còn lại: **18 trang bài học**.
+
 - [ ] **Hạ tầng dùng chung (làm trước, 1 lần):**
   - [ ] Tạo thư mục `blog/sysdesign/`.
   - [ ] Thêm `.blog-card__tag--sysdesign` (color `#38bdf8`, background `rgba(56, 189, 248, 0.08)`) vào `blog/blog.css`; thêm cặp `.article-hero--sysdesign` / `.article-hero__tag--sysdesign` theo đúng pattern các series khác.

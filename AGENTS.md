@@ -170,12 +170,28 @@ js-tools-org/
 │           ├── data_cleaner.py               # Practice code file
 │           └── ... AIE lesson files ...
 │
-│   └── # ── Vector Database Series (Vietnamese, HTML & files co-located) ──
-│       └── vectordb/
-│           ├── vectordb-programming-series.html # Curriculum hub
-│           ├── vdb-sandbox.html              # Interactive 2D Vector Search Sandbox
-│           ├── vdb-engine.js                 # Shared algorithms engine (K-Means, HNSW, PQ)
-│           └── ... Vector DB lesson files & scripts ...
+│   ├── # ── Vector Database Series (Vietnamese, HTML & files co-located) ──
+│   │   └── vectordb/
+│   │       ├── vectordb-programming-series.html # Curriculum hub
+│   │       ├── vdb-sandbox.html              # Interactive 2D Vector Search Sandbox
+│   │       ├── vdb-engine.js                 # Shared algorithms engine (K-Means, HNSW, PQ)
+│   │       └── ... Vector DB lesson files & scripts ...
+│   │
+│   └── # ── System Design Series (Vietnamese; 2 tracks: in-browser sim + real Docker lab) ──
+│       └── sysdesign/
+│           ├── sysdesign-programming-series.html # Curriculum hub
+│           ├── sysdesign-sandbox.html        # Traffic Lab (core interactive demo)
+│           ├── sysdesign-sim-engine.js       # Discrete-event simulation core (validated vs M/M/1)
+│           ├── sysdesign-topology.js         # Canvas renderers (topology, histogram, rho<->latency)
+│           ├── sysdesign-hashring.js         # Consistent hashing + virtual nodes (Lesson 8)
+│           ├── sysdesign-engine-selftest.mjs # `node` self-test, 42 assertions — run before trusting numbers
+│           ├── sysdesign-lab/                # Real Docker lab shared by all 18 lessons
+│           │   ├── docker-compose.yml        #   profiles: base | lb | cache | db | tools
+│           │   ├── app/app.js               #   plain Node http server, 0 deps, mini RESP client
+│           │   ├── loadgen/loadgen.js       #   hand-written load generator (see README caveats)
+│           │   ├── nginx/lb.conf            #   L7 load balancer config
+│           │   └── README.md                #   MANDATORY CPU-architecture preflight
+│           └── ... System Design lesson files ...
 └── README.md
 ```
 
