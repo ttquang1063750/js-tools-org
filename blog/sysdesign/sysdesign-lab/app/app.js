@@ -12,10 +12,13 @@
  *   GET /slow-async?ms → chậm nhưng KHÔNG chặn event loop (I/O giả lập)
  *   GET /slow-sync?ms  → chậm và CHẶN event loop — thủ phạm ở Bài 2, mục 2.2
  *   GET /cached?key=   → cache-aside thật với Redis nếu có REDIS_URL (Bài 5)
+ *   GET /uncached?key= → luôn đi xuống database, dùng làm mốc so sánh (Bài 5)
+ *   POST /reset-stats  → xoá bộ đếm, để mỗi phép đo bắt đầu từ số 0 (Bài 5)
  *   GET /client-ip     → phơi bày lỗ hổng X-Forwarded-For (Bài 4, mục 4.2)
  *   GET /aggregate     → gộp nhiều nhánh (BFF); so song song vs tuần tự (Bài 4, mục 4.4)
  *
- * Biến môi trường: PORT, INSTANCE, REDIS_URL, DB_DELAY_MS, GRACEFUL, TRUST_PROXY_HOPS
+ * Biến môi trường: PORT, INSTANCE, REDIS_URL, DB_DELAY_MS, DB_MAX_CONCURRENCY, GRACEFUL,
+ *                  TRUST_PROXY_HOPS
  */
 
 'use strict';
@@ -32,6 +35,11 @@ const msSince = (t0) => Number(process.hrtime.bigint() - t0) / 1e6;
 const INSTANCE = process.env.INSTANCE || 'app';
 // Độ trễ giả lập của "database" phía sau cache — để thấy cache tiết kiệm bao nhiêu (Bài 5).
 const DB_DELAY_MS = Number(process.env.DB_DELAY_MS || 40);
+// Số truy vấn database ĐỒNG THỜI tối đa — đại diện cho connection pool có thật.
+// Đây là chi tiết làm nên khác biệt ở Bài 5 mục 5.4: nếu "database" là một hàm sleep
+// không giới hạn, thundering herd chỉ làm TĂNG SỐ TRUY VẤN mà không làm chậm gì cả, nên
+// bài học mất hẳn phần quan trọng nhất. Database thật luôn có giới hạn kết nối.
+const DB_MAX_CONCURRENCY = Number(process.env.DB_MAX_CONCURRENCY || 10);
 const REDIS_URL = process.env.REDIS_URL || '';
 const GRACEFUL = process.env.GRACEFUL !== '0';
 
@@ -39,6 +47,10 @@ let healthy = true;
 let inFlight = 0;
 let totalRequests = 0;
 let cacheHits = 0;
+let dbQueries = 0;
+let singleFlightJoins = 0;
+let dbWaitTotalMs = 0;
+let dbMaxQueueDepth = 0;
 let cacheMisses = 0;
 
 // ---------------------------------------------------------------------------
@@ -170,10 +182,85 @@ function json(res, code, obj) {
   res.end(body);
 }
 
-/** Đọc "database": ở lab này là một khoảng chờ, đại diện cho truy vấn thật. */
+/**
+ * Đọc "database": ở lab này là một khoảng chờ, đại diện cho truy vấn thật.
+ *
+ * `dbQueries` là số liệu QUAN TRỌNG NHẤT của Bài 5. Đánh giá cache bằng "có nhanh hơn
+ * không" là chưa đủ — thứ cần đo là bao nhiêu truy vấn đã được đẩy KHỎI database.
+ */
+// Semaphore mô phỏng connection pool: chỉ DB_MAX_CONCURRENCY truy vấn chạy cùng lúc,
+// phần còn lại XẾP HÀNG. Hàng đợi này chính là nơi thundering herd biến thành độ trễ.
+let dbActive = 0;
+const dbWaiters = [];
+
+function dbAcquire() {
+  if (dbActive < DB_MAX_CONCURRENCY) {
+    dbActive++;
+    return Promise.resolve(0);
+  }
+  const t0 = process.hrtime.bigint();
+  if (dbWaiters.length + 1 > dbMaxQueueDepth) dbMaxQueueDepth = dbWaiters.length + 1;
+  return new Promise((resolve) => {
+    dbWaiters.push(() => resolve(Number(process.hrtime.bigint() - t0) / 1e6));
+  });
+}
+
+function dbRelease() {
+  const next = dbWaiters.shift();
+  if (next) next();
+  else dbActive--;
+}
+
 async function readFromDb(key) {
-  await sleep(DB_DELAY_MS);
-  return { key, value: `giá trị của ${key}`, from: 'database', instance: INSTANCE };
+  dbQueries++;
+  const waitedMs = await dbAcquire();
+  dbWaitTotalMs += waitedMs;
+  try {
+    await sleep(DB_DELAY_MS);
+    return { key, value: `giá trị của ${key}`, from: 'database', instance: INSTANCE };
+  } finally {
+    dbRelease();
+  }
+}
+
+/**
+ * SINGLE-FLIGHT (Bài 5, mục 5.4).
+ *
+ * Khi N request cùng miss một key đúng lúc nó hết hạn, cả N đều gọi database — đó là
+ * thundering herd. Map dưới đây gom chúng lại: request ĐẦU TIÊN đi xuống database, các
+ * request sau cùng chờ trên CHÍNH promise đó.
+ *
+ * GIỚI HẠN PHẢI BIẾT: map này nằm trong BỘ NHỚ CỦA MỘT TIẾN TRÌNH. Với 3 replica, mỗi
+ * lần key hết hạn bạn vẫn thấy tối đa 3 truy vấn database chứ không phải 1. Muốn về 1 thì
+ * phải dùng lock chia sẻ trong Redis (SET NX) — đắt hơn và phải xử lý cả trường hợp
+ * người giữ lock chết. Bài học đo cả hai con số này.
+ */
+const inFlightLoads = new Map();
+
+function singleFlight(key, loader) {
+  const pending = inFlightLoads.get(key);
+  if (pending) {
+    singleFlightJoins++;
+    return pending;
+  }
+  // Phải xoá khỏi map trong `finally`, nếu không một lần lỗi sẽ khiến key bị kẹt
+  // vĩnh viễn với một promise đã reject — mọi request sau đó cùng nhận lỗi đó.
+  const promise = loader().finally(() => inFlightLoads.delete(key));
+  inFlightLoads.set(key, promise);
+  return promise;
+}
+
+/**
+ * TTL có jitter (Bài 5, mục 5.3).
+ *
+ * Nếu mọi key được nạp cùng lúc (ví dụ ngay sau khi deploy) và cùng TTL, chúng sẽ hết hạn
+ * cùng một thời điểm => một đợt miss đồng loạt đập vào database. Cộng thêm một lượng ngẫu
+ * nhiên vào TTL để rải các thời điểm hết hạn ra.
+ */
+function ttlWithJitter(baseSec, ratio) {
+  if (!(ratio > 0)) return baseSec;
+  const delta = baseSec * ratio * (Math.random() * 2 - 1);
+  return Math.max(1, Math.round(baseSec + delta));
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +385,11 @@ const server = http.createServer(async (req, res) => {
         totalRequests,
         inFlight,
         cacheHits,
+        dbQueries,
+        singleFlightJoins,
+        dbMaxQueueDepth,
+        dbAvgWaitMs: dbQueries ? Number((dbWaitTotalMs / dbQueries).toFixed(2)) : 0,
+        dbMaxConcurrency: DB_MAX_CONCURRENCY,
         cacheMisses,
         hitRatio: cacheHits + cacheMisses === 0 ? null : cacheHits / (cacheHits + cacheMisses),
       });
@@ -319,14 +411,44 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, mode: 'sync-blocking', ms, instance: INSTANCE });
     }
 
-    if (p === '/cached') {
+    if (p === '/reset-stats') {
+      // Mỗi phép đo của Bài 5 phải bắt đầu từ số 0, nếu không con số dbQueries
+      // sẽ lẫn cả các lần chạy trước.
+      cacheHits = 0;
+      cacheMisses = 0;
+      dbQueries = 0;
+      singleFlightJoins = 0;
+      totalRequests = 0;
+      dbWaitTotalMs = 0;
+      dbMaxQueueDepth = 0;
+      return json(res, 200, { ok: true, instance: INSTANCE });
+    }
+
+    if (p === '/uncached') {
+      // Mốc so sánh: KHÔNG cache, mọi request đều xuống database.
       const key = url.searchParams.get('key') || 'k1';
+      cacheMisses++;
+      const fresh = await readFromDb(key);
+      return json(res, 200, { ...fresh, cache: 'bypassed' });
+    }
+
+    if (p === '/cached') {
+      // Cache-aside thật. Ba tham số để bạn tự bật/tắt từng cơ chế và ĐO chênh lệch:
+      //   ?ttl=30       TTL cơ sở, giây. Đặt nhỏ (1-2s) để tái tạo thundering herd.
+      //   ?flight=single  bật single-flight (mặc định: tắt, để thấy herd trước đã)
+      //   ?jitter=0.2   cộng/trừ tối đa 20% vào TTL để rải thời điểm hết hạn
+      const key = url.searchParams.get('key') || 'k1';
+      const baseTtl = Math.max(1, Number(url.searchParams.get('ttl') || 30));
+      const useSingleFlight = url.searchParams.get('flight') === 'single';
+      const jitter = Number(url.searchParams.get('jitter') || 0);
+
       if (!redis) {
         const fresh = await readFromDb(key);
         cacheMisses++;
         return json(res, 200, { ...fresh, cache: 'disabled' });
       }
       const cacheKey = `demo:${key}`;
+
       let hit = null;
       try {
         hit = await redis.cmd('GET', cacheKey);
@@ -337,13 +459,20 @@ const server = http.createServer(async (req, res) => {
         cacheHits++;
         return json(res, 200, { ...JSON.parse(hit), from: 'cache', instance: INSTANCE });
       }
+
       cacheMisses++;
-      const fresh = await readFromDb(key);
-      try {
-        await redis.cmd('SET', cacheKey, JSON.stringify(fresh), 'EX', '30');
-      } catch {
-        /* không ghi được cache thì bỏ qua, đừng làm request thất bại */
-      }
+
+      // Đây là chỗ DUY NHẤT khác nhau giữa "có herd" và "không herd".
+      const load = async () => {
+        const fresh = await readFromDb(key);
+        try {
+          await redis.cmd('SET', cacheKey, JSON.stringify(fresh), 'EX', String(ttlWithJitter(baseTtl, jitter)));
+        } catch {
+          /* không ghi được cache thì bỏ qua, đừng làm request thất bại */
+        }
+        return fresh;
+      };
+      const fresh = useSingleFlight ? await singleFlight(cacheKey, load) : await load();
       return json(res, 200, fresh);
     }
 

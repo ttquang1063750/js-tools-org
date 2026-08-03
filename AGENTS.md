@@ -193,6 +193,7 @@ js-tools-org/
 │           │   ├── nginx/gw.conf            #   API gateway: HTTP 8081 + HTTPS 8443 (Lesson 4)
 │           │   ├── nginx/gw-routes.conf     #   routes shared by both ports, so the TLS delta is pure
 │           │   ├── static/hello.json        #   file served by the gateway itself (Lesson 4)
+│           │   ├── tools/cache-stats.sh     #   sums cache counters across all 3 replicas (Lesson 5)
 │           │   └── README.md                #   MANDATORY CPU-architecture preflight
 │           └── ... System Design lesson files ...
 └── README.md

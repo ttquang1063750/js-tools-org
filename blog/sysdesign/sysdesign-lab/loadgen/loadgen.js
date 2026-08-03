@@ -38,6 +38,7 @@ function parseArgs(argv) {
     warmup: 3,
     json: false,
     keepAlive: true,
+    keySpace: 0,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -50,8 +51,14 @@ function parseArgs(argv) {
     // Tat keep-alive: moi request mo ket noi moi. Dung de do CHI PHI BAT TAY
     // (voi HTTPS la bat tay TLS) thay vi chi do phan ma hoa doi xung (Bai 4).
     else if (a === '--no-keepalive') out.keepAlive = false;
+    // Sinh ngau nhien ?key=kN trong N key khac nhau. Can cho Bai 5: mot phep do cache
+    // chi co y nghia khi khong gian key duoc kiem soat, vi hit ratio phu thuoc truc tiep
+    // vao ty le giua so key va so request.
+    else if (a === '--key-space') out.keySpace = Number(argv[++i]);
     else if (a === '--help' || a === '-h') {
-      console.log('node loadgen.js --url <URL> [-c connections] [-d giây] [-w warmupGiây] [--json] [--no-keepalive]');
+      console.log(
+        'node loadgen.js --url <URL> [-c connections] [-d giây] [-w warmupGiây] [--json] [--no-keepalive] [--key-space N]'
+      );
       process.exit(0);
     }
   }
@@ -100,6 +107,17 @@ let errors = 0;
 const statusCounts = new Map();
 let countingStartedAt = 0;
 
+/**
+ * Duong dan cho mot request. Voi --key-space N, moi request chon ngau nhien mot key
+ * trong N key => hit ratio ky vong = 1 - (so key duy nhat con hieu luc / so request).
+ */
+function requestPath() {
+  const base = target.pathname + target.search;
+  if (!(cfg.keySpace > 0)) return base;
+  const k = 'k' + Math.floor(Math.random() * cfg.keySpace);
+  return base + (target.search ? '&' : '?') + 'key=' + k;
+}
+
 function oneRequest() {
   if (!running) return;
   const t0 = process.hrtime.bigint();
@@ -109,7 +127,7 @@ function oneRequest() {
       protocol: target.protocol,
       hostname: target.hostname,
       port: target.port || (isTls ? 443 : 80),
-      path: target.pathname + target.search,
+      path: requestPath(),
       agent,
       headers: { Connection: cfg.keepAlive ? 'keep-alive' : 'close' },
     },
@@ -172,6 +190,7 @@ setTimeout(
       url: cfg.url,
       connections: cfg.connections,
       keepAlive: cfg.keepAlive,
+      keySpace: cfg.keySpace || null,
       durationSec: Number(elapsedSec.toFixed(2)),
       requests: ok,
       errors,

@@ -1,0 +1,1789 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 5: Caching — Cache-Aside, TTL &amp; Vô Hiệu Hoá — js-tools</title>
+    <meta
+      name="description"
+      content="Tải database tỉ lệ với (1−h) nên mỗi số 9 thêm vào hit ratio là một lần chia 10 tải; đo thật cho thấy hạ hit ratio từ 99,45% xuống 95,47% làm p99 nhảy từ 4,5 ms lên 42 ms trong khi p50 không đổi; single-flight giảm truy vấn database 20 lần và cắt độ trễ lớn nhất 11 lần nhưng lại làm p50 và p99 tệ hơn một chút; jitter TTL không giảm một truy vấn nào mà vẫn tăng 31% throughput; cache-aside, key có version, eviction và thiết kế cache key."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-caching" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-caching" />
+    <meta property="og:title" content="Bài 5: Caching — Cache-Aside, TTL &amp; Vô Hiệu Hoá — js-tools" />
+    <meta
+      property="og:description"
+      content="Tải database tỉ lệ với (1−h) nên mỗi số 9 thêm vào hit ratio là một lần chia 10 tải; đo thật cho thấy hạ hit ratio từ 99,45% xuống 95,47% làm p99 nhảy từ 4,5 ms lên 42 ms trong khi p50 không đổi; single-flight giảm truy vấn database 20 lần và cắt độ trễ lớn nhất 11 lần nhưng lại làm p50 và p99 tệ hơn một chút; jitter TTL không giảm một truy vấn nào mà vẫn tăng 31% throughput; cache-aside, key có version, eviction và thiết kế cache key."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 5: Caching — Cache-Aside, TTL &amp; Vô Hiệu Hoá — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Tải database tỉ lệ với (1−h) nên mỗi số 9 thêm vào hit ratio là một lần chia 10 tải; đo thật cho thấy hạ hit ratio từ 99,45% xuống 95,47% làm p99 nhảy từ 4,5 ms lên 42 ms trong khi p50 không đổi; single-flight giảm truy vấn database 20 lần và cắt độ trễ lớn nhất 11 lần nhưng lại làm p50 và p99 tệ hơn một chút; jitter TTL không giảm một truy vấn nào mà vẫn tăng 31% throughput; cache-aside, key có version, eviction và thiết kế cache key."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script src="../katex/katex.min.js" defer></script>
+    <script src="../katex/contrib/auto-render.min.js" defer></script>
+    <script src="../katex-render.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 5: Caching — Cache-Aside, TTL & Vô Hiệu Hoá",
+        "description": "Tải database tỉ lệ với (1−h) nên mỗi số 9 thêm vào hit ratio là một lần chia 10 tải; đo thật cho thấy hạ hit ratio từ 99,45% xuống 95,47% làm p99 nhảy từ 4,5 ms lên 42 ms trong khi p50 không đổi; single-flight giảm truy vấn database 20 lần và cắt độ trễ lớn nhất 11 lần nhưng lại làm p50 và p99 tệ hơn một chút; jitter TTL không giảm một truy vấn nào mà vẫn tăng 31% throughput; cache-aside, key có version, eviction và thiết kế cache key.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-caching",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 5: Caching — Cache-Aside, TTL &amp; Vô Hiệu Hoá</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-api-gateway">Bài 4</a> dựng xong tầng vào. Từ bài này trở đi ta đi vào phía sau nó, và
+              thứ đầu tiên gặp là tầng có tỉ lệ lợi ích trên công sức cao nhất trong toàn bộ series: cache. Lab của bài
+              này đo được <strong>26,5 lần</strong> throughput và p99 giảm <strong>20 lần</strong> chỉ bằng cách bật
+              cache cho một key nóng.
+            </p>
+
+            <p>
+              Nhưng phần đáng học không nằm ở con số đó — nó quá dễ đoán. Ba điều bất ngờ hơn: hạ hit ratio từ 99,45%
+              xuống 95,47% (chỉ <em>bốn điểm phần trăm</em>) làm p99 nhảy từ 4,46 ms lên <strong>42,11 ms</strong> trong
+              khi p50 gần như không đổi; single-flight — cách chống thundering herd kinh điển — làm p50 và p99
+              <strong>tệ hơn một chút</strong> chứ không tốt hơn; và jitter cho TTL
+              <strong>không giảm một truy vấn database nào</strong> nhưng vẫn tăng 31% throughput.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo cho mọi số liệu trong bài này</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64 (Node v22.23.2). Ba
+                app replica, mỗi replica 1 CPU / 256 MB; nginx 1.27-alpine; Redis 7-alpine; bộ đo tải 2 CPU. "Database"
+                của lab là một khoảng chờ 40 ms <strong>có giới hạn số truy vấn đồng thời</strong> — chi tiết này quan
+                trọng, xem mục 5.4. Pool database là <strong>10 kết nối/replica</strong> cho mục 5.1–5.3 và được thu
+                xuống <strong>2</strong> cho mục 5.4; mỗi lần thay đổi đều được ghi rõ. Mọi thí nghiệm lặp ít nhất 3
+                lần.
+              </div>
+            </div>
+
+            <!-- ================= 5.1 ================= -->
+            <h2>5.1 Vì sao cache thắng, và thắng bao nhiêu</h2>
+
+            <p>
+              <a href="sysdesign-latency-queueing">Bài 1</a> đã dựng bảng bậc độ lớn latency. Chỗ cache khai thác chính
+              là khoảng cách giữa hai dòng trong bảng đó: đọc từ RAM tính bằng trăm nanosecond, còn một truy vấn
+              database qua mạng tính bằng millisecond — chênh nhau khoảng <strong>10.000 lần</strong>. Cache không làm
+              database nhanh hơn; nó làm cho phần lớn request <em>không phải hỏi database</em>.
+            </p>
+
+            <p>Độ trễ trung bình của một tầng có cache:</p>
+
+            <p>$$T = h \cdot T_{cache} + (1-h) \cdot T_{db}$$</p>
+
+            <p>
+              với $h$ là hit ratio. Thay số của lab ($T_{cache} \approx 1{,}4$ ms, $T_{db} \approx 43$ ms) thì $h =
+              0{,}9$ cho $T \approx 5{,}6$ ms, còn $h = 0{,}99$ cho $T \approx 1{,}8$ ms. Nhưng công thức này che mất
+              phần quan trọng hơn. Số truy vấn database mà hệ thống tạo ra là:
+            </p>
+
+            <p>$$Q = (1-h) \cdot N$$</p>
+
+            <p>
+              Nghĩa là tải database phụ thuộc vào $(1-h)$ — phần <em>chưa</em> hit. Đi từ $h = 90\%$ lên $h = 99\%$ nghe
+              như "cải thiện 9 điểm", nhưng $(1-h)$ đi từ $0{,}1$ xuống $0{,}01$: tải database
+              <strong>giảm 10 lần</strong>. Thêm một số 9 nữa, lên $99{,}9\%$, lại chia 10 lần nữa.
+              <strong>Mỗi số 9 thêm vào là một lần chia 10 tải database.</strong>
+            </p>
+
+            <p>
+              Đây không phải suy luận trên giấy. Mình sweep kích thước tập dữ liệu làm việc (số key khác nhau mà tải
+              chạm tới) và đo hit ratio cùng số truy vấn database thật:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Số key khác nhau</th>
+                  <th>Hit ratio đo được</th>
+                  <th>Truy vấn DB / request</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>100</td>
+                  <td>99,92%</td>
+                  <td>0,0008</td>
+                  <td>17.711</td>
+                  <td>1,50 ms</td>
+                  <td>4,44 ms</td>
+                </tr>
+                <tr>
+                  <td>1.000</td>
+                  <td>99,45%</td>
+                  <td>0,0055</td>
+                  <td>17.457</td>
+                  <td>1,54 ms</td>
+                  <td>4,46 ms</td>
+                </tr>
+                <tr>
+                  <td>5.000</td>
+                  <td>95,47%</td>
+                  <td>0,0453</td>
+                  <td>11.046</td>
+                  <td>1,48 ms</td>
+                  <td><strong>42,11 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>20.000</td>
+                  <td>23,80%</td>
+                  <td>0,7618</td>
+                  <td>934</td>
+                  <td>41,66 ms</td>
+                  <td>86,08 ms</td>
+                </tr>
+                <tr>
+                  <td>60.000</td>
+                  <td>7,47%</td>
+                  <td>0,9250</td>
+                  <td>737</td>
+                  <td>42,73 ms</td>
+                  <td>88,13 ms</td>
+                </tr>
+                <tr>
+                  <td>200.000</td>
+                  <td>2,40%</td>
+                  <td>0,9757</td>
+                  <td>704</td>
+                  <td>43,28 ms</td>
+                  <td>87,23 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Cột thứ ba khớp với công thức đến từng chữ số: $1 - 0{,}9992 = 0{,}0008$, $1 - 0{,}9547 = 0{,}0453$, $1 -
+              0{,}2380 = 0{,}7620$. Công thức $Q = (1-h) \cdot N$ không phải xấp xỉ — nó là định nghĩa của hit ratio
+              viết theo cách khác.
+            </p>
+
+            <p>
+              Nhưng dòng gây bất ngờ là dòng thứ ba. Từ 99,45% xuống 95,47% chỉ là bốn điểm phần trăm, và
+              <strong>p50 thậm chí không đổi</strong> (1,54 → 1,48 ms). Trong khi đó p99 nhảy từ 4,46 ms lên 42,11 ms —
+              <strong>gấp 9,4 lần</strong>. Đúng bài học của Bài 1: giá trị trung bình che mất đuôi, và đuôi là chỗ
+              người dùng cảm nhận.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 348"
+                width="100%"
+                role="img"
+                aria-label="Tải database giảm mười lần cho mỗi số chín thêm vào hit ratio, và vách sụt throughput đo được"
+              >
+                <rect width="720" height="340" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Mỗi số 9 thêm vào hit ratio = một lần chia 10 tải database
+                </text>
+
+                <!-- ===== panel trai: tai DB, truc log ===== -->
+                <text x="16" y="48" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  Tải DB còn lại = (1 − h) · N — trục dọc chia theo bậc 10
+                </text>
+
+                <!-- truc -->
+                <line x1="80" y1="64" x2="80" y2="252" stroke="#374151" />
+                <line x1="80" y1="252" x2="330" y2="252" stroke="#374151" />
+
+                <!-- moc log: 100%, 10%, 1%, 0.1% -->
+                <line x1="80" y1="72" x2="330" y2="72" stroke="#1f2937" stroke-dasharray="2 3" />
+                <text x="40" y="76" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">100%</text>
+                <line x1="80" y1="132" x2="330" y2="132" stroke="#1f2937" stroke-dasharray="2 3" />
+                <text x="46" y="136" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">10%</text>
+                <line x1="80" y1="192" x2="330" y2="192" stroke="#1f2937" stroke-dasharray="2 3" />
+                <text x="52" y="196" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">1%</text>
+                <line x1="80" y1="252" x2="330" y2="252" stroke="#1f2937" stroke-dasharray="2 3" />
+                <text x="40" y="264" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">0,1%</text>
+
+                <!-- cac diem: h=0 -> 100%, 90 -> 10%, 99 -> 1%, 99.9 -> 0.1% -->
+                <line x1="110" y1="72" x2="290" y2="252" stroke="#38bdf8" stroke-width="2" />
+
+                <circle cx="110" cy="72" r="4" fill="#ef4444" />
+                <text x="96" y="278" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">h = 0%</text>
+
+                <circle cx="170" cy="132" r="5" fill="#f59e0b" />
+                <text
+                  x="152"
+                  y="292"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  h = 90%
+                </text>
+                <text x="150" y="304" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">10% tải</text>
+
+                <circle cx="230" cy="192" r="5" fill="#22c55e" />
+                <text
+                  x="212"
+                  y="292"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  h = 99%
+                </text>
+                <text x="214" y="304" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">1% tải</text>
+
+                <circle cx="290" cy="252" r="4" fill="#22c55e" />
+                <text x="272" y="278" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">h = 99,9%</text>
+
+                <!-- mui tien 10x -->
+                <line x1="252" y1="136" x2="252" y2="188" stroke="#f59e0b" stroke-width="1.5" />
+                <polygon points="252,188 249,180 255,180" fill="#f59e0b" />
+                <text
+                  x="258"
+                  y="166"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  ÷10
+                </text>
+
+                <text x="16" y="322" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  9 điểm phần trăm hit ratio = 10 lần tải database.
+                </text>
+                <text x="16" y="336" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Đừng bao giờ nói "cache đã 90%, đủ rồi".
+                </text>
+
+                <!-- ===== panel phai: vach sut do duoc ===== -->
+                <text
+                  x="380"
+                  y="48"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Throughput đo thật — vách sụt nằm ngay dưới 95%
+                </text>
+
+                <line x1="420" y1="64" x2="420" y2="252" stroke="#374151" />
+                <line x1="420" y1="252" x2="700" y2="252" stroke="#374151" />
+                <text x="386" y="70" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">18k</text>
+                <text x="392" y="160" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">9k</text>
+                <text x="404" y="256" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">0</text>
+
+                <!-- diem do: (hit%, rps) -> x theo hit ratio 0..100 map 420..700, y: 0..18000 map 252..66 -->
+                <!-- ve theo thu tu hit tang dan: 2.40,704 | 7.47,737 | 23.80,934 | 95.47,11046 | 99.45,17457 | 99.92,17711 -->
+                <polyline
+                  points="427,245 441,244 487,242 687,138 698,72 700,70"
+                  fill="none"
+                  stroke="#f59e0b"
+                  stroke-width="2"
+                />
+                <circle cx="427" cy="245" r="3" fill="#ef4444" />
+                <circle cx="441" cy="244" r="3" fill="#ef4444" />
+                <circle cx="487" cy="242" r="3" fill="#ef4444" />
+                <circle cx="687" cy="138" r="4" fill="#f59e0b" />
+                <circle cx="698" cy="72" r="4" fill="#22c55e" />
+                <circle cx="700" cy="70" r="3" fill="#22c55e" />
+
+                <text x="596" y="132" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  95,47% → 11.046 rps
+                </text>
+                <text x="586" y="66" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  99,45% → 17.457 rps
+                </text>
+                <text x="430" y="222" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  dưới 25% → chỉ ~700–930 rps
+                </text>
+                <line x1="452" y1="226" x2="460" y2="238" stroke="#ef4444" stroke-width="0.8" />
+                <text x="470" y="184" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  (đoạn 24–95% không đo)
+                </text>
+
+                <text x="420" y="272" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  hit ratio →
+                </text>
+                <text x="420" y="292" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Toàn bộ giá trị nằm ở đoạn 95–100%.
+                </text>
+                <text x="420" y="306" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Bên trái là hệ thống đã nghẽn ở database.
+                </text>
+                <text x="420" y="322" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  p99: 42 ms tại 95,47% · 4,5 ms tại 99,45%
+                </text>
+                <text x="420" y="336" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  — trong khi p50 gần như y hệt.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Bên trái là quan hệ toán học, bên phải là số đo thật của lab. Cả hai nói cùng một điều: vùng đáng đầu tư
+                nằm ở những số 9 cuối cùng.
+              </figcaption>
+            </figure>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: đánh giá cache bằng "có nhanh hơn không"</div>
+              <div class="callout__content">
+                Bật cache rồi bấm thử vài lần thấy nhanh hơn, kết luận "cache chạy tốt" — đó là cách bỏ sót vấn đề dễ
+                nhất. Hai số liệu phải theo dõi là <strong>hit ratio</strong> và
+                <strong>số truy vấn database trên mỗi request</strong>. Một cache có hit ratio 60% vẫn "nhanh hơn không
+                cache", nhưng nó đang để 40% tải đi xuống database — và khi lưu lượng tăng gấp đôi thì tải database cũng
+                tăng gấp đôi, đúng lúc bạn tưởng mình đã có cache che chắn.<br /><br />
+                Trong lab, hai số đó nằm ở <code>/stats</code> và được script <code>tools/cache-stats.sh</code> gộp lại
+                từ cả ba replica — vì mỗi replica đếm riêng, đọc một replica chỉ cho bạn một phần ba sự thật.
+              </div>
+            </div>
+
+            <!-- ================= 5.2 ================= -->
+            <h2>5.2 Các mẫu cache: ai ghi vào đâu, theo thứ tự nào</h2>
+
+            <p>
+              Mọi mẫu cache đều trả lời hai câu hỏi: <em>ai chịu trách nhiệm nạp cache khi miss</em>, và
+              <em>khi ghi dữ liệu thì ghi vào cache hay database trước</em>. Khác biệt giữa các mẫu chỉ nằm ở đó.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Bốn mẫu cache cạnh nhau: cache-aside, read-through, write-through, write-behind"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Bốn mẫu cache — mũi tên đánh số là THỨ TỰ xảy ra
+                </text>
+
+                <!-- ===== 1. cache-aside ===== -->
+                <text x="16" y="50" fill="#22c55e" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  1 · CACHE-ASIDE (đọc)
+                </text>
+                <rect x="16" y="58" width="60" height="26" rx="4" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="46"
+                  y="75"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  app
+                </text>
+                <rect x="16" y="104" width="60" height="26" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="46"
+                  y="121"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  cache
+                </text>
+                <rect x="16" y="150" width="60" height="26" rx="4" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="46"
+                  y="167"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  DB
+                </text>
+                <line x1="80" y1="71" x2="98" y2="71" stroke="#22c55e" />
+                <line x1="98" y1="71" x2="98" y2="117" stroke="#22c55e" />
+                <line x1="98" y1="117" x2="80" y2="117" stroke="#22c55e" />
+                <polygon points="80,117 88,114 88,120" fill="#22c55e" />
+                <text x="102" y="96" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">1 GET</text>
+                <line x1="104" y1="71" x2="120" y2="71" stroke="#f59e0b" />
+                <line x1="120" y1="71" x2="120" y2="163" stroke="#f59e0b" />
+                <line x1="120" y1="163" x2="80" y2="163" stroke="#f59e0b" />
+                <polygon points="80,163 88,160 88,166" fill="#f59e0b" />
+                <text x="124" y="140" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  2 miss → DB
+                </text>
+                <text x="16" y="196" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  3 app tự SET lại cache
+                </text>
+                <text x="16" y="212" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  App biết về cache
+                </text>
+                <text x="16" y="226" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  Phổ biến nhất · cache sập vẫn chạy
+                </text>
+
+                <!-- ===== 2. read-through ===== -->
+                <text
+                  x="196"
+                  y="50"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  2 · READ-THROUGH (đọc)
+                </text>
+                <rect x="196" y="58" width="60" height="26" rx="4" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="226"
+                  y="75"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  app
+                </text>
+                <rect x="196" y="104" width="60" height="26" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="226"
+                  y="121"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  cache
+                </text>
+                <rect x="196" y="150" width="60" height="26" rx="4" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="226"
+                  y="167"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  DB
+                </text>
+                <line x1="226" y1="84" x2="226" y2="104" stroke="#22c55e" />
+                <polygon points="226,104 223,96 229,96" fill="#22c55e" />
+                <text x="232" y="98" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">1</text>
+                <line x1="226" y1="130" x2="226" y2="150" stroke="#f59e0b" />
+                <polygon points="226,150 223,142 229,142" fill="#f59e0b" />
+                <text x="232" y="144" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  2 CACHE tự nạp
+                </text>
+                <text x="196" y="196" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  App KHÔNG biết có cache
+                </text>
+                <text x="196" y="212" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Code app sạch hơn
+                </text>
+                <text x="196" y="226" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  Cache sập = mất đường ra DB
+                </text>
+
+                <!-- ===== 3. write-through ===== -->
+                <text
+                  x="376"
+                  y="50"
+                  fill="#a78bfa"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  3 · WRITE-THROUGH (ghi)
+                </text>
+                <rect x="376" y="58" width="60" height="26" rx="4" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="406"
+                  y="75"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  app
+                </text>
+                <rect x="376" y="104" width="60" height="26" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="406"
+                  y="121"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  cache
+                </text>
+                <rect x="376" y="150" width="60" height="26" rx="4" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="406"
+                  y="167"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  DB
+                </text>
+                <line x1="406" y1="84" x2="406" y2="104" stroke="#a78bfa" />
+                <polygon points="406,104 403,96 409,96" fill="#a78bfa" />
+                <text x="412" y="98" fill="#a78bfa" font-family="system-ui, sans-serif" font-size="8">1 ghi</text>
+                <line x1="406" y1="130" x2="406" y2="150" stroke="#a78bfa" />
+                <polygon points="406,150 403,142 409,142" fill="#a78bfa" />
+                <text x="412" y="144" fill="#a78bfa" font-family="system-ui, sans-serif" font-size="8">
+                  2 ghi tiếp, ĐỒNG BỘ
+                </text>
+                <text x="376" y="196" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Cache luôn khớp DB
+                </text>
+                <text x="376" y="212" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Không có cửa sổ stale
+                </text>
+                <text x="376" y="226" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  Mọi lệnh ghi chậm hơn
+                </text>
+
+                <!-- ===== 4. write-behind ===== -->
+                <text
+                  x="556"
+                  y="50"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  4 · WRITE-BEHIND (ghi)
+                </text>
+                <rect x="556" y="58" width="60" height="26" rx="4" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="586"
+                  y="75"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  app
+                </text>
+                <rect x="556" y="104" width="60" height="26" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="586"
+                  y="121"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  cache
+                </text>
+                <rect x="556" y="150" width="60" height="26" rx="4" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="586"
+                  y="167"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  DB
+                </text>
+                <line x1="586" y1="84" x2="586" y2="104" stroke="#22c55e" />
+                <polygon points="586,104 583,96 589,96" fill="#22c55e" />
+                <text x="592" y="98" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  1 ghi, trả về NGAY
+                </text>
+                <line x1="586" y1="130" x2="586" y2="150" stroke="#ef4444" stroke-dasharray="4 3" />
+                <polygon points="586,150 583,142 589,142" fill="#ef4444" />
+                <text x="592" y="144" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  2 flush SAU, bất đồng bộ
+                </text>
+                <text x="556" y="196" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Ghi nhanh nhất
+                </text>
+                <text x="556" y="212" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Gom được nhiều lệnh ghi
+                </text>
+                <text x="556" y="226" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  Cache chết trước flush = MẤT DỮ LIỆU
+                </text>
+
+                <rect x="16" y="244" width="688" height="44" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="30" y="262" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Trục đánh đổi thật sự không phải "nhanh hay chậm" mà là: app phức tạp thêm bao nhiêu ↔ chấp nhận mất
+                  dữ liệu tới mức nào ↔ dữ liệu được phép cũ bao lâu.
+                </text>
+                <text x="30" y="280" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Write-behind dùng cho bộ đếm lượt xem thì hợp lý; dùng cho số dư tài khoản thì không, dù nó nhanh
+                  nhất.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Cache-aside phổ biến nhất vì nó là mẫu duy nhất mà cache sập thì hệ thống chỉ chậm đi, không ngừng chạy.
+              </figcaption>
+            </figure>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Mẫu</th>
+                  <th>Ai nạp cache</th>
+                  <th>Rủi ro mất dữ liệu</th>
+                  <th>Dùng khi</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Cache-aside</strong></td>
+                  <td>App, khi miss</td>
+                  <td>Không</td>
+                  <td>Mặc định. Tải đọc nhiều, chấp nhận cửa sổ dữ liệu cũ ngắn</td>
+                </tr>
+                <tr>
+                  <td><strong>Read-through</strong></td>
+                  <td>Chính tầng cache</td>
+                  <td>Không</td>
+                  <td>Muốn code app không biết gì về cache; đổi lại cache thành phụ thuộc bắt buộc</td>
+                </tr>
+                <tr>
+                  <td><strong>Write-through</strong></td>
+                  <td>Ghi vào cả hai, đồng bộ</td>
+                  <td>Không</td>
+                  <td>Cần đọc ngay sau ghi luôn thấy dữ liệu mới; chấp nhận lệnh ghi chậm hơn</td>
+                </tr>
+                <tr>
+                  <td><strong>Write-behind</strong></td>
+                  <td>Ghi cache trước, flush sau</td>
+                  <td><strong>Có</strong></td>
+                  <td>Bộ đếm, thống kê, log — dữ liệu mất một ít không sao</td>
+                </tr>
+                <tr>
+                  <td><strong>Refresh-ahead</strong></td>
+                  <td>Nền, làm mới trước khi hết hạn</td>
+                  <td>Không</td>
+                  <td>Key nóng đã biết trước; đổi lại làm mới cả key không ai còn dùng</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 348"
+                width="100%"
+                role="img"
+                aria-label="Sơ đồ trình tự cache-aside ở hai nhánh: cache hit và cache miss, kèm số đo thật của lab"
+              >
+                <rect width="720" height="348" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Cache-aside — hai nhánh, hai chi phí rất khác nhau
+                </text>
+
+                <!-- ================= nhanh HIT ================= -->
+                <text x="16" y="52" fill="#22c55e" font-family="system-ui, sans-serif" font-size="11" font-weight="600">
+                  NHÁNH HIT — đo được p50 = 1,45 ms
+                </text>
+
+                <text
+                  x="46"
+                  y="76"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  client
+                </text>
+                <text
+                  x="200"
+                  y="76"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  app
+                </text>
+                <text
+                  x="380"
+                  y="76"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  cache (Redis)
+                </text>
+                <text
+                  x="560"
+                  y="76"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  database
+                </text>
+
+                <line x1="46" y1="84" x2="46" y2="150" stroke="#374151" stroke-dasharray="3 3" />
+                <line x1="200" y1="84" x2="200" y2="150" stroke="#374151" stroke-dasharray="3 3" />
+                <line x1="380" y1="84" x2="380" y2="150" stroke="#374151" stroke-dasharray="3 3" />
+                <line x1="560" y1="84" x2="560" y2="150" stroke="#4b5563" stroke-dasharray="3 3" opacity="0.4" />
+
+                <line x1="46" y1="96" x2="196" y2="96" stroke="#9ca3af" />
+                <polygon points="196,96 188,93 188,99" fill="#9ca3af" />
+                <text x="80" y="92" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">1 request</text>
+
+                <line x1="200" y1="114" x2="376" y2="114" stroke="#22c55e" />
+                <polygon points="376,114 368,111 368,117" fill="#22c55e" />
+                <text x="236" y="110" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  2 GET demo:k
+                </text>
+
+                <line x1="380" y1="132" x2="204" y2="132" stroke="#22c55e" />
+                <polygon points="204,132 212,129 212,135" fill="#22c55e" />
+                <text x="236" y="128" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  3 có giá trị — xong
+                </text>
+
+                <line x1="196" y1="148" x2="50" y2="148" stroke="#9ca3af" />
+                <polygon points="50,148 58,145 58,151" fill="#9ca3af" />
+                <text x="80" y="144" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">4 trả lời</text>
+
+                <text x="600" y="118" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">
+                  không chạm tới
+                </text>
+
+                <!-- ================= nhanh MISS ================= -->
+                <text
+                  x="16"
+                  y="182"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                >
+                  NHÁNH MISS — đo được p50 = 43,30 ms (chậm hơn 30 lần)
+                </text>
+
+                <line x1="46" y1="192" x2="46" y2="300" stroke="#374151" stroke-dasharray="3 3" />
+                <line x1="200" y1="192" x2="200" y2="300" stroke="#374151" stroke-dasharray="3 3" />
+                <line x1="380" y1="192" x2="380" y2="300" stroke="#374151" stroke-dasharray="3 3" />
+                <line x1="560" y1="192" x2="560" y2="300" stroke="#38bdf8" stroke-dasharray="3 3" />
+
+                <line x1="46" y1="204" x2="196" y2="204" stroke="#9ca3af" />
+                <polygon points="196,204 188,201 188,207" fill="#9ca3af" />
+                <text x="80" y="200" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">1 request</text>
+
+                <line x1="200" y1="222" x2="376" y2="222" stroke="#f59e0b" />
+                <polygon points="376,222 368,219 368,225" fill="#f59e0b" />
+                <text x="236" y="218" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  2 GET demo:k
+                </text>
+
+                <line x1="380" y1="238" x2="204" y2="238" stroke="#ef4444" />
+                <polygon points="204,238 212,235 212,241" fill="#ef4444" />
+                <text x="252" y="234" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  3 rỗng (miss)
+                </text>
+
+                <line x1="200" y1="256" x2="556" y2="256" stroke="#38bdf8" />
+                <polygon points="556,256 548,253 548,259" fill="#38bdf8" />
+                <text x="300" y="252" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="8">
+                  4 truy vấn database — 40 ms (+ chờ pool)
+                </text>
+
+                <line x1="560" y1="272" x2="204" y2="272" stroke="#38bdf8" />
+                <polygon points="204,272 212,269 212,275" fill="#38bdf8" />
+                <text x="300" y="268" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="8">5 dữ liệu</text>
+
+                <line x1="200" y1="288" x2="376" y2="288" stroke="#22c55e" />
+                <polygon points="376,288 368,285 368,291" fill="#22c55e" />
+                <text x="216" y="284" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  6 SET ... EX ttl — chính APP tự nạp lại cache
+                </text>
+
+                <line x1="196" y1="300" x2="50" y2="300" stroke="#9ca3af" />
+                <polygon points="50,300 58,297 58,303" fill="#9ca3af" />
+                <text x="80" y="296" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">7 trả lời</text>
+
+                <rect x="16" y="310" width="688" height="30" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="30" y="329" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Bước 4 là toàn bộ vấn đề của Bài 5: nếu N request cùng tới bước 3 một lúc thì có N lần bước 4 — cho
+                  cùng một dữ liệu (mục 5.4).
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Điểm cần nhớ: ở cache-aside, chính app chịu trách nhiệm ghi lại cache (bước 6). Không có ai khác làm
+                việc đó — và cũng chính vì thế cache sập thì app vẫn chạy được.
+              </figcaption>
+            </figure>
+
+            <p>Cache-aside trong lab, đúng như mã đang chạy:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">cache_aside.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">const cacheKey = `demo:${key}`;
+
+let hit = null;
+try {
+  hit = await redis.cmd('GET', cacheKey);
+} catch {
+  // QUAN TRONG: Redis sap thi van phai phuc vu duoc. Cache la thu TANG TOC,
+  // khong phai phu thuoc bat buoc. Bat loi o day chinh la khac biet giua
+  // "he thong cham di" va "he thong sup" (Bai 17).
+  hit = null;
+}
+if (hit !== null) {
+  cacheHits++;
+  return json(res, 200, { ...JSON.parse(hit), from: 'cache' });
+}
+
+cacheMisses++;
+const fresh = await readFromDb(key);
+try {
+  // SET ... EX: luon dat TTL. Mot key khong co TTL la mot key song mai mai,
+  // va den luc du lieu doi thi khong ai biet phai xoa o dau.
+  await redis.cmd('SET', cacheKey, JSON.stringify(fresh), 'EX', String(ttl));
+} catch {
+  // Khong ghi duoc cache thi bo qua — dung lam request that bai vi chuyen do.
+}
+return json(res, 200, fresh);</code></pre>
+            </div>
+
+            <!-- ================= 5.3 ================= -->
+            <h2>5.3 Vô hiệu hoá cache — phần khó nhất</h2>
+
+            <p>
+              Nạp cache thì dễ. Câu hỏi khó là: khi dữ liệu gốc đổi, làm sao bản trong cache biết mà bỏ đi? Ba cách,
+              theo thứ tự từ đơn giản tới sạch nhất:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cách</th>
+                  <th>Cơ chế</th>
+                  <th>Điểm yếu</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>TTL</strong></td>
+                  <td>Đặt hạn dùng, hết hạn thì tự mất</td>
+                  <td>
+                    Luôn có cửa sổ dữ liệu cũ dài tối đa bằng TTL. Chọn TTL là chọn mức cũ bạn chấp nhận, không phải
+                    tinh chỉnh hiệu năng
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Xoá tường minh</strong></td>
+                  <td>Khi ghi DB thì <code>DEL</code> key tương ứng</td>
+                  <td>
+                    Phải biết <em>mọi</em> key bị ảnh hưởng — một truy vấn danh sách có thể nằm trong hàng chục key. Bỏ
+                    sót một chỗ là dữ liệu cũ tồn tại vô hạn
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Key có version</strong></td>
+                  <td>Không xoá gì; đổi key khi dữ liệu đổi</td>
+                  <td>
+                    Key cũ còn chiếm bộ nhớ cho tới khi hết hạn hoặc bị evict — đổi lại không bao giờ có ai đọc chúng
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Key có version thường là lời giải sạch nhất, vì nó biến một bài toán <em>đồng bộ</em> (xoá đúng lúc, đúng
+              chỗ) thành bài toán <em>đặt tên</em>:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">versioned_key.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// CACH XOA TUONG MINH: phai nho het moi key lien quan. Thieu mot dong la sinh bug
+// "sua roi ma trang van hien so cu", loai bug rat kho tai hien.
+async function updateProductOld(id, data) {
+  await db.update(id, data);
+  await redis.del(`product:${id}`);
+  await redis.del(`product:${id}:reviews`);
+  await redis.del(`category:${data.categoryId}:products`);   // de quen dong nay...
+  await redis.del(`search:featured`);                        // ...va dong nay
+}
+
+// CACH KEY CO VERSION: khong xoa gi ca. Doi version thi MOI key dan xuat doi theo.
+// Cac key cu tro thanh rac khong ai doc, tu bien mat khi het TTL hoac bi evict.
+async function updateProductNew(id, data) {
+  await db.update(id, data);
+  // INCR la thao tac nguyen tu trong Redis => an toan khi nhieu replica cung ghi.
+  await redis.cmd('INCR', `ver:product:${id}`);
+}
+
+async function readProduct(id) {
+  const v = (await redis.cmd('GET', `ver:product:${id}`)) || '0';
+  return cacheAside(`product:${id}:v${v}`, () => db.read(id));
+}</code></pre>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Cửa sổ dữ liệu cũ khi có nhiều lệnh ghi đồng thời</div>
+              <div class="callout__content">
+                Kể cả khi xoá tường minh, vẫn có một khe hở. Trình tự này hoàn toàn có thể xảy ra: request A đọc miss và
+                lấy giá trị cũ từ database; request B ghi giá trị mới rồi xoá cache; <em>sau đó</em> A mới kịp
+                <code>SET</code> giá trị cũ nó đã đọc. Kết quả: cache giữ giá trị cũ, và không có TTL nào cứu được vì
+                key vừa mới được ghi lại.<br /><br />
+                Đây là lý do sâu xa để dùng key có version: với version, giá trị cũ mà A ghi nằm ở
+                <em>key khác</em> (<code>...:v3</code>) so với key mà mọi người đọc sau đó (<code>...:v4</code>). Cuộc
+                đua vẫn xảy ra nhưng nó không còn gây hậu quả — đây là cách xử lý race condition tốt nhất: làm cho nó
+                trở nên vô hại thay vì cố ngăn nó.
+              </div>
+            </div>
+
+            <h3>TTL đồng loạt và tác dụng của jitter</h3>
+
+            <p>
+              Nếu nhiều key được nạp gần như cùng lúc — chuyện xảy ra mỗi lần deploy, mỗi lần cache bị flush, mỗi lần
+              scale thêm replica — và tất cả dùng cùng một TTL, chúng sẽ hết hạn <strong>thành từng đợt</strong>. Cách
+              chữa là cộng thêm một lượng ngẫu nhiên vào TTL:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ttl_jitter.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// TTL 5s voi jitter 0.6 => moi key nhan mot TTL ngau nhien trong [2s, 8s].
+// Ky vong van la 5s, nhung cac thoi diem het han bi RAI RA thay vi don cuc.
+function ttlWithJitter(baseSec, ratio) {
+  if (!(ratio &gt; 0)) return baseSec;
+  const delta = baseSec * ratio * (Math.random() * 2 - 1);
+  return Math.max(1, Math.round(baseSec + delta));
+}</code></pre>
+            </div>
+
+            <p>
+              Đo thật: 300 key, TTL cơ sở 5 giây, 32 kết nối, 30 giây, pool database 2 kết nối mỗi replica,
+              single-flight đã bật ở cả hai cấu hình, ba lần lặp mỗi cấu hình:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Số liệu</th>
+                  <th>TTL cố định 5 s</th>
+                  <th>TTL jitter 60%</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Throughput</td>
+                  <td>10.393 / 10.182 / 11.287</td>
+                  <td><strong>13.550 / 13.387 / 15.216</strong></td>
+                </tr>
+                <tr>
+                  <td>p50</td>
+                  <td>1,15 / 1,09 / 1,03 ms</td>
+                  <td>0,89 / 0,82 / 0,56 ms</td>
+                </tr>
+                <tr>
+                  <td>p99</td>
+                  <td>72,25 / 77,17 / 69,13 ms</td>
+                  <td>59,61 / 65,80 / 66,69 ms</td>
+                </tr>
+                <tr>
+                  <td>Độ trễ lớn nhất</td>
+                  <td>322,7 / 415,3 / 424,9 ms</td>
+                  <td>270,1 / 276,6 / 317,0 ms</td>
+                </tr>
+                <tr>
+                  <td>Chờ hàng đợi database, trung bình</td>
+                  <td>98,6 / 98,0 / 103,1 ms</td>
+                  <td><strong>56,9 / 59,3 / 61,6 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>Truy vấn DB / request</td>
+                  <td>0,0105 / 0,0109 / 0,0095</td>
+                  <td>0,0102 / 0,0104 / 0,0094</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Throughput tăng <strong>31%</strong> và thời gian chờ hàng đợi database giảm gần một nửa. Nhưng hãy để ý
+              dòng cuối: <strong>số truy vấn database trên mỗi request gần như y hệt</strong> (0,0105 so với 0,0102).
+              Jitter không hề giảm khối lượng công việc — nó chỉ <em>rải công việc đó ra theo thời gian</em>. Hàng đợi
+              ngắn hơn không phải vì có ít việc hơn, mà vì việc không còn đến cùng một lúc.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Thí nghiệm đầu tiên của mình về jitter đã thất bại</div>
+              <div class="callout__content">
+                Lần đo đầu mình dùng 2.000 key và TTL 3 giây. Kết quả: jitter <em>không tạo khác biệt nào</em> — mọi số
+                liệu trùng nhau trong khoảng biến động.<br /><br />
+                Nguyên nhân không phải jitter vô dụng mà là <strong>thiết kế thí nghiệm sai</strong>: với 2.000 key và
+                pool database chỉ 2 kết nối, hệ thống nghẽn ở database suốt cả phép đo (hit ratio chỉ đạt 19%). Nó không
+                bao giờ ở trạng thái "rảnh giữa các đợt hết hạn" — mà chính trạng thái đó mới là thứ jitter cải thiện.
+                Giảm còn 300 key để cache kịp nạp trong dưới một giây, và tăng TTL lên 5 giây để giữa các đợt hệ thống
+                thật sự rảnh, thì hiệu ứng hiện ra ngay và lặp lại ổn định cả ba lần.<br /><br />
+                Bài học: một phép đo "không thấy khác biệt" thường nói về thí nghiệm nhiều hơn là về thứ đang được đo.
+                Trước khi kết luận "cơ chế này không có tác dụng", hãy kiểm tra xem hệ thống có đang ở chế độ mà cơ chế
+                đó phát huy hay không.
+              </div>
+            </div>
+
+            <!-- ================= 5.4 ================= -->
+            <h2>5.4 Thundering herd — và một số đo phản trực giác</h2>
+
+            <p>
+              Một key nóng hết hạn. Ngay lúc đó có $N$ request đang cùng hỏi nó. Cả $N$ đều thấy miss, cả $N$ đều gọi
+              database. Database nhận cùng lúc $N$ truy vấn giống nhau cho đúng một dữ liệu — đó là
+              <strong>thundering herd</strong> (hay cache stampede).
+            </p>
+
+            <p>
+              Trường hợp tệ nhất là vòng lặp tự đóng: herd làm database quá tải, quá tải làm request chậm, chậm nên
+              không ai kịp ghi lại cache, cache trống nên đợt request tiếp theo lại thành một herd nữa. Hệ thống không
+              tự hồi phục được dù nguyên nhân ban đầu chỉ là một key hết hạn.
+            </p>
+
+            <h3>Lần đo đầu không thấy gì cả</h3>
+
+            <p>
+              Mình dựng thí nghiệm: một key nóng, TTL 1 giây, 100 kết nối, 15 giây. Không bật single-flight thì có
+              <strong>1.600</strong> truy vấn database; bật lên thì còn <strong>54</strong> — ít hơn 30 lần. Nhưng
+              latency <em>không đổi gì cả</em>: p50, p95, p99 của hai cấu hình trùng nhau trong khoảng biến động.
+            </p>
+
+            <p>
+              Lý do: "database" của lab lúc đó có pool 10 kết nối mỗi replica, tức 30 truy vấn đồng thời, mỗi truy vấn
+              40 ms — sức chứa khoảng 750 truy vấn/giây. Herd tạo ra chừng 89 truy vấn mỗi lần hết hạn. Nó
+              <em>chưa hề</em> đụng tới giới hạn. Herd có thật, đo được bằng số truy vấn, nhưng chưa gây hậu quả.
+            </p>
+
+            <p>
+              Nên mình thu pool xuống <strong>2 kết nối mỗi replica</strong> — một database đang căng, chuyện rất bình
+              thường lúc có sự cố. Cùng thí nghiệm, ba lần lặp:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Số liệu</th>
+                  <th>Không single-flight</th>
+                  <th>Có single-flight</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Truy vấn database</td>
+                  <td>1.100</td>
+                  <td><strong>54</strong></td>
+                </tr>
+                <tr>
+                  <td>Hàng đợi database sâu nhất</td>
+                  <td>33 / 35 / 33</td>
+                  <td><strong>0</strong></td>
+                </tr>
+                <tr>
+                  <td>Chờ hàng đợi, trung bình</td>
+                  <td>312,6 / 312,3 / 312,4 ms</td>
+                  <td><strong>0 ms</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Độ trễ lớn nhất</strong></td>
+                  <td><strong>727,6 / 765,3 / 729,0 ms</strong></td>
+                  <td><strong>67,7 / 64,0 / 67,4 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>p50</td>
+                  <td>4,98 / 5,01 / 5,00 ms</td>
+                  <td>5,54 / 5,46 / 5,70 ms</td>
+                </tr>
+                <tr>
+                  <td>p99</td>
+                  <td>13,18 / 13,05 / 13,29 ms</td>
+                  <td>14,68 / 13,75 / 13,62 ms</td>
+                </tr>
+                <tr>
+                  <td>Throughput</td>
+                  <td>15.928 / 15.987 / 15.894</td>
+                  <td>15.938 / 16.202 / 16.062</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Đọc kỹ bảng này. Single-flight giảm truy vấn database <strong>20 lần</strong>, xoá sạch hàng đợi (sâu 33
+              xuống 0, chờ 312 ms xuống 0), và cắt độ trễ lớn nhất từ ~730 ms xuống ~66 ms — <strong>11 lần</strong>.
+            </p>
+
+            <p>
+              Nhưng <strong>p50 và p99 lại tệ hơn một chút</strong>: p50 từ 5,00 lên 5,57 ms, p99 từ 13,17 lên 14,02 ms.
+              Nếu mình chỉ đo p50 và p99 — đúng hai số liệu mà hầu hết dashboard hiển thị — thì kết luận sẽ là
+              "single-flight không giúp gì, thậm chí hơi hại", và mình đã bỏ nó đi.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Vì sao p99 không thấy được thundering herd</div>
+              <div class="callout__content">
+                Trong phép đo trên có 1.100 request bị chặn ở hàng đợi database, trên tổng khoảng 280.000 request — tức
+                <strong>0,39%</strong>. Percentile 99 cắt ở 1%, nên toàn bộ nhóm bị hại đó nằm <em>bên trên</em> p99:
+                p99 không chứa chúng, chỉ có độ trễ lớn nhất mới lộ ra.<br /><br />
+                Còn vì sao single-flight làm p50 <em>tệ hơn</em>? Vì nó đổi hình dạng thiệt hại. Không có nó, 1.100
+                request chịu toàn bộ hàng đợi 312 ms. Có nó, 1.746 request "nhập đoàn" cùng chờ trên một lần nạp duy
+                nhất — mỗi request chỉ chờ khoảng 40 ms, nhưng số request bị ảnh hưởng <em>nhiều hơn</em>. Tổng thiệt
+                hại nhỏ đi rất nhiều, nhưng nó được rải mỏng nên nhích vào p50.<br /><br />
+                Kết luận thực hành: đánh giá cơ chế chống herd bằng
+                <strong>số truy vấn database, độ sâu hàng đợi và độ trễ lớn nhất</strong>. Nếu chỉ nhìn p50/p99, cơ chế
+                đúng đắn nhất trông như một cơ chế vô ích. Và trên database thật, hàng đợi đó
+                <em>dùng chung với mọi truy vấn khác</em> — nên 312 ms đó không chỉ làm chậm key nóng, nó làm chậm cả
+                những phần hệ thống chẳng liên quan gì. Đó là thiệt hại mà lab này không đo được.
+              </div>
+            </div>
+
+            <p>Bản cài đặt single-flight, chính là mã đang chạy trong lab:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">single_flight.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">const inFlightLoads = new Map();
+
+function singleFlight(key, loader) {
+  const pending = inFlightLoads.get(key);
+  if (pending) return pending;              // nhap doan vao lan nap dang chay
+
+  // PHAI xoa khoi map trong `finally`. Neu khong, mot lan loi se lam key bi ket
+  // vinh vien voi mot promise da reject, va MOI request sau do cung nhan loi do.
+  const promise = loader().finally(() => inFlightLoads.delete(key));
+  inFlightLoads.set(key, promise);
+  return promise;
+}
+
+// Dung trong duong doc:
+const fresh = useSingleFlight
+  ? await singleFlight(cacheKey, load)
+  : await load();</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Con số 54 tiết lộ giới hạn của single-flight</div>
+              <div class="callout__content">
+                Với TTL 1 giây và 18 giây chạy (kể cả warm-up), key hết hạn khoảng 18 lần. Có 3 replica. 18 × 3 =
+                <strong>54</strong> — đúng bằng số truy vấn database đo được, cả ba lần lặp.<br /><br />
+                Con số khớp chính xác đó không phải trùng hợp: nó chứng minh rằng
+                <strong>single-flight chỉ gom được trong phạm vi MỘT tiến trình</strong>. Map
+                <code>inFlightLoads</code> nằm trong bộ nhớ của một replica, nên mỗi replica vẫn tự đi nạp một lần. Muốn
+                về đúng 18 truy vấn thì phải dùng lock chia sẻ trong Redis (<code>SET key val NX EX 5</code>) — nhưng
+                lúc đó bạn nhận thêm một lớp bài toán: nếu tiến trình giữ lock chết trước khi ghi cache thì mọi request
+                khác chờ tới hết hạn lock; và bạn phải chọn giữa "chờ lock" và "trả về dữ liệu cũ".<br /><br />
+                Với 3 replica, chênh lệch 54 so với 18 không đáng đổi thêm phức tạp. Với 300 replica thì câu trả lời
+                khác. Đây là dạng quyết định phụ thuộc quy mô mà không có lời khuyên đúng cho mọi trường hợp — nhưng
+                <em>biết mình đang ở đâu trên trục đó</em> là việc bắt buộc.
+              </div>
+            </div>
+
+            <p>Ba cơ chế chống herd, và điều kiện dùng của từng cái:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cơ chế</th>
+                  <th>Chống được gì</th>
+                  <th>Cái giá</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Single-flight</strong></td>
+                  <td>Nhiều request cùng miss MỘT key</td>
+                  <td>Chỉ gom trong một tiến trình; p50 nhích lên vì nhiều request cùng chờ một lần nạp</td>
+                </tr>
+                <tr>
+                  <td><strong>Jitter TTL</strong></td>
+                  <td>NHIỀU key hết hạn cùng lúc</td>
+                  <td>Không giảm tổng công việc, chỉ rải ra; TTL thực tế của từng key không còn đoán được</td>
+                </tr>
+                <tr>
+                  <td><strong>Trả bản cũ trong lúc làm mới</strong></td>
+                  <td>Cả hai — và không ai phải chờ</td>
+                  <td>Người dùng nhận dữ liệu cũ hơn TTL; phải lưu thêm bản "đã hết hạn nhưng còn dùng được"</td>
+                </tr>
+                <tr>
+                  <td><strong>Nạp trước khi mở tải</strong></td>
+                  <td>Cache trống sau deploy hoặc sau khi flush</td>
+                  <td>Phải biết trước key nào nóng; thêm một bước trong quy trình triển khai</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Hai cơ chế đầu chống hai vấn đề <em>khác nhau</em> và không thay thế được nhau — đó là lý do lab bật cả
+              hai cùng lúc trong phép đo jitter ở mục 5.3.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: client tự thử lại làm herd nặng thêm</div>
+              <div class="callout__content">
+                Khi herd làm request chậm, client thường tự thử lại. Mỗi lần thử lại là một request mới cùng hỏi đúng
+                key đang miss — herd tự nhân lên. Hệ thống chuyển từ "chậm" sang "không bao giờ hồi phục", và nguyên
+                nhân cuối cùng lại là cơ chế được thêm vào để tăng độ tin cậy.<br /><br />
+                Đây chính là hiện tượng khuếch đại đã gặp ở <a href="sysdesign-api-gateway">Bài 4</a> mục 4.5, nhìn từ
+                phía cache. Bài 17 sẽ đào sâu; điều cần nhớ bây giờ: thử lại chỉ ở <strong>một tầng</strong>, có khoảng
+                nghỉ tăng dần và có nhiễu ngẫu nhiên.
+              </div>
+            </div>
+            <!-- ================= 5.5 ================= -->
+            <h2>5.5 Eviction và thiết kế cache key</h2>
+
+            <p>
+              Cache luôn nhỏ hơn dữ liệu gốc, nên luôn có lúc phải bỏ bớt. Redis quyết định bỏ cái nào bằng
+              <code>maxmemory-policy</code>, và lựa chọn này thay đổi hành vi hệ thống nhiều hơn vẻ ngoài của nó:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Chính sách</th>
+                  <th>Bỏ key nào</th>
+                  <th>Phù hợp khi</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>allkeys-lru</code></td>
+                  <td>Key lâu nhất chưa được dùng</td>
+                  <td>Mặc định tốt cho cache thuần. Giả định: dùng gần đây thì sắp dùng lại</td>
+                </tr>
+                <tr>
+                  <td><code>allkeys-lfu</code></td>
+                  <td>Key ít được dùng nhất (theo tần suất)</td>
+                  <td>Có nhóm key nóng ổn định lâu dài; chống được đợt quét dữ liệu lạnh tốt hơn LRU</td>
+                </tr>
+                <tr>
+                  <td><code>volatile-lru</code></td>
+                  <td>Chỉ bỏ key CÓ TTL</td>
+                  <td>Redis vừa làm cache vừa giữ dữ liệu không được phép mất</td>
+                </tr>
+                <tr>
+                  <td><code>noeviction</code></td>
+                  <td>Không bỏ gì — lệnh ghi bị lỗi</td>
+                  <td>
+                    Khi mất dữ liệu là không thể chấp nhận. <strong>Rất nguy hiểm cho cache</strong>: hết bộ nhớ là
+                    ngừng ghi được, hit ratio đóng băng rồi tụt dần
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Redis trong lab cố tình đặt <code>maxmemory 64mb</code> với <code>allkeys-lru</code> để bạn tự gây ra
+              eviction và quan sát. Khi hết bộ nhớ, <code>INFO stats</code> cho biết bao nhiêu key đã bị bỏ:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">quan_sat_eviction.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">docker compose --profile cache up -d
+
+# Bom mot khong gian key rat lon de vuot 64mb, roi xem Redis bo bao nhieu key
+docker compose run --rm loadgen loadgen.js \
+  --url "http://lb:8080/cached?ttl=300" -c 32 -d 20 --key-space 200000
+
+docker compose exec redis redis-cli INFO stats | grep evicted_keys
+docker compose exec redis redis-cli INFO memory | grep -E 'used_memory_human|maxmemory_human'
+
+# So key dang co va hit ratio o phia Redis (khac hit ratio o phia app)
+docker compose exec redis redis-cli DBSIZE
+docker compose exec redis redis-cli INFO stats | grep keyspace</code></pre>
+            </div>
+
+            <h3>Key thiết kế sai làm cache vô dụng</h3>
+
+            <p>
+              Cạm bẫy tốn kém nhất trong bài này không phải chọn sai chính sách eviction mà là
+              <strong>đặt key sai</strong>. Nếu key chứa thứ thay đổi theo từng request, mỗi request tạo ra một key mới:
+              cache ghi liên tục, không bao giờ đọc lại được gì, hit ratio gần 0 — và nó vẫn "hoạt động", không báo lỗi
+              gì cả.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">cache_key_sai_va_dung.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// ===== SAI: moi request mot key moi, hit ratio ~ 0 =====
+`page:${req.url}`                     // chua ca ?utm_source=... => moi lan chia se la key moi
+`user:${id}:${Date.now()}`            // timestamp => khong bao gio trung
+`search:${JSON.stringify(filters)}`   // thu tu thuoc tinh doi => key doi, du cung dieu kien
+`cart:${sessionId}`                   // moi phien mot key => cache chi phuc vu duy nhat 1 nguoi
+
+// ===== DUNG: chi giu nhung gi THAT SU quyet dinh ket qua =====
+const CACHE_PARAMS = ['page', 'sort', 'category'];   // danh sach cho phep, khong phai chan
+
+function cacheKeyFor(url) {
+  const u = new URL(url, 'http://x');
+  const parts = CACHE_PARAMS
+    .filter((k) => u.searchParams.has(k))
+    .sort()                                    // SAP XEP: ?a=1&b=2 va ?b=2&a=1 phai cung key
+    .map((k) => `${k}=${u.searchParams.get(k)}`);
+  return `page:${u.pathname}|${parts.join('&')}`;
+}
+
+// cacheKeyFor('/products?utm_source=fb&sort=price&page=2')
+//   -> 'page:/products|page=2&sort=price'      utm_* bi bo, thu tu duoc chuan hoa</code></pre>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Dùng danh sách cho phép, đừng dùng danh sách chặn</div>
+              <div class="callout__content">
+                Liệt kê tham số <em>được phép</em> vào key (như <code>CACHE_PARAMS</code> ở trên) thay vì liệt kê tham
+                số cần bỏ. Lý do: danh sách chặn phải được cập nhật mỗi khi marketing thêm một tham số theo dõi mới, và
+                khi quên thì hit ratio tụt âm thầm mà không có lỗi nào xuất hiện. Danh sách cho phép thì mặc định là an
+                toàn — tham số lạ bị bỏ qua.
+              </div>
+            </div>
+
+            <p>
+              Hai vấn đề còn lại đáng biết tên. <strong>Hot key</strong>: một key được truy cập quá nhiều làm lệch tải
+              một shard Redis — mọi shard khác rảnh, một shard quá tải; cách chữa là nhân bản key đó thành vài bản
+              (<code>hot:v1#0</code>…<code>hot:v1#7</code>) rồi chọn ngẫu nhiên khi đọc.
+              <strong>Cache pollution</strong>: một tác vụ quét dữ liệu lạnh (báo cáo, backup, con bot) đẩy hết dữ liệu
+              nóng ra khỏi cache — LFU chịu đựng chuyện này tốt hơn LRU, hoặc tách hẳn tác vụ quét sang đường không đi
+              qua cache.
+            </p>
+
+            <h3>Tự làm lại các phép đo</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+docker compose --profile cache up -d
+
+# --- Muc 5.1: khong cache vs cache nong ---
+docker compose exec redis redis-cli flushall && ./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/uncached?key=hot" -c 32 -d 10 -w 3 --json
+./tools/cache-stats.sh
+
+docker compose exec redis redis-cli flushall && ./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/cached?key=hot&ttl=300" -c 32 -d 10 -w 3 --json
+./tools/cache-stats.sh
+
+# --- Muc 5.4: thundering herd. PHAI thu pool DB xuong 2 truoc, neu khong se
+# --- thay dung hien tuong minh da gap: so truy van tang 30 lan ma latency khong doi.
+# Sua DB_MAX_CONCURRENCY thanh '2' trong docker-compose.yml roi:
+docker compose --profile cache up -d --force-recreate app1 app2 app3
+
+docker compose exec redis redis-cli flushall && ./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/cached?key=hot&ttl=1" -c 100 -d 15 -w 3 --json
+./tools/cache-stats.sh                    # xem dbQueries + do sau hang doi
+
+docker compose exec redis redis-cli flushall && ./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/cached?key=hot&ttl=1&flight=single" -c 100 -d 15 -w 3 --json
+./tools/cache-stats.sh                    # so sanh: dbQueries, qDepth, va do tre LON NHAT</code></pre>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Tải database tỉ lệ với $(1-h)$, nên mỗi số 9 thêm vào hit ratio là một lần chia 10 tải — và toàn bộ giá
+              trị nằm ở những số 9 cuối cùng, không phải ở việc đi từ 0% lên 90%. Cache-aside là mặc định vì nó là mẫu
+              duy nhất mà cache sập thì hệ thống chỉ chậm đi. Vô hiệu hoá cache là phần khó nhất, và key có version
+              thường là lời giải sạch nhất vì nó làm cuộc đua ghi trở nên vô hại thay vì cố ngăn cuộc đua.
+            </p>
+
+            <p>
+              Nhưng bài học lớn nhất của bài này là về <em>cách đo</em>. Ba lần trong quá trình viết, số liệu nói ngược
+              điều mình chờ đợi, và cả ba lần nguyên nhân là phép đo chứ không phải cơ chế: jitter "không có tác dụng"
+              vì hệ thống nghẽn suốt nên không có đợt nào để làm phẳng; thundering herd "không gây hại" vì pool database
+              rộng gấp nhiều lần herd; single-flight "làm chậm hơn" vì p50 và p99 không chứa nhóm 0,39% bị hại. Trong cả
+              ba, số liệu đúng — câu hỏi mới là cái sai.
+            </p>
+
+            <p>
+              <strong>Bài 6</strong> đi vào phần khiến việc vô hiệu hoá cache khó tới vậy: mô hình nhất quán. Khi dữ
+              liệu tồn tại ở nhiều chỗ cùng lúc — cache, replica, nhiều vùng — thì "giá trị hiện tại" không còn là một
+              câu hỏi có một câu trả lời.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/app/app.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về app.js (cache-aside + single-flight + jitter)
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-api-gateway" class="article-related__link article-related__link--prev">
+                  Bài 4: Reverse Proxy &amp; API Gateway
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 6: Nhất Quán &amp; Đánh Đổi CAP (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

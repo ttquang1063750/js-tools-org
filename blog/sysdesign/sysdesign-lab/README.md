@@ -86,17 +86,20 @@ docker compose --profile base --profile lb --profile gw --profile cache --profil
 
 ## Các endpoint của app
 
-| Endpoint            | Dùng để làm gì                                                            |
-| ------------------- | ------------------------------------------------------------------------- |
-| `/health`           | Health check. `?fail=1` để cố ý báo hỏng, xem LB rút node ra (Bài 3)      |
-| `/whoami`           | Cho biết replica nào phục vụ — dùng để thấy LB phân phối (Bài 3)          |
-| `/stats`            | Số request, số đang xử lý, hit/miss của cache                             |
-| `/fast`             | Trả lời ngay, dùng làm mốc so sánh                                        |
-| `/slow-async?ms=50` | Chậm nhưng **không** chặn event loop                                      |
-| `/slow-sync?ms=50`  | Chậm và **chặn** event loop — thủ phạm ở Bài 2                            |
-| `/cached?key=abc`   | Cache-aside thật với Redis (Bài 5)                                        |
-| `/client-ip`        | Phơi bày lỗ hổng `X-Forwarded-For` — đọc từ trái vs từ phải (Bài 4)       |
-| `/aggregate`        | Gộp nhiều nhánh; `?branches=50,120,200&mode=parallel\|sequential` (Bài 4) |
+| Endpoint            | Dùng để làm gì                                                              |
+| ------------------- | --------------------------------------------------------------------------- |
+| `/health`           | Health check. `?fail=1` để cố ý báo hỏng, xem LB rút node ra (Bài 3)        |
+| `/whoami`           | Cho biết replica nào phục vụ — dùng để thấy LB phân phối (Bài 3)            |
+| `/stats`            | Số request, số đang xử lý, hit/miss của cache                               |
+| `/fast`             | Trả lời ngay, dùng làm mốc so sánh                                          |
+| `/slow-async?ms=50` | Chậm nhưng **không** chặn event loop                                        |
+| `/slow-sync?ms=50`  | Chậm và **chặn** event loop — thủ phạm ở Bài 2                              |
+| `/cached?key=abc`   | Cache-aside thật với Redis (Bài 5)                                          |
+| `/cached?key=abc`   | Tham số: `ttl`, `flight=single`, `jitter=0.2` — bật/tắt từng cơ chế (Bài 5) |
+| `/uncached?key=abc` | Luôn đi xuống database — mốc so sánh của Bài 5                              |
+| `/reset-stats`      | Xoá bộ đếm, để mỗi phép đo bắt đầu từ 0 (Bài 5)                             |
+| `/client-ip`        | Phơi bày lỗ hổng `X-Forwarded-For` — đọc từ trái vs từ phải (Bài 4)         |
+| `/aggregate`        | Gộp nhiều nhánh; `?branches=50,120,200&mode=parallel\|sequential` (Bài 4)   |
 
 ## Đo tải
 
@@ -118,6 +121,9 @@ docker compose run --rm loadgen loadgen.js --url http://lb:8080/fast -c 50 -d 15
 docker compose run --rm loadgen loadgen.js --url http://gw:8081/api/fast  -c 8 -d 8 -w 3 --json
 docker compose run --rm loadgen loadgen.js --url https://gw:8443/api/fast -c 8 -d 8 -w 3 --json
 
+# Bai 5: khong gian key co kiem soat (hit ratio phu thuoc truc tiep vao no)
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/cached?ttl=300" -c 32 -d 10 -w 3 --key-space 1000 --json
+
 # Cùng phép đo nhưng MỖI REQUEST MỘT KẾT NỐI MỚI — đây mới là chi phí BẮT TAY.
 # Chênh lệch giữa hai cách chạy này lớn hơn nhiều so với chênh lệch HTTP/HTTPS ở trên.
 docker compose run --rm loadgen loadgen.js --url https://gw:8443/api/fast -c 8 -d 8 -w 3 --no-keepalive --json
@@ -137,6 +143,33 @@ docker compose run --rm loadgen loadgen.js --url https://gw:8443/api/fast -c 8 -
    bằng `docker stats`: nếu container loadgen chạm 100% CPU thì số đo đã vô nghĩa.
 3. Đừng để loadgen và app tranh cùng lõi CPU rồi kết luận. Trong `docker-compose.yml` mỗi app
    bị giới hạn 1 CPU và loadgen được 2 CPU chính là vì lý do này.
+
+## Số liệu cache: phải gộp cả ba replica
+
+Mỗi replica đếm **riêng** trong bộ nhớ của nó, nên đọc `/stats` của một replica chỉ cho bạn một
+phần ba sự thật. Script dưới đây gộp lại:
+
+```bash
+./tools/cache-stats.sh reset    # xoá bộ đếm trên cả 3 replica
+./tools/cache-stats.sh          # in tổng: hit ratio, dbQueries, độ sâu hàng đợi DB
+```
+
+Hai số liệu quan trọng nhất của Bài 5 là **hit ratio** và **số truy vấn database trên mỗi
+request** — không phải "có nhanh hơn không".
+
+### DB_MAX_CONCURRENCY: vì sao con số này quyết định bài học
+
+`app.js` giới hạn số truy vấn database **đồng thời** (mặc định 10/replica), mô phỏng connection
+pool có thật. Nếu không có giới hạn này, thundering herd chỉ làm **tăng số truy vấn** mà không
+làm chậm gì cả — và mục 5.4 của Bài 5 mất hẳn phần quan trọng nhất. Để tái tạo đúng số liệu
+trong bài, hãy thu xuống `'2'` rồi tạo lại container:
+
+```bash
+# sửa DB_MAX_CONCURRENCY thành '2' trong docker-compose.yml, rồi:
+docker compose --profile cache up -d --force-recreate app1 app2 app3
+```
+
+`restart` **không** đọc lại biến môi trường — phải `--force-recreate`.
 
 ## Xem load balancer phân phối như thế nào
 
