@@ -32,7 +32,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 17: Chẩn Đoán &amp; Sửa Chữa Mạch** | **Từ Đo Kiểm Đến Sửa Chữa Thực Chiến**  | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 18: Kỹ Thuật Hệ Thống AI**          | **Từ Pipeline Đến Đội Ngũ Agent**       | **13/13**      | **13**   | **100%** ✅ |
 | 🎉 **Series 19: Cơ Sở Dữ Liệu Vector**          | **Từ Thuật Toán Đến Ứng Dụng RAG**      | **9/9**        | **9**    | **100%** ✅ |
-| Series 20                                       | Thiết Kế Hệ Thống                       | 0/18           | 18       | 0%          |
+| Series 20                                       | Thiết Kế Hệ Thống                       | 2/18           | 18       | 11%         |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
