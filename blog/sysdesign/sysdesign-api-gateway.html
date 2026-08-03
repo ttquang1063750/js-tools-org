@@ -1,0 +1,1593 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 4: Reverse Proxy &amp; API Gateway — js-tools</title>
+    <meta
+      name="description"
+      content="TLS termination và sự thật về X-Forwarded-For; đo thật cho thấy chi phí TLS chỉ ~10% khi có keep-alive nhưng tăng 5,6 lần khi mỗi request mở kết nối mới; phép đo file tĩnh đi ngược dự đoán — gateway chậm hơn proxy về Node 2,6 lần cho tới khi thêm open_file_cache (nhanh lên 2,4 lần); gộp dữ liệu song song 208 ms so với tuần tự 386 ms; và ngân sách timeout để tránh nhân số lần thử lại."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-api-gateway" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-api-gateway" />
+    <meta property="og:title" content="Bài 4: Reverse Proxy &amp; API Gateway — js-tools" />
+    <meta
+      property="og:description"
+      content="TLS termination và sự thật về X-Forwarded-For; đo thật cho thấy chi phí TLS chỉ ~10% khi có keep-alive nhưng tăng 5,6 lần khi mỗi request mở kết nối mới; phép đo file tĩnh đi ngược dự đoán — gateway chậm hơn proxy về Node 2,6 lần cho tới khi thêm open_file_cache (nhanh lên 2,4 lần); gộp dữ liệu song song 208 ms so với tuần tự 386 ms; và ngân sách timeout để tránh nhân số lần thử lại."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 4: Reverse Proxy &amp; API Gateway — js-tools" />
+    <meta
+      name="twitter:description"
+      content="TLS termination và sự thật về X-Forwarded-For; đo thật cho thấy chi phí TLS chỉ ~10% khi có keep-alive nhưng tăng 5,6 lần khi mỗi request mở kết nối mới; phép đo file tĩnh đi ngược dự đoán — gateway chậm hơn proxy về Node 2,6 lần cho tới khi thêm open_file_cache (nhanh lên 2,4 lần); gộp dữ liệu song song 208 ms so với tuần tự 386 ms; và ngân sách timeout để tránh nhân số lần thử lại."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 4: Reverse Proxy & API Gateway",
+        "description": "TLS termination và sự thật về X-Forwarded-For; đo thật cho thấy chi phí TLS chỉ ~10% khi có keep-alive nhưng tăng 5,6 lần khi mỗi request mở kết nối mới; phép đo file tĩnh đi ngược dự đoán — gateway chậm hơn proxy về Node 2,6 lần cho tới khi thêm open_file_cache (nhanh lên 2,4 lần); gộp dữ liệu song song 208 ms so với tuần tự 386 ms; và ngân sách timeout để tránh nhân số lần thử lại.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-api-gateway",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 4: Reverse Proxy &amp; API Gateway</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 21 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-load-balancing">Bài 3</a> đặt nginx lên trước ba replica và dùng nó cho đúng một việc:
+              chia tải. Nhưng thành phần đứng ở vị trí đó — nơi <em>mọi</em> request đều phải đi qua — có thể làm nhiều
+              hơn thế rất nhiều: kết thúc TLS, định tuyến theo đường dẫn, phục vụ file tĩnh, chặn request thiếu token,
+              giới hạn tần suất. Bài này giữ nguyên nginx nhưng giao cho nó những việc đó, rồi đo xem mỗi việc đáng giá
+              bao nhiêu.
+            </p>
+
+            <p>
+              Hai phép đo trong bài đi ngược lại điều mình dự đoán khi viết đề cương. Thứ nhất: câu "cho gateway phục vụ
+              file tĩnh để app đỡ việc" hoá ra khiến gateway <strong>chậm hơn 2,6 lần</strong> so với việc chuyển tiếp
+              request về app — cho tới khi thêm đúng một chỉ thị cấu hình. Thứ hai: "TLS tốn khoảng 10%" là con số mình
+              đo được và cũng là con số hay được trích dẫn, nhưng nó chỉ đúng trong một điều kiện rất cụ thể; bỏ điều
+              kiện đó ra thì chi phí thành <strong>5,6 lần</strong>.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo cho mọi số liệu trong bài này</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64 (Node v22.23.2).
+                Mỗi app replica giới hạn <strong>1 CPU / 256 MB</strong>, nginx 1.27-alpine, bộ đo tải 2 CPU. Mọi thí
+                nghiệm lặp lại ít nhất 3 lần và bài ghi cả khoảng biến động. Các con số tuyệt đối phụ thuộc máy bạn —
+                điều cần mang đi là <em>tỉ lệ</em> giữa hai cấu hình được so sánh.
+              </div>
+            </div>
+
+            <!-- ================= 4.1 ================= -->
+            <h2>4.1 Ba cái tên cho cùng một vị trí</h2>
+
+            <p>
+              "Reverse proxy", "load balancer", "API gateway" thường được nói như ba sản phẩm khác nhau. Thực tế chúng
+              là
+              <strong>ba mức trách nhiệm</strong> gán cho cùng một vị trí trong hệ thống: chặng đứng giữa client và các
+              service. Cùng một tiến trình nginx trong lab của series này lần lượt đóng cả ba vai.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 356"
+                width="100%"
+                role="img"
+                aria-label="Ba mức trách nhiệm của chặng đứng trước service: reverse proxy, load balancer, API gateway"
+              >
+                <rect width="720" height="356" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Cùng một vị trí, ba mức trách nhiệm — mỗi mức bao gồm mức trước
+                </text>
+
+                <!-- muc 1 -->
+                <rect x="16" y="40" width="688" height="84" rx="6" fill="#151d30" stroke="#22c55e" />
+                <text x="30" y="60" fill="#22c55e" font-family="system-ui, sans-serif" font-size="11" font-weight="600">
+                  1 · REVERSE PROXY — che giấu và chuyển tiếp
+                </text>
+                <text x="30" y="80" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="10">
+                  Nhận request thay cho server thật · client không biết địa chỉ nội bộ · một cửa vào duy nhất
+                </text>
+                <text x="30" y="98" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Câu hỏi nó trả lời: "gửi request này tới ĐÂU?"
+                </text>
+                <text x="30" y="114" fill="#6b7280" font-family="system-ui, sans-serif" font-size="9">
+                  Trạng thái cần giữ: không có
+                </text>
+
+                <!-- muc 2 -->
+                <rect x="16" y="132" width="688" height="84" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="30"
+                  y="152"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                >
+                  2 · LOAD BALANCER — proxy + chọn trong nhiều bản
+                </text>
+                <text x="30" y="172" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="10">
+                  Thuật toán phân phối · health check · rút node hỏng ra khỏi pool (Bài 3)
+                </text>
+                <text x="30" y="190" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Câu hỏi nó trả lời: "trong N bản giống nhau, chọn BẢN NÀO?"
+                </text>
+                <text x="30" y="206" fill="#6b7280" font-family="system-ui, sans-serif" font-size="9">
+                  Trạng thái cần giữ: sức khoẻ và số kết nối của từng node
+                </text>
+
+                <!-- muc 3 -->
+                <rect x="16" y="224" width="688" height="100" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="30"
+                  y="244"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                >
+                  3 · API GATEWAY — load balancer + hiểu về API
+                </text>
+                <text x="30" y="264" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="10">
+                  TLS termination · định tuyến theo path/version · xác thực · rate limit · gộp nhiều service
+                </text>
+                <text x="30" y="282" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Câu hỏi nó trả lời: "request này là API GÌ, của AI, và có được phép không?"
+                </text>
+                <text x="30" y="298" fill="#6b7280" font-family="system-ui, sans-serif" font-size="9">
+                  Trạng thái cần giữ: khoá công khai, quota, bảng route, phiên TLS
+                </text>
+                <text x="30" y="316" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  Đổi lại: biết về nghiệp vụ =&gt; dễ phình thành nơi chứa logic (mục 4.4)
+                </text>
+
+                <text x="16" y="346" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Không có ranh giới sản phẩm ở đây — chỉ có ranh giới trách nhiệm. Leo lên mức cao hơn khi thật sự cần
+                  thứ mức đó cung cấp.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Mỗi mức thêm quyền năng và thêm trạng thái phải quản lý. Trạng thái là cái giá thật sự, không phải CPU.
+              </figcaption>
+            </figure>
+
+            <p>
+              Phân biệt thêm một cặp dễ lẫn: <strong>forward proxy</strong> và <strong>reverse proxy</strong>. Forward
+              proxy đứng cạnh <em>client</em> và đại diện cho client (ví dụ proxy của công ty đi ra Internet); reverse
+              proxy đứng cạnh <em>server</em> và đại diện cho server. Cùng công nghệ, ngược hướng, và bên nào cấu hình
+              nó cũng khác nhau.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Quy tắc chọn mức</div>
+              <div class="callout__content">
+                Chỉ có một server và muốn ẩn nó sau TLS: reverse proxy là đủ. Có nhiều bản giống nhau: cần load
+                balancer. Có nhiều service <em>khác nhau</em> mà client không nên biết ranh giới giữa chúng: lúc đó API
+                gateway mới đáng. Dựng gateway cho một service duy nhất là thêm một điểm chết mà không nhận lại gì.
+              </div>
+            </div>
+
+            <h3>Lab của bài này</h3>
+
+            <p>
+              Lab dùng chung của series được mở thêm profile <code>gw</code>. Điểm quan trọng trong thiết kế lab: cổng
+              HTTP (8081) và cổng HTTPS (8443) <em>include cùng một file route</em>, nên chênh lệch đo được giữa hai
+              cổng chỉ đến từ TLS, không lẫn khác biệt cấu hình:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">chuan_bi_lab.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+
+# 1. Sinh chung chi TU KY cho gateway (chi dung trong lab, khong dung o dau khac)
+mkdir -p nginx/certs
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout nginx/certs/lab.key -out nginx/certs/lab.crt \
+  -subj "/CN=localhost"
+
+# 2. Bat gateway + 3 app replica
+docker compose --profile gw up -d
+
+# 3. Kiem tra ca hai cong deu song
+curl -s  http://localhost:8081/gw-health      # -> gateway ok
+curl -sk https://localhost:8443/gw-health     # -> gateway ok  (-k: bo qua chung chi tu ky)
+
+# 4. Gateway cat tien to /api/ truoc khi chuyen tiep
+curl -s http://localhost:8081/api/whoami
+# -> {"instance":"app1", ...}   app KHONG he biet den tien to /api/</code></pre>
+            </div>
+
+            <!-- ================= 4.2 ================= -->
+            <h2>4.2 TLS termination và sự thật về X-Forwarded-For</h2>
+
+            <p>
+              <strong>TLS termination</strong> nghĩa là gateway giải mã HTTPS rồi nói HTTP thuần với các service phía
+              sau. Lý do làm vậy rất thực dụng: chứng chỉ chỉ nằm ở một chỗ (gia hạn một lần thay vì N lần), service
+              không cần biết gì về TLS, và gateway đọc được nội dung nên mới định tuyến theo path được.
+            </p>
+
+            <h3>TLS tốn bao nhiêu?</h3>
+
+            <p>
+              Cùng route <code>/api/fast</code>, 8 kết nối đồng thời, 8 giây đo, ba lần lặp — chỉ khác cổng vào là HTTP
+              hay HTTPS:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cổng</th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>8081 — HTTP</strong></td>
+                  <td>22.950 / 22.799 / 21.939</td>
+                  <td>0,33–0,35 ms</td>
+                  <td>0,70–0,76 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>8443 — HTTPS</strong></td>
+                  <td>20.494 / 20.881 / 19.828</td>
+                  <td>0,36 ms</td>
+                  <td>0,88–0,96 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>Chênh lệch</strong></td>
+                  <td>thấp hơn ~9–10%</td>
+                  <td>+0,02 ms</td>
+                  <td>+0,18 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Khoảng 10% throughput, và độ trễ tăng thêm nhỏ hơn nhiều so với thời gian một truy vấn database tầm thường
+              nhất. Kết luận có vẻ rõ ràng: TLS rẻ, bật đi. Nhưng con số này che một điều kiện.
+            </p>
+
+            <h3>Con số 10% chỉ đúng khi có keep-alive</h3>
+
+            <p>
+              Bộ đo tải của lab mặc định dùng <strong>kết nối bền</strong> (keep-alive): mở 8 kết nối rồi gửi hàng trăm
+              nghìn request qua chúng. Cái đắt của TLS là <em>bắt tay</em> — trao đổi khoá bất đối xứng, một hoặc hai
+              vòng mạng — còn phần mã hoá đối xứng sau đó thì rất rẻ. Với keep-alive, chi phí bắt tay được chia cho hàng
+              chục nghìn request nên gần như tan biến.
+            </p>
+
+            <p>
+              Bộ đo tải có cờ <code>--no-keepalive</code> để buộc mỗi request mở một kết nối mới. Cùng route, cùng số
+              kết nối đồng thời:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cấu hình</th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>HTTP + keep-alive</td>
+                  <td>~22.600</td>
+                  <td>0,34 ms</td>
+                  <td>0,73 ms</td>
+                </tr>
+                <tr>
+                  <td>HTTPS + keep-alive</td>
+                  <td>~20.400</td>
+                  <td>0,36 ms</td>
+                  <td>0,91 ms</td>
+                </tr>
+                <tr>
+                  <td>HTTP, mỗi request một kết nối</td>
+                  <td>7.006 / 7.375</td>
+                  <td>1,07–1,11 ms</td>
+                  <td>1,66–1,88 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>HTTPS, mỗi request một kết nối</strong></td>
+                  <td><strong>1.290 / 1.231</strong></td>
+                  <td><strong>5,96–6,21 ms</strong></td>
+                  <td><strong>12,97–13,39 ms</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Bỏ keep-alive đi, HTTP mất 3 lần throughput vì phải bắt tay TCP mỗi lần. Nhưng HTTPS mất
+              <strong>5,6 lần so với chính nó khi có keep-alive</strong>, và p50 tăng từ 0,36 ms lên hơn 6 ms — gấp 17
+              lần. Đó là hình dạng thật của chi phí TLS: nó không nằm ở mỗi <em>request</em>, nó nằm ở mỗi
+              <em>kết nối</em>.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Vì sao điều này quan trọng hơn con số 10%</div>
+              <div class="callout__content">
+                Nếu bạn benchmark bằng công cụ có keep-alive rồi kết luận "TLS tốn 10%", con số đó đúng cho
+                <em>benchmark</em> nhưng có thể sai cho production. Client thật đôi khi không giữ kết nối: cron job gọi
+                một lần rồi thoát, thư viện HTTP cấu hình sai không bật pooling, thiết bị di động rớt mạng liên tục. Với
+                nhóm client đó, mỗi request là một lần bắt tay đầy đủ.<br /><br />
+                Ba việc đáng làm, theo thứ tự hiệu quả: (1) bật <code>ssl_session_cache</code> ở gateway để kết nối lại
+                dùng được phiên cũ — lab đã bật, nghĩa là con số 5,6 lần ở trên vẫn còn là <em>lạc quan</em>; (2) bật
+                HTTP/2 để nhiều request đi chung một kết nối; (3) kiểm tra client của bạn có thật sự dùng connection
+                pool hay không — đây là chỗ thường sai nhất và cũng dễ sửa nhất.
+              </div>
+            </div>
+
+            <h3>Sau khi giải mã, app mất thông tin gì?</h3>
+
+            <p>
+              Kết nối TCP mà app nhìn thấy là kết nối từ <em>gateway</em>, không phải từ client. Nên
+              <code>socket.remoteAddress</code> của app luôn là IP của gateway, và app cũng không còn biết client vào
+              bằng HTTP hay HTTPS. Thông tin đó phải được chuyển tiếp bằng header — và đây là chỗ sinh ra một lỗ hổng
+              rất phổ biến.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 372"
+                width="100%"
+                role="img"
+                aria-label="Hành trình của header X-Forwarded-For qua từng chặng và cách đọc đúng"
+              >
+                <rect width="720" height="372" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Hành trình của X-Forwarded-For — mỗi proxy tin cậy GHI THÊM vào cuối chuỗi
+                </text>
+
+                <!-- chang 1: client -->
+                <rect x="16" y="44" width="150" height="76" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="91"
+                  y="64"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                  text-anchor="middle"
+                >
+                  CLIENT (kẻ tấn công)
+                </text>
+                <text
+                  x="91"
+                  y="82"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  IP thật: 192.168.65.1
+                </text>
+                <text
+                  x="91"
+                  y="100"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  tự gửi header:
+                </text>
+                <text
+                  x="91"
+                  y="112"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  XFF: 1.2.3.4
+                </text>
+
+                <line x1="166" y1="82" x2="216" y2="82" stroke="#4b5563" stroke-width="2" />
+                <polygon points="216,82 208,78 208,86" fill="#4b5563" />
+
+                <!-- chang 2: gateway -->
+                <rect x="216" y="44" width="180" height="76" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="306"
+                  y="64"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                  text-anchor="middle"
+                >
+                  GATEWAY (nginx)
+                </text>
+                <text
+                  x="306"
+                  y="82"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  $proxy_add_x_forwarded_for
+                </text>
+                <text
+                  x="306"
+                  y="98"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  = giá trị client gửi + "," + IP thật
+                </text>
+                <text
+                  x="306"
+                  y="112"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  GIỮ LẠI phần client gửi
+                </text>
+
+                <line x1="396" y1="82" x2="446" y2="82" stroke="#4b5563" stroke-width="2" />
+                <polygon points="446,82 438,78 438,86" fill="#4b5563" />
+
+                <!-- chang 3: app -->
+                <rect x="446" y="44" width="258" height="76" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="575"
+                  y="64"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                  text-anchor="middle"
+                >
+                  APP nhận được
+                </text>
+                <text
+                  x="575"
+                  y="84"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  <tspan fill="#9ca3af">XFF:</tspan>
+                  <tspan fill="#ef4444">1.2.3.4,</tspan>
+                  <tspan fill="#22c55e">192.168.65.1</tspan>
+                </text>
+                <text
+                  x="575"
+                  y="102"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  <tspan fill="#ef4444">đỏ</tspan>
+                  = do client bịa ·
+                  <tspan fill="#22c55e">xanh</tspan>
+                  = do gateway ghi
+                </text>
+                <text
+                  x="575"
+                  y="114"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  remoteAddress = IP của gateway
+                </text>
+
+                <!-- hai cach doc -->
+                <text
+                  x="16"
+                  y="152"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                >
+                  Cùng một chuỗi, hai cách đọc — kết quả ngược nhau
+                </text>
+
+                <rect x="16" y="164" width="336" height="96" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="30"
+                  y="184"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  SAI · đọc phần tử ĐẦU TIÊN
+                </text>
+                <text x="30" y="202" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  xff.split(",")[0]
+                </text>
+                <text x="30" y="220" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  =&gt; 1.2.3.4 — chính giá trị kẻ tấn công bịa
+                </text>
+                <text x="30" y="240" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  Hậu quả: vượt rate limit theo IP · log sai · vượt allowlist
+                </text>
+                <text x="30" y="253" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  Đây là mặc định của rất nhiều đoạn code chép trên mạng.
+                </text>
+
+                <rect x="368" y="164" width="336" height="96" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="382"
+                  y="184"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  ĐÚNG · đếm từ BÊN PHẢI
+                </text>
+                <text x="382" y="202" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  chain[chain.length - TRUST_PROXY_HOPS]
+                </text>
+                <text x="382" y="220" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  =&gt; 192.168.65.1 — IP thật, client không bịa được
+                </text>
+                <text x="382" y="240" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  Vì mỗi chặng TIN CẬY chỉ ghi thêm vào CUỐI chuỗi
+                </text>
+                <text x="382" y="253" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  Số hop phải là con số CỐ ĐỊNH bạn tự biết, không đoán.
+                </text>
+
+                <!-- quy tac -->
+                <rect x="16" y="276" width="688" height="80" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="30"
+                  y="296"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Quy tắc chung
+                </text>
+                <text x="30" y="314" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Phần BÊN PHẢI của chuỗi do hạ tầng của bạn ghi =&gt; tin được. Phần BÊN TRÁI do bên ngoài ghi =&gt;
+                  không tin được.
+                </text>
+                <text x="30" y="332" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Số phần tử tin được = số chặng proxy bạn thật sự vận hành. Không có cách nào suy ra nó từ chính chuỗi.
+                </text>
+                <text x="30" y="349" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  An toàn nhất khi gateway là chặng đầu: GHI ĐÈ toàn bộ header thay vì ghi thêm.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                X-Forwarded-For là một chuỗi mà phần đầu do người ngoài viết. Đọc từ sai đầu là một lỗ hổng, không phải
+                một bug hiển thị.
+              </figcaption>
+            </figure>
+
+            <p>
+              Lab có endpoint <code>/client-ip</code> tồn tại chỉ để chứng minh chuyện này. Chạy thật, gửi kèm một
+              header bịa:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">gia_mao_x_forwarded_for.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">curl -s -H 'X-Forwarded-For: 1.2.3.4' http://localhost:8081/api/client-ip
+
+# {"instance":"app1",
+#  "remoteAddress":"::ffff:172.21.0.5",              ← IP cua GATEWAY, khong phai client
+#  "xForwardedForRaw":"1.2.3.4, 192.168.65.1",       ← gia mao + IP that
+#  "trustProxyHops":0,
+#  "trustedClientIp":"::ffff:172.21.0.5",
+#  "naiveClientIp":"1.2.3.4"}                        ← DOC SAI: nhan nguyen gia tri bia
+
+# ---- Cach sua 1: gateway GHI DE header (route /safe-api/) ----
+curl -s -H 'X-Forwarded-For: 1.2.3.4' http://localhost:8081/safe-api/client-ip
+
+# "xForwardedForRaw":"192.168.65.1"                  ← gia mao bi xoa sach
+# "naiveClientIp":"192.168.65.1"                     ← doc kieu nao cung dung
+
+# ---- Cach sua 2: app dem tu ben phai ----
+# Dat TRUST_PROXY_HOPS='1' cho ca ba app trong docker-compose.yml (mac dinh la '0'),
+# roi TAO LAI container - `restart` khong doc lai bien moi truong:
+#   docker compose --profile gw up -d --force-recreate app1 app2 app3
+curl -s -H 'X-Forwarded-For: 1.2.3.4' http://localhost:8081/api/client-ip
+
+# "xForwardedForRaw":"1.2.3.4, 192.168.65.1",
+# "trustProxyHops":1,
+# "trustedClientIp":"192.168.65.1"                   ← DUNG
+# "naiveClientIp":"1.2.3.4"                          ← van sai, de doi chieu</code></pre>
+            </div>
+
+            <p>Cấu hình nginx tạo ra hai hành vi đó chỉ khác nhau một dòng:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">nginx/gw-routes.conf</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">location /api/ {
+    proxy_pass http://api_pool/;
+    # GHI THEM: giu lai gia tri client gui, noi them IP that vao cuoi.
+    # Dung khi PHIA TRUOC gateway con proxy tin cay khac (CDN chang han) va
+    # app can thay ca chuoi. App BUOC PHAI doc tu ben phai.
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Real-IP       $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location /safe-api/ {
+    proxy_pass http://api_pool/;
+    # GHI DE: xoa sach moi thu client gui. Dung khi gateway la chang DAU TIEN
+    # tiep xuc Internet. Day la mac dinh an toan nhat.
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP       $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}</code></pre>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: thư viện "tin proxy" bật bừa</div>
+              <div class="callout__content">
+                Nhiều framework có công tắc kiểu <code>trust proxy</code>. Đặt nó thành "true" thường có nghĩa là "tin
+                toàn bộ chuỗi", tức là quay về đúng cách đọc sai. Giá trị đúng luôn là một
+                <strong>con số cụ thể</strong>: số chặng proxy bạn thật sự vận hành. Nếu bạn không biết con số đó thì
+                chưa nên bật công tắc — hãy để gateway ghi đè header.<br /><br />
+                Và đây không phải lỗi hiển thị: <code>X-Forwarded-Proto</code> bị bịa có thể làm app tưởng request đã mã
+                hoá nên bỏ qua redirect sang HTTPS; XFF bị bịa vô hiệu hoá mọi rate limit theo IP.
+              </div>
+            </div>
+
+            <!-- ================= 4.3 ================= -->
+            <h2>4.3 Định tuyến theo đường dẫn — và một phép đo đi ngược dự đoán</h2>
+
+            <p>
+              Việc dễ thấy nhất của gateway: xem đường dẫn rồi quyết định gửi đi đâu.
+              <code>/api/orders/*</code> về service đơn hàng, <code>/api/users/*</code> về service người dùng,
+              <code>/static/*</code> thì gateway tự trả. Client thấy một domain duy nhất và không biết phía sau có bao
+              nhiêu service.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: dấu gạch chéo cuối trong proxy_pass</div>
+              <div class="callout__content">
+                <code>proxy_pass http://api_pool<strong>/</strong>;</code> — có dấu <code>/</code> ở cuối — sẽ
+                <em>cắt</em> tiền tố <code>/api/</code> trước khi chuyển tiếp, nên app nhận <code>/fast</code>.<br />
+                <code>proxy_pass http://api_pool;</code> — không có dấu <code>/</code> — giữ nguyên, app nhận
+                <code>/api/fast</code> và trả 404.<br /><br />
+                Một ký tự, hai hành vi khác nhau, và thông báo lỗi duy nhất bạn nhận được là 404 từ app. Cách kiểm tra
+                nhanh: gọi <code>/api/whoami</code>; nếu ra 404 thì xem lại dấu gạch chéo trước khi nghi ngờ bất cứ điều
+                gì khác.
+              </div>
+            </div>
+
+            <h3>"Cho gateway phục vụ file tĩnh" — đo trước khi tin</h3>
+
+            <p>
+              Lời khuyên kinh điển: để gateway tự trả file tĩnh, mỗi file nó trả là một request app không phải xử lý.
+              nginx đọc file nhanh hơn Node rất nhiều, nên chuyện này nghe như không cần kiểm tra. Mình đo thử, 16 kết
+              nối, 8 giây, ba lần lặp, so <code>/static/hello.json</code> (nginx tự trả) với
+              <code>/api/fast</code> (chuyển tiếp về app):
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Route</th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>/static/</code> — nginx tự trả, cấu hình mặc định</td>
+                  <td>8.623 / 9.260 / 8.842</td>
+                  <td>1,53–1,63 ms</td>
+                  <td>3,78–4,51 ms</td>
+                </tr>
+                <tr>
+                  <td><code>/api/fast</code> — chuyển tiếp về Node</td>
+                  <td>22.768 / 22.680 / 22.720</td>
+                  <td>0,58–0,59 ms</td>
+                  <td>1,38–1,41 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              File tĩnh <strong>chậm hơn 2,6 lần</strong> so với đi qua proxy tới một tiến trình Node. Điều này ngược
+              hoàn toàn với dự đoán, nên nó là một trong hai khả năng: hoặc lời khuyên sai, hoặc mình đang đo một thứ
+              khác với thứ mình nghĩ.
+            </p>
+
+            <p>
+              Giả thuyết: thư mục static được <strong>bind-mount</strong> từ máy host vào container. Trên Docker Desktop
+              (macOS/Windows), bind-mount đi qua ranh giới máy ảo, nên mỗi lời gọi hệ thống lên file đó đắt hơn hẳn. Và
+              nginx mặc định <em>mở lại file mỗi request</em>: <code>stat()</code>, <code>open()</code>,
+              <code>read()</code>. Nếu giả thuyết đúng thì việc cache metadata và file descriptor phải xoá được gần hết
+              khoảng cách. Thêm bốn dòng:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">nginx/gw-routes.conf</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">location /static/ {
+    alias /usr/share/nginx/static/;
+    expires 1h;
+
+    # Cache metadata + file descriptor, thay vi stat()+open()+read() moi request.
+    open_file_cache          max=1000 inactive=60s;
+    open_file_cache_valid    60s;
+    open_file_cache_min_uses 1;
+    open_file_cache_errors   on;
+}</code></pre>
+            </div>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cấu hình <code>/static/</code></th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Mặc định</td>
+                  <td>8.623 / 9.260 / 8.842</td>
+                  <td>1,53–1,63 ms</td>
+                  <td>3,78–4,51 ms</td>
+                </tr>
+                <tr>
+                  <td>
+                    <strong>Có <code>open_file_cache</code></strong>
+                  </td>
+                  <td><strong>21.580 / 21.809 / 21.343</strong></td>
+                  <td><strong>0,67–0,69 ms</strong></td>
+                  <td><strong>1,45–1,50 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>Mốc so sánh: proxy về Node</td>
+                  <td>~22.720</td>
+                  <td>0,59 ms</td>
+                  <td>1,40 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Nhanh lên <strong>2,4 lần</strong>, p50 giảm từ 1,6 ms xuống 0,68 ms. Giả thuyết đúng: nút cổ chai không
+              phải nginx mà là hệ thống file phía dưới nó. Sau khi sửa, file tĩnh gần bằng route proxy — vẫn thấp hơn
+              chút, và với file lớn hơn 30 byte của lab thì lợi thế sẽ nghiêng hẳn về nginx.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Bài học rộng hơn con số</div>
+              <div class="callout__content">
+                Lời khuyên "cho gateway phục vụ file tĩnh" không sai — nhưng nó ngầm giả định file nằm trên ổ nhanh hoặc
+                trong cache. Một lời khuyên kiến trúc luôn kèm giả định về môi trường, và giả định đó thường không được
+                viết ra.<br /><br />
+                Đáng chú ý hơn: nếu mình chỉ đo lần đầu rồi kết luận "nginx phục vụ tĩnh chậm", kết luận đó vừa sai vừa
+                nghe rất thuyết phục vì có số liệu kèm theo. Số đo ngược dự đoán không phải kết luận — nó là
+                <em>câu hỏi</em>. Việc tiếp theo luôn là đặt một giả thuyết cụ thể rồi tìm cách làm nó sai.
+              </div>
+            </div>
+
+            <h3>Đánh version API</h3>
+
+            <p>
+              Khi API phải thay đổi theo cách không tương thích ngược, gateway là nơi tự nhiên để hai phiên bản cùng tồn
+              tại. Ba cách thường gặp:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cách</th>
+                  <th>Ví dụ</th>
+                  <th>Được</th>
+                  <th>Mất</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Trong đường dẫn</strong></td>
+                  <td><code>/v1/orders</code>, <code>/v2/orders</code></td>
+                  <td>Thấy ngay trong log và trong URL; gateway định tuyến bằng đúng cơ chế đã có</td>
+                  <td>Version lẫn vào tài nguyên; cache và bookmark bị chia đôi</td>
+                </tr>
+                <tr>
+                  <td><strong>Bằng header</strong></td>
+                  <td><code>Accept: application/vnd.api.v2+json</code></td>
+                  <td>URL giữ nguyên ý nghĩa "tài nguyên"; đúng tinh thần HTTP</td>
+                  <td>Không thấy trong URL nên khó debug; dễ quên khi gọi bằng curl</td>
+                </tr>
+                <tr>
+                  <td><strong>Bằng query</strong></td>
+                  <td><code>/orders?version=2</code></td>
+                  <td>Dễ thử nhanh</td>
+                  <td>Dễ bị bỏ sót; nhiều tầng cache bỏ qua query khi tạo khoá</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Trong thực tế, version trong đường dẫn thắng ở phần lớn hệ thống vì lý do rất thực dụng: khi có sự cố lúc
+              2 giờ sáng, bạn đọc được version ngay trên dòng log mà không phải mở thêm gì.
+            </p>
+
+            <p>
+              Gateway cũng là chỗ để <strong>canary</strong>: đẩy một phần nhỏ lưu lượng sang phiên bản mới trước khi
+              chuyển hết. nginx làm được bằng <code>split_clients</code>, và điểm quan trọng là nó băm theo một khoá ổn
+              định để một client luôn thấy cùng một phiên bản:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">canary_5_phan_tram.conf</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># Bam theo IP (hoac tot hon: theo user id trong cookie) => MOT client luon thay
+# CUNG mot phien ban. Neu bam theo $request_id, cung mot nguoi se nhay qua lai
+# giua v1 va v2 giua cac request — bug rat kho tai hien.
+split_clients "${remote_addr}canary" $api_backend {
+    5%      api_v2;
+    *       api_v1;
+}
+
+location /api/ {
+    proxy_pass http://$api_backend/;
+}</code></pre>
+            </div>
+
+            <!-- ================= 4.4 ================= -->
+            <h2>4.4 Việc xuyên suốt: cái gì nên đặt ở gateway</h2>
+
+            <p>
+              Có một nhóm việc mà <em>mọi</em> service đều cần: xác thực, giới hạn tần suất, ghi log, nén, CORS. Nếu mỗi
+              service tự làm, bạn có N bản cài đặt và N cơ hội để một bản làm sai. Gateway là nơi làm một lần. Nhưng
+              không phải việc gì cũng nên chuyển lên đó.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Việc</th>
+                  <th>Đặt ở đâu</th>
+                  <th>Lý do</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Kết thúc TLS, nén, ghi log truy cập</td>
+                  <td>Gateway</td>
+                  <td>Thuần kỹ thuật, không cần biết nghiệp vụ, giống nhau với mọi service</td>
+                </tr>
+                <tr>
+                  <td>Kiểm tra token còn hợp lệ (chữ ký, hạn dùng)</td>
+                  <td>Gateway</td>
+                  <td>Chặn được request rác trước khi nó tiêu tài nguyên service</td>
+                </tr>
+                <tr>
+                  <td>Người này có quyền sửa đơn hàng #42 không</td>
+                  <td><strong>Service</strong></td>
+                  <td>Cần dữ liệu nghiệp vụ mà chỉ service mới có. Gateway biết chuyện này là gateway đã phình.</td>
+                </tr>
+                <tr>
+                  <td>Giới hạn tần suất theo IP hoặc theo API key</td>
+                  <td>Gateway</td>
+                  <td>Cần một chỗ đếm chung; đếm riêng ở từng replica thì hạn mức thật là N lần hạn mức khai báo</td>
+                </tr>
+                <tr>
+                  <td>Giới hạn theo hạn mức nghiệp vụ (gói cước, số dư)</td>
+                  <td><strong>Service</strong></td>
+                  <td>Là quy tắc nghiệp vụ, thay đổi theo sản phẩm chứ không theo hạ tầng</td>
+                </tr>
+                <tr>
+                  <td>Kiểm tra dữ liệu đầu vào hợp lệ</td>
+                  <td>Cả hai</td>
+                  <td>
+                    Gateway chặn thô (kích thước, kiểu nội dung); service kiểm tra đúng nghĩa và không bao giờ được tin
+                    rằng gateway đã kiểm
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Ranh giới nằm ở một câu hỏi: <strong>việc này có cần biết nghiệp vụ không?</strong> Không cần thì gateway.
+              Cần thì service. Áp dụng câu hỏi đó cho từng việc là cách duy nhất mình biết để gateway không dần biến
+              thành nơi chứa logic.
+            </p>
+
+            <h3>Gộp nhiều service: độ trễ bằng nhánh chậm nhất</h3>
+
+            <p>
+              Một màn hình thường cần dữ liệu từ nhiều service. Nếu client tự gọi từng cái, nó phải chịu toàn bộ độ trễ
+              mạng của mình — với mạng di động thì đắt. Cho gateway (hoặc một service BFF — backend for frontend) gọi hộ
+              trong mạng nội bộ rồi trả về một lần là kiểu thiết kế phổ biến. Điều then chốt là gọi
+              <strong>song song</strong>:
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 320"
+                width="100%"
+                role="img"
+                aria-label="Gọi song song ba nhánh cho tổng thời gian bằng nhánh chậm nhất, gọi tuần tự cho tổng bằng tổng các nhánh"
+              >
+                <rect width="720" height="320" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Ba nhánh 50 / 120 / 200 ms — cùng công việc, hai cách gọi
+                </text>
+
+                <!-- truc thoi gian -->
+                <line x1="120" y1="42" x2="680" y2="42" stroke="#374151" />
+                <text x="120" y="36" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">0</text>
+                <text x="258" y="36" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">100 ms</text>
+                <text x="398" y="36" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">200 ms</text>
+                <text x="538" y="36" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">300 ms</text>
+                <text x="660" y="36" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">400</text>
+
+                <!-- song song -->
+                <text x="16" y="70" fill="#22c55e" font-family="system-ui, sans-serif" font-size="11" font-weight="600">
+                  SONG SONG
+                </text>
+                <text x="16" y="86" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">Promise.all</text>
+
+                <rect x="120" y="60" width="70" height="18" rx="3" fill="#0f2419" stroke="#22c55e" />
+                <text x="196" y="73" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  service A · 50 ms
+                </text>
+                <rect x="120" y="84" width="168" height="18" rx="3" fill="#0f2419" stroke="#22c55e" />
+                <text x="294" y="97" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  service B · 120 ms
+                </text>
+                <rect x="120" y="108" width="280" height="18" rx="3" fill="#0f2419" stroke="#22c55e" />
+                <text x="406" y="121" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  service C · 200 ms ← nhánh chậm nhất quyết định
+                </text>
+
+                <line x1="400" y1="56" x2="400" y2="132" stroke="#22c55e" stroke-dasharray="3 3" />
+                <text
+                  x="404"
+                  y="146"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  tổng ≈ 200 ms = MAX(nhánh)
+                </text>
+                <text x="404" y="160" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  đo thật: 208 / 211 / 213 ms
+                </text>
+
+                <!-- tuan tu -->
+                <text
+                  x="16"
+                  y="196"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                >
+                  TUẦN TỰ
+                </text>
+                <text x="16" y="212" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">for + await</text>
+
+                <rect x="120" y="186" width="70" height="18" rx="3" fill="#2a1520" stroke="#ef4444" />
+                <text x="132" y="199" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">A · 50</text>
+                <rect x="190" y="186" width="168" height="18" rx="3" fill="#2a1520" stroke="#ef4444" />
+                <text x="202" y="199" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">B · 120</text>
+                <rect x="358" y="186" width="280" height="18" rx="3" fill="#2a1520" stroke="#ef4444" />
+                <text x="370" y="199" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">C · 200</text>
+
+                <line x1="638" y1="180" x2="638" y2="212" stroke="#ef4444" stroke-dasharray="3 3" />
+                <text
+                  x="416"
+                  y="230"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  tổng ≈ 370 ms = SUM(nhánh)
+                </text>
+                <text x="470" y="244" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  đo thật: 386 / 384 / 387 ms
+                </text>
+
+                <!-- ket luan -->
+                <rect x="16" y="258" width="688" height="48" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="30" y="278" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Không service nào chậm đi. Cùng ba nhánh đó, chỉ đổi cách gọi, độ trễ chênh 1,8 lần.
+                </text>
+                <text x="30" y="296" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Đổi lại: song song =&gt; một nhánh hỏng làm cả màn hình hỏng, nếu không có timeout riêng cho từng
+                  nhánh và phương án trả về thiếu.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Số đo lấy từ endpoint /aggregate của lab, ba lần lặp mỗi chế độ. Chênh lệch ~8–17 ms so với lý thuyết là
+                chi phí HTTP nội bộ và event loop.
+              </figcaption>
+            </figure>
+
+            <p>
+              Endpoint <code>/aggregate</code> của lab gọi thật ba nhánh qua HTTP nên chi phí socket và event loop đều
+              là chi phí thật, không phải <code>setTimeout</code> giả:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">do_fan_out.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">curl -sk "https://localhost:8443/api/aggregate?branches=50,120,200&amp;mode=parallel"
+# "maxBranchMs":200, "sumBranchMs":370, "totalMs":208.36
+
+curl -sk "https://localhost:8443/api/aggregate?branches=50,120,200&amp;mode=sequential"
+# "maxBranchMs":200, "sumBranchMs":370, "totalMs":386.00
+
+# Cung ba nhanh. Song song: ~MAX. Tuan tu: ~SUM.</code></pre>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: gộp dữ liệu làm gateway phình thành monolith</div>
+              <div class="callout__content">
+                Để gộp được, gateway phải biết gọi service nào, biết hình dạng dữ liệu trả về, biết cách trộn chúng lại
+                — tức là nó bắt đầu chứa logic nghiệp vụ. Sau vài tháng, mỗi lần đổi một service là phải đổi cả gateway,
+                và gateway thành thành phần mà mọi nhóm đều phải sửa nhưng không nhóm nào sở hữu.<br /><br />
+                Cách thoát phổ biến: <strong>tách BFF thành service riêng</strong> đứng sau gateway. Gateway giữ đúng
+                phần kỹ thuật (TLS, route, rate limit, xác thực token); BFF giữ phần biết nghiệp vụ và do nhóm làm
+                frontend sở hữu. Hai việc khác nhau về nhịp thay đổi thì nên ở hai chỗ khác nhau.
+              </div>
+            </div>
+
+            <p>
+              Về giới hạn tần suất, nginx làm sẵn — nhưng cần hiểu nó cho phép <em>bùng</em> tới mức nào, vì đó là chỗ
+              hay gây bất ngờ:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">rate_limit.conf</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># Vung dem chia se, dat khoa theo IP that (KHONG dung XFF thô - xem muc 4.2).
+# 10r/s la toc do LAM DAY THE, khong phai "toi da 10 request moi giay".
+limit_req_zone $binary_remote_addr zone=perip:10m rate=10r/s;
+
+location /api/ {
+    # burst=20: cho phep don tich luy toi 20 request roi tra dan theo 10r/s.
+    # nodelay:  tra 20 request do NGAY LAP TUC thay vi giu lai cho dung nhip.
+    # => voi nodelay, mot client co the ban 20 request trong mot phan nghin giay.
+    #    Bo nodelay thi muot hon nhung client thay do tre bi keo dai.
+    limit_req zone=perip burst=20 nodelay;
+    limit_req_status 429;          # mac dinh la 503 — 429 dung nghia hon
+    proxy_pass http://api_pool/;
+}</code></pre>
+            </div>
+
+            <!-- ================= 4.5 ================= -->
+            <h2>4.5 Gateway là điểm chết duy nhất — và ngân sách timeout</h2>
+
+            <p>
+              Mọi thứ trong bài này đều dồn về một chỗ, và chỗ đó nằm trên đường đi của 100% lưu lượng. Gateway chết là
+              cả hệ thống chết, dù mọi service phía sau vẫn khoẻ mạnh. Nghịch lý: thành phần được thêm vào để tăng độ
+              tin cậy lại là thành phần nguy hiểm nhất.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Rủi ro</th>
+                  <th>Cách giảm</th>
+                  <th>Điều còn lại phải chấp nhận</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Tiến trình gateway chết</td>
+                  <td>Nhiều bản gateway sau một địa chỉ IP nổi (keepalived) hoặc DNS nhiều bản ghi</td>
+                  <td>Cơ chế chuyển đổi đó lại thành thứ phải tin cậy; DNS có cache nên chuyển không tức thì</td>
+                </tr>
+                <tr>
+                  <td>Cả vùng đặt gateway mất</td>
+                  <td>Gateway ở nhiều vùng, định tuyến bằng anycast hoặc DNS theo vùng</td>
+                  <td>Chi phí và độ phức tạp tăng đáng kể; cần dữ liệu cũng sẵn ở nhiều vùng</td>
+                </tr>
+                <tr>
+                  <td>Cấu hình sai làm sập toàn bộ</td>
+                  <td><code>nginx -t</code> trước khi nạp lại; triển khai từng bản một, có bản để quay lại</td>
+                  <td>Vẫn cần người kiểm tra; xem cạm bẫy ngay dưới</td>
+                </tr>
+                <tr>
+                  <td>Gateway thành nút cổ chai</td>
+                  <td>Đo riêng CPU của gateway; giữ việc ở đó thuần kỹ thuật; scale ngang</td>
+                  <td>Rate limit cần đếm chung nên phải có kho đếm chia sẻ (Redis) — lại thêm một phụ thuộc</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy đã thật sự xảy ra khi làm Bài 3</div>
+              <div class="callout__content">
+                Sửa file cấu hình bằng <code>sed -i</code> trên volume bind-mount rồi gọi <code>nginx -s reload</code>,
+                nginx báo <code>pread() returned only 2830 bytes instead of 2832</code>: nó đọc file trong khi file đang
+                bị viết dở. Reload <em>thất bại</em> nhưng nginx vẫn chạy bình thường với cấu hình cũ, nên nhìn từ ngoài
+                không có gì bất thường — và cả một loạt số đo sau đó vô nghĩa, phải bỏ đi.<br /><br />
+                Hai quy tắc rút ra: (1) ghi cấu hình theo kiểu nguyên tử — viết ra file tạm rồi
+                <code>mv</code> đè lên, vì <code>mv</code> trong cùng hệ thống file là một thao tác duy nhất; (2)
+                <strong>luôn kiểm tra cấu hình đang có hiệu lực</strong> sau khi nạp lại, đừng tin là reload đã thành
+                công. Một reload thất bại im lặng còn tệ hơn một reload làm sập, vì nó không cho bạn biết gì.
+              </div>
+            </div>
+
+            <h3>Ngân sách timeout</h3>
+
+            <p>
+              Mỗi chặng trên đường đi có timeout riêng, và chúng phải <strong>giảm dần khi đi vào trong</strong>. Nếu
+              chặng trong chờ lâu hơn chặng ngoài, phần chờ vượt quá là công việc chắc chắn bị bỏ: client đã đi từ lâu
+              mà service vẫn còn chiếm kết nối và CPU để tính một kết quả không ai nhận.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Chặng</th>
+                  <th>Ngân sách ví dụ</th>
+                  <th>Vì sao nhỏ hơn chặng ngoài</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Client (app di động)</td>
+                  <td>10 s</td>
+                  <td>Trần trên: quá mức này người dùng đã rời đi</td>
+                </tr>
+                <tr>
+                  <td>Gateway → service</td>
+                  <td>8 s</td>
+                  <td>Chừa 2 s để gateway còn kịp trả lỗi tử tế thay vì để client tự hết giờ</td>
+                </tr>
+                <tr>
+                  <td>Service → database</td>
+                  <td>3 s</td>
+                  <td>Chừa chỗ cho thử lại và cho cả các nhánh gọi khác trong cùng request</td>
+                </tr>
+                <tr>
+                  <td>Từng nhánh khi gộp dữ liệu</td>
+                  <td>2 s</td>
+                  <td>Một nhánh chậm không được quyền kéo cả màn hình xuống</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Thử lại nhân lên qua từng tầng</div>
+              <div class="callout__content">
+                Bài 3 dùng <code>proxy_next_upstream</code> để gateway tự thử replica khác — rất hiệu quả, và nó chính
+                là lý do lần đo đó không thấy một lỗi 502 nào. Nhưng nếu client cũng thử lại 3 lần, và gateway thử 3
+                replica, và service cũng thử lại database 3 lần, thì một sự cố nhỏ tạo ra
+                <strong>27 lần công việc</strong> đúng lúc hệ thống yếu nhất. Đây là cách một sự cố nhỏ trở thành sự cố
+                toàn diện.<br /><br />
+                Nguyên tắc: <strong>chỉ thử lại ở một tầng</strong>, kèm giới hạn tổng số lần thử và có khoảng nghỉ tăng
+                dần cộng nhiễu ngẫu nhiên. Nếu bạn không biết chắc tầng nào đang thử lại thì hệ thống đang có một hệ số
+                nhân mà bạn chưa nhìn thấy.
+              </div>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Reverse proxy, load balancer và API gateway là ba mức trách nhiệm ở cùng một vị trí, và mỗi mức thêm quyền
+              năng bằng cách thêm trạng thái phải quản lý. TLS termination rẻ khi có kết nối bền và đắt gấp nhiều lần
+              khi không — chi phí nằm ở mỗi kết nối, không phải mỗi request. X-Forwarded-For phải đọc từ bên phải, hoặc
+              tốt hơn là để gateway ghi đè. Việc gì không cần biết nghiệp vụ thì đặt ở gateway, việc cần biết nghiệp vụ
+              thì để service. Và mọi thứ dồn về gateway nghĩa là ngân sách timeout cùng chính sách thử lại phải được
+              thiết kế có chủ ý, không để mặc định.
+            </p>
+
+            <p>
+              Phép đo file tĩnh trong bài này để lại bài học rộng hơn cả kiến trúc: một con số ngược dự đoán không phải
+              kết luận, nó là câu hỏi. Nếu mình dừng ở lần đo đầu, bài này đã khẳng định "nginx phục vụ file tĩnh chậm
+              hơn Node" — sai, nhưng có số liệu kèm theo nên nghe rất thuyết phục.
+            </p>
+
+            <p>
+              <strong>Bài 5</strong> đi vào tầng ngay sau gateway: caching. Lab đã có Redis chờ ở profile
+              <code>cache</code>, và câu hỏi trung tâm là cái mà mọi tầng cache đều phải trả lời — dữ liệu cũ tới mức
+              nào thì vẫn dùng được, và ai chịu trách nhiệm xoá nó.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/nginx/gw.conf"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về gw.conf
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-load-balancing" class="article-related__link article-related__link--prev">
+                  Bài 3: Scale Ngang &amp; Load Balancing
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 5: Caching — Tầng Nào, Bao Lâu, Ai Xoá (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

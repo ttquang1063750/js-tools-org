@@ -5,6 +5,7 @@
 #
 #   Bài 2  →  docker compose --profile base up -d      (1 app server, đo giới hạn)
 #   Bài 3  →  docker compose --profile lb up -d        (nginx + 3 app replica)
+#   Bài 4  →  docker compose --profile gw up -d        (API gateway: TLS + route theo path)
 #   Bài 5  →  docker compose --profile cache up -d     (thêm Redis)
 #   Bài 7  →  docker compose --profile db up -d        (thêm PostgreSQL)
 #
@@ -24,6 +25,10 @@ x-app-base: &app-base
     PORT: '3000'
     DB_DELAY_MS: '40' # độ trễ "database" giả lập, để thấy giá trị của cache (Bài 5)
     GRACEFUL: '1' # đặt '0' để xem hậu quả khi thiếu graceful shutdown (Bài 3)
+    # Số chặng proxy TIN CẬY phía trước. '0' = không tin X-Forwarded-For (mặc định an
+    # toàn). Đặt '1' khi có đúng một gateway ở trước, rồi gọi /client-ip để thấy khác
+    # biệt giữa đọc từ trái (giả mạo được) và đọc từ phải (Bài 4, mục 4.2).
+    TRUST_PROXY_HOPS: '0'
   restart: unless-stopped
   # Giới hạn tài nguyên để kết quả đo ổn định và không phụ thuộc máy bạn mạnh cỡ nào.
   # QUAN TRỌNG: 1 CPU cho mỗi app là chủ ý — Node chỉ có một luồng JS, và ta muốn
@@ -43,12 +48,13 @@ services:
   # load balancer phân phối thật sự ra sao (Bài 3).
   app1:
     <<: *app-base
-    profiles: ['base', 'lb', 'cache', 'db']
+    profiles: ['base', 'gw', 'lb', 'cache', 'db']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
       GRACEFUL: '1'
       INSTANCE: 'app1'
+      TRUST_PROXY_HOPS: '0'
       REDIS_URL: 'redis://redis:6379'
     ports:
       # Chỉ app1 mở cổng ra host, để Bài 2 gọi trực tiếp không qua LB.
@@ -56,22 +62,24 @@ services:
 
   app2:
     <<: *app-base
-    profiles: ['lb', 'cache', 'db']
+    profiles: ['gw', 'lb', 'cache', 'db']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
       GRACEFUL: '1'
       INSTANCE: 'app2'
+      TRUST_PROXY_HOPS: '0'
       REDIS_URL: 'redis://redis:6379'
 
   app3:
     <<: *app-base
-    profiles: ['lb', 'cache', 'db']
+    profiles: ['gw', 'lb', 'cache', 'db']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
       GRACEFUL: '1'
       INSTANCE: 'app3'
+      TRUST_PROXY_HOPS: '0'
       REDIS_URL: 'redis://redis:6379'
 
   # ─────────────────────────────────────────────────────────────
@@ -85,6 +93,32 @@ services:
     volumes:
       - ./nginx/lb.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/logformat.conf:/etc/nginx/conf.d/00-logformat.conf:ro
+    depends_on:
+      - app1
+      - app2
+      - app3
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # API GATEWAY (Bài 4)
+  #
+  # Mo CA HAI cong de do duoc chi phi TLS thuan: 8081 (HTTP) va 8443 (HTTPS)
+  # dung CHUNG file route (nginx/gw-routes.conf) nen chenh lech chi den tu TLS.
+  #
+  # Chung chi tu ky phai sinh truoc khi bat profile nay - xem README.
+  # ─────────────────────────────────────────────────────────────
+  gw:
+    image: nginx:1.27-alpine
+    profiles: ['gw']
+    ports:
+      - '8081:8081'
+      - '8443:8443'
+    volumes:
+      - ./nginx/gw.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/gw-routes.conf:/etc/nginx/snippets/gw-routes.conf:ro
+      - ./nginx/logformat.conf:/etc/nginx/conf.d/00-logformat.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./static:/usr/share/nginx/static:ro
     depends_on:
       - app1
       - app2

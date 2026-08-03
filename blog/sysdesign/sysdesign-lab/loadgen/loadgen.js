@@ -19,11 +19,13 @@
  *
  * Dùng:
  *   node loadgen.js --url http://app1:3000/fast --connections 20 --duration 15 --warmup 3
+ *   node loadgen.js --url https://gw:8443/api/fast -c 8 -d 8      (HTTPS, chung chi tu ky)
  */
 
 'use strict';
 
 const http = require('http');
+const https = require('https');
 
 // ---------------------------------------------------------------------------
 // Tham số dòng lệnh
@@ -35,6 +37,7 @@ function parseArgs(argv) {
     duration: 15,
     warmup: 3,
     json: false,
+    keepAlive: true,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -44,8 +47,11 @@ function parseArgs(argv) {
     else if (a === '--duration' || a === '-d') out.duration = Number(next());
     else if (a === '--warmup' || a === '-w') out.warmup = Number(next());
     else if (a === '--json') out.json = true;
+    // Tat keep-alive: moi request mo ket noi moi. Dung de do CHI PHI BAT TAY
+    // (voi HTTPS la bat tay TLS) thay vi chi do phan ma hoa doi xung (Bai 4).
+    else if (a === '--no-keepalive') out.keepAlive = false;
     else if (a === '--help' || a === '-h') {
-      console.log('node loadgen.js --url <URL> [-c connections] [-d giây] [-w warmupGiây] [--json]');
+      console.log('node loadgen.js --url <URL> [-c connections] [-d giây] [-w warmupGiây] [--json] [--no-keepalive]');
       process.exit(0);
     }
   }
@@ -72,10 +78,17 @@ function percentile(sortedAsc, p) {
 const target = new URL(cfg.url);
 // Kết nối bền: nếu mở TCP mới cho từng request thì phần lớn thời gian đo được là chi phí
 // bắt tay TCP, không phải thời gian server xử lý.
-const agent = new http.Agent({
-  keepAlive: true,
+// Chon module theo giao thuc. HTTPS can thiet cho Bai 4 (do chi phi TLS thuan bang
+// cach ban cung mot route qua cong HTTP va cong HTTPS).
+const isTls = target.protocol === 'https:';
+const mod = isTls ? https : http;
+const agent = new mod.Agent({
+  keepAlive: cfg.keepAlive,
   maxSockets: cfg.connections,
   maxFreeSockets: cfg.connections,
+  // Lab dung chung chi TU KY nen phai tat kiem tra chuoi tin cay.
+  // TUYET DOI khong dung co nay ngoai moi truong lab.
+  ...(isTls ? { rejectUnauthorized: false } : {}),
 });
 
 let counting = false; // chỉ tính số sau khi hết warm-up
@@ -91,14 +104,14 @@ function oneRequest() {
   if (!running) return;
   const t0 = process.hrtime.bigint();
   sent++;
-  const req = http.get(
+  const req = mod.get(
     {
       protocol: target.protocol,
       hostname: target.hostname,
-      port: target.port || 80,
+      port: target.port || (isTls ? 443 : 80),
       path: target.pathname + target.search,
       agent,
-      headers: { Connection: 'keep-alive' },
+      headers: { Connection: cfg.keepAlive ? 'keep-alive' : 'close' },
     },
     (res) => {
       // PHẢI đọc hết body, nếu không socket không được giải phóng và phép đo sẽ sai.
@@ -131,7 +144,11 @@ function oneRequest() {
 // ---------------------------------------------------------------------------
 if (!cfg.json) {
   console.log(`\n▶ Đo tải: ${cfg.url}`);
-  console.log(`  ${cfg.connections} kết nối · warm-up ${cfg.warmup}s · đo ${cfg.duration}s · closed-loop\n`);
+  console.log(
+    `  ${cfg.connections} kết nối · warm-up ${cfg.warmup}s · đo ${cfg.duration}s · closed-loop` +
+      (cfg.keepAlive ? '' : ' · KHÔNG keep-alive (mỗi request mở kết nối mới)') +
+      '\n'
+  );
 }
 
 for (let i = 0; i < cfg.connections; i++) oneRequest();
@@ -154,6 +171,7 @@ setTimeout(
     const result = {
       url: cfg.url,
       connections: cfg.connections,
+      keepAlive: cfg.keepAlive,
       durationSec: Number(elapsedSec.toFixed(2)),
       requests: ok,
       errors,

@@ -12,8 +12,10 @@
  *   GET /slow-async?ms → chậm nhưng KHÔNG chặn event loop (I/O giả lập)
  *   GET /slow-sync?ms  → chậm và CHẶN event loop — thủ phạm ở Bài 2, mục 2.2
  *   GET /cached?key=   → cache-aside thật với Redis nếu có REDIS_URL (Bài 5)
+ *   GET /client-ip     → phơi bày lỗ hổng X-Forwarded-For (Bài 4, mục 4.2)
+ *   GET /aggregate     → gộp nhiều nhánh (BFF); so song song vs tuần tự (Bài 4, mục 4.4)
  *
- * Biến môi trường: PORT, INSTANCE, REDIS_URL, DB_DELAY_MS, GRACEFUL
+ * Biến môi trường: PORT, INSTANCE, REDIS_URL, DB_DELAY_MS, GRACEFUL, TRUST_PROXY_HOPS
  */
 
 'use strict';
@@ -22,6 +24,11 @@ const http = require('http');
 const net = require('net');
 
 const PORT = Number(process.env.PORT || 3000);
+// Agent rieng cho /aggregate: keep-alive de chi phi bat tay TCP khong lan vao so do
+// cua fan-out (Bai 4, muc 4.4).
+const aggAgent = new http.Agent({ keepAlive: true, maxSockets: 32 });
+// Doi hrtime.bigint() thanh milliseconds dang so thuc.
+const msSince = (t0) => Number(process.hrtime.bigint() - t0) / 1e6;
 const INSTANCE = process.env.INSTANCE || 'app';
 // Độ trễ giả lập của "database" phía sau cache — để thấy cache tiết kiệm bao nhiêu (Bài 5).
 const DB_DELAY_MS = Number(process.env.DB_DELAY_MS || 40);
@@ -189,6 +196,95 @@ const server = http.createServer(async (req, res) => {
         uptimeSec: Math.round(process.uptime()),
         inFlight,
         totalRequests,
+      });
+    }
+
+    if (p === '/client-ip') {
+      // Endpoint nay ton tai de CHUNG MINH mot lo hong that (Bai 4, muc 4.2).
+      //
+      // `X-Forwarded-For` la header do CLIENT co the tu dat. Neu app tin nguyen
+      // chuoi do, bat ky ai cung gia duoc IP cua minh => vuot rate limit theo IP,
+      // lam sai toan bo log/audit, va co the vuot ca IP allowlist.
+      //
+      // Cach doc DUNG: chi tin `TRUST_PROXY_HOPS` phan tu tinh TU BEN PHAI, vi
+      // moi proxy tin cay se APPEND IP that cua chang truoc vao cuoi chuoi.
+      const xff = req.headers['x-forwarded-for'] || '';
+      const chain = xff
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+      const hops = Number(process.env.TRUST_PROXY_HOPS || 0);
+      let trusted;
+      if (hops <= 0) {
+        // Khong tin proxy nao: dung dia chi TCP that cua ket noi.
+        trusted = req.socket.remoteAddress;
+      } else if (chain.length >= hops) {
+        trusted = chain[chain.length - hops];
+      } else {
+        // Chuoi ngan hon so hop khai bao => cau hinh sai hoac co ai dang gia mao.
+        trusted = req.socket.remoteAddress;
+      }
+      return json(res, 200, {
+        instance: INSTANCE,
+        remoteAddress: req.socket.remoteAddress,
+        xForwardedForRaw: xff || null,
+        xForwardedForChain: chain,
+        trustProxyHops: hops,
+        // Day moi la IP duoc phep dung cho rate limit / log / allowlist.
+        trustedClientIp: trusted,
+        // Neu tin ca chuoi (CACH SAI) thi se ra IP nay - de doi chieu.
+        naiveClientIp: chain[0] || req.socket.remoteAddress,
+      });
+    }
+
+    if (p === '/aggregate') {
+      // BFF/aggregation that: goi NHIEU dich vu phia sau roi gop ket qua.
+      //
+      // ?branches=50,120,200  do tre gia lap cua tung nhanh (ms)
+      // ?mode=parallel|sequential
+      //
+      // Muc dich: do de CHUNG MINH cong thuc do tre cua fan-out (Bai 4, muc 4.4):
+      //   song song  => tong ~= MAX(cac nhanh)
+      //   tuan tu    => tong ~= SUM(cac nhanh)
+      // Day la ly do mot gateway aggregation phai goi song song; goi tuan tu bien
+      // 3 nhanh 100ms thanh 300ms ma khong ai o phia sau cham hon.
+      const branches = (url.searchParams.get('branches') || '50,120,200')
+        .split(',')
+        .map((v) => Math.max(0, Math.min(5000, Number(v) || 0)))
+        .slice(0, 8);
+      const mode = url.searchParams.get('mode') === 'sequential' ? 'sequential' : 'parallel';
+      const t0 = process.hrtime.bigint();
+
+      // Moi nhanh la mot request HTTP THAT den /slow-async cua chinh instance nay,
+      // nen chi phi socket + event loop deu that, khong phai setTimeout gia.
+      const callBranch = (ms) =>
+        new Promise((resolve) => {
+          const b0 = process.hrtime.bigint();
+          const r = http.get({ host: '127.0.0.1', port: PORT, path: `/slow-async?ms=${ms}`, agent: aggAgent }, (br) => {
+            br.resume();
+            br.on('end', () => resolve({ requestedMs: ms, elapsedMs: msSince(b0), status: br.statusCode }));
+          });
+          r.on('error', (e) => resolve({ requestedMs: ms, elapsedMs: msSince(b0), error: e.code }));
+        });
+
+      let results;
+      if (mode === 'parallel') {
+        results = await Promise.all(branches.map(callBranch));
+      } else {
+        results = [];
+        for (const ms of branches) results.push(await callBranch(ms));
+      }
+
+      const totalMs = msSince(t0);
+      return json(res, 200, {
+        instance: INSTANCE,
+        mode,
+        branches,
+        // Hai con so de doi chieu voi totalMs do duoc:
+        maxBranchMs: Math.max(...branches),
+        sumBranchMs: branches.reduce((a, b) => a + b, 0),
+        totalMs: Number(totalMs.toFixed(2)),
+        perBranch: results,
       });
     }
 

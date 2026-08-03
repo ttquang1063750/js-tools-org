@@ -186,10 +186,13 @@ js-tools-org/
 │           ├── sysdesign-hashring.js         # Consistent hashing + virtual nodes (Lesson 8)
 │           ├── sysdesign-engine-selftest.mjs # `node` self-test, 42 assertions — run before trusting numbers
 │           ├── sysdesign-lab/                # Real Docker lab shared by all 18 lessons
-│           │   ├── docker-compose.yml        #   profiles: base | lb | cache | db | tools
+│           │   ├── docker-compose.yml        #   profiles: base | lb | gw | cache | db | tools
 │           │   ├── app/app.js               #   plain Node http server, 0 deps, mini RESP client
 │           │   ├── loadgen/loadgen.js       #   hand-written load generator (see README caveats)
 │           │   ├── nginx/lb.conf            #   L7 load balancer config
+│           │   ├── nginx/gw.conf            #   API gateway: HTTP 8081 + HTTPS 8443 (Lesson 4)
+│           │   ├── nginx/gw-routes.conf     #   routes shared by both ports, so the TLS delta is pure
+│           │   ├── static/hello.json        #   file served by the gateway itself (Lesson 4)
 │           │   └── README.md                #   MANDATORY CPU-architecture preflight
 │           └── ... System Design lesson files ...
 └── README.md
@@ -360,5 +363,5 @@ page), read these two files **first**, in this order:
 
 ---
 
-**Last Updated**: 2026-07-14
+**Last Updated**: 2026-08-03
 **Maintained by**: Quang (support@js-tools.org)

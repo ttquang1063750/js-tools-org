@@ -46,17 +46,38 @@ docker compose exec app1 node -e "console.log(process.arch)"   # phải khớp u
 
 ## Các profile theo từng bài
 
-| Bài  | Lệnh                                   | Có gì trong stack                 |
-| ---- | -------------------------------------- | --------------------------------- |
-| 2    | `docker compose --profile base up -d`  | 1 app server (cổng 3001)          |
-| 3, 4 | `docker compose --profile lb up -d`    | nginx (cổng 8080) + 3 app replica |
-| 5    | `docker compose --profile cache up -d` | thêm Redis (cổng 6379)            |
-| 7    | `docker compose --profile db up -d`    | thêm PostgreSQL (cổng 5432)       |
+| Bài | Lệnh                                   | Có gì trong stack                                      |
+| --- | -------------------------------------- | ------------------------------------------------------ |
+| 2   | `docker compose --profile base up -d`  | 1 app server (cổng 3001)                               |
+| 3   | `docker compose --profile lb up -d`    | nginx làm load balancer (cổng 8080) + 3 app replica    |
+| 4   | `docker compose --profile gw up -d`    | nginx làm API gateway (HTTP 8081 + HTTPS 8443) + 3 app |
+| 5   | `docker compose --profile cache up -d` | thêm Redis (cổng 6379)                                 |
+| 7   | `docker compose --profile db up -d`    | thêm PostgreSQL (cổng 5432)                            |
+
+### Bài 4 cần một bước chuẩn bị: chứng chỉ tự ký
+
+Profile `gw` mở cổng HTTPS nên phải có chứng chỉ trước, nếu không nginx sẽ không khởi động
+được. Chứng chỉ này chỉ dùng trong lab và đã được `.gitignore` loại ra:
+
+```bash
+mkdir -p nginx/certs
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout nginx/certs/lab.key -out nginx/certs/lab.crt \
+  -subj "/CN=localhost"
+
+docker compose --profile gw up -d
+curl -s  http://localhost:8081/gw-health      # -> gateway ok
+curl -sk https://localhost:8443/gw-health     # -> gateway ok  (-k: bỏ qua chứng chỉ tự ký)
+```
+
+Hai cổng 8081 (HTTP) và 8443 (HTTPS) **include cùng một file route**
+(`nginx/gw-routes.conf`), nên chênh lệch đo được giữa chúng chỉ đến từ TLS chứ không lẫn khác
+biệt cấu hình. Đó là lý do cổng HTTP tồn tại — chỉ để làm mốc đo, production không nên mở.
 
 Dừng và xoá sạch:
 
 ```bash
-docker compose --profile base --profile lb --profile cache --profile db down
+docker compose --profile base --profile lb --profile gw --profile cache --profile db down
 ```
 
 > Cấu hình **replica primary/standby** của PostgreSQL và **worker cho message queue** sẽ được
@@ -65,15 +86,17 @@ docker compose --profile base --profile lb --profile cache --profile db down
 
 ## Các endpoint của app
 
-| Endpoint            | Dùng để làm gì                                                       |
-| ------------------- | -------------------------------------------------------------------- |
-| `/health`           | Health check. `?fail=1` để cố ý báo hỏng, xem LB rút node ra (Bài 3) |
-| `/whoami`           | Cho biết replica nào phục vụ — dùng để thấy LB phân phối (Bài 3)     |
-| `/stats`            | Số request, số đang xử lý, hit/miss của cache                        |
-| `/fast`             | Trả lời ngay, dùng làm mốc so sánh                                   |
-| `/slow-async?ms=50` | Chậm nhưng **không** chặn event loop                                 |
-| `/slow-sync?ms=50`  | Chậm và **chặn** event loop — thủ phạm ở Bài 2                       |
-| `/cached?key=abc`   | Cache-aside thật với Redis (Bài 5)                                   |
+| Endpoint            | Dùng để làm gì                                                            |
+| ------------------- | ------------------------------------------------------------------------- |
+| `/health`           | Health check. `?fail=1` để cố ý báo hỏng, xem LB rút node ra (Bài 3)      |
+| `/whoami`           | Cho biết replica nào phục vụ — dùng để thấy LB phân phối (Bài 3)          |
+| `/stats`            | Số request, số đang xử lý, hit/miss của cache                             |
+| `/fast`             | Trả lời ngay, dùng làm mốc so sánh                                        |
+| `/slow-async?ms=50` | Chậm nhưng **không** chặn event loop                                      |
+| `/slow-sync?ms=50`  | Chậm và **chặn** event loop — thủ phạm ở Bài 2                            |
+| `/cached?key=abc`   | Cache-aside thật với Redis (Bài 5)                                        |
+| `/client-ip`        | Phơi bày lỗ hổng `X-Forwarded-For` — đọc từ trái vs từ phải (Bài 4)       |
+| `/aggregate`        | Gộp nhiều nhánh; `?branches=50,120,200&mode=parallel\|sequential` (Bài 4) |
 
 ## Đo tải
 
@@ -90,7 +113,20 @@ docker compose run --rm loadgen loadgen.js --url http://lb:8080/fast -c 50 -d 15
 
 # Xuất JSON để tự ghi vào bảng số liệu
 docker compose run --rm loadgen loadgen.js --url http://lb:8080/fast -c 50 -d 15 --json
+
+# Đo chi phí TLS trên cùng một route (Bài 4)
+docker compose run --rm loadgen loadgen.js --url http://gw:8081/api/fast  -c 8 -d 8 -w 3 --json
+docker compose run --rm loadgen loadgen.js --url https://gw:8443/api/fast -c 8 -d 8 -w 3 --json
+
+# Cùng phép đo nhưng MỖI REQUEST MỘT KẾT NỐI MỚI — đây mới là chi phí BẮT TAY.
+# Chênh lệch giữa hai cách chạy này lớn hơn nhiều so với chênh lệch HTTP/HTTPS ở trên.
+docker compose run --rm loadgen loadgen.js --url https://gw:8443/api/fast -c 8 -d 8 -w 3 --no-keepalive --json
 ```
+
+> `--no-keepalive` buộc mở kết nối mới cho từng request. Với HTTPS, throughput đo được trên máy
+> tham chiếu tụt **5,6 lần** so với khi có keep-alive — vì chi phí TLS nằm ở mỗi **kết nối**,
+> không phải mỗi request. Bộ đo tải bỏ qua kiểm tra chứng chỉ (`rejectUnauthorized: false`) để
+> chạy được với chứng chỉ tự ký; đừng bao giờ dùng cách đó ngoài lab.
 
 **Ba giới hạn phải biết trước khi đọc số** (chi tiết trong phần đầu `loadgen.js`):
 

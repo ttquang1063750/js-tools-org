@@ -32,7 +32,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 17: Chẩn Đoán &amp; Sửa Chữa Mạch** | **Từ Đo Kiểm Đến Sửa Chữa Thực Chiến**  | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 18: Kỹ Thuật Hệ Thống AI**          | **Từ Pipeline Đến Đội Ngũ Agent**       | **13/13**      | **13**   | **100%** ✅ |
 | 🎉 **Series 19: Cơ Sở Dữ Liệu Vector**          | **Từ Thuật Toán Đến Ứng Dụng RAG**      | **9/9**        | **9**    | **100%** ✅ |
-| Series 20                                       | Thiết Kế Hệ Thống                       | 3/18           | 18       | 17%         |
+| Series 20                                       | Thiết Kế Hệ Thống                       | 4/18           | 18       | 22%         |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
@@ -459,25 +459,25 @@ Cột **Cần trước** ghi số bài tiên quyết, dùng để kiểm chuỗi
 > thật), trang hub, và tích hợp toàn cục (blog/index.html, ROOT index.html, i18n.js,
 > sitemap.xml, search-index.json, AGENTS.md). Còn lại: **18 trang bài học**.
 
-- [ ] **Hạ tầng dùng chung (làm trước, 1 lần):**
-  - [ ] Tạo thư mục `blog/sysdesign/`.
-  - [ ] Thêm `.blog-card__tag--sysdesign` (color `#38bdf8`, background `rgba(56, 189, 248, 0.08)`) vào `blog/blog.css`; thêm cặp `.article-hero--sysdesign` / `.article-hero__tag--sysdesign` theo đúng pattern các series khác.
-  - [ ] **Prism:** bổ sung grammar `json` vào `blog/prism.js` (hoặc alias sang `javascript`) — hiện CHƯA có. Kiểm tra `yaml` highlight đúng trên `docker-compose.yml` thật.
-- [ ] **Engine dùng chung (co-located, viết trước khi viết bài):**
-  - [ ] `sysdesign-sim-engine.js` — lõi mô phỏng sự kiện rời rạc (node/queue/capacity/phân phối thời gian phục vụ/tiêm lỗi/thu số liệu p50-p95-p99). Không phụ thuộc DOM để test được.
-  - [ ] `sysdesign-topology.js` — renderer Canvas (topology + gói tin động + panel số liệu).
-  - [ ] `sysdesign-hashring.js` — consistent hashing có virtual node (dùng ở Bài 8).
-- [ ] **Lab Docker dùng chung:** `sysdesign-lab/` gồm `docker-compose.yml` (profiles: `base`, `gw`, `lb`, `cache`, `replica`, `queue`), `app.js` (Node `http` thuần), `nginx.conf`, container `loadgen` chứa `wrk`. **Phải tự chạy thử toàn bộ profiles trước khi viết bài** — mọi số trong bài lấy từ đây.
-- [ ] **Trang Visualizer chính:** `sysdesign-sandbox.html` — Traffic Lab 3 panel (điều khiển / canvas topology / số liệu + đồ thị utilization↔latency).
-- [ ] **Trang Hub:** `sysdesign-programming-series.html` — glossary đầy đủ (latency/throughput/p99/utilization/consistent hashing/quorum/saga/SLO...), bảng lộ trình 18 bài, quảng bá sandbox và hướng dẫn cài Docker cho lab.
-- [ ] **18 trang bài học:** viết theo đúng đề cương H2 ở Phần III, KHÔNG quiz, cấu trúc `.code-tabs`, đủ hình bắt buộc, đủ lab, references chuẩn, related links, giscus.
-- [ ] **Tích hợp toàn cục (kiểm cả HAI file index):**
-  - [ ] Thêm `a.blog-card` vào `blog/index.html`.
-  - [ ] Thêm `a.learn-card` vào **ROOT `index.html`** (file riêng, đã bị bỏ sót 2 lần trước).
-  - [ ] Thêm key i18n `learn.sysdesign.title` / `learn.sysdesign.desc` (EN + VI) vào `i18n.js`.
-  - [ ] `sitemap.xml`: 18 bài + 1 hub + 1 sandbox.
-  - [ ] `blog/search-index.json`: 18 entry, `headingsVi` khớp H2 thực tế.
-  - [ ] Cập nhật bảng tiến độ đầu `plan.md` (`X/18`), `README.md`, `AGENTS.md`.
+- [x] **Hạ tầng dùng chung (làm trước, 1 lần):**
+  - [x] Tạo thư mục `blog/sysdesign/`.
+  - [x] Thêm `.blog-card__tag--sysdesign` (color `#38bdf8`, background `rgba(56, 189, 248, 0.08)`) vào `blog/blog.css`; thêm cặp `.article-hero--sysdesign` / `.article-hero__tag--sysdesign` theo đúng pattern các series khác.
+  - [x] **Prism:** bổ sung grammar `json` vào `blog/prism.js` (hoặc alias sang `javascript`) — hiện CHƯA có. Kiểm tra `yaml` highlight đúng trên `docker-compose.yml` thật.
+- [x] **Engine dùng chung (co-located, viết trước khi viết bài):**
+  - [x] `sysdesign-sim-engine.js` — lõi mô phỏng sự kiện rời rạc (node/queue/capacity/phân phối thời gian phục vụ/tiêm lỗi/thu số liệu p50-p95-p99). Không phụ thuộc DOM để test được.
+  - [x] `sysdesign-topology.js` — renderer Canvas (topology + gói tin động + panel số liệu).
+  - [x] `sysdesign-hashring.js` — consistent hashing có virtual node (dùng ở Bài 8).
+- [x] **Lab Docker dùng chung:** `sysdesign-lab/` gồm `docker-compose.yml` (profiles thực tế: `base`, `lb`, `gw`, `cache`, `db`, `tools`), `app/app.js` (Node `http` thuần, 0 dependency), `nginx/lb.conf` + `nginx/gw.conf` + `nginx/gw-routes.conf`, và `loadgen/loadgen.js` — **bộ đo tải tự viết thay vì `wrk`**, có chủ ý: Bài 2 cần dạy chính cách đo (closed-loop, coordinated omission) nên bộ đo phải đọc được. **Phải tự chạy thử toàn bộ profiles trước khi viết bài** — mọi số trong bài lấy từ đây. Còn thiếu: cấu hình primary/replica cho PostgreSQL (Bài 7) và worker message queue (Bài 12).
+- [x] **Trang Visualizer chính:** `sysdesign-sandbox.html` — Traffic Lab 3 panel (điều khiển / canvas topology / số liệu + đồ thị utilization↔latency).
+- [x] **Trang Hub:** `sysdesign-programming-series.html` — glossary đầy đủ (latency/throughput/p99/utilization/consistent hashing/quorum/saga/SLO...), bảng lộ trình 18 bài, quảng bá sandbox và hướng dẫn cài Docker cho lab.
+- [~] **18 trang bài học (4/18):** Bài 1 ✅ · Bài 2 ✅ · Bài 3 ✅ · Bài 4 ✅ — viết theo đúng đề cương H2 ở Phần III, KHÔNG quiz, cấu trúc `.code-tabs`, đủ hình bắt buộc, đủ lab, references chuẩn, related links, giscus.
+- [x] **Tích hợp toàn cục (kiểm cả HAI file index):**
+  - [x] Thêm `a.blog-card` vào `blog/index.html`.
+  - [x] Thêm `a.learn-card` vào **ROOT `index.html`** (file riêng, đã bị bỏ sót 2 lần trước).
+  - [x] Thêm key i18n `learn.sysdesign.title` / `learn.sysdesign.desc` (EN + VI) vào `i18n.js`.
+  - [~] `sitemap.xml`: 18 bài + 1 hub + 1 sandbox — cập nhật dần theo từng bài (đã có hub + sandbox + Bài 1–4).
+  - [~] `blog/search-index.json`: 18 entry — cập nhật dần theo từng bài (đã có Bài 1–4), `headingsVi` khớp H2 thực tế.
+  - [x] Cập nhật bảng tiến độ đầu `plan.md` (`X/18`), `README.md`, `AGENTS.md`.
 - [ ] **QA từng bài:** `node check-lesson.js <file>` và `npx prettier --check` phải sạch trước khi tick "xong".
 
 > Tài liệu bàn giao cho người/agent thực thi. Phần I ở trên là **thiết kế nội dung**; phần II này là **danh sách công việc kỹ thuật** bám đúng khung (template) thật của dự án. Đọc kèm `AGENTS.md`.
