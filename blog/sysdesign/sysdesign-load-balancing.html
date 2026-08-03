@@ -1,0 +1,1370 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 3: Scale Ngang &amp; Load Balancing — js-tools</title>
+    <meta
+      name="description"
+      content="Scale dọc vs scale ngang và điều kiện stateless; L4 vs L7; bốn thuật toán phân phối — đo thật cho thấy round robin cho p95 tệ hơn least_conn 340 lần khi một replica suy giảm, dù biểu đồ số request mỗi node vẫn cân bằng 11/10/9; health check chủ động vs thụ động; và phát hiện phản trực giác: graceful shutdown không tạo khác biệt với request ngắn nhưng giảm đuôi latency 2,9 lần với request dài."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-load-balancing" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-load-balancing" />
+    <meta property="og:title" content="Bài 3: Scale Ngang &amp; Load Balancing — js-tools" />
+    <meta
+      property="og:description"
+      content="Scale dọc vs scale ngang và điều kiện stateless; L4 vs L7; bốn thuật toán phân phối — đo thật cho thấy round robin cho p95 tệ hơn least_conn 340 lần khi một replica suy giảm, dù biểu đồ số request mỗi node vẫn cân bằng 11/10/9; health check chủ động vs thụ động; và phát hiện phản trực giác: graceful shutdown không tạo khác biệt với request ngắn nhưng giảm đuôi latency 2,9 lần với request dài."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 3: Scale Ngang &amp; Load Balancing — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Scale dọc vs scale ngang và điều kiện stateless; L4 vs L7; bốn thuật toán phân phối — đo thật cho thấy round robin cho p95 tệ hơn least_conn 340 lần khi một replica suy giảm, dù biểu đồ số request mỗi node vẫn cân bằng 11/10/9; health check chủ động vs thụ động; và phát hiện phản trực giác: graceful shutdown không tạo khác biệt với request ngắn nhưng giảm đuôi latency 2,9 lần với request dài."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 3: Scale Ngang & Load Balancing",
+        "description": "Scale dọc vs scale ngang và điều kiện stateless; L4 vs L7; bốn thuật toán phân phối — đo thật cho thấy round robin cho p95 tệ hơn least_conn 340 lần khi một replica suy giảm, dù biểu đồ số request mỗi node vẫn cân bằng 11/10/9; health check chủ động vs thụ động; và phát hiện phản trực giác: graceful shutdown không tạo khác biệt với request ngắn nhưng giảm đuôi latency 2,9 lần với request dài.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-load-balancing",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 3: Scale Ngang &amp; Load Balancing</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-single-server-limits">Bài 2</a> đã đo được giới hạn cứng của một server: knee ở khoảng
+              4 kết nối đồng thời, và với handler chiếm CPU thì throughput đứng yên ở 200 req/s ngay từ một kết nối. Dù
+              code hoàn hảo, một tiến trình vẫn là một tiến trình — và một điểm chết.
+            </p>
+
+            <p>
+              Bài này đặt nginx lên phía trước, nhân app thành ba replica, rồi đo lại. Kết quả có hai điều phản trực
+              giác đến mức mình phải chạy lại nhiều lần để chắc: một thuật toán phân phối cho biểu đồ
+              <em>hoàn toàn cân bằng</em> nhưng p95 tệ hơn <strong>340 lần</strong>, và graceful shutdown — thứ mọi tài
+              liệu đều khuyên — hoá ra <strong>không tạo khác biệt nào đo được</strong> trong trường hợp phổ biến nhất.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo cho mọi số liệu trong bài này</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64 (Node v22.23.2).
+                Mỗi app replica giới hạn <strong>1 CPU / 256 MB</strong>, nginx 1.27-alpine, bộ đo tải 2 CPU. Mọi thí
+                nghiệm đều được lặp lại ít nhất 3 lần và bài ghi cả khoảng biến động, không lấy một lần chạy làm kết
+                luận.
+              </div>
+            </div>
+
+            <!-- ================= 3.1 ================= -->
+            <h2>3.1 Scale dọc và scale ngang</h2>
+
+            <p>
+              <strong>Scale dọc</strong> (scale up) là cho máy khoẻ hơn: thêm CPU, thêm RAM.
+              <strong>Scale ngang</strong> (scale out) là thêm máy. Hai hướng này không tương đương, và lựa chọn sai
+              hướng là một trong những sai lầm đắt nhất.
+            </p>
+
+            <p>
+              Scale dọc thắng ở sự đơn giản: không phải nghĩ về phân tán, không mất tính nhất quán, không thêm hop mạng.
+              Nhưng nó có ba giới hạn cứng:
+            </p>
+
+            <ul>
+              <li><strong>Trần vật lý.</strong> Không tồn tại máy mạnh vô hạn.</li>
+              <li>
+                <strong>Giá tăng phi tuyến.</strong> Máy gấp đôi hiệu năng thường đắt hơn gấp đôi, nhất là ở phân khúc
+                cao cấp.
+              </li>
+              <li>
+                <strong>Vẫn là một điểm chết.</strong> Đây là giới hạn nghiêm trọng nhất và không thể mua để khắc phục —
+                máy 128 lõi chết thì hệ thống vẫn chết.
+              </li>
+            </ul>
+
+            <p>
+              Scale ngang gỡ được cả ba, nhưng có một điều kiện tiên quyết không thương lượng:
+              <strong>ứng dụng phải stateless</strong>. Cụ thể là không giữ trong RAM tiến trình bất cứ thứ gì mà
+              request sau cần đọc lại — session, cache cục bộ, bộ đếm, kết quả tính dở.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: scale ngang một app còn giữ state trong RAM</div>
+              <div class="callout__content">
+                Đây là loại bug khó chịu nhất trong nghề, vì nó <em>không</em> làm hệ thống sập — nó chỉ sai
+                <strong>thỉnh thoảng</strong>. Người dùng đăng nhập ở replica 1, request tiếp theo rơi vào replica 2 và
+                bị coi là chưa đăng nhập. Với 3 replica thì xác suất "đúng" là 1/3, nên lỗi xảy ra khoảng 2/3 số lần —
+                nhưng vì bạn thử trên máy dev một replica nên nó không bao giờ tái tạo được. <br /><br />
+                Dấu hiệu nhận biết: bug biến mất khi scale về 1 replica. Nếu thấy triệu chứng đó, đừng đi tìm race
+                condition — hãy đi tìm state cục bộ.
+              </div>
+            </div>
+
+            <!-- ================= 3.2 ================= -->
+            <h2>3.2 L4 và L7: load balancer "thấy" được gì</h2>
+
+            <p>
+              Khác biệt cốt lõi giữa hai tầng không phải tốc độ mà là <strong>lượng thông tin</strong> mà load balancer
+              đọc được — và cái giá phải trả để đọc nó.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 330"
+                width="100%"
+                role="img"
+                aria-label="So sánh load balancer tầng 4 và tầng 7: mỗi tầng đọc được thông tin gì"
+              >
+                <rect width="720" height="330" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  L4 vs L7 — cùng một request, hai mức "nhìn thấy"
+                </text>
+
+                <!-- ============ L4 ============ -->
+                <text x="16" y="52" fill="#22c55e" font-family="system-ui, sans-serif" font-size="11" font-weight="600">
+                  L4 — tầng vận chuyển (TCP)
+                </text>
+                <rect x="16" y="62" width="330" height="112" rx="6" fill="#151d30" stroke="#22c55e" />
+                <text x="30" y="82" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">ĐỌC ĐƯỢC:</text>
+                <text x="30" y="98" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="10">
+                  IP nguồn / đích · cổng
+                </text>
+                <text x="30" y="120" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  KHÔNG ĐỌC ĐƯỢC:
+                </text>
+                <text x="30" y="136" fill="#4b5563" font-family="system-ui, sans-serif" font-size="10">
+                  đường dẫn URL · header · cookie
+                </text>
+                <text x="30" y="158" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  → rẻ, nhanh, không giải mã TLS
+                </text>
+
+                <!-- ============ L7 ============ -->
+                <text
+                  x="374"
+                  y="52"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                >
+                  L7 — tầng ứng dụng (HTTP)
+                </text>
+                <rect x="374" y="62" width="330" height="112" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text x="388" y="82" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">ĐỌC ĐƯỢC:</text>
+                <text x="388" y="98" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="10">
+                  tất cả của L4, cộng thêm:
+                </text>
+                <text x="388" y="114" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="10">
+                  URL · header · cookie · method
+                </text>
+                <text x="388" y="136" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="9">
+                  → định tuyến theo path, A/B test, TLS termination
+                </text>
+                <text x="388" y="158" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  → phải giải mã TLS: tốn CPU, thành tầng phải scale riêng
+                </text>
+
+                <!-- ============ goi tin minh hoa ============ -->
+                <text x="16" y="206" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="10">
+                  Cùng một gói tin, phần nào nằm trong "tầm nhìn" của mỗi loại:
+                </text>
+
+                <!-- khung goi tin -->
+                <rect x="16" y="218" width="140" height="34" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="86"
+                  y="232"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  TCP header
+                </text>
+                <text
+                  x="86"
+                  y="245"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  10.0.0.5:443 → app:3000
+                </text>
+
+                <rect x="160" y="218" width="544" height="34" rx="4" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="432"
+                  y="232"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  HTTP payload (bị mã hoá nếu là HTTPS)
+                </text>
+                <text
+                  x="432"
+                  y="245"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  GET /api/orders/42 · Host: shop.vn · Cookie: sid=abc · Authorization: Bearer …
+                </text>
+
+                <!-- ngoac chi pham vi -->
+                <line x1="16" y1="260" x2="156" y2="260" stroke="#22c55e" stroke-width="2" />
+                <text
+                  x="86"
+                  y="274"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  L4 chỉ thấy đến đây
+                </text>
+                <line x1="16" y1="284" x2="704" y2="284" stroke="#38bdf8" stroke-width="2" />
+                <text
+                  x="360"
+                  y="298"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  L7 thấy hết — nhưng phải giải mã TLS mới thấy được
+                </text>
+
+                <text x="16" y="320" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Lab của series này dùng nginx ở chế độ L7, vì ta cần định tuyến theo path và ghi log biết request đi
+                  tới replica nào.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Không có lựa chọn "tốt hơn" tuyệt đối: L4 cho thông lượng thô, L7 cho khả năng ra quyết định.
+              </figcaption>
+            </figure>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: chọn L7 cho mọi thứ rồi ngạc nhiên vì LB thành bottleneck</div>
+              <div class="callout__content">
+                L7 phải giải mã TLS để đọc được HTTP. Với lưu lượng lớn, chi phí đó biến chính load balancer thành thành
+                phần cần scale — và nó lại là thành phần <em>duy nhất</em> mọi request phải đi qua. Nếu bạn không cần
+                định tuyến theo nội dung (ví dụ chỉ chia tải cho một pool đồng nhất), L4 vừa rẻ hơn vừa bớt một điểm
+                phải lo.
+              </div>
+            </div>
+
+            <!-- ================= 3.3 ================= -->
+            <h2>3.3 Thuật toán phân phối — và phép đo làm mình phải chạy lại nhiều lần</h2>
+
+            <p>Bốn thuật toán thường gặp nhất:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thuật toán</th>
+                  <th>Cách chọn replica</th>
+                  <th>Điểm yếu</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Round Robin</strong></td>
+                  <td>Lần lượt theo vòng</td>
+                  <td>Không biết replica nào đang bận — chia đều <em>số lượng</em>, không chia đều <em>tải</em></td>
+                </tr>
+                <tr>
+                  <td><strong>Least Connections</strong></td>
+                  <td>Replica có ít kết nối đang mở nhất</td>
+                  <td>Cần theo dõi trạng thái; "ít kết nối" chưa chắc là "ít tải"</td>
+                </tr>
+                <tr>
+                  <td><strong>Random</strong></td>
+                  <td>Chọn ngẫu nhiên</td>
+                  <td>Phương sai lớn, dễ dồn cục ngẫu nhiên</td>
+                </tr>
+                <tr>
+                  <td><strong>Random of two choices</strong></td>
+                  <td>Lấy ngẫu nhiên 2, chọn cái ít việc hơn</td>
+                  <td>Gần như không có — rẻ như random mà chất lượng gần least-conn</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Khi mọi request tốn như nhau và mọi replica khoẻ như nhau, cả bốn cho kết quả gần giống nhau. Sự khác biệt
+              chỉ lộ ra khi có <strong>lệch</strong> — và trong thực tế thì luôn có lệch: một replica vừa bị GC pause,
+              một replica đang chạy trên máy chủ ồn ào hơn, một replica vừa restart nên cache còn lạnh.
+            </p>
+
+            <h3>Thí nghiệm: một replica bị suy giảm</h3>
+
+            <p>
+              Đây là kịch bản tất định và rất thật: ba replica, trong đó <strong>một</strong> replica bị chiếm event
+              loop (mình bơm tải <code>/slow-sync?ms=30</code> trực tiếp vào <code>app3</code>, không qua load
+              balancer). Rồi đo <code>/fast</code> qua load balancer. Lặp 3 lần cho mỗi thuật toán:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thuật toán</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p95</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td rowspan="3"><strong>Round Robin</strong></td>
+                  <td>147 req/s</td>
+                  <td>0,50 ms</td>
+                  <td>119,64 ms</td>
+                  <td>149,70 ms</td>
+                </tr>
+                <tr>
+                  <td>215 req/s</td>
+                  <td>0,43 ms</td>
+                  <td>119,42 ms</td>
+                  <td>119,79 ms</td>
+                </tr>
+                <tr>
+                  <td>145 req/s</td>
+                  <td>0,41 ms</td>
+                  <td>120,91 ms</td>
+                  <td>149,49 ms</td>
+                </tr>
+                <tr>
+                  <td rowspan="3"><strong>Least Connections</strong></td>
+                  <td>6.511 req/s</td>
+                  <td>0,23 ms</td>
+                  <td>0,35 ms</td>
+                  <td>2,64 ms</td>
+                </tr>
+                <tr>
+                  <td>5.892 req/s</td>
+                  <td>0,23 ms</td>
+                  <td>0,35 ms</td>
+                  <td>59,11 ms</td>
+                </tr>
+                <tr>
+                  <td>8.883 req/s</td>
+                  <td>0,23 ms</td>
+                  <td>0,35 ms</td>
+                  <td>0,64 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>Đọc bảng này chậm lại một chút, vì nó chứa ba điều đáng giá:</p>
+
+            <ul>
+              <li>
+                <strong>Throughput chênh khoảng 40 lần</strong> (~170 req/s so với ~7.100 req/s). Cùng phần cứng, cùng
+                mã nguồn, khác đúng một dòng cấu hình.
+              </li>
+              <li>
+                <strong>p95 chênh khoảng 340 lần</strong> (~120 ms so với 0,35 ms). Với round robin, cứ khoảng một phần
+                ba request bị đưa vào replica đang bị chặn và phải chờ tới lượt.
+              </li>
+              <li>
+                <strong>Nhưng p50 gần như y hệt</strong> (0,4–0,5 ms so với 0,23 ms). Đây là phần nguy hiểm: nếu bảng
+                điều khiển của bạn hiển thị latency trung vị, thảm hoạ này <em>hoàn toàn vô hình</em>.
+              </li>
+            </ul>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Round robin chia đều số request nhưng dồn tải vào replica đang suy giảm, least connections thì tránh nó"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Cùng một replica bị suy giảm — hai cách phản ứng
+                </text>
+
+                <!-- ==== ROUND ROBIN ==== -->
+                <text x="16" y="52" fill="#ef4444" font-family="system-ui, sans-serif" font-size="11" font-weight="600">
+                  Round Robin — chia đều SỐ LƯỢNG
+                </text>
+                <g font-family="system-ui, sans-serif" font-size="9">
+                  <!-- app1 -->
+                  <text x="24" y="76" fill="#9ca3af">app1</text>
+                  <rect x="58" y="66" width="96" height="13" rx="2" fill="#22c55e" opacity="0.5" />
+                  <text x="160" y="76" fill="#22c55e">11 request · khoẻ · 0,4 ms</text>
+                  <!-- app2 -->
+                  <text x="24" y="98" fill="#9ca3af">app2</text>
+                  <rect x="58" y="88" width="88" height="13" rx="2" fill="#22c55e" opacity="0.5" />
+                  <text x="160" y="98" fill="#22c55e">10 request · khoẻ · 0,4 ms</text>
+                  <!-- app3 -->
+                  <text x="24" y="120" fill="#9ca3af">app3</text>
+                  <rect x="58" y="110" width="80" height="13" rx="2" fill="#ef4444" opacity="0.65" />
+                  <text x="160" y="120" fill="#ef4444">9 request · ĐANG BỊ CHẶN · ~120 ms</text>
+                </g>
+                <text x="24" y="146" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Biểu đồ "số request mỗi node" trông cân bằng hoàn hảo (11 / 10 / 9) — không có gì báo động.
+                </text>
+                <text x="24" y="160" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  Nhưng 1/3 người dùng phải chờ ~120 ms. Kết quả: 147 req/s, p95 = 119,6 ms.
+                </text>
+
+                <!-- ==== LEAST CONN ==== -->
+                <text
+                  x="16"
+                  y="196"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                >
+                  Least Connections — chia theo VIỆC ĐANG LÀM
+                </text>
+                <g font-family="system-ui, sans-serif" font-size="9">
+                  <text x="24" y="220" fill="#9ca3af">app1</text>
+                  <rect x="58" y="210" width="270" height="13" rx="2" fill="#22c55e" opacity="0.5" />
+                  <text x="334" y="220" fill="#22c55e">nhận phần lớn tải · 0,23 ms</text>
+                  <text x="24" y="242" fill="#9ca3af">app2</text>
+                  <rect x="58" y="232" width="262" height="13" rx="2" fill="#22c55e" opacity="0.5" />
+                  <text x="334" y="242" fill="#22c55e">nhận phần lớn tải · 0,23 ms</text>
+                  <text x="24" y="264" fill="#9ca3af">app3</text>
+                  <rect x="58" y="254" width="14" height="13" rx="2" fill="#ef4444" opacity="0.65" />
+                  <text x="80" y="264" fill="#f59e0b">bị TRÁNH vì đang giữ nhiều kết nối</text>
+                </g>
+                <text x="24" y="288" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  Biểu đồ trông LỆCH — nhưng kết quả: 6.511 req/s, p95 = 0,35 ms. Lệch mới là đúng.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Số request mỗi node là số đếm thật qua load balancer khi <code>app3</code> đang bị chặn.
+              </figcaption>
+            </figure>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: dùng "số request mỗi node" để đánh giá cân bằng tải</div>
+              <div class="callout__content">
+                Mình đã đo đúng điều này: với round robin và <code>app3</code> đang bị chặn hoàn toàn, phân phối vẫn là
+                <strong>11 / 10 / 9</strong> trên 30 request — cân bằng gần như hoàn hảo. Một bảng điều khiển hiển thị
+                "requests per node" sẽ hiện ba cột bằng nhau, xanh hết, trong khi throughput đã sụp 40 lần. <br /><br />
+                Round robin <em>luôn</em> chia đều số lượng — đó là định nghĩa của nó. Vậy nên chỉ số đó không mang
+                thông tin gì về cân bằng tải. Hãy nhìn <strong>utilization</strong> và
+                <strong>latency theo replica</strong>. Và ngược lại: khi least-conn hoạt động đúng, biểu đồ số lượng sẽ
+                trông <em>lệch</em> — đừng "sửa" nó.
+              </div>
+            </div>
+
+            <h3>Cài đặt bốn thuật toán</h3>
+
+            <p>
+              Chỉ vài dòng mỗi thuật toán. Đây là mã thật đang chạy trong bộ mô phỏng của series
+              (<code>sysdesign-sim-engine.js</code>), nên bạn có thể đối chiếu hành vi mô phỏng với lab:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">bon_thuat_toan_lb.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// `alive` = danh sach replica con song. Moi replica co: busy (dang xu ly), queueDepth.
+function pickReplica(alive, policy, rng) {
+  if (alive.length === 0) return null;      // ca tang chet => phai drop, khong duoc treo
+  if (alive.length === 1) return alive[0];
+
+  switch (policy) {
+    case 'round-robin': {
+      const r = alive[this.rrCursor % alive.length];
+      this.rrCursor++;
+      return r;                              // KHONG he doc trang thai replica
+    }
+
+    case 'least-connections': {
+      let best = alive[0];
+      for (const r of alive) {
+        if (r.busy + r.queueDepth &lt; best.busy + best.queueDepth) best = r;
+      }
+      return best;                           // doc trang thai => tranh duoc node dang nghen
+    }
+
+    case 'random':
+      return alive[Math.floor(rng.next() * alive.length)];
+
+    case 'random-two-choices': {
+      // "Power of two choices": chi lay 2 mau ngau nhien roi chon cai it viec hon.
+      // Re nhu random nhung chat luong can bang gan bang least-connections.
+      const a = alive[Math.floor(rng.next() * alive.length)];
+      const b = alive[Math.floor(rng.next() * alive.length)];
+      return a.busy + a.queueDepth &lt;= b.busy + b.queueDepth ? a : b;
+    }
+  }
+}</code></pre>
+            </div>
+
+            <p>Trong nginx thì chỉ là một dòng trong khối <code>upstream</code>:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">nginx/lb.conf</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">upstream app_pool {
+    # Mac dinh cua nginx la round robin (khong can khai bao gi).
+    # Bo dau # o dong duoi de doi sang least connections roi DO LAI:
+    least_conn;
+
+    server app1:3000 max_fails=2 fail_timeout=5s;
+    server app2:3000 max_fails=2 fail_timeout=5s;
+    server app3:3000 max_fails=2 fail_timeout=5s;
+
+    # Ket noi ben toi upstream: neu thieu, nginx mo TCP moi cho MOI request,
+    # va phan lon do tre ban do duoc se la chi phi bat tay TCP noi bo.
+    keepalive 64;
+}</code></pre>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                🕳️ Cạm bẫy trong lúc làm lab: <code>nginx -s reload</code> đọc file bị hụt byte
+              </div>
+              <div class="callout__content">
+                Lỗi này xảy ra thật khi mình đổi thuật toán để đo. Sửa file cấu hình <em>tại chỗ</em> (bằng
+                <code>sed -i</code>) trong khi file đang được bind-mount vào container làm nginx đọc phải trạng thái nửa
+                vời: <br /><br />
+                <code>nginx: [emerg] pread() returned only 2830 bytes instead of 2832</code>
+                <br /><br />
+                Nguy hiểm ở chỗ reload <strong>thất bại nhưng nginx vẫn chạy</strong> với cấu hình cũ. Mình đã đo được
+                một bộ số "sau khi đổi thuật toán" mà thực chất vẫn là round robin — và phải bỏ đi. <br /><br />
+                Cách đúng: ghi file kiểu nguyên tử (ghi ra file tạm rồi <code>mv</code>) hoặc restart container, và
+                <strong>luôn xác nhận cấu hình đang có hiệu lực</strong> thay vì tin rằng nó đã đổi:
+                <br />
+                <code>docker compose exec lb grep -c '^ *least_conn;' /etc/nginx/conf.d/default.conf</code>
+              </div>
+            </div>
+
+            <!-- ================= 3.4 ================= -->
+            <h2>3.4 Health check, failover và graceful shutdown</h2>
+
+            <p>
+              Load balancer chỉ hữu ích nếu nó biết replica nào còn sống. Có hai cách biết, và nginx bản mã nguồn mở chỉ
+              có một:
+            </p>
+
+            <ul>
+              <li>
+                <strong>Chủ động (active):</strong> load balancer định kỳ gọi <code>/health</code>. Phát hiện sớm, rút
+                node ra <em>trước khi</em> có request nào bị ảnh hưởng. Đây là tính năng của nginx Plus,
+                <strong>không có</strong> trong bản mã nguồn mở.
+              </li>
+              <li>
+                <strong>Thụ động (passive):</strong> đếm lỗi thực tế. <code>max_fails=2 fail_timeout=5s</code> nghĩa là
+                sau 2 lần thất bại trong 5 giây thì tạm loại node đó. Hệ quả quan trọng:
+                <strong>vài request đầu tiên sau khi node chết vẫn phải thất bại</strong> — đó là cái giá của việc phát
+                hiện.
+              </li>
+            </ul>
+
+            <h3>Thí nghiệm: dừng một replica trong lúc đang có tải</h3>
+
+            <p>
+              Chạy tải <code>/fast</code> qua load balancer với 8 kết nối, đến giây thứ 5 thì
+              <code>docker compose stop app3</code>. Mình kỳ vọng thấy một loạt lỗi 502. Kết quả thực tế khác hẳn:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Chỉ số</th>
+                  <th>Có graceful shutdown</th>
+                  <th>Không graceful shutdown</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Lỗi mà client nhìn thấy</td>
+                  <td><strong>0</strong></td>
+                  <td><strong>0</strong></td>
+                </tr>
+                <tr>
+                  <td>Mã trạng thái</td>
+                  <td>toàn bộ 200</td>
+                  <td>toàn bộ 200</td>
+                </tr>
+                <tr>
+                  <td>p99</td>
+                  <td>0,92 ms</td>
+                  <td>0,90 ms</td>
+                </tr>
+                <tr>
+                  <td>Latency lớn nhất</td>
+                  <td>2.011 ms</td>
+                  <td>2.011 ms</td>
+                </tr>
+                <tr>
+                  <td>Số request nginx phải thử lại upstream khác</td>
+                  <td>27</td>
+                  <td>31</td>
+                </tr>
+                <tr>
+                  <td>Số request mất ≥ 1 giây</td>
+                  <td>29</td>
+                  <td>27</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>Hai phát hiện, và cả hai đều đi ngược điều mình dự đoán trước khi đo.</p>
+
+            <p>
+              <strong>Thứ nhất: không có lỗi nào.</strong> Nguyên nhân nằm trong chính cấu hình
+              <code>proxy_next_upstream</code> — nginx tự thử lại request ở upstream khác. Log của nginx cho thấy rõ
+              từng trường hợp:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">log nginx — request được thử lại</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">172.21.0.6 "GET /fast HTTP/1.1" status=200 \
+  to=172.21.0.2:3000, 172.21.0.4:3000 \
+  ut=2.001, 0.000  rt=2.001  tries=504, 200
+
+# Doc dong nay:
+#   to=   hai upstream => da thu lai
+#   ut=   upstream dau mat 2.001s (het proxy_connect_timeout), upstream sau ~0s
+#   tries=504, 200  => lan dau timeout, lan hai thanh cong
+#   status=200      => CLIENT KHONG HE THAY LOI, chi thay cham</code></pre>
+            </div>
+
+            <p>
+              Đây là tin tốt và tin xấu cùng lúc. Tin tốt: retry cứu được tính sẵn sàng. Tin xấu:
+              <strong>nó biến mất mát tính sẵn sàng thành mất mát độ trễ</strong>, và độ lớn của mất mát đó bằng đúng
+              <code>proxy_connect_timeout</code> mà bạn đặt — ở đây là 2 giây. Nếu bạn chỉ theo dõi tỉ lệ lỗi, bạn sẽ
+              kết luận "deploy hoàn toàn êm" trong khi ~30 người dùng vừa phải chờ 2 giây.
+            </p>
+
+            <p>
+              <strong>Thứ hai: graceful shutdown không tạo khác biệt nào đo được.</strong> 27 so với 31 request bị thử
+              lại là nằm trong nhiễu. Điều này thoạt nghe như phản bác mọi tài liệu vận hành, nhưng lý do rất đơn giản:
+              <code>/fast</code> hoàn thành trong 0,2 ms, nên tại thời điểm nhận SIGTERM
+              <strong>hầu như không có request nào đang bay để mà drain</strong>. Log của app xác nhận:
+              <code>"đánh dấu unhealthy, chờ 0 request đang xử lý..."</code>
+            </p>
+
+            <h3>Vậy graceful shutdown có ích khi nào? Đo lại với request dài</h3>
+
+            <p>
+              Lặp lại đúng thí nghiệm nhưng đổi sang <code>/slow-async?ms=500</code> — request đủ dài để luôn có vài
+              request đang bay khi node bị dừng:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Chỉ số (request 500 ms)</th>
+                  <th>Có graceful shutdown</th>
+                  <th>Không graceful shutdown</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Lỗi client nhìn thấy</td>
+                  <td>0</td>
+                  <td>0</td>
+                </tr>
+                <tr>
+                  <td><strong>Latency lớn nhất</strong></td>
+                  <td><strong>860,78 ms</strong></td>
+                  <td><strong>2.514,83 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>Log của app khi nhận SIGTERM</td>
+                  <td>"chờ <strong>5</strong> request đang xử lý..." → drain xong → thoát</td>
+                  <td>"thoát ngay, request đang xử lý bị cắt"</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Giờ khác biệt hiện ra rõ: <strong>861 ms so với 2.515 ms</strong> — đuôi latency tệ hơn khoảng
+              <strong>2,9 lần</strong>. Năm request đang bay bị cắt giữa đường, nginx phải thử lại chúng, và mỗi lần thử
+              lại tốn 500 ms đã làm vô ích cộng 2 giây chờ timeout cộng 500 ms làm lại.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Timeline so sánh dừng node có graceful shutdown và không có"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Dừng một replica đang phục vụ request 500 ms
+                </text>
+
+                <!-- ==== CO GRACEFUL ==== -->
+                <text x="16" y="52" fill="#22c55e" font-family="system-ui, sans-serif" font-size="11" font-weight="600">
+                  Có graceful shutdown — max 861 ms
+                </text>
+                <line x1="70" y1="88" x2="680" y2="88" stroke="#24324f" />
+                <!-- moc SIGTERM -->
+                <line x1="240" y1="66" x2="240" y2="110" stroke="#f59e0b" stroke-dasharray="3 2" />
+                <text x="244" y="76" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">SIGTERM</text>
+                <!-- 5 request dang bay, hoan tat binh thuong -->
+                <g fill="#22c55e" opacity="0.75">
+                  <rect x="150" y="80" width="150" height="7" rx="2" />
+                  <rect x="170" y="90" width="150" height="7" rx="2" />
+                  <rect x="190" y="100" width="150" height="7" rx="2" />
+                </g>
+                <text x="350" y="88" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  5 request đang bay được CHẠY XONG rồi mới thoát
+                </text>
+                <text x="70" y="128" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Trình tự: đánh dấu unhealthy → chờ drain → thoát. Không request nào bị cắt, không phải làm lại.
+                </text>
+
+                <!-- ==== KHONG GRACEFUL ==== -->
+                <text
+                  x="16"
+                  y="176"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                >
+                  Không graceful shutdown — max 2.515 ms
+                </text>
+                <line x1="70" y1="212" x2="680" y2="212" stroke="#24324f" />
+                <line x1="240" y1="190" x2="240" y2="258" stroke="#f59e0b" stroke-dasharray="3 2" />
+                <text x="244" y="200" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  SIGTERM → thoát ngay
+                </text>
+                <!-- request bi cat -->
+                <g opacity="0.75">
+                  <rect x="150" y="204" width="90" height="7" rx="2" fill="#ef4444" />
+                  <rect x="170" y="214" width="70" height="7" rx="2" fill="#ef4444" />
+                  <rect x="190" y="224" width="50" height="7" rx="2" fill="#ef4444" />
+                </g>
+                <text x="248" y="210" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  bị CẮT giữa đường
+                </text>
+                <!-- nginx cho timeout roi thu lai -->
+                <rect x="240" y="238" width="180" height="7" rx="2" fill="#f59e0b" opacity="0.6" />
+                <text x="426" y="245" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  nginx chờ hết proxy_connect_timeout = 2 s
+                </text>
+                <rect x="424" y="248" width="150" height="7" rx="2" fill="#22c55e" opacity="0.6" />
+                <text x="580" y="255" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  làm lại 500 ms
+                </text>
+
+                <text x="70" y="278" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  Tổng chi phí một request bất hạnh: 500 ms vô ích + 2 s chờ timeout + 500 ms làm lại ≈ 2,5 s.
+                </text>
+                <text x="70" y="292" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Client vẫn nhận 200 — nên nếu chỉ theo dõi tỉ lệ lỗi thì bạn không thấy gì cả.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Cả hai mốc latency lớn nhất đều là số đo thật từ lab.
+              </figcaption>
+            </figure>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: graceful shutdown một mình là chưa đủ</div>
+              <div class="callout__content">
+                App trong lab làm đúng ba bước: đánh dấu unhealthy → chờ drain → thoát. Nhưng nginh bản mã nguồn mở
+                <strong>không hỏi <code>/health</code> bao giờ</strong>, nên việc "đánh dấu unhealthy" chẳng ai nghe
+                thấy. Đó chính là lý do vẫn còn ~30 request phải trả giá 2 giây. <br /><br />
+                Trình tự deploy đúng phải là: <strong>rút node khỏi load balancer trước</strong> (qua API của LB, hoặc
+                chờ đủ một chu kỳ health check chủ động), <em>rồi mới</em> gửi SIGTERM, <em>rồi</em> drain, <em>rồi</em>
+                thoát. Thiếu bước đầu thì graceful shutdown chỉ giải quyết được nửa vấn đề.
+                <br /><br />
+                Đây cũng là lý do timeout là một trong những tham số quan trọng nhất của hệ phân tán — Bài 17 sẽ quay
+                lại đúng con số 2 giây này.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: health check chỉ kiểm tra cổng TCP</div>
+              <div class="callout__content">
+                Nhiều cấu hình chỉ kiểm tra "cổng 3000 có mở không". Một tiến trình Node bị chặn event loop
+                <em>vẫn</em> mở cổng, vẫn hoàn tất bắt tay TCP — nên vẫn được coi là khoẻ, đúng lúc nó hoàn toàn không
+                phục vụ được ai. Đó chính là <code>app3</code> trong thí nghiệm ở mục 3.3: sống theo mọi tiêu chí TCP,
+                nhưng p95 là 120 ms. <br /><br />
+                <code>/health</code> phải thực sự thực thi được một chút logic, và tốt hơn nữa là kiểm tra cả dependency
+                thiết yếu. Nhưng đừng thái quá: nếu <code>/health</code> trả lỗi chỉ vì database chậm, cả pool sẽ bị rút
+                ra cùng lúc và bạn tự gây ra sự cố toàn phần.
+              </div>
+            </div>
+
+            <!-- ================= 3.5 ================= -->
+            <h2>3.5 Sticky session và cái giá của state cục bộ</h2>
+
+            <p>
+              Khi app giữ session trong RAM, cách sửa nhanh nhất là bắt mỗi người dùng luôn về đúng một replica —
+              <strong>sticky session</strong>. Trong nginx chỉ cần một dòng <code>ip_hash;</code>. Nó chạy được, và đó
+              chính là vấn đề.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Hệ quả</th>
+                  <th>Vì sao xảy ra</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Mất cân bằng tải</td>
+                  <td>Người dùng không sinh ra lượng tải như nhau; một replica có thể trúng toàn người dùng nặng</td>
+                </tr>
+                <tr>
+                  <td>Mất session khi replica chết</td>
+                  <td>State chỉ nằm trong RAM của replica đó — chết là mất, người dùng bị đăng xuất</td>
+                </tr>
+                <tr>
+                  <td>Chặn autoscale</td>
+                  <td>Thêm replica không giúp gì cho người dùng đã bị ghim; bớt replica là mất session</td>
+                </tr>
+                <tr>
+                  <td>Deploy nào cũng gây gián đoạn</td>
+                  <td>Mỗi lần restart replica là toàn bộ người dùng ghim vào nó bị ảnh hưởng</td>
+                </tr>
+                <tr>
+                  <td>Sai lệch với NAT</td>
+                  <td><code>ip_hash</code> ghim theo IP, nên cả một công ty sau NAT bị dồn vào một replica</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Lời giải đúng là đưa session ra store dùng chung — Redis, hoặc token có chữ ký để không cần lưu gì cả. Khi
+              đó app thật sự stateless và mọi vấn đề trên tan biến. Bài 5 sẽ dựng đúng tầng đó.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: dùng sticky session để che lỗi thiết kế</div>
+              <div class="callout__content">
+                Sticky session là công cụ hợp lệ trong vài tình huống hẹp (ví dụ WebSocket có state kết nối, hoặc cache
+                cục bộ nóng mà mất thì chỉ chậm chứ không sai). Nhưng khi nó được bật <em>để tránh phải sửa</em> state
+                cục bộ, hệ thống sẽ chạy được ngay hôm nay và <strong>tự khoá khả năng scale về sau</strong>. Cái giá
+                không xuất hiện lúc bật — nó xuất hiện sáu tháng sau, khi bạn cần autoscale và phát hiện mình không thể.
+              </div>
+            </div>
+
+            <!-- ================= thuc hanh ================= -->
+            <h2>Tự làm lại các phép đo</h2>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">terminal</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># 1) Dung nginx + 3 replica
+cd blog/sysdesign/sysdesign-lab
+docker compose --profile lb up -d
+sleep 10                      # QUAN TRONG: cho ca 3 replica khoe han
+
+# 2) Xem phan phoi (round robin => dem gan bang nhau)
+for i in $(seq 1 30); do curl -s http://localhost:8080/whoami; echo; done \
+  | grep -o '"instance":"app[0-9]"' | sort | uniq -c
+
+# 3) Lam SUY GIAM dung mot replica: ban truc tiep vao app3, KHONG qua LB
+docker compose run --rm -d --name hog loadgen \
+  loadgen.js --url "http://app3:3000/slow-sync?ms=30" -c 3 -d 25 -w 0
+
+# 4) Do /fast qua LB trong luc app3 dang bi chan
+docker compose run --rm loadgen \
+  loadgen.js --url http://lb:8080/fast -c 6 -d 10 -w 3
+
+# 5) Doi sang least_conn roi DO LAI. Ghi file kieu nguyen tu, dung sed -i:
+sed 's/^    # least_conn;/    least_conn;/' nginx/lb.conf &gt; /tmp/lb.new \
+  &amp;&amp; mv /tmp/lb.new nginx/lb.conf
+docker compose restart lb
+# XAC NHAN cau hinh da co hieu luc truoc khi tin so do:
+docker compose exec lb grep -c '^ *least_conn;' /etc/nginx/conf.d/default.conf
+
+# 6) Dem request bi nginx thu lai va request mat >= 1 giay
+docker compose logs --no-log-prefix lb | grep -c 'to=[^ ]*,'
+docker compose logs --no-log-prefix lb | grep -oE 'rt=[0-9.]+' \
+  | awk -F= '$2&gt;=1{n++} END{print n+0}'</code></pre>
+            </div>
+
+            <p>
+              Ba câu hỏi nên tự trả lời sau khi chạy: phân phối số lượng có cân bằng không (nên là có), p95 chênh bao
+              nhiêu giữa hai thuật toán, và <em>p50</em> có phản ánh được vấn đề không (nên là không).
+            </p>
+
+            <h3>Đối chiếu với mô phỏng</h3>
+
+            <p>
+              Traffic Lab dưới đây cho phép đổi thuật toán phân phối và giết replica ngay trên trang. Chọn kiến trúc
+              <strong>"2. LB + nhiều app server"</strong>, đặt tải đủ cao, rồi bấm
+              <strong>"Giết 1 app server"</strong> để xem hàng đợi dồn sang các replica còn lại và utilization nhảy lên.
+            </p>
+
+            <div
+              style="
+                margin: 24px 0;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                overflow: hidden;
+                background: #0b0f19;
+              "
+            >
+              <iframe
+                src="sysdesign-sandbox"
+                title="Traffic Lab — phòng lab lưu lượng"
+                style="width: 100%; height: 680px; border: none"
+                loading="lazy"
+              ></iframe>
+            </div>
+
+            <!-- ================= chuyen tiep ================= -->
+            <h2>Ba replica rồi — nhưng chúng đang giành nhau cái gì?</h2>
+
+            <p>
+              Ta đã gỡ được điểm chết duy nhất và nhân throughput lên. Nhưng để ý một điều trong toàn bộ bài này: cả ba
+              replica đều đọc cùng một nguồn dữ liệu. Scale tầng stateless là phần dễ; nó chỉ đẩy điểm nghẽn xuống tầng
+              sau.
+            </p>
+
+            <p>
+              <strong>Bài 4</strong> sẽ mở rộng nginx từ load balancer thành API gateway — định tuyến theo path, TLS
+              termination, và một cạm bẫy bảo mật cụ thể: vì sao không bao giờ được tin header
+              <code>X-Forwarded-For</code> do client gửi lên.
+            </p>
+
+            <!-- References Block -->
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://nginx.org/en/docs/http/ngx_http_upstream_module.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    nginx — Module ngx_http_upstream (least_conn, ip_hash, max_fails, keepalive)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.eecs.harvard.edu/~michaelm/postscripts/handbook2001.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Mitzenmacher — The Power of Two Choices in Randomized Load Balancing
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_next_upstream"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    nginx — proxy_next_upstream (cơ chế thử lại đã biến lỗi thành độ trễ trong bài này)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://learn.microsoft.com/en-us/azure/architecture/patterns/health-endpoint-monitoring"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Health Endpoint Monitoring Pattern — thiết kế <code>/health</code> cho đúng
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <!-- Download Block -->
+            <div class="article-cta">
+              <h3>Tải mã nguồn thực hành</h3>
+              <p>
+                Cấu hình nginx L7 dùng trong bài (có log <code>to=$upstream_addr</code> để tự đếm phân phối) và lõi mô
+                phỏng chứa cài đặt bốn thuật toán phân phối:
+              </p>
+              <a
+                href="sysdesign-lab/nginx/lb.conf"
+                download
+                class="btn-facebook"
+                style="background: #38bdf8; text-decoration: none; color: #04263a; margin-right: 8px"
+              >
+                Tải về lb.conf
+              </a>
+              <a
+                href="sysdesign-sim-engine.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về sysdesign-sim-engine.js
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-single-server-limits" class="article-related__link article-related__link--prev">
+                  Bài 2: Dựng Lab &amp; Đo Giới Hạn Một Server
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 4: Reverse Proxy &amp; API Gateway (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
