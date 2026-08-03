@@ -13,6 +13,7 @@
  */
 
 import { Simulator, mm1Theory, percentile } from './sysdesign-sim-engine.js';
+import { HashRing, moduloAssign, countMigrations, compareAddNode, makeKeys } from './sysdesign-hashring.js';
 
 let failed = 0;
 const check = (name, ok, detail) => {
@@ -174,6 +175,92 @@ console.log('\n[7] percentile() — các trường hợp biên');
   const ten = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   check('p50 của 1..10 = 5', percentile(ten, 50) === 5, `nearest-rank: ceil(0.5*10)=5 => phần tử thứ 5`);
   check('không làm thay đổi mảng đầu vào', ten[0] === 1 && ten[9] === 10);
+}
+
+// ---------------------------------------------------------------------------
+// 8. Consistent hashing (Bài 8) — tỉ lệ di trú phải khớp lý thuyết
+// ---------------------------------------------------------------------------
+console.log('\n[8] Consistent hashing — số key phải di trú khi thêm 1 node');
+{
+  const keys = makeKeys(20000);
+  for (const n of [2, 4, 8]) {
+    const nodesBefore = Array.from({ length: n }, (_, i) => `node${i + 1}`);
+    const r = compareAddNode(keys, nodesBefore, `node${n + 1}`, 200);
+    // modulo: kỳ vọng (N-1)/N  |  consistent: kỳ vọng 1/(N+1)
+    const modOk = Math.abs(r.modulo.ratio - r.theory.moduloRatio) < 0.05;
+    const chOk = Math.abs(r.consistent.ratio - r.theory.consistentRatio) < 0.05;
+    check(
+      `${n} → ${n + 1} node: modulo`,
+      modOk,
+      `di trú ${(r.modulo.ratio * 100).toFixed(1)}% (lý thuyết ${(r.theory.moduloRatio * 100).toFixed(1)}%)`
+    );
+    check(
+      `${n} → ${n + 1} node: consistent hashing`,
+      chOk,
+      `di trú ${(r.consistent.ratio * 100).toFixed(1)}% (lý thuyết ${(r.theory.consistentRatio * 100).toFixed(1)}%)`
+    );
+  }
+}
+
+console.log('\n[9] Virtual node — càng nhiều vnode thì tải càng đều');
+{
+  const keys = makeKeys(20000);
+  const spreads = [];
+  for (const v of [1, 10, 100, 500]) {
+    const ring = new HashRing({ vnodes: v });
+    for (let i = 1; i <= 5; i++) ring.addNode(`node${i}`);
+    const d = ring.loadDistribution(keys);
+    spreads.push({ v, spread: d.spread });
+    console.log(`       vnodes=${String(v).padStart(3)} → độ lệch tải ${(d.spread * 100).toFixed(1)}%`);
+  }
+  // Phải giảm ĐƠN ĐIỆU theo số vnode, không chỉ hai đầu tốt hơn nhau.
+  let monotonic = true;
+  for (let i = 1; i < spreads.length; i++) {
+    if (spreads[i].spread >= spreads[i - 1].spread) monotonic = false;
+  }
+  check('độ lệch giảm đơn điệu khi tăng vnode', monotonic);
+  const s1 = spreads.find((s) => s.v === 1).spread;
+  const s500 = spreads.find((s) => s.v === 500).spread;
+  check('vnodes=1 lệch nặng (>100%)', s1 > 1.0, `${(s1 * 100).toFixed(1)}%`);
+  check('vnodes=500 chấp nhận được (<25%)', s500 < 0.25, `${(s500 * 100).toFixed(1)}%`);
+}
+
+console.log('\n[10] HashRing — tính tất định & các trường hợp biên');
+{
+  const ring = new HashRing({ vnodes: 50 });
+  check('vòng rỗng trả null', ring.getNode('bất kỳ') === null);
+  ring.addNode('a').addNode('b').addNode('c');
+  const k = 'user:12345';
+  const first = ring.getNode(k);
+  check('cùng key luôn về cùng node', ring.getNode(k) === first, `→ ${first}`);
+
+  // Bớt rồi thêm lại đúng node đó phải tái lập vòng cũ (vị trí vnode là tất định).
+  const before = ring.assignAll(makeKeys(500));
+  ring.removeNode('b');
+  ring.addNode('b');
+  const after = ring.assignAll(makeKeys(500));
+  const m = countMigrations(before, after);
+  check('bớt rồi thêm lại cùng node → vòng tái lập y nguyên', m.moved === 0, `${m.moved} key bị di chuyển`);
+
+  // Xoá node thì key của nó phải chuyển sang node khác, không được biến mất.
+  const assigned = ring.assignAll(makeKeys(500));
+  ring.removeNode('c');
+  const reassigned = ring.assignAll(makeKeys(500));
+  const orphan = [...reassigned.values()].filter((v) => v === 'c' || v == null).length;
+  check('xoá node không để key nào mất chủ', orphan === 0, `${orphan} key không có node`);
+  check('key cũ của node bị xoá được nhận lại', countMigrations(assigned, reassigned).moved > 0);
+}
+
+console.log('\n[11] moduloAssign — mọi key phải có node');
+{
+  const keys = makeKeys(100);
+  const m = moduloAssign(keys, ['n1', 'n2', 'n3']);
+  check('gán đủ 100 key', m.size === 100);
+  check(
+    'không có key nào undefined',
+    [...m.values()].every((v) => typeof v === 'string')
+  );
+  check('danh sách node rỗng → map rỗng', moduloAssign(keys, []).size === 0);
 }
 
 console.log(
