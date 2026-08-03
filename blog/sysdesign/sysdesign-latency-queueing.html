@@ -1,0 +1,1160 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 1: Latency, Throughput &amp; Lý Thuyết Hàng Đợi — js-tools</title>
+    <meta
+      name="description"
+      content="Phân biệt latency và throughput; bảng bậc độ lớn latency từ L1 cache tới RTT liên lục địa; tail latency và vì sao giá trị trung bình là con số lừa dối; định luật Little L = λW; vì sao ρ = 0,7 đã khiến thời gian chờ gấp 2,3 lần; ước lượng back-of-envelope từ DAU ra RPS đỉnh. Kèm Traffic Lab tương tác đối chiếu mô phỏng với công thức M/M/1."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-latency-queueing" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-latency-queueing" />
+    <meta property="og:title" content="Bài 1: Latency, Throughput &amp; Lý Thuyết Hàng Đợi — js-tools" />
+    <meta
+      property="og:description"
+      content="Phân biệt latency và throughput; bảng bậc độ lớn latency từ L1 cache tới RTT liên lục địa; tail latency và vì sao giá trị trung bình là con số lừa dối; định luật Little L = λW; vì sao ρ = 0,7 đã khiến thời gian chờ gấp 2,3 lần; ước lượng back-of-envelope từ DAU ra RPS đỉnh. Kèm Traffic Lab tương tác đối chiếu mô phỏng với công thức M/M/1."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 1: Latency, Throughput &amp; Lý Thuyết Hàng Đợi — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Phân biệt latency và throughput; bảng bậc độ lớn latency từ L1 cache tới RTT liên lục địa; tail latency và vì sao giá trị trung bình là con số lừa dối; định luật Little L = λW; vì sao ρ = 0,7 đã khiến thời gian chờ gấp 2,3 lần; ước lượng back-of-envelope từ DAU ra RPS đỉnh. Kèm Traffic Lab tương tác đối chiếu mô phỏng với công thức M/M/1."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script src="../katex/katex.min.js" defer></script>
+    <script src="../katex/contrib/auto-render.min.js" defer></script>
+    <script src="../katex-render.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 1: Latency, Throughput & Lý Thuyết Hàng Đợi — js-tools",
+        "description": "Phân biệt latency và throughput; bảng bậc độ lớn latency từ L1 cache tới RTT liên lục địa; tail latency và vì sao giá trị trung bình là con số lừa dối; định luật Little L = λW; vì sao ρ = 0,7 đã khiến thời gian chờ gấp 2,3 lần; ước lượng back-of-envelope từ DAU ra RPS đỉnh. Kèm Traffic Lab tương tác đối chiếu mô phỏng với công thức M/M/1.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-latency-queueing",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": {
+          "@type": "Blog",
+          "name": "js-tools Blog",
+          "url": "https://js-tools.org/blog/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "js-tools",
+          "url": "https://js-tools.org"
+        },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 1: Latency, Throughput &amp; Lý Thuyết Hàng Đợi</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 18 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              Mọi cuộc thảo luận về thiết kế hệ thống rồi cũng quy về hai con số: <strong>độ trễ</strong> và
+              <strong>thông lượng</strong>. Nghe đơn giản, nhưng đây là chỗ sai lệch bắt đầu — vì phần lớn chúng ta được
+              dạy tư duy tuyến tính, trong khi hệ thống có hàng đợi lại hành xử <em>phi tuyến</em> một cách tàn nhẫn.
+            </p>
+
+            <p>
+              Bài này thiết lập bốn nền tảng dùng lại suốt 17 bài sau: phân biệt latency với throughput, ghi nhớ bậc độ
+              lớn của các loại độ trễ, hiểu vì sao giá trị trung bình là con số lừa dối, và cuối cùng là công thức giải
+              thích tại sao một server "còn 30% CPU rảnh" vẫn có thể đang chết.
+            </p>
+
+            <!-- ================= 1.1 ================= -->
+            <h2>1.1 Latency và Throughput: hai đại lượng, không phải một</h2>
+
+            <p>
+              <strong>Latency</strong> là thời gian phục vụ <em>một</em> request, đo bằng đơn vị thời gian.
+              <strong>Throughput</strong> là số request phục vụ được trong <em>một đơn vị thời gian</em>, đo bằng req/s.
+              Chúng liên quan nhưng không suy ra được nhau, và điều quan trọng hơn cả:
+              <strong>tối ưu cái này thường làm hại cái kia</strong>.
+            </p>
+
+            <p>
+              Ví dụ dễ thấy nhất là <em>ghép lô</em> (batching). Gom 100 lệnh ghi rồi đẩy xuống database một lần giúp
+              throughput tăng vọt vì chi phí cố định mỗi lần ghi được chia đều. Nhưng request đến đầu tiên phải
+              <em>chờ</em> 99 request kia đến đủ mới được xử lý — latency của nó tăng lên. Nén dữ liệu cũng vậy: tiết
+              kiệm băng thông (tăng throughput trên cùng đường truyền) nhưng thêm thời gian nén/giải nén vào mỗi
+              request.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Kỹ thuật</th>
+                  <th>Tác động lên throughput</th>
+                  <th>Tác động lên latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Batching</strong></td>
+                  <td>Tăng mạnh (chia đều chi phí cố định)</td>
+                  <td>Xấu đi (phải chờ đủ lô)</td>
+                </tr>
+                <tr>
+                  <td><strong>Nén dữ liệu</strong></td>
+                  <td>Tăng (ít byte hơn trên cùng đường truyền)</td>
+                  <td>Xấu đi (thêm thời gian nén/giải nén)</td>
+                </tr>
+                <tr>
+                  <td><strong>Cache</strong></td>
+                  <td>Tăng (bớt việc cho tầng sau)</td>
+                  <td>Tốt lên (đường đi ngắn hơn)</td>
+                </tr>
+                <tr>
+                  <td><strong>Thêm replica</strong></td>
+                  <td>Tăng gần tuyến tính</td>
+                  <td>Tốt lên <em>gián tiếp</em> (giảm chờ hàng đợi, không làm mỗi request nhanh hơn)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Dòng cuối bảng chứa một ý tinh tế và rất hay bị hiểu sai: thêm server <strong>không</strong> làm một
+              request đơn lẻ được xử lý nhanh hơn. Nếu handler mất 20 ms CPU thì nó vẫn mất 20 ms, dù bạn có 1 hay 100
+              server. Thêm server chỉ làm <em>giảm thời gian xếp hàng</em>. Khi hệ thống rảnh rỗi, thêm server hầu như
+              không cải thiện latency chút nào.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: suy latency từ throughput</div>
+              <div class="callout__content">
+                "Server chịu được 1000 req/s, vậy mỗi request mất 1 ms" — <strong>sai</strong>. Kết luận đó chỉ đúng nếu
+                server xử lý tuần tự đúng một request tại một thời điểm. Thực tế nếu server chạy 50 request song song,
+                mỗi request có thể mất 50 ms mà throughput vẫn là 1000 req/s. Quan hệ đúng giữa ba đại lượng này chính
+                là định luật Little ở mục 1.4 — và nó cần <em>ba</em> con số, không phải hai.
+              </div>
+            </div>
+
+            <!-- ================= 1.2 ================= -->
+            <h2>1.2 Bậc độ lớn của latency: bảng số định hình mọi kiến trúc</h2>
+
+            <p>
+              Đây có lẽ là bảng số quan trọng nhất mà một người thiết kế hệ thống cần nằm lòng. Không phải để nhớ chính
+              xác từng con số, mà để nhớ <strong>khoảng cách giữa chúng</strong> — vì chính khoảng cách đó quyết định
+              kiến trúc.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Thang logarit so sánh bậc độ lớn của các loại latency"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="26" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Bậc độ lớn latency (thang logarit)
+                </text>
+
+                <!-- trục -->
+                <line x1="150" y1="270" x2="700" y2="270" stroke="#24324f" stroke-width="1" />
+                <g font-family="system-ui, sans-serif" font-size="9" fill="#9ca3af" text-anchor="middle">
+                  <text x="150" y="285">1ns</text>
+                  <text x="260" y="285">100ns</text>
+                  <text x="370" y="285">10µs</text>
+                  <text x="480" y="285">1ms</text>
+                  <text x="590" y="285">100ms</text>
+                  <text x="700" y="285">10s</text>
+                </g>
+
+                <!-- cac thanh: x = 150 + 110*log10(ns/1) / 2  => moi 110px = 2 bac -->
+                <g font-family="system-ui, sans-serif" font-size="11">
+                  <!-- L1: 1ns -->
+                  <text x="140" y="52" fill="#f3f4f6" text-anchor="end">L1 cache</text>
+                  <rect x="150" y="43" width="3" height="12" fill="#22c55e" rx="1" />
+                  <text x="160" y="52" fill="#9ca3af" font-size="9">~1 ns</text>
+
+                  <!-- RAM: 100ns -->
+                  <text x="140" y="76" fill="#f3f4f6" text-anchor="end">RAM</text>
+                  <rect x="150" y="67" width="110" height="12" fill="#22c55e" rx="1" />
+                  <text x="267" y="76" fill="#9ca3af" font-size="9">~100 ns</text>
+
+                  <!-- SSD: 100us -->
+                  <text x="140" y="100" fill="#f3f4f6" text-anchor="end">SSD (NVMe)</text>
+                  <rect x="150" y="91" width="275" height="12" fill="#38bdf8" rx="1" />
+                  <text x="432" y="100" fill="#9ca3af" font-size="9">~100 µs</text>
+
+                  <!-- RTT cung DC: 0.5ms -->
+                  <text x="140" y="124" fill="#f3f4f6" text-anchor="end">RTT trong cùng DC</text>
+                  <rect x="150" y="115" width="313" height="12" fill="#38bdf8" rx="1" />
+                  <text x="470" y="124" fill="#9ca3af" font-size="9">~0,5 ms</text>
+
+                  <!-- HDD seek: 10ms -->
+                  <text x="140" y="148" fill="#f3f4f6" text-anchor="end">HDD seek</text>
+                  <rect x="150" y="139" width="385" height="12" fill="#f59e0b" rx="1" />
+                  <text x="542" y="148" fill="#9ca3af" font-size="9">~10 ms</text>
+
+                  <!-- RTT HN-SG: 50ms -->
+                  <text x="140" y="172" fill="#f3f4f6" text-anchor="end">RTT Hà Nội ↔ Singapore</text>
+                  <rect x="150" y="163" width="423" height="12" fill="#f59e0b" rx="1" />
+                  <text x="580" y="172" fill="#9ca3af" font-size="9">~40–60 ms</text>
+
+                  <!-- RTT lien luc dia: 150ms -->
+                  <text x="140" y="196" fill="#f3f4f6" text-anchor="end">RTT liên lục địa</text>
+                  <rect x="150" y="187" width="453" height="12" fill="#ef4444" rx="1" />
+                  <text x="610" y="196" fill="#9ca3af" font-size="9">~150 ms</text>
+
+                  <!-- Timeout mac dinh: 30s -->
+                  <text x="140" y="220" fill="#f3f4f6" text-anchor="end">Timeout mặc định</text>
+                  <rect x="150" y="211" width="553" height="12" fill="#ef4444" rx="1" />
+                  <text x="150" y="243" fill="#9ca3af" font-size="9">
+                    Mỗi 110 px = 100 lần. RAM nhanh hơn RTT liên lục địa khoảng 1,5 triệu lần.
+                  </text>
+                </g>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Thang logarit: mỗi bước 110 px tương ứng <strong>100 lần</strong>. Chính vì thang này là logarit mà trực
+                giác tuyến tính của chúng ta liên tục sai.
+              </figcaption>
+            </figure>
+
+            <p>
+              Hãy đọc bảng này theo hướng ứng dụng. RAM nhanh hơn một round-trip liên lục địa khoảng
+              <strong>1,5 triệu lần</strong>. Điều đó giải thích ba quyết định kiến trúc kinh điển:
+            </p>
+
+            <ul>
+              <li>
+                <strong>Vì sao cache thắng gần như luôn luôn:</strong> đổi một truy vấn qua mạng (~1 ms) thành một lần
+                đọc RAM (~100 ns) là tiết kiệm 10.000 lần. Không có tối ưu thuật toán nào cho tỉ lệ như vậy.
+              </li>
+              <li>
+                <strong>Vì sao CDN tồn tại:</strong> khi người dùng ở cách server nửa vòng trái đất, 150 ms là
+                <em>giới hạn vật lý</em> — sẽ nói rõ ở Bài 6. Cách duy nhất là đưa dữ liệu lại gần họ.
+              </li>
+              <li>
+                <strong>Vì sao "N+1 query" là tội đồ:</strong> 100 truy vấn tuần tự × 1 ms = 100 ms, trong khi gộp thành
+                một truy vấn có thể chỉ 3 ms. Vấn đề không nằm ở database mà ở <em>số lần đi qua mạng</em>.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: tối ưu sai tầng</div>
+              <div class="callout__content">
+                Dành hai ngày tối ưu một hàm từ 50 µs xuống 5 µs, trong khi request đó đang chờ một round-trip mạng 150
+                ms. Bạn vừa cải thiện <strong>0,03%</strong> tổng thời gian. Trước khi tối ưu bất cứ thứ gì, hãy xác
+                định độ trễ đang nằm ở <em>bậc</em> nào — đó cũng là lý do Bài 16 (Observability) tồn tại.
+              </div>
+            </div>
+
+            <!-- ================= 1.3 ================= -->
+            <h2>1.3 Tail latency: vì sao giá trị trung bình là con số lừa dối</h2>
+
+            <p>
+              Phân phối latency của hệ thống thực gần như luôn <strong>lệch phải</strong>: phần lớn request nhanh, một
+              phần nhỏ chậm hẳn, và cái đuôi dài đó kéo giá trị trung bình đi. Kết quả là
+              <strong>trung bình không đại diện cho ai cả</strong> — không phải trải nghiệm điển hình, cũng không phải
+              trải nghiệm tệ nhất.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 260"
+                width="100%"
+                role="img"
+                aria-label="Histogram latency lệch phải với các vạch p50, trung bình, p95, p99"
+              >
+                <rect width="720" height="260" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Phân phối latency thực tế luôn lệch phải
+                </text>
+
+                <!-- cac cot histogram: mo phong phan phoi lech phai -->
+                <g fill="#38bdf8" opacity="0.8">
+                  <rect x="60" y="150" width="16" height="70" />
+                  <rect x="78" y="95" width="16" height="125" />
+                  <rect x="96" y="70" width="16" height="150" />
+                  <rect x="114" y="82" width="16" height="138" />
+                  <rect x="132" y="104" width="16" height="116" />
+                  <rect x="150" y="128" width="16" height="92" />
+                  <rect x="168" y="150" width="16" height="70" />
+                  <rect x="186" y="168" width="16" height="52" />
+                  <rect x="204" y="180" width="16" height="40" />
+                  <rect x="222" y="190" width="16" height="30" />
+                  <rect x="240" y="196" width="16" height="24" />
+                  <rect x="258" y="201" width="16" height="19" />
+                  <rect x="276" y="205" width="16" height="15" />
+                  <rect x="294" y="208" width="16" height="12" />
+                  <rect x="312" y="210" width="16" height="10" />
+                  <rect x="330" y="212" width="16" height="8" />
+                  <rect x="348" y="213" width="16" height="7" />
+                  <rect x="366" y="214" width="16" height="6" />
+                  <rect x="384" y="215" width="16" height="5" />
+                  <rect x="402" y="216" width="16" height="4" />
+                  <rect x="420" y="216" width="16" height="4" />
+                  <rect x="438" y="217" width="16" height="3" />
+                  <rect x="456" y="217" width="16" height="3" />
+                  <rect x="474" y="218" width="16" height="2" />
+                  <rect x="492" y="218" width="16" height="2" />
+                  <rect x="510" y="218" width="16" height="2" />
+                  <rect x="528" y="219" width="16" height="1" />
+                  <rect x="560" y="219" width="16" height="1" />
+                  <rect x="600" y="219" width="16" height="1" />
+                  <rect x="650" y="219" width="16" height="1" />
+                </g>
+                <line x1="50" y1="220" x2="700" y2="220" stroke="#24324f" />
+
+                <!-- cac vach moc -->
+                <g font-family="system-ui, sans-serif" font-size="10">
+                  <line x1="118" y1="40" x2="118" y2="220" stroke="#22c55e" stroke-dasharray="3 2" />
+                  <text x="122" y="52" fill="#22c55e">p50 = 20ms</text>
+
+                  <line x1="176" y1="40" x2="176" y2="220" stroke="#9ca3af" stroke-dasharray="3 2" />
+                  <text x="180" y="66" fill="#9ca3af">trung bình = 42ms</text>
+
+                  <line x1="330" y1="40" x2="330" y2="220" stroke="#f59e0b" stroke-dasharray="3 2" />
+                  <text x="334" y="80" fill="#f59e0b">p95 = 180ms</text>
+
+                  <line x1="474" y1="40" x2="474" y2="220" stroke="#ef4444" stroke-dasharray="3 2" />
+                  <text x="478" y="94" fill="#ef4444">p99 = 420ms</text>
+
+                  <text x="60" y="242" fill="#9ca3af" font-size="9">
+                    Trung bình nằm bên phải p50 và vẫn thấp hơn p95 gần 4 lần: nó không mô tả được ai.
+                  </text>
+                </g>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Hình dạng này là mặc định của hệ thống thực, không phải trường hợp bệnh lý. Đuôi phải sinh ra từ GC
+                pause, cache miss, tranh chấp lock, retry, và hàng đợi.
+              </figcaption>
+            </figure>
+
+            <p>
+              Vì vậy ta dùng <strong>phân vị</strong> (percentile). Nói "p99 = 420 ms" nghĩa là 99% request nhanh hơn
+              420 ms, và 1% chậm hơn. Với một dịch vụ nhận 10 triệu request mỗi ngày, cái "1%" đó là
+              <strong>100.000 lần</strong> người dùng có trải nghiệm tệ — mỗi ngày.
+            </p>
+
+            <h3>Vì sao p99 của service lại thành p90 của người dùng</h3>
+
+            <p>
+              Đây là phần khiến tail latency nguy hiểm hơn nhiều so với cảm nhận ban đầu. Một trang web hiện đại thường
+              phải gọi nhiều service để dựng xong một màn hình. Nếu mỗi lời gọi độc lập và xác suất một lời gọi bị chậm
+              là $p$, thì xác suất người dùng gặp <strong>ít nhất một</strong> lời gọi chậm khi trang gọi $n$ service
+              là:
+            </p>
+
+            <p style="text-align: center">$$P(\text{cham}) = 1 - (1 - p)^n$$</p>
+
+            <p>
+              Trong đó $p$ là xác suất một lời gọi vượt ngưỡng chậm (ví dụ $p = 0{,}01$ ứng với ngưỡng p99), và $n$ là
+              số service mà trang phải gọi. Thay số:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Số service gọi ($n$)</th>
+                  <th>Xác suất gặp ít nhất một lời gọi chậm</th>
+                  <th>Nghĩa là</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>1,0%</td>
+                  <td>p99 của service = p99 của người dùng</td>
+                </tr>
+                <tr>
+                  <td>10</td>
+                  <td>9,6%</td>
+                  <td>p99 của service ≈ <strong>p90</strong> của người dùng</td>
+                </tr>
+                <tr>
+                  <td>50</td>
+                  <td>39,5%</td>
+                  <td>gần 4/10 lượt tải trang bị ảnh hưởng</td>
+                </tr>
+                <tr>
+                  <td>100</td>
+                  <td>63,4%</td>
+                  <td>chậm trở thành trạng thái <em>bình thường</em></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Đây chính là lý do các hệ thống lớn theo dõi tới p99,9 và tại sao việc chia nhỏ thành nhiều service làm
+              bài toán tail latency khó hơn hẳn — một điểm ta sẽ tính bằng con số cụ thể ở Bài 15.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Phân vị không cộng được</div>
+              <div class="callout__content">
+                Nếu request đi qua ba tầng có p99 lần lượt 10 ms, 20 ms, 30 ms thì p99 tổng
+                <strong>không phải</strong> 60 ms. Lý do: các tầng khó khi nào cùng lúc rơi vào trường hợp tệ nhất của
+                mình. Muốn biết p99 tổng, bạn phải đo trên <em>toàn bộ đường đi</em> chứ không cộng số của từng chặng.
+                Cũng vì thế, mọi biểu đồ hiển thị "tổng p99 các tầng" đều nên bị nghi ngờ.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: coordinated omission</div>
+              <div class="callout__content">
+                Phần lớn công cụ đo tải hoạt động theo <em>vòng đóng</em>: mỗi kết nối chỉ gửi request tiếp theo sau khi
+                nhận được phản hồi. Nghĩa là khi server chậm, công cụ <strong>tự động gửi ít hơn</strong> — đúng những
+                request lẽ ra phải rơi vào giai đoạn tệ nhất lại không bao giờ được gửi. Kết quả: p99 đo được đẹp giả
+                tạo. Bài 2 sẽ tái tạo hiện tượng này bằng chính bộ đo của lab để bạn thấy con số lệch bao nhiêu.
+              </div>
+            </div>
+
+            <!-- ================= 1.4 ================= -->
+            <h2>1.4 Định luật Little và lý thuyết hàng đợi</h2>
+
+            <p>
+              Giờ đến phần giải thích được hầu hết những gì "lạ" trong vận hành hệ thống. Bắt đầu bằng một đẳng thức đơn
+              giản đến mức đáng ngạc nhiên — <strong>định luật Little</strong>:
+            </p>
+
+            <p style="text-align: center">$$L = \lambda W$$</p>
+
+            <p>
+              Trong đó $L$ là số request trung bình đang nằm trong hệ thống, $\lambda$ (lambda) là tốc độ request đến
+              (req/s), và $W$ là thời gian trung bình mỗi request nằm trong hệ thống (giây). Đẳng thức này đúng cho
+              <em>mọi</em> hệ thống ổn định, không cần giả định gì về phân phối.
+            </p>
+
+            <p>
+              Ứng dụng trực tiếp: nếu dịch vụ của bạn nhận 500 req/s và mỗi request mất trung bình 40 ms, thì số request
+              đang xử lý đồng thời là $L = 500 \times 0{,}04 = 20$. Đó chính là con số bạn cần để chọn kích thước
+              connection pool hoặc số worker — không phải đoán.
+            </p>
+
+            <h3>Utilization và cái vách phi tuyến</h3>
+
+            <p>Gọi $\mu$ (mu) là tốc độ phục vụ tối đa của server (req/s). <strong>Mức chiếm dụng</strong> là:</p>
+
+            <p style="text-align: center">$$\rho = \frac{\lambda}{\mu}$$</p>
+
+            <p>
+              Với mô hình hàng đợi đơn giản nhất (một server, request đến theo tiến trình Poisson, thời gian phục vụ
+              phân phối exponential — ký hiệu M/M/1), thời gian trung bình một request nằm trong hệ là:
+            </p>
+
+            <p style="text-align: center">$$W = \frac{1}{\mu - \lambda}$$</p>
+
+            <p>
+              Hãy để ý mẫu số. Khi $\lambda$ tiến tới $\mu$, mẫu số tiến tới 0 và $W$ tiến tới
+              <strong>vô cùng</strong>. Đây không phải sự cố — đây là hành vi <em>bình thường</em> của mọi hàng đợi.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Đồ thị mức chiếm dụng rho với thời gian chờ W, có tiệm cận đứng tại rho bằng 1"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Độ trễ theo mức chiếm dụng — W = 1/(μ−λ)
+                </text>
+
+                <!-- luoi -->
+                <g stroke="#1b2740" stroke-width="1">
+                  <line x1="70" y1="60" x2="70" y2="250" />
+                  <line x1="196" y1="60" x2="196" y2="250" />
+                  <line x1="322" y1="60" x2="322" y2="250" />
+                  <line x1="448" y1="60" x2="448" y2="250" />
+                  <line x1="574" y1="60" x2="574" y2="250" />
+                  <line x1="70" y1="250" x2="640" y2="250" />
+                  <line x1="70" y1="190" x2="640" y2="190" />
+                  <line x1="70" y1="130" x2="640" y2="130" />
+                  <line x1="70" y1="70" x2="640" y2="70" />
+                </g>
+
+                <!-- duong cong W = 1/(1-rho), chuan hoa: y=250 tai rho=0 -->
+                <path
+                  d="M70 244 L133 240 L196 236 L259 230 L322 220 L385 205 L448 184 L479 168 L510 145 L541 112 L560 82 L570 62"
+                  fill="none"
+                  stroke="#38bdf8"
+                  stroke-width="2.5"
+                />
+
+                <!-- tiem can dung tai rho = 1 -->
+                <line x1="574" y1="55" x2="574" y2="255" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4 3" />
+                <text
+                  x="570"
+                  y="50"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  font-weight="600"
+                  text-anchor="end"
+                >
+                  ρ = 1
+                </text>
+
+                <!-- vung an toan / nguy hiem -->
+                <rect x="70" y="60" width="315" height="190" fill="#22c55e" opacity="0.05" />
+                <rect x="385" y="60" width="63" height="190" fill="#f59e0b" opacity="0.07" />
+                <rect x="448" y="60" width="126" height="190" fill="#ef4444" opacity="0.07" />
+
+                <!-- diem moc -->
+                <g font-family="system-ui, sans-serif" font-size="10">
+                  <circle cx="385" cy="205" r="4" fill="#22c55e" />
+                  <text x="393" y="203" fill="#22c55e">ρ=0,5 → chờ ×1</text>
+                  <circle cx="448" cy="184" r="4" fill="#f59e0b" />
+                  <text x="456" y="176" fill="#f59e0b">ρ=0,7 → chờ ×2,3</text>
+                  <circle cx="510" cy="145" r="4" fill="#ef4444" />
+                  <text x="400" y="120" fill="#ef4444">ρ=0,9 → chờ ×9</text>
+                  <circle cx="541" cy="112" r="4" fill="#ef4444" />
+                  <text x="400" y="103" fill="#ef4444">ρ=0,95 → chờ ×19</text>
+                </g>
+
+                <!-- nhan truc -->
+                <g font-family="system-ui, sans-serif" font-size="10" fill="#9ca3af">
+                  <text x="70" y="268" text-anchor="middle">0</text>
+                  <text x="196" y="268" text-anchor="middle">0,25</text>
+                  <text x="322" y="268" text-anchor="middle">0,5</text>
+                  <text x="448" y="268" text-anchor="middle">0,75</text>
+                  <text x="574" y="268" text-anchor="middle">1,0</text>
+                  <text x="355" y="288" text-anchor="middle">mức chiếm dụng ρ = λ/μ</text>
+                  <text x="60" y="66" text-anchor="end">cao</text>
+                  <text x="60" y="252" text-anchor="end">thấp</text>
+                </g>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Vùng xanh (ρ &lt; 0,6) là nơi trực giác tuyến tính còn đúng. Từ vùng vàng trở đi, mỗi phần trăm tải thêm
+                vào phải trả bằng nhiều phần trăm độ trễ.
+              </figcaption>
+            </figure>
+
+            <p>Con số cụ thể cho thời gian <em>chờ trong hàng đợi</em> (không tính thời gian phục vụ):</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Mức chiếm dụng ρ</th>
+                  <th>Thời gian chờ so với lúc rảnh</th>
+                  <th>Cảm nhận vận hành</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0,50</td>
+                  <td>×1</td>
+                  <td>Thoải mái</td>
+                </tr>
+                <tr>
+                  <td>0,70</td>
+                  <td>×2,3</td>
+                  <td>"CPU mới 70%, còn dư mà" — nhưng p99 đã xấu rõ</td>
+                </tr>
+                <tr>
+                  <td>0,90</td>
+                  <td>×9</td>
+                  <td>Rung lắc, sự cố nhỏ thành sự cố lớn</td>
+                </tr>
+                <tr>
+                  <td>0,95</td>
+                  <td>×19</td>
+                  <td>Một đợt burst nhẹ là sập</td>
+                </tr>
+                <tr>
+                  <td>0,99</td>
+                  <td>×99</td>
+                  <td>Về mặt thực tế là đã chết</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: "CPU mới 70%, còn thoải mái"</div>
+              <div class="callout__content">
+                Câu này được nói ra hàng ngày trong các cuộc họp vận hành, và nó bỏ qua bảng trên. Ở ρ = 0,7 thời gian
+                chờ đã <strong>gấp 2,3 lần</strong> so với hệ rảnh; ở 0,9 là gấp 9 lần. Tệ hơn: đây là con số
+                <em>trung bình</em>, còn p99 xấu đi nhanh hơn nữa. Một hệ thống chạy đều ở 70% không phải "còn dư 30%"
+                mà là <strong>đã ở rìa vùng phi tuyến</strong>. <br /><br />
+                Và xin đừng "giải quyết" bằng cách tăng độ dài hàng đợi. Hàng đợi dài hơn không tăng $\mu$ — nó chỉ đổi
+                hình thức thất bại từ <em>từ chối nhanh</em> sang <em>chờ rồi timeout</em>, thường là tệ hơn cho người
+                dùng. Bài 13 sẽ nói vì sao trả 429 ngay lại tử tế hơn.
+              </div>
+            </div>
+
+            <h3>Thấy nó xảy ra: Traffic Lab một node</h3>
+
+            <p>
+              Đọc bảng số là một chuyện, thấy đường cong dựng đứng dưới tay mình là chuyện khác. Demo dưới đây chạy một
+              bộ mô phỏng sự kiện rời rạc thật (không phải animation vẽ sẵn): kéo thanh tải và quan sát p99 cùng độ dài
+              hàng đợi. Đường xanh là <em>lý thuyết</em> $W = 1/(\mu-\lambda)$, các điểm vàng là số
+              <em>mô phỏng đo được</em> — hai thứ này phải khớp nhau, và đó cũng là cách engine của series được kiểm
+              chứng.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🧪 Thử ngay</div>
+              <div class="callout__content">
+                Chọn kiến trúc <strong>"1. Một server duy nhất"</strong> rồi kéo thanh <strong>Tải đưa vào</strong> từ
+                10 lên dần. Để ý ba mốc: ở 25 rps (ρ = 0,5) p99 gần như không đổi; ở 40 rps (ρ = 0,8) p99 bắt đầu tách
+                khỏi p50; ở 50 rps (ρ = 1,0) hàng đợi dâng vô hạn và p99 không còn hội tụ về giá trị nào. <br /><br />
+                <a href="sysdesign-sandbox" target="_blank" rel="noopener"
+                  ><strong>Mở Traffic Lab ở tab riêng →</strong></a
+                >
+              </div>
+            </div>
+
+            <div
+              style="
+                margin: 24px 0;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                overflow: hidden;
+                background: #0b0f19;
+              "
+            >
+              <iframe
+                src="sysdesign-sandbox"
+                title="Traffic Lab — phòng lab lưu lượng"
+                style="width: 100%; height: 680px; border: none"
+                loading="lazy"
+              ></iframe>
+            </div>
+
+            <h3>Mã nguồn: tính phân vị và mô phỏng M/M/1</h3>
+
+            <p>
+              Hai hàm dưới đây là mã thật đang chạy trong engine của series. Hàm percentile dùng phương pháp
+              "nearest-rank" — cùng cách mà các công cụ đo tải phổ biến báo cáo, nên số của bạn so sánh được với số của
+              chúng.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">percentile_va_mm1.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Tinh phan vi theo phuong phap nearest-rank (khong noi suy).
+// Luu y: KHONG sua doi mang dau vao - da tung co bug vi ham sort() tai cho.
+function percentile(values, p) {
+  if (!values || values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) =&gt; a - b);
+  if (p &lt;= 0) return sorted[0];
+  if (p &gt;= 100) return sorted[sorted.length - 1];
+  const rank = Math.ceil((p / 100) * sorted.length);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
+}
+
+// Ly thuyet hang doi M/M/1. Tra ve null khi rho &gt;= 1: hang doi tang vo han,
+// KHONG co trang thai on dinh - dung tra ve mot con so gia o day.
+function mm1Theory(lambda, mu) {
+  const rho = lambda / mu;
+  if (rho &gt;= 1) return { rho, W: null, Wq: null, L: null, stable: false };
+  const W = 1 / (mu - lambda);      // tong thoi gian trong he (giay)
+  const Wq = rho / (mu - lambda);   // rieng thoi gian CHO trong hang doi
+  const L = lambda * W;             // dinh luat Little
+  return { rho, W, Wq, L, stable: true };
+}
+
+// Doi chieu nhanh: mu = 50 req/s (moi request 20ms)
+for (const lambda of [25, 35, 45, 49]) {
+  const t = mm1Theory(lambda, 50);
+  console.log(`rho=${t.rho.toFixed(2)}  W=${(t.W * 1000).toFixed(1)}ms  L=${t.L.toFixed(2)}`);
+}
+// rho=0.50  W=40.0ms  L=1.00
+// rho=0.70  W=66.7ms  L=2.33
+// rho=0.90  W=200.0ms L=4.50
+// rho=0.98  W=1000.0ms L=49.00   &lt;-- chi tang lambda tu 45 len 49 ma W gap 5 lan</code></pre>
+            </div>
+
+            <p>
+              Bốn dòng kết quả cuối là toàn bộ bài học của mục này gói lại: tăng tải từ 45 lên 49 req/s — chỉ
+              <strong>9%</strong> — làm thời gian trong hệ tăng từ 200 ms lên 1000 ms, tức <strong>5 lần</strong>.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Về độ tin cậy của các con số trong series này</div>
+              <div class="callout__content">
+                Bộ mô phỏng dùng cho mọi demo đã được đối chiếu với công thức M/M/1 ở các mức ρ từ 0,20 đến 0,95, sai số
+                dưới <strong>4%</strong>; định luật Little cũng khớp (L lý thuyết 4,000 so với 3,884 đo được). Bạn có
+                thể tự kiểm bằng cách tải mã nguồn cuối bài và chạy <code>node sysdesign-engine-selftest.mjs</code> — 42
+                mục kiểm chứng, không cần cài thêm gì. <br /><br />
+                Toàn bộ số hiệu năng trong series đến từ máy đo thật hoặc từ bộ mô phỏng đã kiểm chứng.
+                <strong>Không có con số nào được bịa</strong>, và các bài có lab đều ghi rõ cấu hình máy đo.
+              </div>
+            </div>
+
+            <!-- ================= 1.5 ================= -->
+            <h2>1.5 Ước lượng back-of-envelope</h2>
+
+            <p>
+              Kỹ năng cuối của bài: từ một yêu cầu bằng lời, ra được các con số để bắt đầu thiết kế. Đây là bước phải
+              làm <em>trước</em> khi vẽ bất cứ sơ đồ nào, vì nếu không thì mọi lựa chọn về sau chỉ là phỏng đoán.
+            </p>
+
+            <p>Làm mẫu với một bài toán cụ thể: <strong>10 triệu người dùng hoạt động hằng ngày (DAU)</strong>.</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">uoc_luong.txt</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># 1) DAU -> RPS trung binh
+10.000.000 DAU x 20 request/nguoi/ngay = 200.000.000 request/ngay
+200.000.000 / 86.400 giay              = ~2.315 req/s   (trung binh)
+
+# 2) He so dinh: luu luong KHONG deu trong ngay
+#    Thuc te thuong dat 2-5 lan trung binh vao gio cao diem.
+2.315 x 3                              = ~7.000 req/s   (dinh)
+
+# 3) Ti le doc/ghi: dinh hinh toan bo kien truc
+#    Gia dinh 100:1 (mang xa hoi, tin tuc, thuong mai dien tu deu quanh muc nay)
+doc:  ~6.930 req/s   -> cache + read replica giai quyet duoc (Bai 5, Bai 7)
+ghi:  ~70 req/s      -> mot primary con thua suc, CHUA can sharding (Bai 8)
+
+# 4) Dung luong
+#    Moi request ghi ~2 KB payload
+70 req/s x 2 KB x 86.400              = ~12 GB/ngay
+                                       = ~4,4 TB/nam  -> can nghi ve archival
+
+# 5) Bang thong ra
+#    Moi response doc ~10 KB
+6.930 req/s x 10 KB                    = ~69 MB/s = ~550 Mbps  -> CDN (Bai 6)</code></pre>
+            </div>
+
+            <p>
+              Năm bước đó mất chưa tới hai phút nhưng đã loại bỏ được rất nhiều lựa chọn sai. Đáng chú ý nhất: với 70
+              ghi/giây, <strong>sharding là không cần thiết</strong> — một quyết định tiết kiệm hàng tháng công sức và
+              vô số phức tạp vĩnh viễn. Nếu bỏ qua bước ước lượng, rất dễ bắt đầu bằng một kiến trúc phân tán cho một
+              bài toán mà một server đơn giải quyết được.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Cạm bẫy: thiết kế cho con số trung bình</div>
+              <div class="callout__content">
+                Hai sai sót phổ biến nhất trong bước này, và cả hai đều dẫn tới sập vào đúng lúc đông người nhất:
+                <br /><br />
+                <strong>1. Quên hệ số đỉnh.</strong> Thiết kế cho 2.315 req/s rồi giờ cao điểm nhận 7.000 req/s — hệ
+                thống chạy ở ρ ≈ 3, tức là không có trạng thái ổn định nào cả.
+                <br />
+                <strong>2. Quên độ lệch đọc/ghi.</strong> Nhìn con số tổng 7.000 req/s rồi kết luận "phải sharding
+                ngay", trong khi thực tế chỉ có 70 ghi/giây. Tối ưu sai tầng, trả giá phức tạp mà không được lợi ích.
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đào sâu: vì sao ước lượng thô lại đủ dùng</div>
+              <div class="callout__content">
+                Mục đích của back-of-envelope không phải ra số chính xác mà là ra <strong>đúng bậc độ lớn</strong>. Sai
+                2 lần thì không sao — kiến trúc cho 3.500 và 7.000 req/s về cơ bản giống nhau. Nhưng sai 100 lần thì
+                khác hẳn: 70 req/s và 7.000 req/s là hai hệ thống hoàn toàn khác nhau. Vì vậy hãy làm tròn mạnh tay,
+                dùng lũy thừa của 10, và tập trung vào việc <em>không sai bậc</em>.
+              </div>
+            </div>
+
+            <!-- ================= chuyen tiep ================= -->
+            <h2>Còn một câu hỏi chưa trả lời</h2>
+
+            <p>
+              Toàn bộ bài này xoay quanh $\mu$ — tốc độ phục vụ tối đa. Bảng số, đường cong, mọi ước lượng đều dựa vào
+              nó. Nhưng ta chưa hề nói $\mu$ của server <em>bạn</em> thực tế là bao nhiêu.
+            </p>
+
+            <p>
+              Con số đó không đọc được từ tài liệu và không đoán được từ cấu hình máy. Phải <strong>đo</strong>. Bài 2
+              sẽ dựng một app Node thật trong Docker, chạy tải tăng dần, và tìm điểm mà throughput ngừng tăng nhưng độ
+              trễ bùng nổ — cái vách bạn vừa thấy trong lý thuyết, lần này bằng số đo của chính máy bạn. Trên đường đi,
+              ta cũng sẽ thấy một handler viết sai kiểu có thể làm throughput sụp <strong>195 lần</strong>.
+            </p>
+
+            <!-- References Block -->
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://www.usenix.org/system/files/conference/hotcloud13/hotcloud13-hunt.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Dean &amp; Barroso — "The Tail at Scale" (bài gốc về tail latency trong hệ phân tán)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.brendangregg.com/usemethod.html" target="_blank" rel="noopener noreferrer">
+                    Brendan Gregg — The USE Method (phương pháp phân tích utilization/saturation/errors)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://colin-scott.github.io/personal_website/research/interactive_latency.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Interactive Latency Numbers — bảng bậc độ lớn latency thay đổi theo từng năm
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.infoq.com/presentations/latency-response-time/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Gil Tene — "How NOT to Measure Latency" (nguồn gốc khái niệm coordinated omission)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <!-- Download Block -->
+            <div class="article-cta">
+              <h3>Tải mã nguồn thực hành</h3>
+              <p>
+                Lõi mô phỏng dùng cho mọi demo trong series, kèm bộ kiểm chứng 42 mục chạy được bằng Node (không cần cài
+                thêm gì):
+              </p>
+              <a
+                href="sysdesign-sim-engine.js"
+                download
+                class="btn-facebook"
+                style="background: #38bdf8; text-decoration: none; color: #04263a"
+              >
+                Tải về sysdesign-sim-engine.js
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 2: Dựng Lab &amp; Đo Giới Hạn Một Server (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
