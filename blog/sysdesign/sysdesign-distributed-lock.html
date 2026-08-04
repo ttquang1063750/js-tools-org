@@ -1,0 +1,1467 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 10: Distributed Lock — js-tools</title>
+    <meta
+      name="description"
+      content="Phân biệt lock cho hiệu quả và lock cho đúng đắn; ba điều bắt buộc của một Redis lock; phát hiện chính — lock đúng chuẩn nhưng TTL 200 ms ngắn hơn thời gian xử lý 300 ms cho 79 xung đột trên 80, tệ hơn cả không dùng lock (41/80), vì lock đã đồng bộ hoá hai worker để trùng nhau có hệ thống; GC pause dài hơn TTL cho 31/80 xung đột mà không lệnh Redis nào lỗi nên thêm node không cứu được; fencing token không ngăn xung đột mà ngăn thiệt hại — 15 lệnh ghi bị tài nguyên từ chối; và các cách tránh lock hoàn toàn."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-distributed-lock" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-distributed-lock" />
+    <meta property="og:title" content="Bài 10: Distributed Lock — js-tools" />
+    <meta
+      property="og:description"
+      content="Phân biệt lock cho hiệu quả và lock cho đúng đắn; ba điều bắt buộc của một Redis lock; phát hiện chính — lock đúng chuẩn nhưng TTL 200 ms ngắn hơn thời gian xử lý 300 ms cho 79 xung đột trên 80, tệ hơn cả không dùng lock (41/80), vì lock đã đồng bộ hoá hai worker để trùng nhau có hệ thống; GC pause dài hơn TTL cho 31/80 xung đột mà không lệnh Redis nào lỗi nên thêm node không cứu được; fencing token không ngăn xung đột mà ngăn thiệt hại — 15 lệnh ghi bị tài nguyên từ chối; và các cách tránh lock hoàn toàn."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 10: Distributed Lock — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Phân biệt lock cho hiệu quả và lock cho đúng đắn; ba điều bắt buộc của một Redis lock; phát hiện chính — lock đúng chuẩn nhưng TTL 200 ms ngắn hơn thời gian xử lý 300 ms cho 79 xung đột trên 80, tệ hơn cả không dùng lock (41/80), vì lock đã đồng bộ hoá hai worker để trùng nhau có hệ thống; GC pause dài hơn TTL cho 31/80 xung đột mà không lệnh Redis nào lỗi nên thêm node không cứu được; fencing token không ngăn xung đột mà ngăn thiệt hại — 15 lệnh ghi bị tài nguyên từ chối; và các cách tránh lock hoàn toàn."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 10: Distributed Lock",
+        "description": "Phân biệt lock cho hiệu quả và lock cho đúng đắn; ba điều bắt buộc của một Redis lock; phát hiện chính — lock đúng chuẩn nhưng TTL 200 ms ngắn hơn thời gian xử lý 300 ms cho 79 xung đột trên 80, tệ hơn cả không dùng lock (41/80), vì lock đã đồng bộ hoá hai worker để trùng nhau có hệ thống; GC pause dài hơn TTL cho 31/80 xung đột mà không lệnh Redis nào lỗi nên thêm node không cứu được; fencing token không ngăn xung đột mà ngăn thiệt hại — 15 lệnh ghi bị tài nguyên từ chối; và các cách tránh lock hoàn toàn.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-distributed-lock",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+        "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 10: Distributed Lock</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 17 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-cap-consistency">Bài 9</a> kết thúc ở chỗ mọi thứ phụ thuộc vào việc đồng hồ lệch bao
+              nhiêu. Distributed lock là ví dụ trực tiếp nhất: nó là một cơ chế dựa trên
+              <strong>giả định về thời gian</strong>, và khi giả định đó sai thì hai worker cùng tin mình đang giữ lock
+              — dù Redis hoạt động hoàn toàn đúng và không có lệnh nào lỗi.
+            </p>
+
+            <p>
+              Lab của bài này cho hai worker Node thật tranh một lock Redis và <strong>đếm số xung đột</strong>: số lần
+              có từ hai worker cùng ở trong vùng tới hạn. Kết quả có một con số làm mình phải chạy lại nhiều lần để
+              chắc: một lock <em>được cài đúng chuẩn</em> nhưng có TTL ngắn hơn thời gian xử lý cho
+              <strong>79 xung đột trên 80 lần vào vùng tới hạn</strong> — tệ hơn cả việc
+              <em>không dùng lock nào</em> (41/80). Một lock sai còn nguy hiểm hơn không có lock, vì nó cho bạn sự tự
+              tin.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64 (Node v22.23.2),
+                Redis 7-alpine. Hai container worker chạy <em>cùng một file</em> <code>worker/lock-worker.js</code>, mỗi
+                worker giới hạn 1 CPU, mỗi worker hoàn thành 40 vùng tới hạn (tổng 80). Thời gian xử lý mô phỏng 300 ms
+                mỗi lần.<br /><br />
+                Bộ đếm xung đột nằm trong Redis và được cập nhật bằng <strong>script Lua</strong> — nghĩa là nó atomic,
+                nên con số đếm được không bị chính cuộc đua mà nó đang đo làm sai.
+              </div>
+            </div>
+
+            <!-- ================= 10.1 ================= -->
+            <h2>10.1 Hai nhu cầu hoàn toàn khác nhau</h2>
+
+            <p>
+              Trước khi bàn về cách cài lock, phải phân biệt hai lý do dùng nó. Phần lớn tài liệu gộp chúng làm một, và
+              đó là nguồn gốc của mọi tai nạn liên quan tới distributed lock.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Lock cho HIỆU QUẢ</th>
+                  <th>Lock cho ĐÚNG ĐẮN</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Mục đích</td>
+                  <td>Tránh làm việc trùng lặp</td>
+                  <td>Ngăn hai worker cùng thay đổi cùng một dữ liệu</td>
+                </tr>
+                <tr>
+                  <td>Hỏng thì sao</td>
+                  <td>Tốn CPU, gửi email hai lần, tạo thumbnail hai lần</td>
+                  <td><strong>Dữ liệu sai, trừ tiền hai lần, mất hàng trong kho</strong></td>
+                </tr>
+                <tr>
+                  <td>Lock phân tán có đủ?</td>
+                  <td><strong>Đủ</strong> — hỏng hiếm khi thì chấp nhận được</td>
+                  <td><strong>KHÔNG đủ</strong> — cần fencing token, hoặc tốt hơn là đừng dùng lock</td>
+                </tr>
+                <tr>
+                  <td>Công cụ đúng</td>
+                  <td>Redis lock là lựa chọn hợp lý</td>
+                  <td>Transaction của database, hoặc idempotency (Bài 11), hoặc phân vùng theo key</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Cạm bẫy: dùng distributed lock để bảo đảm đúng đắn cho nghiệp vụ tiền bạc
+              </div>
+              <div class="callout__content">
+                Distributed lock <strong>không</strong> cho bạn đảm bảo đó, và mục 10.3 sẽ chứng minh bằng số. Lý do sâu
+                xa: một lock chỉ nói "ở thời điểm bạn hỏi, không ai khác giữ nó". Nó không nói gì về thời điểm bạn
+                <em>ghi</em>, vốn xảy ra sau đó — và giữa hai thời điểm ấy tiến trình của bạn có thể bị dừng lâu hơn
+                TTL.<br /><br />
+                Nếu hai worker cùng chạy sẽ làm mất tiền, thì công cụ đúng là
+                <strong>transaction của database</strong> (nó có cơ chế cô lập thật, không dựa vào đồng hồ), hoặc
+                <strong>idempotency</strong> (lặp lại không gây hại nên không cần ngăn), hoặc
+                <strong>phân vùng theo key</strong> (mỗi key chỉ có một worker, nên không có gì phải tranh). Lock phân
+                tán vẫn hữu ích — chỉ là cho nhóm hiệu quả.
+              </div>
+            </div>
+
+            <!-- ================= 10.2 ================= -->
+            <h2>10.2 Ba điều bắt buộc của một Redis lock</h2>
+
+            <p>Một lock Redis đúng chuẩn cần đúng ba thứ, và thiếu bất kỳ thứ nào cũng sinh ra một lỗi riêng:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">redis_lock.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// 1. NX  — chi dat khi key CHUA ton tai. Day la phan "gianh lock".
+// 2. PX  — BAT BUOC co TTL. Khong co thi holder chet la deadlock VINH VIEN.
+// 3. token ngau nhien — de CHI chu so huu moi xoa duoc (xem release).
+async function acquire(key, token, ttlMs) {
+  const res = await redis.cmd('SET', key, token, 'NX', 'PX', String(ttlMs));
+  return res === 'OK';
+}
+
+// Giai phong PHAI atomic: kiem token roi moi DEL, trong CUNG mot lenh.
+//
+// Vi sao khong duoc `DEL` thang: lock cua ban co the da HET HAN va nguoi khac da
+// gianh duoc no. `DEL` thang se xoa lock CUA HO — va tu do moi thu hong theo day
+// chuyen, vi bay gio ba worker cung tin minh dang giu lock.
+const RELEASE_LUA = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+else
+  return 0
+end`;
+
+async function release(key, token) {
+  return redis.cmd('EVAL', RELEASE_LUA, '1', key, token);
+}</code></pre>
+            </div>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thiếu thứ gì</th>
+                  <th>Lỗi sinh ra</th>
+                  <th>Biểu hiện</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Không có <code>NX</code></td>
+                  <td>Không có lock nào cả — ai ghi cũng thắng</td>
+                  <td>Xung đột ngay từ đầu, dễ phát hiện</td>
+                </tr>
+                <tr>
+                  <td>Không có TTL</td>
+                  <td><strong>Deadlock vĩnh viễn</strong> khi holder chết</td>
+                  <td>Hệ thống đứng và không tự hồi phục; phải xoá key bằng tay</td>
+                </tr>
+                <tr>
+                  <td>Không có token</td>
+                  <td>Worker xoá lock của worker khác</td>
+                  <td>Xung đột <em>ngẫu nhiên</em>, chỉ xảy ra sau khi có một lần hết hạn — rất khó tái tạo</td>
+                </tr>
+                <tr>
+                  <td>Giải phóng không atomic</td>
+                  <td>Cùng lỗi trên, chỉ hẹp hơn: cửa sổ giữa <code>GET</code> và <code>DEL</code></td>
+                  <td>Hiếm hơn, nên còn khó tìm hơn</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h3>Đo thật: lock có làm được việc của nó không?</h3>
+
+            <p>
+              Hai worker, mỗi worker hoàn thành 40 vùng tới hạn (tổng 80), thời gian xử lý 300 ms. Bộ đếm
+              <code>XUNG ĐỘT</code> tăng mỗi khi có từ hai worker cùng ở trong vùng tới hạn:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cấu hình</th>
+                  <th>Vào vùng tới hạn</th>
+                  <th>Xung đột</th>
+                  <th>Tỉ lệ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>A · <strong>Không dùng lock</strong></td>
+                  <td>80</td>
+                  <td>41</td>
+                  <td>51%</td>
+                </tr>
+                <tr>
+                  <td>B · Lock đúng, TTL 1000 ms &gt; xử lý 300 ms</td>
+                  <td>80</td>
+                  <td><strong>0</strong></td>
+                  <td><strong>0%</strong></td>
+                </tr>
+                <tr>
+                  <td>C · Lock đúng nhưng <strong>TTL 200 ms &lt; xử lý 300 ms</strong></td>
+                  <td>80</td>
+                  <td><strong>79</strong></td>
+                  <td><strong>99%</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Hàng B là điều ta mong đợi: lock hoạt động, 0 xung đột. Hàng C là hàng đáng dừng lại rất lâu. Lock ở hàng
+              C được cài <em>hoàn toàn đúng</em> — có <code>NX</code>, có TTL, có token, giải phóng bằng Lua. Không có
+              GC pause nào, không có clock skew nào. Nó chỉ có một tham số sai:
+              <strong>TTL ngắn hơn thời gian xử lý</strong>. Và kết quả là 99% — <em>tệ hơn cả không dùng lock</em>.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Vì sao TTL ngắn lại tệ hơn không có lock</div>
+              <div class="callout__content">
+                Cơ chế rất đơn giản khi nhìn ra: worker A giành lock, bắt đầu xử lý 300 ms. Đến mốc 200 ms, lock
+                <strong>tự hết hạn</strong> trong khi A vẫn đang làm. Worker B lập tức giành được và vào vùng tới hạn —
+                bây giờ có hai worker bên trong. Chuyện này lặp lại ở <em>gần như mọi</em> vòng, nên tỉ lệ là 99% chứ
+                không phải một con số ngẫu nhiên.<br /><br />
+                Vì sao tệ hơn không có lock? Vì không có lock thì 51% — hai worker chạy tự do và đôi khi lệch pha nhau.
+                Có lock TTL ngắn thì lock <em>đồng bộ hoá</em> chúng: B luôn bắt đầu đúng lúc lock của A hết hạn, tức là
+                đúng lúc A còn 100 ms nữa mới xong. Lock đã biến sự trùng lặp ngẫu nhiên thành sự trùng lặp
+                <strong>có hệ thống</strong>.<br /><br />
+                Hệ quả thực hành: <strong>TTL phải dài hơn thời gian xử lý xấu nhất</strong>, không phải trung bình. Và
+                nếu bạn không biết thời gian xấu nhất là bao nhiêu — trường hợp rất phổ biến khi trong vùng tới hạn có
+                lời gọi mạng — thì bạn không đặt được TTL đúng, và đó là dấu hiệu nên chọn cách khác (mục 10.5).
+              </div>
+            </div>
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 320"
+                width="100%"
+                role="img"
+                aria-label="Timeline hai worker với một GC pause dài hơn TTL, tô rõ khoảng thời gian cả hai cùng tin mình giữ lock"
+              >
+                <rect width="720" height="320" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  GC pause dài hơn TTL — Redis đúng hoàn toàn, lock vẫn hỏng
+                </text>
+
+                <!-- truc thoi gian -->
+                <line x1="90" y1="272" x2="690" y2="272" stroke="#374151" />
+                <text x="90" y="288" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">0</text>
+                <text x="230" y="288" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">1000 ms</text>
+                <text x="370" y="288" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">2000</text>
+                <text x="510" y="288" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">3000</text>
+                <text x="650" y="288" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">4000</text>
+
+                <!-- ===== worker A ===== -->
+                <text x="16" y="70" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  WORKER A
+                </text>
+                <!-- gianh lock -->
+                <rect x="90" y="58" width="18" height="18" rx="3" fill="#38bdf8" />
+                <text
+                  x="99"
+                  y="52"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  lấy lock
+                </text>
+                <!-- GC pause 1200ms -->
+                <rect x="108" y="58" width="168" height="18" rx="3" fill="#6b7280" opacity="0.45" />
+                <text
+                  x="192"
+                  y="71"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  GC PAUSE 1200 ms — tiến trình bị dừng
+                </text>
+                <!-- A tinh lai va GHI -->
+                <rect x="276" y="58" width="42" height="18" rx="3" fill="#ef4444" opacity="0.85" />
+                <text
+                  x="297"
+                  y="71"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  GHI
+                </text>
+                <text x="330" y="71" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  A vẫn TIN mình đang giữ lock — nhưng lock đã hết hạn từ mốc 1000
+                </text>
+
+                <!-- TTL cua A -->
+                <line x1="90" y1="88" x2="230" y2="88" stroke="#38bdf8" stroke-width="1.5" />
+                <line x1="90" y1="84" x2="90" y2="92" stroke="#38bdf8" />
+                <line x1="230" y1="84" x2="230" y2="92" stroke="#38bdf8" />
+                <text
+                  x="160"
+                  y="100"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  TTL 1000 ms
+                </text>
+                <text x="236" y="100" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  ← lock TỰ hết hạn ở đây
+                </text>
+
+                <!-- ===== worker B ===== -->
+                <text
+                  x="16"
+                  y="150"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  WORKER B
+                </text>
+                <rect x="230" y="138" width="18" height="18" rx="3" fill="#22c55e" />
+                <text
+                  x="239"
+                  y="132"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  lấy lock
+                </text>
+                <rect x="248" y="138" width="42" height="18" rx="3" fill="#22c55e" opacity="0.55" />
+                <text
+                  x="269"
+                  y="151"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  GHI
+                </text>
+                <text x="300" y="151" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  B giành lock hợp lệ — nó không làm gì sai cả
+                </text>
+
+                <!-- vung nguy hiem -->
+                <rect x="276" y="52" width="14" height="112" fill="#ef4444" opacity="0.12" />
+                <line x1="276" y1="52" x2="276" y2="164" stroke="#ef4444" stroke-dasharray="3 3" />
+                <line x1="290" y1="52" x2="290" y2="164" stroke="#ef4444" stroke-dasharray="3 3" />
+                <text
+                  x="283"
+                  y="180"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  CẢ HAI cùng ở trong vùng tới hạn
+                </text>
+
+                <!-- so do duoc -->
+                <rect x="16" y="192" width="336" height="66" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="28"
+                  y="210"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Đo thật: pause 1200 ms &gt; TTL 1000 ms
+                </text>
+                <text x="28" y="228" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  31 xung đột / 80 lần vào vùng tới hạn = 39%
+                </text>
+                <text x="28" y="244" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Không lệnh Redis nào lỗi. Không log nào bất thường.
+                </text>
+
+                <rect x="368" y="192" width="336" height="66" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="380"
+                  y="210"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Vì sao thêm node Redis KHÔNG cứu được
+                </text>
+                <text x="380" y="228" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Vấn đề nằm ở giả định về THỜI GIAN của tiến trình,
+                </text>
+                <text x="380" y="242" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  không nằm ở độ tin cậy của Redis. 5 node cũng vậy.
+                </text>
+                <text x="380" y="254" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Đây là cốt lõi lập luận của Kleppmann về Redlock.
+                </text>
+
+                <text x="16" y="308" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  GC pause không phải giả tưởng: stop-the-world của JVM, VM bị migrate, container bị throttle CPU, hoặc
+                  máy bị swap — tất cả đều dừng tiến trình hàng giây.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Điểm cần nhớ: lock trả lời câu hỏi "lúc này ai giữ?" nhưng bạn cần câu trả lời cho
+                <em>thời điểm ghi</em> — và giữa hai thời điểm đó không ai đảm bảo gì.
+              </figcaption>
+            </figure>
+            <!-- ================= 10.3 ================= -->
+            <h2>10.3 Vì sao Redlock gây tranh cãi</h2>
+
+            <p>
+              Redlock là thuật toán được đề xuất để làm lock phân tán an toàn hơn: giành lock trên đa số trong 5 node
+              Redis độc lập. Nó bị Martin Kleppmann phản biện, và lập luận cốt lõi rất gọn —
+              <strong>vấn đề không nằm ở Redis</strong>.
+            </p>
+
+            <p>
+              Thí nghiệm ở lab tái tạo đúng lập luận đó. Cùng lock đúng chuẩn, cùng TTL 1000 ms dài hơn xử lý 300 ms:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cấu hình</th>
+                  <th>Vào vùng tới hạn</th>
+                  <th>Xung đột</th>
+                  <th>Nhận xét</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>B · TTL 1000, không có pause</td>
+                  <td>80</td>
+                  <td><strong>0</strong></td>
+                  <td>Lock làm đúng việc của nó</td>
+                </tr>
+                <tr>
+                  <td>D · TTL 1000, <strong>GC pause 1200 ms</strong></td>
+                  <td>80</td>
+                  <td><strong>31</strong> (39%)</td>
+                  <td>Không lệnh Redis nào lỗi. Redis hoạt động hoàn hảo</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Cơ chế: worker A giành lock, rồi <em>bị dừng</em> 1200 ms — GC stop-the-world, VM bị migrate, container bị
+              throttle CPU, hoặc máy bị swap. Trong lúc đó lock hết hạn ở mốc 1000 ms, worker B giành được một cách hoàn
+              toàn hợp lệ. A tỉnh lại ở mốc 1200 ms và <strong>vẫn tin mình đang giữ lock</strong> — nó không có cách
+              nào biết rằng thời gian đã trôi qua. Nó ghi. Bây giờ có hai worker ghi.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Thêm node Redis không sửa được vấn đề này</div>
+              <div class="callout__content">
+                Đây là điểm quan trọng nhất của mục này. Nếu bạn nghĩ "dùng 5 node Redis thì an toàn hơn 1 node" thì hãy
+                đọc lại thí nghiệm D: <strong>Redis không hề sai gì cả</strong>. Nó nhận <code>SET NX PX</code>, nó hết
+                hạn key đúng lúc, nó trao lock cho B đúng theo giao thức. Lỗi nằm ở
+                <strong>giả định rằng tiến trình của bạn không bị dừng lâu hơn TTL</strong> — một giả định về phía
+                <em>client</em>, không phải về phía Redis.<br /><br />
+                Thêm bốn node nữa chỉ làm phần "giành lock" bền hơn với sự cố của chính Redis. Nó không làm tiến trình
+                của bạn ngừng bị GC pause, và cũng không cho tiến trình đó biết rằng thời gian đã trôi qua.
+              </div>
+            </div>
+            <!-- ================= 10.4 ================= -->
+            <h2>10.4 Fencing token — lời giải đúng cho nhóm đúng đắn</h2>
+
+            <p>
+              Nếu lock không thể đảm bảo "chỉ một worker ghi", thì phải chuyển việc kiểm tra sang chỗ khác:
+              <strong>chính tài nguyên đích</strong>. Lock cấp một số <strong>tăng đơn điệu</strong> — fencing token —
+              và mọi lệnh ghi phải kèm số đó. Tài nguyên nhớ token lớn nhất nó từng thấy và <strong>từ chối</strong> mọi
+              token nhỏ hơn.
+            </p>
+
+            <p>
+              Nhờ vậy worker "zombie" quay lại sau GC pause bị chặn — không phải vì nó biết mình đã mất lock, mà vì tài
+              nguyên biết đã có người mới hơn.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">fencing_token.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// Token TANG DON DIEU, do Redis cap bang INCR (atomic).
+// Lay SAU khi co lock, de thu tu token khop voi thu tu gianh duoc lock.
+const fence = Number(await redis.cmd('INCR', 'lab:fence:seq'));
+
+// Tai nguyen dich TU KIEM. Day moi la mau chot: neu tai nguyen khong kiem thi
+// fencing token chi la mot con so trang tri.
+const FENCED_WRITE_LUA = `
+local seen = tonumber(redis.call('GET', KEYS[1]) or '0')
+local tok  = tonumber(ARGV[1])
+if tok &lt; seen then
+  redis.call('INCR', KEYS[3])          -- dem so lan bi TU CHOI
+  return 0
+end
+redis.call('SET', KEYS[1], tok)
+redis.call('INCR', KEYS[2])            -- dem so lan duoc CHAP NHAN
+return 1`;
+
+// Trong worker: chi lam viec khi tai nguyen CHAP NHAN token.
+const accepted = (await fencedWrite(fence)) === 1;
+if (accepted) await doWork();</code></pre>
+            </div>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 268"
+                width="100%"
+                role="img"
+                aria-label="Fencing token: worker zombie gửi token cũ và bị tài nguyên từ chối"
+              >
+                <rect width="720" height="268" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Fencing token — tài nguyên nhớ token lớn nhất đã thấy và từ chối token nhỏ hơn
+                </text>
+
+                <!-- cot -->
+                <text
+                  x="80"
+                  y="48"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  worker A
+                </text>
+                <text
+                  x="252"
+                  y="48"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  worker B
+                </text>
+                <text
+                  x="440"
+                  y="48"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  lock (cấp token)
+                </text>
+                <text
+                  x="620"
+                  y="48"
+                  fill="#a78bfa"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  tài nguyên
+                </text>
+
+                <!-- buoc 1: A lay lock, token 33 -->
+                <line x1="80" y1="70" x2="424" y2="70" stroke="#38bdf8" />
+                <polygon points="424,70 416,67 416,73" fill="#38bdf8" />
+                <text x="150" y="66" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="8">
+                  1 · A lấy lock → nhận token 33
+                </text>
+
+                <!-- buoc 2: A bi pause -->
+                <rect x="40" y="82" width="80" height="18" rx="3" fill="#6b7280" opacity="0.45" />
+                <text
+                  x="80"
+                  y="95"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  GC PAUSE
+                </text>
+                <text x="126" y="95" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  2 · lock của A hết hạn trong lúc A bị dừng
+                </text>
+
+                <!-- buoc 3: B lay lock, token 34 -->
+                <line x1="252" y1="116" x2="424" y2="116" stroke="#22c55e" />
+                <polygon points="424,116 416,113 416,119" fill="#22c55e" />
+                <text x="266" y="112" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  3 · B lấy lock → token 34
+                </text>
+
+                <!-- buoc 4: B ghi, duoc chap nhan -->
+                <line x1="252" y1="140" x2="596" y2="140" stroke="#22c55e" />
+                <polygon points="596,140 588,137 588,143" fill="#22c55e" />
+                <text x="330" y="136" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  4 · B ghi kèm token 34
+                </text>
+                <rect x="560" y="152" width="144" height="30" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="632"
+                  y="166"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  CHẤP NHẬN
+                </text>
+                <text
+                  x="632"
+                  y="177"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  đã thấy: 34
+                </text>
+
+                <!-- buoc 5: A tinh lai, ghi voi token cu 33 -->
+                <line x1="80" y1="200" x2="556" y2="200" stroke="#ef4444" stroke-dasharray="4 3" />
+                <polygon points="556,200 548,197 548,203" fill="#ef4444" />
+                <text x="120" y="196" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  5 · A tỉnh lại, vẫn TIN mình giữ lock, ghi kèm token 33
+                </text>
+                <rect x="560" y="188" width="144" height="34" rx="4" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="632"
+                  y="202"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  TỪ CHỐI
+                </text>
+                <text
+                  x="632"
+                  y="214"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  33 &lt; 34 đã thấy
+                </text>
+
+                <rect x="16" y="234" width="688" height="26" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="28" y="251" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Đo thật: 15 lệnh ghi bị từ chối trên 80 lần vào vùng tới hạn · 65 được chấp nhận · 65 + 15 = 80.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                A không hề biết mình đã mất lock — và nó không cần biết. Việc kiểm tra nằm ở tài nguyên, nơi duy nhất có
+                thông tin đầy đủ.
+              </figcaption>
+            </figure>
+            <p>Cùng cấu hình gây hỏng ở thí nghiệm D — TTL 1000 ms, GC pause 1200 ms — nhưng bật fencing:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cấu hình</th>
+                  <th>Xung đột</th>
+                  <th>Ghi được chấp nhận</th>
+                  <th>Ghi bị TỪ CHỐI</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>D · lock, pause 1200 &gt; TTL 1000</td>
+                  <td>31</td>
+                  <td>—</td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <td>E · <strong>lock + fencing</strong>, cùng pause</td>
+                  <td>15</td>
+                  <td>65</td>
+                  <td><strong>15</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Đọc bảng này cho đúng: fencing không ngăn xung đột</div>
+              <div class="callout__content">
+                Cột "xung đột" ở hàng E vẫn là 15, không phải 0 — và đó <strong>không</strong> phải thất bại. Fencing
+                token không hề ngăn hai worker cùng vào vùng tới hạn; chỉ lock làm được việc đó, và lock đã hỏng vì GC
+                pause. Fencing ngăn <strong>thiệt hại</strong>: 15 lệnh ghi của worker zombie bị tài nguyên từ chối, và
+                65 + 15 = 80 khớp đúng tổng số lần vào vùng tới hạn.<br /><br />
+                Vì sao 15 chứ không phải 31 như hàng D? Vì khi lệnh ghi bị từ chối, worker bỏ luôn phần xử lý 300 ms —
+                nên vùng tới hạn của nó ngắn hơn nhiều và ít chồng lấn hơn. Đó là hệ quả của thiết kế lab, và nó cũng
+                phản ánh đúng thực tế: một zombie bị chặn sớm thì gây ít nhiễu hơn.<br /><br />
+                Cách hiểu đúng: <strong>lock là lớp phòng ngừa, fencing là lớp bảo đảm</strong>. Lock giảm số lần tranh
+                chấp (và nhờ đó giữ throughput); fencing đảm bảo rằng khi lock hỏng thì không có dữ liệu nào bị ghi sai.
+                Nhóm "đúng đắn" ở mục 10.1 cần <em>cả hai</em>.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: triển khai fencing nhưng tài nguyên không kiểm token</div>
+              <div class="callout__content">
+                Đây là cách phổ biến nhất để làm fencing sai: worker lấy token, truyền token đi, ghi token vào log —
+                nhưng tài nguyên đích <em>không so sánh gì cả</em>. Lúc đó token chỉ là một con số trang trí, và bạn có
+                toàn bộ cảm giác an toàn mà không có chút an toàn nào.<br /><br />
+                Câu hỏi kiểm tra: <strong>tài nguyên của bạn có thể TỪ CHỐI một lệnh ghi không?</strong> Nếu nó chỉ biết
+                nhận thì fencing không áp dụng được. Với database, cơ chế tương đương và rất thực dụng là
+                <strong>optimistic concurrency</strong>: <code>UPDATE ... WHERE version = $expected</code> — số dòng bị
+                ảnh hưởng bằng 0 chính là "bị từ chối". Nó không cần lock, không cần token riêng, và database đã có sẵn.
+              </div>
+            </div>
+
+            <!-- ================= 10.5 ================= -->
+            <h2>10.5 Tránh lock hoàn toàn — thường là câu trả lời tốt nhất</h2>
+
+            <p>
+              Sau bốn mục trên, kết luận thực dụng là: distributed lock đúng thì khó, và ngay cả khi đúng nó vẫn không
+              cho đảm bảo mà nhóm "đúng đắn" cần. Nên trong phần lớn trường hợp, câu hỏi tốt hơn không phải "cài lock
+              thế nào" mà là <strong>"có cách nào không cần lock?"</strong>
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cách</th>
+                  <th>Hoạt động thế nào</th>
+                  <th>Dùng khi</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Thao tác atomic sẵn có</strong></td>
+                  <td><code>INCR</code>, <code>SETNX</code>, <code>UPDATE ... SET n = n + 1</code></td>
+                  <td>
+                    Thao tác diễn đạt được bằng một lệnh. Rẻ nhất và chắc nhất — không có gì để tranh vì không có khoảng
+                    thời gian nào ở giữa
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Optimistic concurrency</strong></td>
+                  <td><code>UPDATE ... WHERE version = $expected</code>, 0 dòng bị ảnh hưởng ⇒ thử lại</td>
+                  <td>Xung đột hiếm. Không có lock nào bị giữ nên không có deadlock, không có TTL phải đoán</td>
+                </tr>
+                <tr>
+                  <td><strong>Idempotency</strong> (Bài 11)</td>
+                  <td>Làm hai lần cũng cho cùng kết quả nên không cần ngăn lần thứ hai</td>
+                  <td>
+                    Thao tác có thể thiết kế lại thành idempotent. Đây thường là lời giải <em>đúng nhất</em>, không chỉ
+                    là lời giải tránh lock
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Phân vùng theo key</strong> (Bài 12)</td>
+                  <td>Mỗi key chỉ đi tới một worker cố định ⇒ không có hai worker nào cùng chạm một key</td>
+                  <td>
+                    Có hàng đợi phân vùng. Nó biến bài toán loại trừ lẫn nhau thành bài toán <em>định tuyến</em> — dễ
+                    hơn rất nhiều
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Transaction của database</strong></td>
+                  <td>Cơ chế cô lập thật, không dựa vào đồng hồ hay TTL</td>
+                  <td>Dữ liệu đã ở trong một database. Đây là công cụ đúng cho nghiệp vụ tiền bạc</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: giữ lock trong lúc gọi mạng</div>
+              <div class="callout__content">
+                Nếu trong vùng tới hạn có một lời gọi HTTP hoặc một truy vấn database, thì thời gian giữ lock phụ thuộc
+                vào một thứ bạn không kiểm soát. Hai hậu quả cùng lúc: <strong>TTL không đặt được đúng</strong> (bạn
+                không biết giới hạn trên của một lời gọi mạng — xem lại mục 10.2 hàng C), và
+                <strong>throughput bị chặn bởi dependency chậm nhất</strong> vì mọi worker khác đang xếp hàng chờ
+                lock.<br /><br />
+                Còn một cạm bẫy song sinh: <strong>lock quá thô</strong>. Một lock cho cả bảng thay vì một lock cho mỗi
+                bản ghi biến hệ thống song song thành hệ thống tuần tự. Nếu bạn phải dùng lock, hãy đặt phạm vi hẹp nhất
+                có thể — theo <code>order_id</code>, không phải theo <code>orders</code>.
+              </div>
+            </div>
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 268"
+                width="100%"
+                role="img"
+                aria-label="So sánh ba chiến lược: distributed lock, thao tác atomic, và phân vùng theo key"
+              >
+                <rect width="720" height="268" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Ba cách giải cùng một bài toán — chỉ cách thứ nhất cần đoán TTL
+                </text>
+
+                <!-- ==== 1. LOCK ==== -->
+                <rect x="16" y="40" width="216" height="176" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="58" fill="#ef4444" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  1 · DISTRIBUTED LOCK
+                </text>
+                <circle cx="52" cy="86" r="12" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="52"
+                  y="90"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  w1
+                </text>
+                <circle cx="52" cy="122" r="12" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="52"
+                  y="126"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  w2
+                </text>
+                <rect x="94" y="90" width="52" height="28" rx="4" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="120"
+                  y="108"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  LOCK
+                </text>
+                <line x1="64" y1="90" x2="90" y2="100" stroke="#22c55e" />
+                <line x1="64" y1="120" x2="90" y2="110" stroke="#ef4444" stroke-dasharray="3 2" />
+                <rect x="164" y="90" width="52" height="28" rx="4" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="190"
+                  y="108"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  tài nguyên
+                </text>
+                <line x1="146" y1="104" x2="160" y2="104" stroke="#9ca3af" />
+                <text x="28" y="148" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Phải đoán TTL
+                </text>
+                <text x="28" y="162" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Hỏng khi GC pause &gt; TTL
+                </text>
+                <text x="28" y="176" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Throughput bị tuần tự hoá
+                </text>
+                <text x="28" y="196" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  Đo được: 31/80 xung đột
+                </text>
+                <text x="28" y="208" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  khi pause vượt TTL
+                </text>
+
+                <!-- ==== 2. ATOMIC ==== -->
+                <rect x="248" y="40" width="216" height="176" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="260"
+                  y="58"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  2 · THAO TÁC ATOMIC
+                </text>
+                <circle cx="284" cy="86" r="12" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="284"
+                  y="90"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  w1
+                </text>
+                <circle cx="284" cy="122" r="12" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="284"
+                  y="126"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  w2
+                </text>
+                <rect x="360" y="90" width="88" height="28" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="404"
+                  y="103"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  INCR / CAS
+                </text>
+                <text
+                  x="404"
+                  y="114"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  atomic sẵn có
+                </text>
+                <line x1="296" y1="90" x2="356" y2="100" stroke="#22c55e" />
+                <line x1="296" y1="120" x2="356" y2="110" stroke="#22c55e" />
+                <text x="260" y="148" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Không có TTL nào để sai
+                </text>
+                <text x="260" y="162" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Không có khoảng giữa
+                </text>
+                <text x="260" y="176" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Cả hai worker đều chạy
+                </text>
+                <text x="260" y="196" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  Giới hạn: chỉ dùng được khi
+                </text>
+                <text x="260" y="208" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  diễn đạt được bằng MỘT lệnh
+                </text>
+
+                <!-- ==== 3. PARTITION ==== -->
+                <rect x="480" y="40" width="224" height="176" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="492"
+                  y="58"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  3 · PHÂN VÙNG THEO KEY
+                </text>
+                <rect x="492" y="74" width="60" height="20" rx="3" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="522"
+                  y="88"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  key A,C,E
+                </text>
+                <rect x="492" y="106" width="60" height="20" rx="3" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="522"
+                  y="120"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  key B,D,F
+                </text>
+                <circle cx="600" cy="84" r="12" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="600"
+                  y="88"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  w1
+                </text>
+                <circle cx="600" cy="116" r="12" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="600"
+                  y="120"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  w2
+                </text>
+                <line x1="552" y1="84" x2="588" y2="84" stroke="#22c55e" />
+                <line x1="552" y1="116" x2="588" y2="116" stroke="#22c55e" />
+                <text x="492" y="148" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Không có gì để tranh: mỗi key
+                </text>
+                <text x="492" y="160" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  chỉ có MỘT worker xử lý
+                </text>
+                <text x="492" y="180" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="8">
+                  Biến bài toán loại trừ lẫn nhau
+                </text>
+                <text x="492" y="192" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="8">
+                  thành bài toán ĐỊNH TUYẾN
+                </text>
+                <text x="492" y="208" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Đổi lại: hotspot theo key (Bài 8)
+                </text>
+
+                <text x="16" y="240" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Thứ tự nên thử: (2) atomic → (3) phân vùng → transaction/idempotency → và chỉ khi hết cách mới tới
+                  (1).
+                </text>
+                <text x="16" y="256" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Cách 1 là cách duy nhất phải trả lời câu hỏi "TTL bao nhiêu là đủ" — một câu hỏi thường không có câu
+                  trả lời đúng.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Distributed lock không sai — nó chỉ là công cụ đắt nhất trong ba, nên nên là lựa chọn cuối chứ không
+                phải phản xạ đầu tiên.
+              </figcaption>
+            </figure>
+
+            <h3>Tự làm lại các phép đo</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+docker compose --profile lock up -d redis
+
+# ./tools/lock-test.sh &lt;LOCK&gt; &lt;FENCE&gt; &lt;PAUSE_MS&gt; &lt;TTL&gt; &lt;ROUNDS&gt; &lt;WORK_MS&gt;
+# Con so quan trong nhat la XUNG_DOT: so lan co TU HAI worker cung o trong vung toi han.
+
+./tools/lock-test.sh off 0 0    1000 40 300   # A: khong lock          -> 41/80
+./tools/lock-test.sh on  0 0    1000 40 300   # B: lock dung           ->  0/80
+./tools/lock-test.sh on  0 0     200 40 300   # C: TTL < thoi gian xu ly -> 79/80 (!)
+./tools/lock-test.sh on  0 1200 1000 40 300   # D: GC pause > TTL      -> 31/80
+./tools/lock-test.sh on  1 1200 1000 40 300   # E: + fencing -> 15 lenh ghi BI TU CHOI
+
+# LUU Y ve thiet ke thi nghiem: WORK_MS phai du dai so voi PAUSE_MS, neu khong worker
+# kia da ra khoi vung toi han truoc khi "zombie" tinh lai, va ban se do ra 0 xung dot
+# du lock da that su hong. Ban dau tien cua lab nay mac dung loi do.</code></pre>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Phải phân biệt lock cho <strong>hiệu quả</strong> (hỏng thì tốn CPU) và lock cho <strong>đúng đắn</strong>
+              (hỏng thì mất tiền). Distributed lock chỉ đủ cho nhóm thứ nhất, và toàn bộ mục 10.3 là bằng chứng bằng số
+              cho điều đó.
+            </p>
+
+            <p>
+              Một lock Redis đúng cần đủ ba thứ: <code>NX</code>, TTL, và token ngẫu nhiên với lệnh giải phóng atomic.
+              Nhưng cài đúng vẫn chưa đủ — phát hiện mạnh nhất của bài này là hàng C: lock <em>đúng chuẩn</em> với TTL
+              200 ms ngắn hơn thời gian xử lý 300 ms cho <strong>79 xung đột trên 80</strong>, tệ hơn cả không dùng lock
+              (41/80). Vì lock đã đồng bộ hoá hai worker để chúng trùng nhau một cách <em>có hệ thống</em> thay vì ngẫu
+              nhiên.
+            </p>
+
+            <p>
+              Với GC pause dài hơn TTL, xung đột là 31/80 — và không một lệnh Redis nào lỗi. Đó là lý do thêm node Redis
+              không sửa được: giả định sai nằm ở phía client. Fencing token là lời giải, nhưng phải đọc đúng: nó
+              <strong>không ngăn xung đột</strong> (vẫn 15/80), nó ngăn <strong>thiệt hại</strong> — 15 lệnh ghi bị tài
+              nguyên từ chối. Và nó chỉ có tác dụng nếu tài nguyên thật sự kiểm token.
+            </p>
+
+            <p>
+              Thực dụng nhất: <strong>tránh lock</strong>. Thao tác atomic, optimistic concurrency, phân vùng theo key,
+              transaction — tất cả đều không phải trả lời câu hỏi "TTL bao nhiêu là đủ", một câu hỏi thường không có câu
+              trả lời đúng.
+            </p>
+
+            <p>
+              <strong>Bài 11</strong> đi vào cách tránh lock mạnh nhất trong danh sách đó: idempotency. Nếu làm hai lần
+              cũng cho cùng kết quả thì không cần ngăn lần thứ hai — và đó cũng là câu trả lời cho một câu hỏi mà mọi hệ
+              thống phân tán phải đối mặt: khi client nhận timeout, nó không thể biết request đã được xử lý hay chưa.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/worker/lock-worker.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về lock-worker.js
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-cap-consistency" class="article-related__link article-related__link--prev">
+                  Bài 9: CAP &amp; Các Mô Hình Nhất Quán
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 11: Idempotency &amp; Retry An Toàn (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

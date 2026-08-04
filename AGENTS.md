@@ -198,6 +198,8 @@ js-tools-org/
 │           │   ├── static/hello.json        #   file served by the gateway itself (Lesson 4)
 │           │   ├── tools/cache-stats.sh     #   sums cache counters across all 3 replicas (Lesson 5)
 │           │   ├── tools/pg-lag.sh          #   real replication lag from pg_stat_replication (Lesson 7)
+│           │   ├── tools/lock-test.sh       #   two workers race one Redis lock, counts conflicts (Lesson 10)
+│           │   ├── worker/lock-worker.js    #   Redis lock + fencing token, 0 deps (Lesson 10)
 │           │   ├── app/minipg.js            #   PostgreSQL wire-protocol client, 0 deps (Lesson 7)
 │           │   ├── postgres/init/           #   replication role + pg_hba + schema, runs once on initdb
 │           │   │                            #   profile `shard` adds a 2nd independent Postgres (Lesson 8)

@@ -10,6 +10,7 @@
 #   Bài 6  →  docker compose --profile edge up -d      (tầng edge có proxy_cache)
 #   Bài 7  →  docker compose --profile replica up -d   (PostgreSQL primary + read replica)
 #   Bài 8  →  docker compose --profile shard up -d     (hai shard PostgreSQL + router)
+#   Bài 10 →  docker compose --profile lock up -d      (Redis + hai worker tranh lock)
 #
 # KHÔNG có Dockerfile và KHÔNG cần `npm install`: code được bind-mount thẳng vào image
 # node chính thức, nên bạn sửa file là chạy lại thấy ngay, và đọc được toàn bộ code.
@@ -183,7 +184,7 @@ services:
   # ─────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    profiles: ['cache', 'db']
+    profiles: ['cache', 'db', 'lock', 'queue']
     ports:
       - '6379:6379'
     # maxmemory nhỏ có chủ ý: để bạn tự gây ra tình trạng eviction và quan sát
@@ -311,6 +312,35 @@ services:
           cpus: '1.0'
           memory: 512M
 
+
+  # ─────────────────────────────────────────────────────────────
+  # WORKER TRANH LOCK (Bài 10)
+  #
+  # Hai container chay CUNG mot file, cung co xu ly mot tai nguyen duy nhat.
+  # Khong tu chay (`profiles: [lock]`) — ban goi thu cong qua tools/lock-test.sh de
+  # dieu khien duoc cac bien LOCK / FENCE / PAUSE_MS cho tung phep do.
+  # ─────────────────────────────────────────────────────────────
+  lockworker:
+    image: node:22-alpine
+    profiles: ['lock']
+    working_dir: /worker
+    volumes:
+      - ./worker:/worker:ro
+    entrypoint: ['node']
+    command: ['lock-worker.js']
+    environment:
+      REDIS_URL: 'redis://redis:6379'
+      LOCK: 'off'
+      FENCE: '0'
+      LOCK_TTL_MS: '400'
+      PAUSE_MS: '0'
+      ROUNDS: '300'
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
 
   # ─────────────────────────────────────────────────────────────
   # BỘ ĐO TẢI

@@ -32,7 +32,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 | 🎉 **Series 17: Chẩn Đoán &amp; Sửa Chữa Mạch** | **Từ Đo Kiểm Đến Sửa Chữa Thực Chiến**  | **8/8**        | **8**    | **100%** ✅ |
 | 🎉 **Series 18: Kỹ Thuật Hệ Thống AI**          | **Từ Pipeline Đến Đội Ngũ Agent**       | **13/13**      | **13**   | **100%** ✅ |
 | 🎉 **Series 19: Cơ Sở Dữ Liệu Vector**          | **Từ Thuật Toán Đến Ứng Dụng RAG**      | **9/9**        | **9**    | **100%** ✅ |
-| Series 20                                       | Thiết Kế Hệ Thống                       | 9/18           | 18       | 50%         |
+| Series 20                                       | Thiết Kế Hệ Thống                       | 10/18          | 18       | 56%         |
 
 > **2026-07-06:** Đã gỡ phần thiết kế chi tiết (tech stack, đề cương, syllabus H2) của các
 > series **100% hoàn thành** (2 WebGPU, 3 DSA, 6 CSS, 7 SQL, 8 Web Audio, 9 Git, 10 Điện Tử) khỏi file
@@ -471,13 +471,13 @@ Cột **Cần trước** ghi số bài tiên quyết, dùng để kiểm chuỗi
 - [x] **Lab Docker dùng chung:** `sysdesign-lab/` gồm `docker-compose.yml` (profiles thực tế: `base`, `lb`, `gw`, `cache`, `db`, `tools`), `app/app.js` (Node `http` thuần, 0 dependency), `nginx/lb.conf` + `nginx/gw.conf` + `nginx/gw-routes.conf`, và `loadgen/loadgen.js` — **bộ đo tải tự viết thay vì `wrk`**, có chủ ý: Bài 2 cần dạy chính cách đo (closed-loop, coordinated omission) nên bộ đo phải đọc được. **Phải tự chạy thử toàn bộ profiles trước khi viết bài** — mọi số trong bài lấy từ đây. PostgreSQL primary + read replica đã có (Bài 7, profile `replica`, dùng `postgres:18` vì `postgres:16-alpine` không kéo được trong môi trường dựng bài). Còn thiếu: worker message queue (Bài 12).
 - [x] **Trang Visualizer chính:** `sysdesign-sandbox.html` — Traffic Lab 3 panel (điều khiển / canvas topology / số liệu + đồ thị utilization↔latency).
 - [x] **Trang Hub:** `sysdesign-programming-series.html` — glossary đầy đủ (latency/throughput/p99/utilization/consistent hashing/quorum/saga/SLO...), bảng lộ trình 18 bài, quảng bá sandbox và hướng dẫn cài Docker cho lab.
-- [~] **18 trang bài học (9/18):** Bài 1 ✅ · Bài 2 ✅ · Bài 3 ✅ · Bài 4 ✅ · Bài 5 ✅ · Bài 6 ✅ · Bài 7 ✅ · Bài 8 ✅ · Bài 9 ✅ — viết theo đúng đề cương H2 ở Phần III, KHÔNG quiz, cấu trúc `.code-tabs`, đủ hình bắt buộc, đủ lab, references chuẩn, related links, giscus.
+- [~] **18 trang bài học (10/18):** Bài 1 ✅ · Bài 2 ✅ · Bài 3 ✅ · Bài 4 ✅ · Bài 5 ✅ · Bài 6 ✅ · Bài 7 ✅ · Bài 8 ✅ · Bài 9 ✅ · Bài 10 ✅ — viết theo đúng đề cương H2 ở Phần III, KHÔNG quiz, cấu trúc `.code-tabs`, đủ hình bắt buộc, đủ lab, references chuẩn, related links, giscus.
 - [x] **Tích hợp toàn cục (kiểm cả HAI file index):**
   - [x] Thêm `a.blog-card` vào `blog/index.html`.
   - [x] Thêm `a.learn-card` vào **ROOT `index.html`** (file riêng, đã bị bỏ sót 2 lần trước).
   - [x] Thêm key i18n `learn.sysdesign.title` / `learn.sysdesign.desc` (EN + VI) vào `i18n.js`.
-  - [~] `sitemap.xml`: 18 bài + 1 hub + 1 sandbox — cập nhật dần theo từng bài (đã có hub + sandbox + Bài 1–9).
-  - [~] `blog/search-index.json`: 18 entry — cập nhật dần theo từng bài (đã có Bài 1–9), `headingsVi` khớp H2 thực tế.
+  - [~] `sitemap.xml`: 18 bài + 1 hub + 1 sandbox — cập nhật dần theo từng bài (đã có hub + sandbox + Bài 1–10).
+  - [~] `blog/search-index.json`: 18 entry — cập nhật dần theo từng bài (đã có Bài 1–10), `headingsVi` khớp H2 thực tế.
   - [x] Cập nhật bảng tiến độ đầu `plan.md` (`X/18`), `README.md`, `AGENTS.md`.
 - [ ] **QA từng bài:** `node check-lesson.js <file>` và `npx prettier --check` phải sạch trước khi tick "xong".
 

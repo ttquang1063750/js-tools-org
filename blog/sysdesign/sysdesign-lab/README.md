@@ -56,6 +56,7 @@ docker compose exec app1 node -e "console.log(process.arch)"   # phải khớp u
 | 7   | `docker compose --profile db up -d`      | thêm PostgreSQL (cổng 5432)                            |
 | 7   | `docker compose --profile replica up -d` | PostgreSQL primary (5432) + read replica (5433)        |
 | 8   | `docker compose --profile shard up -d`   | hai shard PostgreSQL độc lập (5432, 5434) + router     |
+| 10  | `docker compose --profile lock up -d`    | Redis + hai worker tranh một lock (chạy qua `tools/`)  |
 
 ### Bài 4 cần một bước chuẩn bị: chứng chỉ tự ký
 
@@ -80,7 +81,7 @@ biệt cấu hình. Đó là lý do cổng HTTP tồn tại — chỉ để làm
 Dừng và xoá sạch:
 
 ```bash
-docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard down
+docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard --profile lock down
 ```
 
 > `replica` dựng **streaming replication thật**: replica tự chạy `pg_basebackup` từ primary
@@ -162,6 +163,26 @@ docker compose run --rm loadgen loadgen.js --url https://gw:8443/api/fast -c 8 -
    bằng `docker stats`: nếu container loadgen chạm 100% CPU thì số đo đã vô nghĩa.
 3. Đừng để loadgen và app tranh cùng lõi CPU rồi kết luận. Trong `docker-compose.yml` mỗi app
    bị giới hạn 1 CPU và loadgen được 2 CPU chính là vì lý do này.
+
+## Bài 10: hai worker tranh một lock
+
+```bash
+docker compose --profile lock up -d redis
+# ./tools/lock-test.sh <LOCK> <FENCE> <PAUSE_MS> <TTL> <ROUNDS> <WORK_MS>
+./tools/lock-test.sh off 0 0    1000 40 300   # khong lock            -> 41/80 xung dot
+./tools/lock-test.sh on  0 0    1000 40 300   # lock dung             ->  0/80
+./tools/lock-test.sh on  0 0     200 40 300   # TTL < thoi gian xu ly -> 79/80
+./tools/lock-test.sh on  0 1200 1000 40 300   # GC pause > TTL        -> 31/80
+./tools/lock-test.sh on  1 1200 1000 40 300   # + fencing -> 15 lenh ghi BI TU CHOI
+```
+
+> **Về thiết kế thí nghiệm — hai lỗi đã mắc phải khi dựng lab này:**
+>
+> 1. `WORK_MS` phải đủ dài so với `PAUSE_MS`. Nếu không, worker kia đã ra khỏi vùng tới hạn
+>    trước khi "zombie" tỉnh lại, và bạn đo ra 0 xung đột dù lock đã thật sự hỏng.
+> 2. Mỗi worker phải hoàn thành đủ số vòng **thành công**. Bản đầu để worker thua `continue`
+>    và bỏ luôn vòng đó, nên nó chạy hết 40 vòng trong vài trăm ms rồi thoát — phần lớn thời
+>    gian chỉ còn một worker, và "0 xung đột" trở nên vô nghĩa.
 
 ## Số liệu cache: phải gộp cả ba replica
 
