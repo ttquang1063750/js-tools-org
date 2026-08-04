@@ -18,6 +18,7 @@
  *   GET /aggregate     → gộp nhiều nhánh (BFF); so song song vs tuần tự (Bài 4, mục 4.4)
  *   GET /cacheable     → phát header cache cho tầng edge; ETag/304, Vary (Bài 6)
  *   GET /shard?key=&mode= → router theo shard key; so shard key tốt vs lệch (Bài 8)
+ *   GET /charge?key=&idem= → trừ tiền có/không idempotency key (Bài 11)
  *   GET /rww?id=&pin=  → ghi primary rồi đọc ngay replica: tái tạo bug read-your-writes,
  *                        và bật/tắt cơ chế ghim-về-primary để kiểm chứng bản vá (Bài 7)
  *
@@ -69,6 +70,8 @@ let dbWaitTotalMs = 0;
 let rwwTotal = 0;
 let rwwStale = 0;
 let rwwPinned = 0;
+let chargeCreated = 0;
+let chargeReplays = 0;
 let dbMaxQueueDepth = 0;
 let cacheMisses = 0;
 
@@ -568,6 +571,59 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (p === '/charge') {
+      // Tru tien mot lan. ?idem=1 dung idempotency key, ?idem=0 thi khong.
+      //
+      // Diem quan trong nhat: CA hai viec — ghi bang dedup VA tru so du — nam trong
+      // MOT cau lenh SQL duy nhat. Postgres chay mot cau lenh trong mot transaction ngam,
+      // nen khong ton tai cua so nao cho hai request song song cung lot qua (muc 11.3).
+      if (!pgPrimary) return json(res, 503, { error: 'chua dat PG_PRIMARY' });
+      const useIdem = url.searchParams.get('idem') !== '0';
+      const amount = Math.max(1, Number(url.searchParams.get('amount') || 100));
+      // Khong co idempotency key thi moi lan thu la mot "y dinh" moi => key ngau nhien.
+      // Day chinh la hanh vi cua `POST /orders` khong kem key.
+      const key = useIdem
+        ? String(url.searchParams.get('key') || 'idem-demo')
+        : `no-idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // minipg khong tham so hoa duoc, nen phai tu lam sach. Chi cho phep ky tu an toan.
+      const safeKey = key.replace(/[^A-Za-z0-9:_-]/g, '').slice(0, 120) || 'k';
+
+      // CTE: `ins` co gang ghi ban ghi dedup. ON CONFLICT DO NOTHING nghia la neu key da
+      // ton tai thi khong ghi gi va `ins` rong. `upd` chi tru so du KHI `ins` co dong —
+      // tuc la chi lan DAU TIEN moi co hieu ung nghiep vu.
+      // Cau SELECT cuoi tra ve ket qua moi (created=true) hoac ket qua DA LUU (false).
+      const sql = `
+        WITH ins AS (
+          INSERT INTO charges (idem_key, amount, response)
+          VALUES ('${safeKey}', ${amount}, 'charge-ok-' || ${amount})
+          ON CONFLICT (idem_key) DO NOTHING
+          RETURNING id, amount, response
+        ), upd AS (
+          UPDATE balances SET balance = balance - ${amount}
+          WHERE id = 1 AND EXISTS (SELECT 1 FROM ins)
+          RETURNING balance
+        )
+        SELECT id, amount, response, 'true' AS created FROM ins
+        UNION ALL
+        SELECT c.id, c.amount, c.response, 'false' FROM charges c
+        WHERE c.idem_key = '${safeKey}' AND NOT EXISTS (SELECT 1 FROM ins)`;
+
+      const rows = await pgPrimary.query(sql);
+      const row = rows[0] || null;
+      const replay = row && row.created === 'false';
+      if (replay) chargeReplays++;
+      else chargeCreated++;
+      return json(res, replay ? 200 : 201, {
+        instance: INSTANCE,
+        idempotencyKey: useIdem ? safeKey : null,
+        chargeId: row && row.id,
+        amount: row && Number(row.amount),
+        // Tra lai CHINH ket qua da luu, khong phai mot 200 rong (muc 11.2).
+        response: row && row.response,
+        replayed: Boolean(replay),
+      });
+    }
+
     if (p === '/whoami') {
       return json(res, 200, { instance: INSTANCE, pid: process.pid, totalRequests });
     }
@@ -588,6 +644,8 @@ const server = http.createServer(async (req, res) => {
         rwwPinned,
         rwwStaleRatio: rwwTotal ? Number((rwwStale / rwwTotal).toFixed(4)) : null,
         readPinMs: READ_PIN_MS,
+        chargeCreated,
+        chargeReplays,
         shards: PG_SHARDS,
         shardHits,
         cacheMisses,
@@ -623,6 +681,8 @@ const server = http.createServer(async (req, res) => {
       rwwStale = 0;
       rwwPinned = 0;
       shardHits.fill(0);
+      chargeCreated = 0;
+      chargeReplays = 0;
       dbWaitTotalMs = 0;
       dbMaxQueueDepth = 0;
       return json(res, 200, { ok: true, instance: INSTANCE });

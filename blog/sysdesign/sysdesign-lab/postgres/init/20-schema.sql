@@ -23,3 +23,28 @@ CREATE TABLE IF NOT EXISTS write_load (
   id     BIGSERIAL PRIMARY KEY,
   filler TEXT NOT NULL
 );
+
+-- ---------------------------------------------------------------------------
+-- Bài 11 — idempotency
+-- ---------------------------------------------------------------------------
+
+-- Số dư: "hiệu ứng nghiệp vụ" mà việc xử lý trùng sẽ làm sai.
+CREATE TABLE IF NOT EXISTS balances (
+  id      INTEGER PRIMARY KEY,
+  balance BIGINT NOT NULL
+);
+INSERT INTO balances (id, balance) VALUES (1, 1000000) ON CONFLICT (id) DO NOTHING;
+
+-- Bảng dedup. Điểm mấu chốt là UNIQUE trên idem_key: nó biến việc chống trùng thành
+-- một ràng buộc do CHÍNH DATABASE thực thi, thay vì một đoạn code "kiểm tra rồi ghi"
+-- vốn luôn có cửa sổ race condition (Bài 11, mục 11.3).
+--
+-- `response` lưu KẾT QUẢ, không chỉ lưu một cờ "đã xử lý". Nếu chỉ lưu cờ thì request
+-- retry nhận về 200 rỗng và client mất mã giao dịch (Bài 11, mục 11.2).
+CREATE TABLE IF NOT EXISTS charges (
+  id         BIGSERIAL PRIMARY KEY,
+  idem_key   TEXT        NOT NULL UNIQUE,
+  amount     BIGINT      NOT NULL,
+  response   TEXT        NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

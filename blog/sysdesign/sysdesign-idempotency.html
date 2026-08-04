@@ -1,0 +1,1318 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 11: Idempotency &amp; Retry An Toàn — js-tools</title>
+    <meta
+      name="description"
+      content="Exactly-once delivery là bất khả thi — bài toán hai vị tướng; thứ khả thi là at-least-once cộng xử lý idempotent; idempotency key phải là key cho ý định do client sinh và server phải lưu toàn bộ kết quả chứ không chỉ một cờ; ghi dedup và xử lý nghiệp vụ phải nằm trong cùng một transaction vì không có thứ tự nào an toàn nếu tách làm hai; đo thật 78.774 request đồng thời cùng một key cho đúng 1 bản ghi và đúng 1 mã 201, còn tắt idempotency thì 14.236 bản ghi và số dư âm 423.600."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-idempotency" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-idempotency" />
+    <meta property="og:title" content="Bài 11: Idempotency &amp; Retry An Toàn — js-tools" />
+    <meta
+      property="og:description"
+      content="Exactly-once delivery là bất khả thi — bài toán hai vị tướng; thứ khả thi là at-least-once cộng xử lý idempotent; idempotency key phải là key cho ý định do client sinh và server phải lưu toàn bộ kết quả chứ không chỉ một cờ; ghi dedup và xử lý nghiệp vụ phải nằm trong cùng một transaction vì không có thứ tự nào an toàn nếu tách làm hai; đo thật 78.774 request đồng thời cùng một key cho đúng 1 bản ghi và đúng 1 mã 201, còn tắt idempotency thì 14.236 bản ghi và số dư âm 423.600."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 11: Idempotency &amp; Retry An Toàn — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Exactly-once delivery là bất khả thi — bài toán hai vị tướng; thứ khả thi là at-least-once cộng xử lý idempotent; idempotency key phải là key cho ý định do client sinh và server phải lưu toàn bộ kết quả chứ không chỉ một cờ; ghi dedup và xử lý nghiệp vụ phải nằm trong cùng một transaction vì không có thứ tự nào an toàn nếu tách làm hai; đo thật 78.774 request đồng thời cùng một key cho đúng 1 bản ghi và đúng 1 mã 201, còn tắt idempotency thì 14.236 bản ghi và số dư âm 423.600."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 11: Idempotency & Retry An Toàn",
+        "description": "Exactly-once delivery là bất khả thi — bài toán hai vị tướng; thứ khả thi là at-least-once cộng xử lý idempotent; idempotency key phải là key cho ý định do client sinh và server phải lưu toàn bộ kết quả chứ không chỉ một cờ; ghi dedup và xử lý nghiệp vụ phải nằm trong cùng một transaction vì không có thứ tự nào an toàn nếu tách làm hai; đo thật 78.774 request đồng thời cùng một key cho đúng 1 bản ghi và đúng 1 mã 201, còn tắt idempotency thì 14.236 bản ghi và số dư âm 423.600.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-idempotency",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+        "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 11: Idempotency &amp; Retry An Toàn</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 15 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-distributed-lock">Bài 10</a> kết luận rằng cách tránh lock mạnh nhất là làm cho việc
+              lặp lại trở nên vô hại. Bài này là cách làm điều đó — và nó cũng là câu trả lời cho một bài toán mà mọi hệ
+              thống phân tán phải đối mặt:
+              <strong>khi client nhận timeout, nó không thể biết request đã được xử lý hay chưa.</strong>
+            </p>
+
+            <p>
+              Lab của bài này bắn <strong>78.774 request đồng thời với cùng một idempotency key</strong> vào một
+              endpoint trừ tiền. Kết quả: đúng <strong>một</strong> bản ghi trong database, đúng <strong>một</strong> mã
+              <code>201 Created</code>, và số dư bị trừ đúng một lần. Tắt idempotency đi và chạy lại cùng tải: 14.236
+              bản ghi, số dư bị trừ 1.423.600 — tài khoản <strong>âm 423.600</strong>.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64 (Node v22.23.2),
+                PostgreSQL 18.3, ba app replica mỗi replica 1 CPU, nginx 1.27-alpine, bộ đo tải 2 CPU, 64 kết nối đồng
+                thời trong 10 giây.<br /><br />
+                Tầng truy cập database là <code>app/minipg.js</code> — client wire-protocol tự viết, không dependency
+                (giới thiệu ở <a href="sysdesign-replication">Bài 7</a>). Nó không hỗ trợ tham số hoá, nên endpoint tự
+                làm sạch đầu vào; điều này có ghi rõ trong mã và là giới hạn của lab, không phải cách làm nên theo.
+              </div>
+            </div>
+
+            <!-- ================= 11.1 ================= -->
+            <h2>11.1 Vì sao "exactly-once" là ảo tưởng</h2>
+
+            <p>
+              Client gửi một request trừ tiền. Nó chờ, và nhận timeout. Câu hỏi: server đã trừ tiền chưa?
+              <strong>Client không có cách nào biết.</strong> Ba tình huống sau đây tạo ra <em>đúng cùng một</em> trải
+              nghiệm ở phía client:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Điều thật sự xảy ra</th>
+                  <th>Client thấy gì</th>
+                  <th>Nếu client thử lại thì sao</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Request không tới được server</td>
+                  <td>Timeout</td>
+                  <td>Đúng — cần thử lại</td>
+                </tr>
+                <tr>
+                  <td>Server xử lý xong, <strong>response bị mất trên đường về</strong></td>
+                  <td>Timeout</td>
+                  <td><strong>SAI — trừ tiền lần thứ hai</strong></td>
+                </tr>
+                <tr>
+                  <td>Server đang xử lý, chưa xong</td>
+                  <td>Timeout</td>
+                  <td>Sai — có thể xử lý song song hai lần</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Đây là <strong>bài toán hai vị tướng</strong>: không có giao thức nào cho phép hai bên đạt được sự chắc
+              chắn tuyệt đối về việc thông điệp đã tới, khi kênh truyền có thể mất tin. Hệ quả:
+              <em>exactly-once delivery</em>
+              là bất khả thi.
+            </p>
+
+            <p>
+              Nhưng có một tổ hợp làm được điều mà người ta thật sự muốn:
+              <strong>at-least-once delivery + xử lý idempotent</strong>. Gửi lại cho tới khi chắc đã tới
+              (at-least-once), và thiết kế sao cho nhận nhiều lần cũng chỉ có hiệu ứng một lần. Kết quả nhìn từ ngoài
+              <em>giống</em> exactly-once, dù không có bước nào trong đó là exactly-once.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: tin quảng cáo "exactly-once delivery"</div>
+              <div class="callout__content">
+                Vài message broker quảng cáo exactly-once. Thứ họ thật sự cung cấp là exactly-once
+                <em>processing</em> trong một phạm vi hẹp: khi cả việc đọc message và việc ghi kết quả đều nằm trong hệ
+                thống của họ, họ có thể làm hai việc đó atomic với nhau.<br /><br />
+                Phạm vi đó <strong>không bao gồm side-effect ra thế giới bên ngoài</strong>. Nếu consumer của bạn gọi
+                API thanh toán, gửi email, hay đẩy thông báo, thì không broker nào đảm bảo được việc đó chỉ xảy ra một
+                lần — vì chính lời gọi đó cũng chịu bài toán hai vị tướng. Với những side-effect ấy, bạn vẫn phải tự làm
+                idempotent.
+              </div>
+            </div>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Hai vị tướng: server xử lý xong nhưng response bị mất, client không phân biệt được với trường hợp thất bại"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Ba tình huống, cùng MỘT thứ client nhìn thấy: timeout
+                </text>
+
+                <!-- ==== 1 ==== -->
+                <rect x="16" y="38" width="688" height="56" rx="6" fill="#151d30" stroke="#22c55e" />
+                <text x="28" y="56" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  1 · Request KHÔNG tới được server
+                </text>
+                <circle cx="70" cy="76" r="10" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="70"
+                  y="80"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  C
+                </text>
+                <line x1="82" y1="76" x2="240" y2="76" stroke="#ef4444" stroke-dasharray="4 3" />
+                <text x="246" y="79" fill="#ef4444" font-family="system-ui, sans-serif" font-size="11">✕</text>
+                <circle cx="420" cy="76" r="10" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="420"
+                  y="80"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  S
+                </text>
+                <text x="452" y="72" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  server không biết gì · số dư KHÔNG đổi
+                </text>
+                <text x="452" y="86" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  thử lại là ĐÚNG
+                </text>
+
+                <!-- ==== 2 ==== -->
+                <rect x="16" y="102" width="688" height="60" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="120" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  2 · Server XỬ LÝ XONG, response bị mất trên đường về
+                </text>
+                <circle cx="70" cy="142" r="10" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="70"
+                  y="146"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  C
+                </text>
+                <line x1="82" y1="138" x2="408" y2="138" stroke="#22c55e" />
+                <polygon points="408,138 400,135 400,141" fill="#22c55e" />
+                <circle cx="420" cy="142" r="10" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="420"
+                  y="146"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  S
+                </text>
+                <line x1="408" y1="152" x2="260" y2="152" stroke="#ef4444" stroke-dasharray="4 3" />
+                <text x="248" y="156" fill="#ef4444" font-family="system-ui, sans-serif" font-size="11">✕</text>
+                <text x="452" y="138" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  ĐÃ TRỪ TIỀN · số dư đã đổi
+                </text>
+                <text
+                  x="452"
+                  y="154"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  thử lại ⇒ TRỪ LẦN THỨ HAI
+                </text>
+
+                <!-- ==== 3 ==== -->
+                <rect x="16" y="170" width="688" height="56" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="28" y="188" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  3 · Server ĐANG xử lý, chưa xong
+                </text>
+                <circle cx="70" cy="208" r="10" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="70"
+                  y="212"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  C
+                </text>
+                <line x1="82" y1="208" x2="408" y2="208" stroke="#22c55e" />
+                <polygon points="408,208 400,205 400,211" fill="#22c55e" />
+                <circle cx="420" cy="208" r="10" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="420"
+                  y="212"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  S
+                </text>
+                <text x="452" y="204" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  đang chạy · chưa biết kết quả
+                </text>
+                <text x="452" y="218" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  thử lại ⇒ xử lý SONG SONG hai lần
+                </text>
+
+                <!-- ket luan -->
+                <rect x="16" y="234" width="688" height="52" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text x="28" y="252" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  Không có giao thức nào phân biệt được ba tình huống này từ phía client
+                </text>
+                <text x="28" y="270" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Nên đừng cố phân biệt. Hãy làm cho việc thử lại trở nên VÔ HẠI: at-least-once + xử lý idempotent.
+                </text>
+                <text x="28" y="282" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Nhìn từ ngoài, tổ hợp đó giống exactly-once — dù không bước nào trong đó là exactly-once.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Bài toán hai vị tướng nói rằng sự chắc chắn tuyệt đối là bất khả thi. Idempotency là cách làm cho sự
+                không chắc chắn đó không còn quan trọng.
+              </figcaption>
+            </figure>
+            <!-- ================= 11.2 ================= -->
+            <h2>11.2 Idempotency key và bảng dedup</h2>
+
+            <p>
+              Cơ chế rất gọn: client sinh một key duy nhất cho <strong>ý định</strong> của mình — không phải cho từng
+              lần thử. Server lưu ánh xạ key → kết quả. Gặp lại key đã có, server
+              <strong>trả về kết quả cũ</strong> thay vì xử lý lại.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Quyết định</th>
+                  <th>Làm đúng</th>
+                  <th>Làm sai và hậu quả</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Ai sinh key</td>
+                  <td><strong>Client</strong>, một key cho một ý định</td>
+                  <td>
+                    Server sinh key ⇒ mỗi lần thử là một key mới ⇒ không dedup được gì. Client sinh key mới cho mỗi
+                    <em>lần thử</em> cũng cùng hậu quả
+                  </td>
+                </tr>
+                <tr>
+                  <td>Lưu gì</td>
+                  <td><strong>Toàn bộ kết quả</strong> để trả lại</td>
+                  <td>
+                    Chỉ lưu cờ "đã xử lý" ⇒ request retry nhận <code>200</code> rỗng, client
+                    <strong>mất mã giao dịch</strong> và không biết phải làm gì tiếp
+                  </td>
+                </tr>
+                <tr>
+                  <td>TTL của key</td>
+                  <td>Dài hơn thời gian retry tối đa của client</td>
+                  <td>Ngắn hơn ⇒ key hết hạn giữa hai lần retry, và lần thứ hai được xử lý như một ý định mới</td>
+                </tr>
+                <tr>
+                  <td>Mã trả về khi trùng</td>
+                  <td>Cùng mã và cùng body như lần đầu</td>
+                  <td>
+                    Trả <code>409 Conflict</code> ⇒ client tưởng thất bại và có thể thử lại bằng key khác — đúng cái ta
+                    muốn tránh
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Key là cho Ý ĐỊNH, không phải cho lần thử</div>
+              <div class="callout__content">
+                Đây là chỗ dễ hiểu sai nhất, và cũng là chỗ quyết định toàn bộ cơ chế có hoạt động hay không. Nếu người
+                dùng bấm "Thanh toán" một lần, đó là <strong>một</strong> ý định — nên chỉ có <strong>một</strong> key,
+                dù thư viện HTTP thử lại năm lần.<br /><br />
+                Hệ quả thực hành: key phải được sinh ở nơi ý định phát sinh (khi người dùng bấm nút, hoặc khi job được
+                tạo) và <em>giữ nguyên</em> qua mọi lần thử. Nếu bạn sinh key ngay trước lời gọi HTTP thì mỗi lần thử
+                lại sẽ có key khác, và bạn đã cài đặt xong toàn bộ cơ chế mà không nhận được lợi ích nào.
+              </div>
+            </div>
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 296"
+                width="100%"
+                role="img"
+                aria-label="Hai nhánh retry: không có idempotency key thì trừ tiền hai lần, có key thì trả lại kết quả đã lưu"
+              >
+                <rect width="720" height="296" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Cùng một lần thử lại, hai kết cục — khác nhau đúng một header
+                </text>
+
+                <text
+                  x="70"
+                  y="46"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  client
+                </text>
+                <text
+                  x="330"
+                  y="46"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  server
+                </text>
+                <text
+                  x="600"
+                  y="46"
+                  fill="#a78bfa"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  số dư
+                </text>
+
+                <!-- ==== KHONG KEY ==== -->
+                <rect x="16" y="54" width="688" height="104" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="72" fill="#ef4444" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  KHÔNG có idempotency key
+                </text>
+                <line x1="70" y1="88" x2="318" y2="88" stroke="#9ca3af" />
+                <polygon points="318,88 310,85 310,91" fill="#9ca3af" />
+                <text x="120" y="84" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  1 · POST /charge amount=100
+                </text>
+                <line x1="342" y1="88" x2="580" y2="88" stroke="#a78bfa" />
+                <polygon points="580,88 572,85 572,91" fill="#a78bfa" />
+                <text x="596" y="91" fill="#a78bfa" font-family="system-ui, sans-serif" font-size="8">−100</text>
+                <line x1="318" y1="104" x2="180" y2="104" stroke="#ef4444" stroke-dasharray="4 3" />
+                <text x="168" y="108" fill="#ef4444" font-family="system-ui, sans-serif" font-size="11">✕</text>
+                <text x="352" y="108" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  2 · response MẤT trên đường về
+                </text>
+                <line x1="70" y1="124" x2="318" y2="124" stroke="#f59e0b" />
+                <polygon points="318,124 310,121 310,127" fill="#f59e0b" />
+                <text x="120" y="120" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  3 · client THỬ LẠI (không biết lần 1 đã xong)
+                </text>
+                <line x1="342" y1="124" x2="580" y2="124" stroke="#ef4444" />
+                <polygon points="580,124 572,121 572,127" fill="#ef4444" />
+                <text
+                  x="596"
+                  y="127"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  font-weight="600"
+                >
+                  −100 nữa
+                </text>
+                <text x="28" y="148" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  Kết quả: TRỪ HAI LẦN. Đo thật ở quy mô tải: 14.236 bản ghi, số dư âm 423.600.
+                </text>
+
+                <!-- ==== CO KEY ==== -->
+                <rect x="16" y="166" width="688" height="104" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="28"
+                  y="184"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  CÓ idempotency key
+                </text>
+                <line x1="70" y1="200" x2="318" y2="200" stroke="#9ca3af" />
+                <polygon points="318,200 310,197 310,203" fill="#9ca3af" />
+                <text x="112" y="196" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  1 · POST + Idempotency-Key: order-999
+                </text>
+                <line x1="342" y1="200" x2="580" y2="200" stroke="#a78bfa" />
+                <polygon points="580,200 572,197 572,203" fill="#a78bfa" />
+                <text x="596" y="203" fill="#a78bfa" font-family="system-ui, sans-serif" font-size="8">−100</text>
+                <line x1="318" y1="216" x2="180" y2="216" stroke="#ef4444" stroke-dasharray="4 3" />
+                <text x="168" y="220" fill="#ef4444" font-family="system-ui, sans-serif" font-size="11">✕</text>
+                <text x="352" y="220" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  2 · response mất — nhưng kết quả ĐÃ ĐƯỢC LƯU cùng key
+                </text>
+                <line x1="70" y1="236" x2="318" y2="236" stroke="#f59e0b" />
+                <polygon points="318,236 310,233 310,239" fill="#f59e0b" />
+                <text x="112" y="232" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  3 · thử lại với CÙNG key order-999
+                </text>
+                <line x1="342" y1="236" x2="500" y2="236" stroke="#22c55e" stroke-dasharray="3 3" />
+                <text x="506" y="239" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  chỉ SELECT · không chạm số dư
+                </text>
+                <text x="28" y="260" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  Kết quả: trả lại CHÍNH kết quả cũ (cùng chargeId). Đo thật: 78.774 request → 1 bản ghi, 1 mã 201.
+                </text>
+
+                <text x="16" y="288" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Chú ý bước 3 ở nhánh dưới trả về 200 kèm body cũ, KHÔNG phải 409 — nếu trả 409, client tưởng thất bại
+                  và có thể thử lại bằng key khác.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Client không cần biết lần thử nào đã thành công. Đó chính là điểm: idempotency làm cho sự không chắc
+                chắn trở nên không quan trọng.
+              </figcaption>
+            </figure>
+            <!-- ================= 11.3 ================= -->
+            <h2>11.3 Ghi dedup và xử lý nghiệp vụ phải nằm trong CÙNG một transaction</h2>
+
+            <p>Đây là mục quan trọng nhất của bài. Cách cài đặt trực giác nhất — và sai — trông như thế này:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">check_then_act_SAI.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// ===== SAI: check-then-act — race condition kinh dien =====
+const seen = await db.query(`SELECT * FROM charges WHERE idem_key = $1`, [key]);
+if (seen.rows.length) return seen.rows[0].response;   // (1) kiem tra
+
+await db.query(`UPDATE balances SET balance = balance - $1 WHERE id = 1`, [amount]);
+await db.query(`INSERT INTO charges (idem_key, response) VALUES ($1, $2)`, [key, resp]); // (2) ghi
+
+// Cua so giua (1) va (2): HAI request song song deu thay "chua co" o buoc (1),
+// nen CA HAI di tiep va CA HAI tru tien. Chinh xac cai ta dinh ngan.</code></pre>
+            </div>
+
+            <p>
+              Lời giải không phải là thêm lock (xem <a href="sysdesign-distributed-lock">Bài 10</a>) mà là để
+              <strong>database tự thực thi</strong> tính duy nhất, bằng một <code>UNIQUE</code> constraint, và làm cả
+              hai việc trong <strong>một câu lệnh</strong>:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">idempotent_charge.sql</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-sql">-- `ins` co gang ghi ban ghi dedup. ON CONFLICT DO NOTHING nghia la neu key da ton tai
+-- thi khong ghi gi va `ins` RONG.
+-- `upd` chi tru so du KHI `ins` co dong — tuc la chi lan DAU TIEN moi co hieu ung.
+-- Cau SELECT cuoi tra ve ket qua moi (created=true) hoac ket qua DA LUU (false).
+--
+-- Toan bo la MOT cau lenh => Postgres chay no trong mot transaction ngam => KHONG ton
+-- tai cua so nao cho hai request song song cung lot qua.
+WITH ins AS (
+  INSERT INTO charges (idem_key, amount, response)
+  VALUES ('order-999', 100, 'charge-ok-100')
+  ON CONFLICT (idem_key) DO NOTHING
+  RETURNING id, amount, response
+), upd AS (
+  UPDATE balances SET balance = balance - 100
+  WHERE id = 1 AND EXISTS (SELECT 1 FROM ins)
+  RETURNING balance
+)
+SELECT id, amount, response, 'true' AS created FROM ins
+UNION ALL
+SELECT c.id, c.amount, c.response, 'false' FROM charges c
+WHERE c.idem_key = 'order-999' AND NOT EXISTS (SELECT 1 FROM ins);</code></pre>
+            </div>
+
+            <p>
+              Bảng <code>charges</code> có <code>idem_key TEXT NOT NULL UNIQUE</code>. Ràng buộc đó là thứ làm việc
+              thật: nó biến việc chống trùng từ một <em>đoạn code</em> có thể sai thành một <em>bất biến</em> mà
+              database không cho phép vi phạm.
+            </p>
+
+            <h3>Đo thật: 78.774 request đồng thời với cùng một key</h3>
+
+            <p>64 kết nối, 10 giây, cùng một <code>idem_key</code>, so với cùng tải nhưng không có idempotency key:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Số liệu</th>
+                  <th>CÓ idempotency key</th>
+                  <th>KHÔNG có</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Request đã xử lý</td>
+                  <td>78.774</td>
+                  <td>14.172</td>
+                </tr>
+                <tr>
+                  <td>Mã trả về</td>
+                  <td><strong>201 × 1</strong> · 200 × 78.773</td>
+                  <td>201 × 14.172</td>
+                </tr>
+                <tr>
+                  <td><strong>Bản ghi trong database</strong></td>
+                  <td><strong>1</strong></td>
+                  <td><strong>14.236</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Số dư bị trừ</strong></td>
+                  <td><strong>100</strong></td>
+                  <td><strong>1.423.600</strong> (số dư còn −423.600)</td>
+                </tr>
+                <tr>
+                  <td>Throughput</td>
+                  <td>6.596 rps</td>
+                  <td>1.183 rps</td>
+                </tr>
+                <tr>
+                  <td>p50 / p99</td>
+                  <td>3,41 / 72,47 ms</td>
+                  <td>39,62 / 189,92 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Dòng "mã trả về" là bằng chứng gọn nhất: trong <strong>78.774</strong> request đồng thời cùng nhắm một
+              key, đúng <strong>một</strong> request nhận <code>201 Created</code>. Toàn bộ phần còn lại nhận
+              <code>200</code> kèm <em>chính kết quả đã lưu</em> — cùng <code>chargeId</code>, cùng
+              <code>response</code>. Không có request nào thất bại (0 lỗi).
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Vì sao bản có idempotency lại NHANH HƠN 5,6 lần</div>
+              <div class="callout__content">
+                Điều này ban đầu trông như một lợi ích bất ngờ của idempotency, nhưng nguyên nhân thật nằm ở chỗ khác và
+                cần nói rõ. Bản <em>không</em> idempotency thực hiện một <code>INSERT</code> và một
+                <code>UPDATE balances</code> ở <strong>mọi</strong> request, và tất cả đều cập nhật
+                <em>cùng một dòng</em> số dư. Postgres khoá dòng đó ở mức row-level, nên 64 kết nối phải xếp hàng đi qua
+                một dòng duy nhất.<br /><br />
+                Bản có idempotency chỉ ghi ở request đầu tiên; 78.773 request sau chỉ <code>SELECT</code>, không cần
+                khoá ghi gì cả. Nên chênh lệch throughput ở đây là
+                <strong>hệ quả của việc bỏ được tranh chấp khoá</strong>, chứ không phải một tính chất tổng quát của
+                idempotency. Với tải mà các request nhắm những key <em>khác nhau</em>, sẽ không có khoảng cách này.<br /><br />
+                Nhưng có một điều tổng quát: bản không idempotency <em>tạo ra</em> chính sự tranh chấp mà nó phải chịu.
+                Việc xử lý trùng không chỉ làm dữ liệu sai — nó còn tự sinh thêm tải cho hệ thống đúng lúc hệ thống đang
+                gặp vấn đề mạng, tức là đúng lúc client đang thử lại nhiều nhất.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: tách dedup và nghiệp vụ thành hai transaction</div>
+              <div class="callout__content">
+                Ngay cả khi dùng <code>UNIQUE</code> constraint, nếu bạn ghi dedup ở transaction A rồi xử lý nghiệp vụ ở
+                transaction B thì vẫn còn hai cửa sổ hỏng.<br /><br />
+                <strong>Ghi dedup trước:</strong> A thành công, tiến trình chết trước khi B chạy. Key đã tồn tại nên mọi
+                lần thử lại đều nhận "đã xử lý" — nhưng tiền chưa bao giờ bị trừ. Yêu cầu
+                <em>im lặng biến mất</em>.<br /><br />
+                <strong>Xử lý nghiệp vụ trước:</strong> B thành công, tiến trình chết trước khi A chạy. Tiền đã trừ
+                nhưng không có bản ghi dedup, nên lần thử lại trừ thêm lần nữa.<br /><br />
+                Không có thứ tự nào an toàn. Chỉ có một cách: <strong>cùng một transaction</strong> — và cách rẻ nhất để
+                đảm bảo điều đó là viết cả hai việc trong <em>một câu lệnh</em> như SQL ở trên.
+              </div>
+            </div>
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 276"
+                width="100%"
+                role="img"
+                aria-label="Ranh giới transaction bao trọn cả xử lý nghiệp vụ và ghi bảng dedup, so với hai transaction tách rời"
+              >
+                <rect width="720" height="276" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Ranh giới transaction — không có thứ tự nào an toàn nếu tách làm hai
+                </text>
+
+                <!-- ==== SAI 1: dedup truoc ==== -->
+                <rect x="16" y="38" width="336" height="90" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="56" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  SAI · ghi dedup trước, nghiệp vụ sau
+                </text>
+                <rect x="28" y="64" width="120" height="24" rx="3" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="88"
+                  y="79"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  TX A: ghi dedup ✓
+                </text>
+                <text x="156" y="79" fill="#ef4444" font-family="system-ui, sans-serif" font-size="14">✕</text>
+                <rect x="176" y="64" width="120" height="24" rx="3" fill="#151d30" stroke="#4b5563" />
+                <text
+                  x="236"
+                  y="79"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  TX B: trừ tiền
+                </text>
+                <text x="28" y="104" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Key đã tồn tại ⇒ mọi lần thử lại đều nhận "đã xử lý"
+                </text>
+                <text x="28" y="118" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  nhưng tiền CHƯA BAO GIỜ bị trừ — yêu cầu im lặng biến mất
+                </text>
+
+                <!-- ==== SAI 2: nghiep vu truoc ==== -->
+                <rect x="368" y="38" width="336" height="90" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="380" y="56" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  SAI · nghiệp vụ trước, dedup sau
+                </text>
+                <rect x="380" y="64" width="120" height="24" rx="3" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="440"
+                  y="79"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  TX A: trừ tiền ✓
+                </text>
+                <text x="508" y="79" fill="#ef4444" font-family="system-ui, sans-serif" font-size="14">✕</text>
+                <rect x="528" y="64" width="120" height="24" rx="3" fill="#151d30" stroke="#4b5563" />
+                <text
+                  x="588"
+                  y="79"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  TX B: ghi dedup
+                </text>
+                <text x="380" y="104" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  Tiền đã trừ nhưng không có bản ghi dedup
+                </text>
+                <text x="380" y="118" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  ⇒ lần thử lại trừ THÊM lần nữa
+                </text>
+
+                <!-- ==== DUNG ==== -->
+                <rect x="16" y="140" width="688" height="90" rx="6" fill="#0f2419" stroke="#22c55e" stroke-width="2" />
+                <text
+                  x="28"
+                  y="158"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  ĐÚNG · một transaction bao trọn cả hai — rẻ nhất là viết trong MỘT câu lệnh
+                </text>
+                <rect x="40" y="168" width="150" height="26" rx="3" fill="#151d30" stroke="#22c55e" />
+                <text
+                  x="115"
+                  y="184"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  INSERT ... ON CONFLICT
+                </text>
+                <text x="200" y="184" fill="#22c55e" font-family="system-ui, sans-serif" font-size="10">+</text>
+                <rect x="220" y="168" width="150" height="26" rx="3" fill="#151d30" stroke="#22c55e" />
+                <text
+                  x="295"
+                  y="184"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  UPDATE balances
+                </text>
+                <text x="384" y="178" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  Cả hai thành công, hoặc cả hai không xảy ra.
+                </text>
+                <text x="384" y="192" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  UNIQUE constraint là thứ thực thi tính duy nhất, không phải code.
+                </text>
+                <text x="40" y="216" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  Đo thật: 78.774 request đồng thời cùng một key → đúng 1 bản ghi, đúng 1 mã 201, số dư trừ đúng 100.
+                </text>
+
+                <text x="16" y="252" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Cách "kiểm tra rồi mới ghi" không có trong hình vì nó còn tệ hơn cả hai cách SAI ở trên: hai request
+                  song song đều thấy "chưa có".
+                </text>
+                <text x="16" y="268" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Và đừng thêm lock để vá nó — xem Bài 10 về việc distributed lock không cho đảm bảo đúng đắn.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Đây là lý do <code>UNIQUE</code> constraint đáng giá hơn mọi cơ chế dedup viết bằng tay: nó là bất biến
+                do database thực thi, không phải một đoạn code có thể bị đua.
+              </figcaption>
+            </figure>
+
+            <!-- ================= 11.4 ================= -->
+            <h2>11.4 Ngữ nghĩa HTTP, và hai tính chất hay bị gộp</h2>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Method</th>
+                  <th>Idempotent theo đặc tả?</th>
+                  <th>Ghi chú thực hành</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>GET</code></td>
+                  <td>Có (và an toàn — không đổi trạng thái)</td>
+                  <td>
+                    Nếu <code>GET</code> của bạn đổi trạng thái thì bạn đã vi phạm đặc tả và mọi tầng cache sẽ hại bạn
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>PUT</code></td>
+                  <td>Có</td>
+                  <td>
+                    <strong>Với ID do client sinh, <code>PUT</code> biến việc tạo mới thành idempotent tự nhiên</strong>
+                    — không cần bảng dedup nào
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>DELETE</code></td>
+                  <td>Có</td>
+                  <td>Xoá lần thứ hai không đổi gì. Nhưng trả <code>404</code> ở lần hai có thể làm client hiểu sai</td>
+                </tr>
+                <tr>
+                  <td><code>POST</code></td>
+                  <td><strong>Không</strong></td>
+                  <td>Đây là lý do idempotency key tồn tại. Mọi endpoint tạo bằng <code>POST</code> đều cần nó</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>Hai tính chất rất hay bị gộp làm một, và chúng <strong>độc lập</strong> với nhau:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Idempotent</th>
+                  <th>Giao hoán (commutative)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Nghĩa</td>
+                  <td>Lặp lại không đổi kết quả</td>
+                  <td>Đổi thứ tự không đổi kết quả</td>
+                </tr>
+                <tr>
+                  <td>Ví dụ có</td>
+                  <td><code>SET x = 5</code></td>
+                  <td><code>x = x + 1</code> và <code>x = x + 2</code></td>
+                </tr>
+                <tr>
+                  <td>Ví dụ không</td>
+                  <td><code>x = x + 1</code> (lặp lại thì cộng hai lần)</td>
+                  <td><code>SET x = 5</code> và <code>SET x = 9</code> (thứ tự quyết định kết quả)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Chú ý hai hàng cuối đối nghịch nhau: <code>SET</code> thì idempotent nhưng không giao hoán;
+              <code>+= 1</code> thì giao hoán nhưng không idempotent. Trong hệ phân tán bạn thường cần <em>cả hai</em>,
+              và cách đạt được là dùng phép cộng có kèm dedup — <code>+= 1</code> cho tính giao hoán, bảng dedup cho
+              tính idempotent. Đây cũng là lời giải thích cho gợi ý ở <a href="sysdesign-cap-consistency">Bài 9</a> mục
+              9.5: <code>balance = balance + 50</code> trộn được còn <code>SET balance = 150</code> thì không.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: <code>POST /orders</code> không kèm idempotency key</div>
+              <div class="callout__content">
+                Đây là cạm bẫy phổ biến nhất của cả bài, và nó im lặng gần như hoàn hảo. Endpoint chạy đúng trong mọi
+                lần test, chạy đúng trên mạng ổn định, và chỉ sinh đơn trùng khi mạng chập chờn — tức là với một phần
+                nhỏ người dùng, không tái tạo được theo yêu cầu, và thường chỉ bị phát hiện khi khách hàng phàn nàn hoặc
+                khi bộ phận kế toán đối chiếu.<br /><br />
+                Hai cách sửa, cả hai đều tốt: thêm <strong>idempotency key</strong> (header
+                <code>Idempotency-Key</code> là quy ước phổ biến), hoặc đổi sang
+                <strong><code>PUT /orders/{id}</code> với id do client sinh</strong> — lúc đó tính idempotent là hệ quả
+                của thiết kế URL, không cần thêm hạ tầng nào.
+              </div>
+            </div>
+            <!-- ================= 11.5 ================= -->
+            <h2>11.5 Idempotency ở tầng dữ liệu và cho consumer</h2>
+
+            <p>
+              Không phải lúc nào cũng cần một bảng dedup riêng. Nhiều khi tính idempotent có thể nằm sẵn trong cách bạn
+              thiết kế dữ liệu:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Kỹ thuật</th>
+                  <th>Cách làm</th>
+                  <th>Khi nào dùng</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>INSERT ... ON CONFLICT</code></td>
+                  <td>Upsert theo khoá tự nhiên</td>
+                  <td>Dữ liệu có khoá tự nhiên (email, mã đơn từ hệ thống nguồn) — rẻ nhất và chắc nhất</td>
+                </tr>
+                <tr>
+                  <td><strong>Khoá tự nhiên thay vì auto-increment</strong></td>
+                  <td>Khoá chính là <code>order_no</code> do hệ thống nguồn cấp</td>
+                  <td>
+                    Khi có thể. Auto-increment nghĩa là mỗi lần ghi lại tạo một ID mới, nên không có gì để dedup theo
+                  </td>
+                </tr>
+                <tr>
+                  <td>Dedup theo <code>event_id</code></td>
+                  <td>Consumer lưu <code>event_id</code> đã xử lý, bỏ qua nếu gặp lại</td>
+                  <td><strong>Điều kiện tiên quyết</strong> cho at-least-once của message queue (Bài 12)</td>
+                </tr>
+                <tr>
+                  <td>Cột version (optimistic)</td>
+                  <td><code>UPDATE ... WHERE version = $expected</code></td>
+                  <td>Khi cần cả chống trùng và chống ghi đè lẫn nhau (Bài 10 mục 10.5)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ TTL của bảng dedup phải dài hơn chu kỳ retry của queue</div>
+              <div class="callout__content">
+                Bảng dedup phải được dọn, nếu không nó lớn vô hạn. Nhưng nếu TTL của nó <strong>ngắn hơn</strong> chu kỳ
+                redeliver của message queue thì sinh ra một lỗi rất khó truy: job bị redeliver sau khi key đã hết hạn,
+                nên nó được xử lý <em>lần thứ hai</em> như một job hoàn toàn mới.<br /><br />
+                Con số phải so là: TTL bảng dedup &gt; (số lần retry tối đa × khoảng nghỉ lớn nhất) + thời gian job có
+                thể nằm trong dead letter queue trước khi được đưa lại. Với những hệ có DLQ và người vận hành đưa job
+                trở lại sau vài ngày, TTL vài giờ là <strong>chắc chắn không đủ</strong> — và lỗi này chỉ xuất hiện sau
+                khi có sự cố, tức là đúng lúc tệ nhất.
+              </div>
+            </div>
+
+            <h3>Tự làm lại các phép đo</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+docker compose --profile replica up -d      # can PostgreSQL
+
+psql_() { docker compose exec -T postgres psql -U lab -d lab -tAc "$1"; }
+reset() { psql_ "TRUNCATE charges; UPDATE balances SET balance = 1000000 WHERE id = 1;"; }
+
+# --- CO idempotency key: ban CUNG MOT key ---
+reset
+docker compose run --rm loadgen loadgen.js \
+  --url "http://lb:8080/charge?key=order-999&amount=100&idem=1" -c 64 -d 10 -w 2 --json
+psql_ "SELECT count(*) AS ban_ghi FROM charges;"            # 1
+psql_ "SELECT balance FROM balances WHERE id=1;"            # 999900  (tru dung 100)
+
+# --- KHONG idempotency key: cung tai, cung thoi gian ---
+reset
+docker compose run --rm loadgen loadgen.js \
+  --url "http://lb:8080/charge?amount=100&idem=0" -c 64 -d 10 -w 2 --json
+psql_ "SELECT count(*) AS ban_ghi FROM charges;"            # 14236
+psql_ "SELECT balance FROM balances WHERE id=1;"            # -423600  (!)
+
+# Xem ky truong statusCodes cua ban CO idempotency: {"200":78773,"201":1}
+# Dung MOT request nhan 201 Created trong 78.774 request dong thoi.</code></pre>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Exactly-once delivery là bất khả thi — bài toán hai vị tướng nói rằng client nhận timeout không thể phân
+              biệt được ba tình huống khác nhau. Thứ khả thi và cũng là thứ người ta thật sự muốn là
+              <strong>at-least-once + xử lý idempotent</strong>, và nhìn từ ngoài tổ hợp đó giống exactly-once.
+            </p>
+
+            <p>
+              Idempotency key phải là key cho <strong>ý định</strong>, do client sinh và giữ nguyên qua mọi lần thử.
+              Server phải lưu <strong>toàn bộ kết quả</strong> chứ không chỉ một cờ "đã xử lý", và trả lại chính kết quả
+              đó khi gặp key trùng.
+            </p>
+
+            <p>
+              Phần quan trọng nhất là mục 11.3: ghi dedup và xử lý nghiệp vụ phải nằm trong
+              <strong>cùng một transaction</strong>. Không có thứ tự nào an toàn nếu tách làm hai — ghi dedup trước thì
+              yêu cầu im lặng biến mất, xử lý trước thì lần thử lại trừ tiền thêm lần nữa. Và đừng dùng mẫu "kiểm tra
+              rồi ghi": hai request song song đều thấy "chưa có". Cách rẻ nhất và chắc nhất là để
+              <code>UNIQUE</code> constraint thực thi tính duy nhất, trong một câu lệnh duy nhất.
+            </p>
+
+            <p>
+              Đo thật:
+              <strong>78.774 request đồng thời cùng một key → đúng 1 bản ghi, đúng 1 mã 201, số dư trừ đúng 100</strong
+              >, không một lỗi nào. Tắt idempotency: 14.236 bản ghi và số dư âm 423.600.
+            </p>
+
+            <p>
+              <strong>Bài 12</strong> là nơi tất cả những điều trên trở thành điều kiện bắt buộc chứ không phải lựa
+              chọn: message queue với ngữ nghĩa at-least-once. Khi một job có thể được giao lại bất cứ lúc nào, consumer
+              <em>phải</em> idempotent — nếu không, mỗi lần redeliver là một lần side-effect nữa.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/postgres/init/20-schema.sql"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về 20-schema.sql (bảng dedup có UNIQUE constraint)
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-distributed-lock" class="article-related__link article-related__link--prev">
+                  Bài 10: Distributed Lock
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 12: Message Queue &amp; Xử Lý Bất Đồng Bộ (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
