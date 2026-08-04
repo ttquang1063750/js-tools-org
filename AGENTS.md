@@ -200,6 +200,8 @@ js-tools-org/
 │           │   ├── tools/pg-lag.sh          #   real replication lag from pg_stat_replication (Lesson 7)
 │           │   ├── tools/lock-test.sh       #   two workers race one Redis lock, counts conflicts (Lesson 10)
 │           │   ├── worker/lock-worker.js    #   Redis lock + fencing token, 0 deps (Lesson 10)
+│           │   ├── worker/queue.js          #   Redis Streams producer/consumer/depth, 0 deps (Lesson 12)
+│           │   ├── tools/queue-test.sh      #   queue scaling, poison + DLQ, ack-mode damage (Lesson 12)
 │           │   ├── app/minipg.js            #   PostgreSQL wire-protocol client, 0 deps (Lesson 7)
 │           │   ├── postgres/init/           #   replication role + pg_hba + schema, runs once on initdb
 │           │   │                            #   profile `shard` adds a 2nd independent Postgres (Lesson 8)

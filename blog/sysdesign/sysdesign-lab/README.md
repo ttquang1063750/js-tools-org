@@ -57,6 +57,7 @@ docker compose exec app1 node -e "console.log(process.arch)"   # phải khớp u
 | 7   | `docker compose --profile replica up -d` | PostgreSQL primary (5432) + read replica (5433)        |
 | 8   | `docker compose --profile shard up -d`   | hai shard PostgreSQL độc lập (5432, 5434) + router     |
 | 10  | `docker compose --profile lock up -d`    | Redis + hai worker tranh một lock (chạy qua `tools/`)  |
+| 12  | `docker compose --profile queue up -d`   | Redis Streams + producer/consumer (chạy qua `tools/`)  |
 
 ### Bài 4 cần một bước chuẩn bị: chứng chỉ tự ký
 
@@ -81,7 +82,7 @@ biệt cấu hình. Đó là lý do cổng HTTP tồn tại — chỉ để làm
 Dừng và xoá sạch:
 
 ```bash
-docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard --profile lock down
+docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard --profile lock --profile queue down
 ```
 
 > `replica` dựng **streaming replication thật**: replica tự chạy `pg_basebackup` từ primary
@@ -183,6 +184,33 @@ docker compose --profile lock up -d redis
 > 2. Mỗi worker phải hoàn thành đủ số vòng **thành công**. Bản đầu để worker thua `continue`
 >    và bỏ luôn vòng đó, nên nó chạy hết 40 vòng trong vài trăm ms rồi thoát — phần lớn thời
 >    gian chỉ còn một worker, và "0 xung đột" trở nên vô nghĩa.
+
+## Bài 12: hàng đợi Redis Streams
+
+```bash
+docker compose --profile queue up -d redis
+# ./tools/queue-test.sh COUNT N_CONSUMER [WORK_MS] [POISON_EVERY] [MAX_ATTEMPTS] [IDEMPOTENT] [ACK_MODE] [DUR] [BATCH]
+./tools/queue-test.sh 20000 1 0 0 0 0 after 15000   # msActive 1764ms · 11.338/s
+./tools/queue-test.sh 20000 2 0 0 0 0 after 15000   # msActive ~1201ms · tong 16.652/s
+./tools/queue-test.sh 20000 4 0 0 0 0 after 15000   # msActive  ~658ms · tong 30.375/s  (chi 2,68x)
+./tools/queue-test.sh 5000  1 0 500 0 0 after 15000 # poison: pending=10 ton dong
+./tools/queue-test.sh 5000  1 0 500 1 0 after 15000 # co DLQ: dlq=10, pending=0
+```
+
+> **Chỉ đọc `msActive`, đừng đọc `rate`.** `rate` chia cho toàn bộ `DURATION_MS` kể cả thời
+> gian ngồi chờ stream rỗng, nên nó phản ánh tham số chứ không phản ánh năng lực tiêu thụ.
+>
+> **Ack sai thời điểm** — kill consumer giữa lô để đo thiệt hại:
+>
+> ```bash
+> docker compose exec -T redis redis-cli DEL lab:jobs
+> docker compose run --rm --no-deps -e ROLE=producer -e COUNT=3000 queueworker queue.js
+> docker compose run --rm --name qkill --no-deps -e ROLE=consumer -e WORK_MS=5 -e BATCH=500 \
+>   -e ACK_MODE=on-receive -e DURATION_MS=30000 queueworker queue.js &
+> sleep 1.2 && docker kill qkill
+> docker compose exec -T redis redis-cli XPENDING lab:jobs g1 | head -1   # 0   -> mat 352 job
+> # doi ACK_MODE=after roi lap lai                                        # 352 -> khoi phuc het
+> ```
 
 ## Số liệu cache: phải gộp cả ba replica
 
