@@ -184,6 +184,7 @@ js-tools-org/
 │           ├── sysdesign-sim-engine.js       # Discrete-event simulation core (validated vs M/M/1)
 │           ├── sysdesign-topology.js         # Canvas renderers (topology, histogram, rho<->latency)
 │           ├── sysdesign-hashring.js         # Consistent hashing + virtual nodes (Lesson 8)
+│           ├── sysdesign-quorum.js           # Quorum R/W/N sim + LWW data loss (Lesson 9)
 │           ├── sysdesign-engine-selftest.mjs # `node` self-test, 42 assertions — run before trusting numbers
 │           ├── sysdesign-lab/                # Real Docker lab shared by all 18 lessons
 │           │   ├── docker-compose.yml        #   profiles: base | lb | gw | cache | db | tools
