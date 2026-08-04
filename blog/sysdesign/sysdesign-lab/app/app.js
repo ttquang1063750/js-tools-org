@@ -17,11 +17,12 @@
  *   GET /client-ip     → phơi bày lỗ hổng X-Forwarded-For (Bài 4, mục 4.2)
  *   GET /aggregate     → gộp nhiều nhánh (BFF); so song song vs tuần tự (Bài 4, mục 4.4)
  *   GET /cacheable     → phát header cache cho tầng edge; ETag/304, Vary (Bài 6)
+ *   GET /shard?key=&mode= → router theo shard key; so shard key tốt vs lệch (Bài 8)
  *   GET /rww?id=&pin=  → ghi primary rồi đọc ngay replica: tái tạo bug read-your-writes,
  *                        và bật/tắt cơ chế ghim-về-primary để kiểm chứng bản vá (Bài 7)
  *
  * Biến môi trường: PORT, INSTANCE, REDIS_URL, DB_DELAY_MS, DB_MAX_CONCURRENCY, GRACEFUL,
- *                  TRUST_PROXY_HOPS, PG_PRIMARY, PG_REPLICA, READ_PIN_MS
+ *                  TRUST_PROXY_HOPS, PG_PRIMARY, PG_REPLICA, READ_PIN_MS, PG_SHARDS
  */
 
 'use strict';
@@ -50,6 +51,12 @@ const PG_REPLICA = process.env.PG_REPLICA || '';
 // Sau khi một người dùng GHI, ghim lệnh ĐỌC của chính họ về primary trong bao nhiêu ms.
 // 0 = tắt (để thấy bug trước đã).
 const READ_PIN_MS = Number(process.env.READ_PIN_MS || 0);
+// Bài 8: danh sách shard, phân tách bằng dấu phẩy. Thứ tự QUAN TRỌNG với modulo hashing —
+// đổi thứ tự là đổi toàn bộ ánh xạ key → shard.
+const PG_SHARDS = (process.env.PG_SHARDS || '')
+  .split(',')
+  .map((v) => v.trim())
+  .filter(Boolean);
 const GRACEFUL = process.env.GRACEFUL !== '0';
 
 let healthy = true;
@@ -186,6 +193,33 @@ const pgReplica = PG_REPLICA ? new PgPool({ host: PG_REPLICA }, 6) : null;
  * thái ghim phải nằm ở chỗ dùng chung (cookie của chính người dùng, hoặc Redis).
  */
 const readPin = new Map();
+
+// ---------------------------------------------------------------------------
+// Bài 8 — shard router
+// ---------------------------------------------------------------------------
+const pgShards = PG_SHARDS.map((host) => new PgPool({ host }, 4));
+const shardHits = new Array(pgShards.length).fill(0);
+
+// FNV-1a rồi trộn bằng fmix32 của MurmurHash3. Vì sao cần bước trộn: FNV-1a có avalanche
+// kém với chuỗi ngắn và giống nhau ('user:1', 'user:2'...), nên các key liên tiếp rơi vào
+// cùng shard theo cụm. Bước fmix32 rẻ và xoá hẳn hiện tượng đó.
+function shardHash(key) {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 2246822507);
+  h ^= h >>> 13;
+  h = Math.imul(h, 3266489909);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+function pickShard(shardKey) {
+  return shardHash(String(shardKey)) % pgShards.length;
+}
 
 function shouldReadPrimary(id, now) {
   if (READ_PIN_MS <= 0) return false;
@@ -508,6 +542,32 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (p === '/shard') {
+      // ?key=...      gia tri dung lam SHARD KEY
+      // ?mode=good    shard key = chinh key (cardinality cao, phan bo deu)
+      // ?mode=skew    shard key = mot gia tri gan nhu khong doi => moi thu don vao 1 shard,
+      //               mo phong "shard theo tenant khi co mot tenant khong lo" hoac
+      //               "shard theo ngay khi moi ghi deu la hom nay"
+      if (pgShards.length === 0) return json(res, 503, { error: 'chua dat PG_SHARDS' });
+      const key = url.searchParams.get('key') || 'k0';
+      const mode = url.searchParams.get('mode') === 'skew' ? 'skew' : 'good';
+      // Voi mode=skew, 95% request dung CUNG mot shard key.
+      const shardKey = mode === 'skew' ? (shardHash(key) % 100 < 95 ? 'tenant-khong-lo' : key) : key;
+      const idx = pickShard(shardKey);
+      shardHits[idx]++;
+      const id = 1 + (shardHash(key) % 1000);
+      const rows = await pgShards[idx].query(
+        `UPDATE profiles SET version = version + 1 WHERE id = ${id} RETURNING id, version`
+      );
+      return json(res, 200, {
+        instance: INSTANCE,
+        shardKey,
+        shard: PG_SHARDS[idx],
+        shardIndex: idx,
+        row: rows[0] || null,
+      });
+    }
+
     if (p === '/whoami') {
       return json(res, 200, { instance: INSTANCE, pid: process.pid, totalRequests });
     }
@@ -528,6 +588,8 @@ const server = http.createServer(async (req, res) => {
         rwwPinned,
         rwwStaleRatio: rwwTotal ? Number((rwwStale / rwwTotal).toFixed(4)) : null,
         readPinMs: READ_PIN_MS,
+        shards: PG_SHARDS,
+        shardHits,
         cacheMisses,
         hitRatio: cacheHits + cacheMisses === 0 ? null : cacheHits / (cacheHits + cacheMisses),
       });
@@ -560,6 +622,7 @@ const server = http.createServer(async (req, res) => {
       rwwTotal = 0;
       rwwStale = 0;
       rwwPinned = 0;
+      shardHits.fill(0);
       dbWaitTotalMs = 0;
       dbMaxQueueDepth = 0;
       return json(res, 200, { ok: true, instance: INSTANCE });

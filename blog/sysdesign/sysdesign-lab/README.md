@@ -55,6 +55,7 @@ docker compose exec app1 node -e "console.log(process.arch)"   # phải khớp u
 | 5   | `docker compose --profile cache up -d`   | thêm Redis (cổng 6379)                                 |
 | 7   | `docker compose --profile db up -d`      | thêm PostgreSQL (cổng 5432)                            |
 | 7   | `docker compose --profile replica up -d` | PostgreSQL primary (5432) + read replica (5433)        |
+| 8   | `docker compose --profile shard up -d`   | hai shard PostgreSQL độc lập (5432, 5434) + router     |
 
 ### Bài 4 cần một bước chuẩn bị: chứng chỉ tự ký
 
@@ -79,7 +80,7 @@ biệt cấu hình. Đó là lý do cổng HTTP tồn tại — chỉ để làm
 Dừng và xoá sạch:
 
 ```bash
-docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db down
+docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard down
 ```
 
 > `replica` dựng **streaming replication thật**: replica tự chạy `pg_basebackup` từ primary
@@ -94,6 +95,11 @@ docker compose --profile base --profile lb --profile gw --profile edge --profile
 > không quay lại làm standby được. Dựng lại bằng `docker compose --profile replica down -v`
 > rồi `up -d` — cờ `-v` **xoá dữ liệu** của cả primary, schema sẽ được nạp lại từ
 > `postgres/init/`.
+>
+> **Bài 8** dùng `postgres` làm shard 1 và thêm `postgres-shard2` — hai database **độc lập
+> hoàn toàn**, không replication. Mỗi shard bị giới hạn `cpus: '1.0'` **có chủ ý**: bỏ giới
+> hạn đó thì lab đo ra kết quả **ngược hẳn**, vì hai shard chia nhau CPU của cùng một máy —
+> đúng cái giới hạn mà sharding sinh ra để vượt qua (xem Bài 8 mục 8.2).
 >
 > Còn thiếu: **worker cho message queue** (Bài 12).
 

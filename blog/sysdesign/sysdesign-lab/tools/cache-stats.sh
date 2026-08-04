@@ -50,6 +50,16 @@ const get = (host) =>
   if (rwwT) {
     console.log(`  ---- READ-YOUR-WRITES: tong=${rwwT} doc_ra_du_lieu_cu=${rwwS} ghim_ve_primary=${rwwP} · ti le cu = ${((rwwS / rwwT) * 100).toFixed(2)}% · READ_PIN_MS=${rows[0] ? rows[0].readPinMs : "?"}`);
   }
+  if (rows[0] && rows[0].shardHits && rows[0].shardHits.length) {
+    const n = rows[0].shardHits.length;
+    const tot = Array.from({ length: n }, (_, i) => rows.reduce((a, r) => a + ((r.shardHits || [])[i] || 0), 0));
+    const sum = tot.reduce((a, b) => a + b, 0);
+    if (sum) {
+      const parts = tot.map((c, i) => `${(rows[0].shards || [])[i] || i}=${c} (${((c / sum) * 100).toFixed(1)}%)`);
+      console.log(`  ---- SHARD: ${parts.join("  ·  ")}`);
+      console.log(`  do lech shard = ${(((Math.max(...tot) - Math.min(...tot)) / (sum / n)) * 100).toFixed(1)}%`);
+    }
+  }
   if (total) console.log(`  hit ratio = ${((hits / total) * 100).toFixed(2)}%   ·   truy vấn DB / request = ${(db / reqs).toFixed(4)}`);
 })();
 ' 2>/dev/null

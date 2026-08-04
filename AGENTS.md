@@ -199,6 +199,7 @@ js-tools-org/
 │           │   ├── tools/pg-lag.sh          #   real replication lag from pg_stat_replication (Lesson 7)
 │           │   ├── app/minipg.js            #   PostgreSQL wire-protocol client, 0 deps (Lesson 7)
 │           │   ├── postgres/init/           #   replication role + pg_hba + schema, runs once on initdb
+│           │   │                            #   profile `shard` adds a 2nd independent Postgres (Lesson 8)
 │           │   └── README.md                #   MANDATORY CPU-architecture preflight
 │           └── ... System Design lesson files ...
 └── README.md

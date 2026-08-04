@@ -9,6 +9,7 @@
 #   Bài 5  →  docker compose --profile cache up -d     (thêm Redis)
 #   Bài 6  →  docker compose --profile edge up -d      (tầng edge có proxy_cache)
 #   Bài 7  →  docker compose --profile replica up -d   (PostgreSQL primary + read replica)
+#   Bài 8  →  docker compose --profile shard up -d     (hai shard PostgreSQL + router)
 #
 # KHÔNG có Dockerfile và KHÔNG cần `npm install`: code được bind-mount thẳng vào image
 # node chính thức, nên bạn sửa file là chạy lại thấy ngay, và đọc được toàn bộ code.
@@ -52,7 +53,7 @@ services:
   # load balancer phân phối thật sự ra sao (Bài 3).
   app1:
     <<: *app-base
-    profiles: ['base', 'gw', 'lb', 'edge', 'cache', 'db', 'replica']
+    profiles: ['base', 'gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -60,6 +61,8 @@ services:
       GRACEFUL: '1'
       INSTANCE: 'app1'
       TRUST_PROXY_HOPS: '0'
+      # Bai 8: hai shard doc lap. Router trong app quyet dinh key nao di shard nao.
+      PG_SHARDS: 'postgres,postgres-shard2'
       REDIS_URL: 'redis://redis:6379'
       # Bai 7: GHI di primary, DOC di replica. Doi READ_PIN_MS thanh vi du '500' de bat
       # co che ghim-ve-primary sau khi ghi, roi do lai ti le doc ra du lieu cu.
@@ -72,7 +75,7 @@ services:
 
   app2:
     <<: *app-base
-    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica']
+    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -80,6 +83,8 @@ services:
       GRACEFUL: '1'
       INSTANCE: 'app2'
       TRUST_PROXY_HOPS: '0'
+      # Bai 8: hai shard doc lap. Router trong app quyet dinh key nao di shard nao.
+      PG_SHARDS: 'postgres,postgres-shard2'
       REDIS_URL: 'redis://redis:6379'
       # Bai 7: GHI di primary, DOC di replica. Doi READ_PIN_MS thanh vi du '500' de bat
       # co che ghim-ve-primary sau khi ghi, roi do lai ti le doc ra du lieu cu.
@@ -89,7 +94,7 @@ services:
 
   app3:
     <<: *app-base
-    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica']
+    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -97,6 +102,8 @@ services:
       GRACEFUL: '1'
       INSTANCE: 'app3'
       TRUST_PROXY_HOPS: '0'
+      # Bai 8: hai shard doc lap. Router trong app quyet dinh key nao di shard nao.
+      PG_SHARDS: 'postgres,postgres-shard2'
       REDIS_URL: 'redis://redis:6379'
       # Bai 7: GHI di primary, DOC di replica. Doi READ_PIN_MS thanh vi du '500' de bat
       # co che ghim-ve-primary sau khi ghi, roi do lai ti le doc ra du lieu cu.
@@ -109,7 +116,7 @@ services:
   # ─────────────────────────────────────────────────────────────
   lb:
     image: nginx:1.27-alpine
-    profiles: ['lb', 'cache', 'db', 'replica']
+    profiles: ['lb', 'cache', 'db', 'replica', 'shard']
     ports:
       - '8080:8080'
     volumes:
@@ -196,7 +203,7 @@ services:
   # ─────────────────────────────────────────────────────────────
   postgres:
     image: postgres:18
-    profiles: ['db', 'replica']
+    profiles: ['db', 'replica', 'shard']
     environment:
       POSTGRES_PASSWORD: labpass
       POSTGRES_USER: lab
@@ -221,6 +228,15 @@ services:
     ports:
       - '5432:5432'
     restart: unless-stopped
+    # Gioi han 1 CPU MOI SHARD, cung ly do nhu gioi han 1 CPU moi app (Bai 2): neu hai
+    # shard dung chung CPU khong gioi han thi lab KHONG do duoc loi ich cua sharding —
+    # thu ma sharding sinh ra de giai quyet chinh la "vuot qua gioi han cua mot may".
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
 
   # ─────────────────────────────────────────────────────────────
   # DATABASE — READ REPLICA (Bài 7)
@@ -264,6 +280,37 @@ services:
     depends_on:
       - postgres
     restart: 'no'
+
+  # ─────────────────────────────────────────────────────────────
+  # SHARD THU HAI (Bài 8)
+  #
+  # Cung image, cung schema, nhung la mot database HOAN TOAN RIENG: khong replication,
+  # khong biet gi ve shard con lai. Do la ban chat cua sharding — va cung la ly do
+  # JOIN xuyen shard khong ton tai o tang database (muc 8.5).
+  # ─────────────────────────────────────────────────────────────
+  postgres-shard2:
+    image: postgres:18
+    profiles: ['shard']
+    environment:
+      POSTGRES_PASSWORD: labpass
+      POSTGRES_USER: lab
+      POSTGRES_DB: lab
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command: ['postgres', '-c', 'log_min_duration_statement=500']
+    volumes:
+      - ./postgres/init/20-schema.sql:/docker-entrypoint-initdb.d/20-schema.sql:ro
+    ports:
+      - '5434:5432'
+    restart: unless-stopped
+    # Gioi han 1 CPU MOI SHARD, cung ly do nhu gioi han 1 CPU moi app (Bai 2): neu hai
+    # shard dung chung CPU khong gioi han thi lab KHONG do duoc loi ich cua sharding —
+    # thu ma sharding sinh ra de giai quyet chinh la "vuot qua gioi han cua mot may".
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
 
   # ─────────────────────────────────────────────────────────────
   # BỘ ĐO TẢI

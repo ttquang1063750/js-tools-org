@@ -1,0 +1,1612 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 8: Sharding &amp; Consistent Hashing — js-tools</title>
+    <meta
+      name="description"
+      content="Sharding là bước cuối vì chi phí vĩnh viễn; modulo hashing từ 4 lên 5 shard buộc 79,97% dữ liệu di trú — khớp lý thuyết N/(N+1) tới hai chữ số — còn consistent hashing chỉ 18,78%; nhưng consistent hashing không thể thiếu virtual node: không có vnode, một shard nhận 66 key trong khi shard khác nhận 25.465; và shard key lệch có p50 và p95 tốt hơn nhưng p99 tệ hơn 10,3 lần — hotspot sống hoàn toàn ở phần đuôi."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-sharding" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-sharding" />
+    <meta property="og:title" content="Bài 8: Sharding &amp; Consistent Hashing — js-tools" />
+    <meta
+      property="og:description"
+      content="Sharding là bước cuối vì chi phí vĩnh viễn; modulo hashing từ 4 lên 5 shard buộc 79,97% dữ liệu di trú — khớp lý thuyết N/(N+1) tới hai chữ số — còn consistent hashing chỉ 18,78%; nhưng consistent hashing không thể thiếu virtual node: không có vnode, một shard nhận 66 key trong khi shard khác nhận 25.465; và shard key lệch có p50 và p95 tốt hơn nhưng p99 tệ hơn 10,3 lần — hotspot sống hoàn toàn ở phần đuôi."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 8: Sharding &amp; Consistent Hashing — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Sharding là bước cuối vì chi phí vĩnh viễn; modulo hashing từ 4 lên 5 shard buộc 79,97% dữ liệu di trú — khớp lý thuyết N/(N+1) tới hai chữ số — còn consistent hashing chỉ 18,78%; nhưng consistent hashing không thể thiếu virtual node: không có vnode, một shard nhận 66 key trong khi shard khác nhận 25.465; và shard key lệch có p50 và p95 tốt hơn nhưng p99 tệ hơn 10,3 lần — hotspot sống hoàn toàn ở phần đuôi."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script src="../katex/katex.min.js" defer></script>
+    <script src="../katex/contrib/auto-render.min.js" defer></script>
+    <script src="../katex-render.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 8: Sharding & Consistent Hashing",
+        "description": "Sharding là bước cuối vì chi phí vĩnh viễn; modulo hashing từ 4 lên 5 shard buộc 79,97% dữ liệu di trú — khớp lý thuyết N/(N+1) tới hai chữ số — còn consistent hashing chỉ 18,78%; nhưng consistent hashing không thể thiếu virtual node: không có vnode, một shard nhận 66 key trong khi shard khác nhận 25.465; và shard key lệch có p50 và p95 tốt hơn nhưng p99 tệ hơn 10,3 lần — hotspot sống hoàn toàn ở phần đuôi.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-sharding",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+        "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 8: Sharding &amp; Consistent Hashing</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 22 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-replication">Bài 7</a> giải quyết tầng đọc rất rẻ. Nhưng nó không giúp gì cho hai thứ:
+              <strong>throughput ghi</strong> — mọi lệnh ghi vẫn dồn về một primary — và <strong>dung lượng</strong> —
+              mọi replica đều chứa trọn bộ dữ liệu. Khi một trong hai thứ đó vượt giới hạn một máy, không còn cách nào
+              ngoài chia dữ liệu ra: <strong>sharding</strong>.
+            </p>
+
+            <p>
+              Đây là bước đắt nhất trong toàn bộ series, và cái giá không phải tiền mà là
+              <strong>độ phức tạp vĩnh viễn</strong>: mất transaction xuyên shard, mất JOIN, phân trang trở nên khó, và
+              mọi truy vấn không mang shard key đều thành quét toàn bộ.
+            </p>
+
+            <p>
+              Hai phép đo trong bài đáng chú ý. Thứ nhất, tỉ lệ dữ liệu phải di trú khi thêm một shard: modulo hashing
+              từ 4 lên 5 shard làm <strong>79,97%</strong> dữ liệu phải chuyển chỗ, còn consistent hashing chỉ 18,78% —
+              và cả hai khớp gần như hoàn hảo với công thức lý thuyết. Thứ hai, một shard key lệch làm
+              <strong>p99 tệ hơn 10,3 lần</strong> trong khi <strong>p50 lại tốt hơn</strong> — hotspot sống hoàn toàn ở
+              phần đuôi.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64. Hai shard
+                PostgreSQL 18.3 <strong>độc lập hoàn toàn</strong> (không replication, không biết gì về nhau), mỗi shard
+                giới hạn <strong>1 CPU / 512 MB</strong>; ba app replica mỗi replica 1 CPU; nginx 1.27-alpine; bộ đo tải
+                2 CPU. Phần số liệu về tỉ lệ di trú và virtual node chạy bằng <code>node</code> trên
+                <code>sysdesign-hashring.js</code> với 100.000 key, không cần Docker.<br /><br />
+                Giới hạn 1 CPU mỗi shard <strong>không phải chi tiết trang trí</strong> — xem mục 8.2, nơi việc thiếu nó
+                khiến lab đo ra kết quả ngược hẳn.
+              </div>
+            </div>
+
+            <!-- ================= 8.1 ================= -->
+            <h2>8.1 Khi nào buộc phải shard — và vì sao nên là bước cuối</h2>
+
+            <p>Thứ tự ưu tiên đúng, từ rẻ tới đắt. Mỗi bước chỉ nên đi khi bước trước đã hết tác dụng:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Bước</th>
+                  <th>Giải quyết được</th>
+                  <th>Chi phí độ phức tạp</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1 · Tối ưu query và thêm index</td>
+                  <td>Phần lớn vấn đề "database chậm" trong thực tế</td>
+                  <td>Gần như không</td>
+                </tr>
+                <tr>
+                  <td>2 · Cache (<a href="sysdesign-caching">Bài 5</a>)</td>
+                  <td>Tải đọc; mỗi số 9 hit ratio chia 10 tải database</td>
+                  <td>Thấp, nhưng thêm bài toán vô hiệu hoá</td>
+                </tr>
+                <tr>
+                  <td>3 · Read replica (<a href="sysdesign-replication">Bài 7</a>)</td>
+                  <td>Throughput đọc</td>
+                  <td>Trung bình: lag và read-your-writes</td>
+                </tr>
+                <tr>
+                  <td>4 · Scale dọc primary</td>
+                  <td>Throughput ghi, tới trần phần cứng</td>
+                  <td>Thấp, nhưng có trần và trần đó đắt</td>
+                </tr>
+                <tr>
+                  <td><strong>5 · Sharding</strong></td>
+                  <td><strong>Throughput ghi và dung lượng, không còn trần</strong></td>
+                  <td><strong>Cao và VĨNH VIỄN</strong> — không có đường quay lại dễ dàng</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>Ba dấu hiệu cho thấy bạn <em>thật sự</em> cần shard, chứ không phải chỉ cảm thấy cần:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Dấu hiệu</th>
+                  <th>Vì sao replica và cache không giúp được</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Primary bão hoà I/O ghi, không phải CPU</td>
+                  <td>Replica nhân tải đọc chứ không chia tải ghi; cache không đứng trước đường ghi</td>
+                </tr>
+                <tr>
+                  <td>Dữ liệu vượt dung lượng ổ đĩa lớn nhất bạn mua được</td>
+                  <td>Mỗi replica đều chứa <em>trọn bộ</em> dữ liệu, nên thêm replica không thêm dung lượng</td>
+                </tr>
+                <tr>
+                  <td>Thời gian backup và restore đã dài tới mức không chấp nhận được</td>
+                  <td>
+                    Đây là dấu hiệu bị bỏ qua nhiều nhất. Database 5 TB nghĩa là RTO của bạn tính bằng nhiều giờ, dù hệ
+                    thống đang chạy hoàn hảo
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: shard quá sớm</div>
+              <div class="callout__content">
+                Sharding sớm là quyết định khó đảo ngược nhất trong bài này. Bạn trả giá ngay lập tức — mất
+                <code>JOIN</code>, mất transaction xuyên shard, phân trang thành bài toán riêng, mọi truy vấn không mang
+                shard key thành scatter-gather — để đổi lấy một lợi ích có thể không bao giờ cần đến.<br /><br />
+                Câu hỏi kiểm tra rất đơn giản:
+                <strong>bạn đã đo và biết chính xác cái gì đang bão hoà chưa?</strong> Nếu câu trả lời là "chưa, nhưng
+                chắc là database" thì bước tiếp theo là đi đo, không phải đi shard. Rất nhiều lần thứ đang bão hoà là
+                một truy vấn thiếu index, và một dòng <code>CREATE INDEX</code> giải quyết xong vấn đề mà sharding phải
+                trả giá cả năm.
+              </div>
+            </div>
+            <!-- ================= 8.2 ================= -->
+            <h2>8.2 Chọn shard key — và một phép đo suýt cho kết luận ngược</h2>
+
+            <p>Shard key tốt phải đạt cả ba điều, và điều thứ ba là điều hay bị bỏ qua nhất:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Yêu cầu</th>
+                  <th>Nếu thiếu thì sao</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Cardinality cao</strong></td>
+                  <td>Ít giá trị khác nhau ⇒ không chia được thành nhiều shard, dù thuật toán băm hoàn hảo</td>
+                </tr>
+                <tr>
+                  <td><strong>Phân bố đều</strong></td>
+                  <td>Hotspot: một shard nhận gần hết tải trong khi các shard khác nằm không</td>
+                </tr>
+                <tr>
+                  <td><strong>Khớp với cách truy vấn</strong></td>
+                  <td>
+                    Mọi truy vấn không mang shard key phải hỏi <em>tất cả</em> shard rồi gộp kết quả (scatter-gather) —
+                    độ trễ bằng shard chậm nhất, và tải nhân với số shard
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: shard theo thời gian hoặc ID tăng dần</div>
+              <div class="callout__content">
+                Shard theo <code>created_at</code> hoặc theo ID tự tăng nghe rất tự nhiên và rất dễ hiểu. Hậu quả:
+                <strong>toàn bộ lệnh ghi mới dồn vào một shard</strong> — shard của "hôm nay" — trong khi các shard cũ
+                chỉ nhận lưu lượng đọc thưa thớt. Bạn đã trả toàn bộ chi phí phức tạp của sharding mà không nhận được
+                thứ mình mua: chia tải ghi.<br /><br />
+                Shard theo tenant có cùng vấn đề dưới hình thức khác: nếu một tenant lớn gấp trăm lần các tenant còn lại
+                thì shard chứa nó là một hệ thống riêng đang quá tải. Với trường hợp đó, thường phải
+                <strong>xử lý riêng tenant khổng lồ</strong> — cho nó shard riêng — chứ không có shard key nào giải
+                quyết được bằng cách băm.
+              </div>
+            </div>
+
+            <h3>Đo thật: shard key tốt so với shard key lệch</h3>
+
+            <p>
+              Lab dựng hai shard PostgreSQL <em>độc lập hoàn toàn</em> — không replication, không biết gì về nhau — và
+              một router trong app quyết định key nào đi shard nào. Chế độ <code>skew</code> mô phỏng đúng tình huống
+              "một tenant khổng lồ": 95% request dùng cùng một shard key.
+            </p>
+
+            <p>24 kết nối, 12 giây, 20.000 key khác nhau, mỗi shard giới hạn 1 CPU, hai lần lặp:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Số liệu</th>
+                  <th>Shard key tốt</th>
+                  <th>Shard key lệch</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Phân bố tải</td>
+                  <td>49,3% / 50,7%</td>
+                  <td>97,0% / 3,0%</td>
+                </tr>
+                <tr>
+                  <td>Độ lệch</td>
+                  <td><strong>2,7% / 3,0%</strong></td>
+                  <td><strong>188,0%</strong></td>
+                </tr>
+                <tr>
+                  <td>Throughput</td>
+                  <td><strong>12.024 / 11.982 rps</strong></td>
+                  <td>9.099 / 9.078 rps</td>
+                </tr>
+                <tr>
+                  <td>p50</td>
+                  <td>1,96 / 1,98 ms</td>
+                  <td><strong>1,73 / 1,73 ms</strong> (tốt hơn!)</td>
+                </tr>
+                <tr>
+                  <td>p95</td>
+                  <td>3,03 / 3,01 ms</td>
+                  <td>2,84 / 2,82 ms (vẫn tốt hơn)</td>
+                </tr>
+                <tr>
+                  <td><strong>p99</strong></td>
+                  <td><strong>3,59 / 3,59 ms</strong></td>
+                  <td><strong>37,08 / 36,59 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>Độ trễ lớn nhất</td>
+                  <td>12,19 / 14,45 ms</td>
+                  <td>48,47 / 50,62 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Shard key tốt cho <strong>+32% throughput</strong>. Nhưng hãy đọc kỹ ba dòng percentile: shard key
+              <em>lệch</em> có p50 <strong>và</strong> p95 <strong>tốt hơn</strong>, rồi p99 đột ngột tệ hơn
+              <strong>10,3 lần</strong>. Hotspot không làm chậm phần lớn request — nó dồn toàn bộ thiệt hại vào phần
+              đuôi.
+            </p>
+
+            <p>
+              Đây là lần thứ ba trong series cùng một hình mẫu xuất hiện: ở
+              <a href="sysdesign-load-balancing">Bài 3</a> round robin cho biểu đồ cân bằng nhưng p95 tệ hơn 340 lần; ở
+              <a href="sysdesign-caching">Bài 5</a> single-flight làm p50 tệ hơn nhưng cắt đuôi 11 lần; ở đây shard key
+              lệch thắng ở p50 và p95 rồi thua 10 lần ở p99. Nếu dashboard của bạn chỉ có trung bình và p95 thì cả ba
+              lần bạn đều kết luận ngược.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Phép đo này suýt cho kết luận ngược — và vì sao</div>
+              <div class="callout__content">
+                Lần đo đầu tiên, hai shard PostgreSQL <strong>không có giới hạn CPU</strong>. Kết quả: shard key
+                <em>lệch</em> nhanh hơn — 14.058 rps so với 12.090 rps của shard key tốt — và p99 cũng tốt hơn (3,06 so
+                với 3,61 ms). Nếu dừng ở đó, bài này sẽ kết luận "shard key lệch tốt hơn", nghe vô lý nhưng có số liệu
+                kèm theo.<br /><br />
+                Nguyên nhân: cả hai shard nằm trên <em>cùng một máy</em> và chia nhau CPU của máy đó. Cấu hình phân bố
+                đều làm <strong>hai</strong> container PostgreSQL cùng hoạt động, tạo thêm tranh chấp CPU với ba app và
+                bộ đo tải; cấu hình lệch chỉ làm <strong>một</strong> container bận. Trên một máy, "phân bố đều" là một
+                điều <em>bất lợi</em>.<br /><br />
+                Nhưng đó chính là thứ mà sharding sinh ra để vượt qua: <strong>giới hạn của một máy</strong>. Một lab
+                trên một laptop không thể đo được lợi ích đó, trừ khi ta áp giới hạn tài nguyên cho mỗi shard để mô
+                phỏng "mỗi shard là một máy riêng". Thêm <code>cpus: '1.0'</code> cho mỗi shard — đúng cùng lý do đã
+                giới hạn 1 CPU mỗi app từ <a href="sysdesign-single-server-limits">Bài 2</a> — và kết quả đảo chiều đúng
+                như dự đoán.<br /><br />
+                Bài học chung: khi một phép đo cho kết quả ngược với lý thuyết, khả năng cao nhất là
+                <strong>môi trường đo đã triệt tiêu chính hiện tượng cần đo</strong>. Câu hỏi phải hỏi là "cấu hình này
+                có cho hiện tượng đó cơ hội xuất hiện không", trước khi kết luận lý thuyết sai.
+              </div>
+            </div>
+
+            <p>Router shard trong lab, đầy đủ như mã đang chạy:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">shard_router.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// FNV-1a roi tron bang fmix32 cua MurmurHash3.
+// Vi sao can buoc tron: FNV-1a co avalanche KEM voi cac chuoi ngan va giong nhau
+// ('user:1', 'user:2'...), nen cac key lien tiep roi vao cung shard theo cum.
+// Buoc fmix32 re va xoa han hien tuong do.
+function shardHash(key) {
+  let h = 2166136261;
+  for (let i = 0; i &lt; key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h ^= h &gt;&gt;&gt; 16;
+  h = Math.imul(h, 2246822507);
+  h ^= h &gt;&gt;&gt; 13;
+  h = Math.imul(h, 3266489909);
+  h ^= h &gt;&gt;&gt; 16;
+  return h &gt;&gt;&gt; 0;
+}
+
+// CANH BAO: day la modulo hashing. Don gian, nhung xem muc 8.3 truoc khi dung that —
+// them mot shard la phai di tru gan het du lieu.
+function pickShard(shardKey) {
+  return shardHash(String(shardKey)) % pgShards.length;
+}</code></pre>
+            </div>
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Heatmap tải theo shard: shard key tốt cho 49 và 51 phần trăm, shard key lệch cho 97 và 3 phần trăm, kèm p99 đo được"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Hotspot sống hoàn toàn ở phần đuôi — p50 nói ngược với p99
+                </text>
+
+                <!-- ==== shard key tot ==== -->
+                <text x="16" y="52" fill="#22c55e" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  SHARD KEY TỐT
+                </text>
+                <rect x="16" y="60" width="150" height="54" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <rect x="16" y="60" width="150" height="27" fill="#22c55e" opacity="0.35" />
+                <text
+                  x="91"
+                  y="80"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  shard 1 · 49,3%
+                </text>
+                <text
+                  x="91"
+                  y="104"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  80.762 request
+                </text>
+                <rect x="176" y="60" width="150" height="54" rx="4" fill="#0f2419" stroke="#22c55e" />
+                <rect x="176" y="60" width="150" height="28" fill="#22c55e" opacity="0.36" />
+                <text
+                  x="251"
+                  y="80"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  shard 2 · 50,7%
+                </text>
+                <text
+                  x="251"
+                  y="104"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  82.989 request
+                </text>
+                <text x="344" y="76" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  độ lệch 2,7% · 12.024 rps
+                </text>
+                <text x="344" y="92" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  p50 1,96 ms · p99 3,59 ms
+                </text>
+                <text x="344" y="108" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  đuôi sát p50 — hệ thống đang khoẻ
+                </text>
+
+                <!-- ==== shard key lech ==== -->
+                <text
+                  x="16"
+                  y="146"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  SHARD KEY LỆCH (95% request cùng một shard key)
+                </text>
+                <rect x="16" y="154" width="150" height="54" rx="4" fill="#2a1520" stroke="#ef4444" />
+                <rect x="16" y="154" width="150" height="52" fill="#ef4444" opacity="0.55" />
+                <text
+                  x="91"
+                  y="176"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  shard 1 · 97,0%
+                </text>
+                <text
+                  x="91"
+                  y="198"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  122.964 request
+                </text>
+                <rect x="176" y="154" width="150" height="54" rx="4" fill="#2a1520" stroke="#ef4444" />
+                <rect x="176" y="154" width="150" height="2" fill="#ef4444" opacity="0.3" />
+                <text
+                  x="251"
+                  y="176"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  shard 2 · 3,0%
+                </text>
+                <text
+                  x="251"
+                  y="198"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  3.790 request · gần như rảnh
+                </text>
+                <text x="344" y="170" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  độ lệch 188,0% · 9.099 rps
+                </text>
+                <text
+                  x="344"
+                  y="186"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  p50 1,73 ms — TỐT HƠN cấu hình trên!
+                </text>
+                <text
+                  x="344"
+                  y="202"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  p99 37,08 ms — tệ hơn 10,3 lần
+                </text>
+
+                <!-- so sanh percentile -->
+                <rect x="16" y="224" width="688" height="64" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="28"
+                  y="242"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Cùng bốn số liệu, hai kết luận trái ngược
+                </text>
+                <text x="28" y="260" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  p50: 1,73 &lt; 1,96 · p95: 2,84 &lt; 3,03 → "shard key lệch nhanh hơn"
+                </text>
+                <text x="28" y="276" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  p99: 37,08 vs 3,59 · max: 48,47 vs 12,19 → "shard key lệch tệ hơn 10 lần"
+                </text>
+                <text x="440" y="268" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Chỉ p99 và max nói đúng.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Đây là lần thứ ba trong series cùng hình mẫu này xuất hiện (Bài 3 mục 3.3, Bài 5 mục 5.4). Dashboard chỉ
+                có trung bình và p95 sẽ cho kết luận sai cả ba lần.
+              </figcaption>
+            </figure>
+
+            <!-- ================= 8.3 ================= -->
+            <h2>8.3 Modulo hashing và thảm hoạ resharding</h2>
+
+            <p>
+              Cách chia đơn giản nhất là <code>hash(key) % N</code> với $N$ là số shard. Nó ngắn, dễ hiểu, phân bố đều,
+              và chính là cách router trong lab đang làm. Vấn đề xuất hiện đúng vào ngày bạn thêm shard thứ $N+1$.
+            </p>
+
+            <p>
+              Một key chỉ <em>giữ nguyên chỗ</em> nếu $h \bmod N = h \bmod (N+1)$. Theo định lý số dư Trung Hoa, khi $N$
+              và $N+1$ nguyên tố cùng nhau — mà hai số liên tiếp thì luôn vậy — cặp $(h \bmod N,\ h \bmod (N+1))$ phân
+              bố đều trên $N(N+1)$ khả năng. Số cặp thoả điều kiện giữ nguyên là $N$, nên:
+            </p>
+
+            <p>
+              $$P(\text{stay}) = \frac{N}{N(N+1)} = \frac{1}{N+1} \quad\Rightarrow\quad P(\text{move}) = \frac{N}{N+1}$$
+            </p>
+
+            <p>
+              Lưu ý con số này là $N/(N+1)$, <strong>không</strong> phải $(N-1)/N$ như thường bị trích dẫn. Chạy thật
+              với 100.000 key, so cả hai thuật toán, consistent hashing dùng 150 virtual node:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thêm shard</th>
+                  <th>Modulo — đo</th>
+                  <th>Modulo — lý thuyết $\frac{N}{N+1}$</th>
+                  <th>Consistent — đo</th>
+                  <th>Consistent — lý thuyết $\frac{1}{N+1}$</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>2 → 3</td>
+                  <td>66,81%</td>
+                  <td>66,67%</td>
+                  <td>37,19%</td>
+                  <td>33,33%</td>
+                </tr>
+                <tr>
+                  <td>3 → 4</td>
+                  <td>74,89%</td>
+                  <td>75,00%</td>
+                  <td>29,46%</td>
+                  <td>25,00%</td>
+                </tr>
+                <tr>
+                  <td><strong>4 → 5</strong></td>
+                  <td><strong>79,97%</strong></td>
+                  <td><strong>80,00%</strong></td>
+                  <td><strong>18,78%</strong></td>
+                  <td><strong>20,00%</strong></td>
+                </tr>
+                <tr>
+                  <td>8 → 9</td>
+                  <td>88,74%</td>
+                  <td>88,89%</td>
+                  <td>12,76%</td>
+                  <td>11,11%</td>
+                </tr>
+                <tr>
+                  <td>16 → 17</td>
+                  <td>94,03%</td>
+                  <td>94,12%</td>
+                  <td>5,74%</td>
+                  <td>5,88%</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Thêm cùng một shard: modulo hashing buộc 80 phần trăm key di trú, consistent hashing chỉ khoảng 19 phần trăm"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Thêm CÙNG một shard (4 → 5) · ô đỏ = key phải chuyển chỗ
+                </text>
+
+                <!-- ==== MODULO ==== -->
+                <text x="16" y="50" fill="#ef4444" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  MODULO · hash(key) % N — đo được 79,97% key phải di trú
+                </text>
+                <!-- luoi 20x4 = 80 o, to do 64 o (80%) -->
+                <g>
+                  <rect x="16" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="35" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="54" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="73" y="58" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="92" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="111" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="130" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="149" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="168" y="58" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="187" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="206" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="225" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="244" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="263" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="282" y="58" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="301" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="320" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="339" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="358" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="377" y="58" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="16" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="35" y="77" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="54" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="73" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="92" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="111" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="130" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="149" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="168" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="187" y="77" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="206" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="225" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="244" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="263" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="282" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="301" y="77" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="320" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="339" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="358" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="377" y="77" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="16" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="35" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="54" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="73" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="92" y="96" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="111" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="130" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="149" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="168" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="187" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="206" y="96" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="225" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="244" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="263" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="282" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="301" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="320" y="96" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="339" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="358" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="377" y="96" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="16" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="35" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="54" y="115" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="73" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="92" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="111" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="130" y="115" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="149" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="168" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="187" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="206" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="225" y="115" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="244" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="263" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="282" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="301" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="320" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="339" y="115" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="358" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="377" y="115" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                </g>
+                <text
+                  x="410"
+                  y="76"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  64 / 80 ô đỏ
+                </text>
+                <text x="410" y="94" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Lý thuyết N/(N+1) = 4/5 = 80,00%
+                </text>
+                <text x="410" y="110" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Đo thật (100.000 key) = 79,97%
+                </text>
+                <text x="410" y="128" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Với 16 → 17 shard thì con số là 94,03%
+                </text>
+
+                <!-- ==== CONSISTENT ==== -->
+                <text
+                  x="16"
+                  y="164"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  CONSISTENT HASHING · vòng hash + 150 vnode — đo được 18,78%
+                </text>
+                <g>
+                  <rect x="16" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="35" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="54" y="172" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="73" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="92" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="111" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="130" y="172" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="149" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="168" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="187" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="206" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="225" y="172" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="244" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="263" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="282" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="301" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="320" y="172" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="339" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="358" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="377" y="172" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="16" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="35" y="191" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="54" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="73" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="92" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="111" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="130" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="149" y="191" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="168" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="187" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="206" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="225" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="244" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="263" y="191" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="282" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="301" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="320" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="339" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="358" y="191" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="377" y="191" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="16" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="35" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="54" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="73" y="210" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="92" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="111" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="130" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="149" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="168" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="187" y="210" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="206" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="225" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="244" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="263" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="282" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="301" y="210" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="320" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="339" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="358" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="377" y="210" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="16" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="35" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="54" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="73" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="92" y="229" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="111" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="130" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="149" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="168" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="187" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="206" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="225" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="244" y="229" width="17" height="17" fill="#ef4444" opacity="0.75" />
+                  <rect x="263" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="282" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="301" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="320" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="339" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="358" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                  <rect x="377" y="229" width="17" height="17" fill="#22c55e" opacity="0.55" />
+                </g>
+                <text
+                  x="410"
+                  y="190"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  15 / 80 ô đỏ
+                </text>
+                <text x="410" y="208" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Lý thuyết 1/(N+1) = 1/5 = 20,00%
+                </text>
+                <text x="410" y="224" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Đo thật (100.000 key) = 18,78%
+                </text>
+                <text x="410" y="242" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Chỉ những key trong cung của shard mới phải chuyển
+                </text>
+
+                <rect x="16" y="258" width="688" height="34" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="28" y="278" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Chênh lệch 4,3 lần về lượng dữ liệu di trú — nhưng chi phí thật nằm ở cache miss toàn cục và ở khoảng
+                  thời gian một key có thể ở cả hai shard.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Mỗi ô đại diện 1,25% tập key; số ô đỏ được vẽ khớp với tỉ lệ đo được. Ô xanh là key giữ nguyên chỗ.
+              </figcaption>
+            </figure>
+            <p>
+              Modulo khớp lý thuyết tới hai chữ số thập phân ở mọi hàng. Và con số đáng nhớ nằm ở hàng 4 → 5: thêm
+              <em>một</em> shard vào một hệ thống bốn shard buộc <strong>80% dữ liệu phải chuyển chỗ</strong>. Với 16
+              shard thì con số là 94% — càng nhiều shard, thêm một shard càng tệ.
+            </p>
+
+            <p>
+              Consistent hashing sát với $1/(N+1)$ nhưng lệch rõ hơn ở $N$ nhỏ (37,19% so với 33,33% lý thuyết khi 2 →
+              3). Lý do: với ít node, vị trí các điểm băm trên vòng có phương sai lớn, nên tỉ lệ thực tế dao động quanh
+              giá trị kỳ vọng. Càng nhiều node và càng nhiều virtual node thì càng khớp.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Chi phí thật của 80% không phải là băng thông</div>
+              <div class="callout__content">
+                Chuyển 80% dữ liệu là việc nặng nhưng có thể lên kế hoạch. Cái đắt hơn là ba hệ quả kéo theo:<br /><br />
+                <strong>Một:</strong> mọi tầng cache dùng cùng cách băm đó cũng miss toàn bộ — nếu bạn đang có hit ratio
+                99% thì tải database tăng 100 lần đúng lúc nó đang phải di trú dữ liệu (nối
+                <a href="sysdesign-caching">Bài 5</a> mục 5.1).<br /><br />
+                <strong>Hai:</strong> trong lúc di trú, một key có thể ở shard cũ, shard mới, hoặc cả hai — nên tầng ứng
+                dụng phải biết đọc cả hai chỗ và biết chỗ nào là chuẩn.<br /><br />
+                <strong>Ba:</strong> nếu phải dừng lại giữa đường, bạn ở một trạng thái không phải cũ cũng không phải
+                mới. Đó là lý do consistent hashing không chỉ "tốt hơn về con số" mà là điều kiện để việc thêm shard trở
+                thành một thao tác vận hành bình thường thay vì một dự án.
+              </div>
+            </div>
+            <!-- ================= 8.4 ================= -->
+            <h2>8.4 Consistent hashing và virtual node</h2>
+
+            <p>
+              Ý tưởng: thay vì băm key ra <em>chỉ số shard</em>, hãy băm cả key và cả tên shard ra
+              <strong>cùng một không gian</strong> — một vòng tròn 32 bit. Mỗi key thuộc về shard đầu tiên gặp được khi
+              đi theo chiều kim đồng hồ. Thêm một shard chỉ chiếm lấy phần cung nằm ngay trước nó, nên chỉ những key
+              trong cung đó phải di trú.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 316"
+                width="100%"
+                role="img"
+                aria-label="Vòng hash: bên trái không có virtual node nên các cung rất lệch, bên phải mỗi node có nhiều virtual node nên tải đều hơn"
+              >
+                <rect width="720" height="316" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Vòng hash — và vì sao virtual node là bắt buộc, không phải tối ưu thêm
+                </text>
+
+                <!-- ==== ben trai: khong vnode ==== -->
+                <text x="16" y="48" fill="#ef4444" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  1 điểm mỗi node — cung rất lệch
+                </text>
+                <circle cx="130" cy="150" r="76" fill="none" stroke="#374151" stroke-width="1.5" />
+                <!-- cac diem node lech nhau -->
+                <circle cx="130" cy="74" r="6" fill="#38bdf8" />
+                <text
+                  x="130"
+                  y="64"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  s1
+                </text>
+                <circle cx="196" cy="112" r="6" fill="#22c55e" />
+                <text x="212" y="110" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">s2</text>
+                <circle cx="188" cy="196" r="6" fill="#f59e0b" />
+                <text x="204" y="204" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">s3</text>
+                <circle cx="66" cy="112" r="6" fill="#a78bfa" />
+                <text x="42" y="108" fill="#a78bfa" font-family="system-ui, sans-serif" font-size="8">s4</text>
+                <!-- cung lon cua s4 -->
+                <path d="M188 196 A76 76 0 0 1 66 112" fill="none" stroke="#a78bfa" stroke-width="5" opacity="0.5" />
+                <text
+                  x="130"
+                  y="252"
+                  fill="#a78bfa"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  s4 chiếm cung khổng lồ
+                </text>
+                <text
+                  x="130"
+                  y="266"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  s2 chiếm cung tí xíu
+                </text>
+
+                <!-- ==== ben phai: co vnode ==== -->
+                <text
+                  x="300"
+                  y="48"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Nhiều virtual node mỗi node — cung xen kẽ
+                </text>
+                <circle cx="400" cy="150" r="76" fill="none" stroke="#374151" stroke-width="1.5" />
+                <circle cx="400" cy="74" r="4" fill="#38bdf8" />
+                <circle cx="447" cy="88" r="4" fill="#22c55e" />
+                <circle cx="476" cy="127" r="4" fill="#f59e0b" />
+                <circle cx="474" cy="175" r="4" fill="#a78bfa" />
+                <circle cx="443" cy="214" r="4" fill="#38bdf8" />
+                <circle cx="397" cy="226" r="4" fill="#f59e0b" />
+                <circle cx="351" cy="214" r="4" fill="#22c55e" />
+                <circle cx="325" cy="176" r="4" fill="#a78bfa" />
+                <circle cx="324" cy="126" r="4" fill="#38bdf8" />
+                <circle cx="352" cy="88" r="4" fill="#f59e0b" />
+                <circle cx="424" cy="78" r="4" fill="#a78bfa" />
+                <circle cx="464" cy="105" r="4" fill="#22c55e" />
+                <text
+                  x="400"
+                  y="252"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  mỗi node có nhiều cung nhỏ rải khắp vòng
+                </text>
+                <text
+                  x="400"
+                  y="266"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  ⇒ tổng cung của mỗi node xấp xỉ bằng nhau
+                </text>
+
+                <!-- ==== so do duoc ==== -->
+                <rect x="520" y="58" width="184" height="188" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text x="532" y="76" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  Đo thật · 8 node · 100.000 key
+                </text>
+                <text x="532" y="94" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  lý tưởng: 12.500 key mỗi node
+                </text>
+                <text x="532" y="114" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">1 vnode:</text>
+                <text x="532" y="126" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  ít nhất 66 · nhiều nhất 25.465
+                </text>
+                <text
+                  x="532"
+                  y="138"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  font-weight="600"
+                >
+                  chênh 386 lần!
+                </text>
+                <text x="532" y="158" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">10 vnode:</text>
+                <text x="532" y="170" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  8.428 · 20.368 — lệch 95,5%
+                </text>
+                <text x="532" y="190" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">150 vnode:</text>
+                <text x="532" y="202" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  11.514 · 14.688 — lệch 25,4%
+                </text>
+                <text x="532" y="222" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">500 vnode:</text>
+                <text x="532" y="234" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  10.887 · 13.483 — lệch 20,8%
+                </text>
+
+                <text x="16" y="290" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Không có virtual node, consistent hashing vẫn lệch tải nặng — đó là lý do mọi cài đặt thật đều dùng
+                  vnode.
+                </text>
+                <text x="16" y="306" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Virtual node cũng là cách xử lý node có dung lượng khác nhau: node mạnh gấp đôi thì cấp cho nó gấp đôi
+                  số vnode.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Số liệu chạy bằng <code>node</code> trên <code>sysdesign-hashring.js</code>, không cần Docker — bạn có
+                thể lặp lại trong vài giây.
+              </figcaption>
+            </figure>
+
+            <p>Bảng đầy đủ, cùng 8 node và 100.000 key (lý tưởng là 12.500 key mỗi node):</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Virtual node / shard</th>
+                  <th>Node ít nhất</th>
+                  <th>Node nhiều nhất</th>
+                  <th>Độ lệch</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>66</td>
+                  <td>25.465</td>
+                  <td>203,2%</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>1.002</td>
+                  <td>28.766</td>
+                  <td>222,1%</td>
+                </tr>
+                <tr>
+                  <td>5</td>
+                  <td>5.621</td>
+                  <td>18.705</td>
+                  <td>104,7%</td>
+                </tr>
+                <tr>
+                  <td>10</td>
+                  <td>8.428</td>
+                  <td>20.368</td>
+                  <td>95,5%</td>
+                </tr>
+                <tr>
+                  <td>50</td>
+                  <td>10.599</td>
+                  <td>14.722</td>
+                  <td>33,0%</td>
+                </tr>
+                <tr>
+                  <td>150</td>
+                  <td>11.514</td>
+                  <td>14.688</td>
+                  <td>25,4%</td>
+                </tr>
+                <tr>
+                  <td>500</td>
+                  <td>10.887</td>
+                  <td>13.483</td>
+                  <td>20,8%</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Hàng đầu tiên là lý do virtual node tồn tại: với một điểm băm mỗi node, một shard nhận
+              <strong>66 key</strong> trong khi một shard khác nhận <strong>25.465</strong> — chênh
+              <strong>386 lần</strong>
+              cho một thuật toán vẫn thường được giới thiệu là "phân bố đều".
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Độ lệch không giảm đơn điệu ở giá trị nhỏ</div>
+              <div class="callout__content">
+                Để ý hàng 2 vnode: độ lệch <strong>222,1%</strong>, <em>tệ hơn</em> cả 1 vnode (203,2%). Đây không phải
+                lỗi đo — với rất ít điểm băm, kết quả phụ thuộc hoàn toàn vào chỗ những điểm đó tình cờ rơi vào, nên độ
+                lệch dao động chứ không giảm đều.<br /><br />
+                Điều đó có một hệ quả thực hành:
+                <strong>đừng chọn số vnode nhỏ rồi tăng dần cho tới khi thấy khá</strong>, vì đường đi lên không đơn
+                điệu và bạn có thể dừng lại ở một điểm may mắn. Hãy chọn thẳng một giá trị đủ lớn (100–200 là khoảng
+                thường dùng trong thực tế) và kiểm tra bằng đo thật với đúng tập key của bạn. Chi phí là bộ nhớ và thời
+                gian tìm kiếm trên vòng — cả hai đều tăng theo số vnode, nên 500 không phải lúc nào cũng tốt hơn 150 (đo
+                được 20,8% so với 25,4%, đổi lấy hơn ba lần số điểm phải giữ).
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai_hashring.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># Khong can Docker — chi can node
+cd blog/sysdesign
+node --input-type=module -e "
+import { compareAddNode, makeKeys, HashRing } from './sysdesign-hashring.js';
+const keys = makeKeys(100000);
+for (const n of [2,3,4,8,16]) {
+  const nodes = Array.from({length:n},(_,i)=>'s'+(i+1));
+  const r = compareAddNode(keys, nodes, 's'+(n+1), 150);
+  console.log(n+'->'+(n+1),
+    'modulo', (r.modulo.ratio*100).toFixed(2)+'%', '(ly thuyet', ((n/(n+1))*100).toFixed(2)+'%)',
+    '| consistent', (r.consistent.ratio*100).toFixed(2)+'%', '(ly thuyet', ((1/(n+1))*100).toFixed(2)+'%)');
+}
+for (const v of [1,2,10,150,500]) {
+  const ring = new HashRing({ vnodes: v });
+  for (const n of ['s1','s2','s3','s4','s5','s6','s7','s8']) ring.addNode(n);
+  const d = ring.loadDistribution(keys);
+  console.log(v+' vnode: min', d.min, 'max', d.max, 'lech', (d.spread*100).toFixed(1)+'%');
+}
+"
+
+# Va bo tu kiem tra 42 khang dinh, trong do co ca phan hashring
+node sysdesign-engine-selftest.mjs</code></pre>
+            </div>
+
+            <!-- ================= 8.5 ================= -->
+            <h2>8.5 Hệ quả ở tầng ứng dụng — phần đắt thật sự</h2>
+
+            <p>
+              Chọn được shard key tốt và dùng consistent hashing chỉ giải quyết phần <em>hạ tầng</em>. Cái đắt nằm ở
+              tầng ứng dụng, vì bốn thứ bạn vẫn coi là hiển nhiên nay không còn nữa.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thứ mất đi</th>
+                  <th>Vì sao mất</th>
+                  <th>Phải thay bằng gì</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>JOIN</code> giữa hai bảng khác shard</td>
+                  <td>Hai shard là hai database không biết gì về nhau</td>
+                  <td>
+                    Nhân bản dữ liệu nhỏ sang mọi shard, hoặc đặt hai bảng cùng shard key để chúng luôn ở cùng shard
+                  </td>
+                </tr>
+                <tr>
+                  <td>Transaction bao nhiều shard</td>
+                  <td>Không có transaction coordinator giữa các database độc lập</td>
+                  <td>
+                    Thiết kế lại để mỗi transaction nằm trong <em>một</em> shard; nếu không được thì saga (Bài 14)
+                  </td>
+                </tr>
+                <tr>
+                  <td>Khoá tự tăng toàn cục</td>
+                  <td>Mỗi shard có chuỗi riêng ⇒ hai shard sinh cùng ID</td>
+                  <td>UUID, hoặc ID có nhúng shard, hoặc Snowflake-style (Bài 10)</td>
+                </tr>
+                <tr>
+                  <td>Truy vấn theo cột không phải shard key</td>
+                  <td>Không biết dữ liệu nằm shard nào</td>
+                  <td>
+                    Global secondary index (một bảng tra cứu ánh xạ giá trị → shard), hoặc chấp nhận scatter-gather
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: tự làm JOIN trong tầng ứng dụng</div>
+              <div class="callout__content">
+                Khi <code>JOIN</code> không còn, phản xạ tự nhiên là kéo dữ liệu từ cả hai shard về app rồi ghép trong
+                bộ nhớ. Với vài trăm dòng thì không sao. Với vài trăm nghìn dòng thì bạn vừa biến một database phân tán
+                thành một nút cổ chai mạng — và tệ hơn, chỗ nghẽn nằm ở app chứ không ở database, nên mọi dashboard
+                database vẫn xanh trong khi hệ thống chậm.<br /><br />
+                Đây cũng chính là bài toán fan-out ở <a href="sysdesign-api-gateway">Bài 4</a> mục 4.4 với đúng cùng hai
+                quy tắc: gọi các shard <strong>song song</strong> (độ trễ bằng shard chậm nhất, không phải tổng), và
+                <strong>có timeout riêng cho từng shard</strong> để một shard chậm không kéo cả truy vấn xuống.<br /><br />
+                Nhưng câu trả lời tốt nhất thường không phải tối ưu việc ghép, mà là <em>không cần ghép</em>: chọn shard
+                key sao cho dữ liệu hay được truy vấn cùng nhau thì nằm cùng shard. Đó là yêu cầu thứ ba ở mục 8.2 —
+                "khớp với cách truy vấn" — và nó quan trọng hơn cả hai yêu cầu đầu.
+              </div>
+            </div>
+
+            <p>
+              Còn một việc nữa mà không có lời khuyên nào làm cho dễ: <strong>phân trang xuyên shard</strong>. Muốn lấy
+              "20 dòng mới nhất" trên 8 shard, bạn phải lấy 20 dòng mới nhất từ <em>mỗi</em> shard (160 dòng), gộp, sắp
+              xếp, rồi cắt 20. Trang thứ hai thì phải lấy 40 mỗi shard, và trang thứ 100 thì mỗi shard phải trả 2.000
+              dòng để cuối cùng dùng 20. Chi phí tăng theo số trang, không theo số dòng cần.
+            </p>
+
+            <p>
+              Cách thoát thông thường là bỏ phân trang theo số trang và chuyển sang
+              <strong>phân trang theo con trỏ</strong> (cursor/keyset): "cho tôi 20 dòng sau mốc này". Nó cắt được chi
+              phí tăng theo trang, nhưng đổi lại người dùng không nhảy tới trang 100 được nữa — một thay đổi
+              <em>sản phẩm</em>, không chỉ là thay đổi kỹ thuật. Đây là dạng đánh đổi rất đặc trưng của sharding: giới
+              hạn hạ tầng đi ngược lên và định hình cả tính năng.
+            </p>
+
+            <h3>Tự làm lại phép đo shard</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai_shard.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+docker compose --profile shard up -d     # hai shard PostgreSQL DOC LAP + router trong app
+
+# Kiem tra router phan bo that
+for k in a b c d e f; do curl -s "http://localhost:3001/shard?key=$k&mode=good"; echo; done
+
+# --- shard key TOT ---
+./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/shard?mode=good" \
+  -c 24 -d 12 -w 2 --json --key-space 20000
+./tools/cache-stats.sh          # xem dong SHARD + do lech
+
+# --- shard key LECH (95% request cung mot shard key) ---
+./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/shard?mode=skew" \
+  -c 24 -d 12 -w 2 --json --key-space 20000
+./tools/cache-stats.sh
+
+# QUAN TRONG: neu ban bo gioi han `cpus: '1.0'` cua hai shard trong docker-compose.yml
+# thi ket qua se DAO NGUOC — shard key lech trong nhu nhanh hon. Ly do o muc 8.2.</code></pre>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Sharding là bước cuối vì nó là bước duy nhất có chi phí <em>vĩnh viễn</em>: mất JOIN, mất transaction
+              xuyên shard, phân trang thành bài toán riêng. Trước nó còn bốn bước rẻ hơn, và câu hỏi kiểm tra luôn là
+              "bạn đã đo và biết chính xác cái gì đang bão hoà chưa".
+            </p>
+
+            <p>
+              Modulo hashing đơn giản nhưng thêm một shard buộc $N/(N+1)$ dữ liệu di trú — đo được 79,97% khi đi từ 4
+              lên 5 shard, khớp lý thuyết tới hai chữ số. Consistent hashing hạ con số đó xuống 18,78%, nhưng
+              <strong>chỉ khi có virtual node</strong>: không có vnode, một shard nhận 66 key trong khi shard khác nhận
+              25.465.
+            </p>
+
+            <p>
+              Và bài học về đo lường lặp lại lần thứ ba trong series: shard key lệch có p50 <em>và</em> p95
+              <strong>tốt hơn</strong> shard key tốt, rồi p99 tệ hơn 10,3 lần. Cộng thêm một bài học mới: lần đo đầu
+              tiên của mục 8.2 cho kết quả ngược hoàn toàn, vì hai shard dùng chung CPU của một máy — môi trường đo đã
+              triệt tiêu đúng hiện tượng cần đo.
+            </p>
+
+            <p>
+              <strong>Bài 9</strong> hình thức hoá câu hỏi mà mục 7.4 để ngỏ: khi mạng bị chia, và không node nào biết
+              bên kia đã chết hay chỉ mất liên lạc, thì phải chọn gì? Đó là CAP — và phần quan trọng hơn CAP mà ít người
+              nói tới: lựa chọn bạn gặp <em>hằng ngày</em>, khi mạng hoàn toàn bình thường.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-hashring.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về sysdesign-hashring.js
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-replication" class="article-related__link article-related__link--prev">
+                  Bài 7: Replication &amp; Scale Tầng Đọc
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 9: CAP &amp; Các Mô Hình Nhất Quán (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
