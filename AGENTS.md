@@ -192,6 +192,8 @@ js-tools-org/
 │           │   ├── nginx/lb.conf            #   L7 load balancer config
 │           │   ├── nginx/gw.conf            #   API gateway: HTTP 8081 + HTTPS 8443 (Lesson 4)
 │           │   ├── nginx/gw-routes.conf     #   routes shared by both ports, so the TLS delta is pure
+│           │   ├── nginx/edge.conf          #   edge/CDN tier with proxy_cache, X-Cache header (Lesson 6)
+│           │   ├── nginx/edge-common.conf   #   cache settings shared by raw-key and normalized-key locations
 │           │   ├── static/hello.json        #   file served by the gateway itself (Lesson 4)
 │           │   ├── tools/cache-stats.sh     #   sums cache counters across all 3 replicas (Lesson 5)
 │           │   └── README.md                #   MANDATORY CPU-architecture preflight

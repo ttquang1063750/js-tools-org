@@ -51,6 +51,7 @@ docker compose exec app1 node -e "console.log(process.arch)"   # phải khớp u
 | 2   | `docker compose --profile base up -d`  | 1 app server (cổng 3001)                               |
 | 3   | `docker compose --profile lb up -d`    | nginx làm load balancer (cổng 8080) + 3 app replica    |
 | 4   | `docker compose --profile gw up -d`    | nginx làm API gateway (HTTP 8081 + HTTPS 8443) + 3 app |
+| 6   | `docker compose --profile edge up -d`  | tầng edge có proxy_cache (cổng 8082) + 3 app           |
 | 5   | `docker compose --profile cache up -d` | thêm Redis (cổng 6379)                                 |
 | 7   | `docker compose --profile db up -d`    | thêm PostgreSQL (cổng 5432)                            |
 
@@ -77,7 +78,7 @@ biệt cấu hình. Đó là lý do cổng HTTP tồn tại — chỉ để làm
 Dừng và xoá sạch:
 
 ```bash
-docker compose --profile base --profile lb --profile gw --profile cache --profile db down
+docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db down
 ```
 
 > Cấu hình **replica primary/standby** của PostgreSQL và **worker cho message queue** sẽ được

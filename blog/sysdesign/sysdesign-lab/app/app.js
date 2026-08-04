@@ -16,6 +16,7 @@
  *   POST /reset-stats  → xoá bộ đếm, để mỗi phép đo bắt đầu từ số 0 (Bài 5)
  *   GET /client-ip     → phơi bày lỗ hổng X-Forwarded-For (Bài 4, mục 4.2)
  *   GET /aggregate     → gộp nhiều nhánh (BFF); so song song vs tuần tự (Bài 4, mục 4.4)
+ *   GET /cacheable     → phát header cache cho tầng edge; ETag/304, Vary (Bài 6)
  *
  * Biến môi trường: PORT, INSTANCE, REDIS_URL, DB_DELAY_MS, DB_MAX_CONCURRENCY, GRACEFUL,
  *                  TRUST_PROXY_HOPS
@@ -373,6 +374,53 @@ const server = http.createServer(async (req, res) => {
         totalMs: Number(totalMs.toFixed(2)),
         perBranch: results,
       });
+    }
+
+    if (p === '/cacheable') {
+      // Endpoint nay ton tai de tang edge (nginx proxy_cache) co thu ma cache (Bai 6).
+      //
+      // ?ttl=60          gia tri max-age / s-maxage
+      // ?vary=cookie     them `Vary: Cookie` — de CHUNG MINH no bam nho cache
+      // ?etag=0          tat ETag (mac dinh bat) de so co/khong revalidation
+      // ?private=1       Cache-Control: private => tang edge KHONG duoc cache
+      // ?immutable=1     max-age dai + immutable, kieu asset co hash trong ten file
+      const ttl = Math.max(0, Number(url.searchParams.get('ttl') || 60));
+      const wantEtag = url.searchParams.get('etag') !== '0';
+      const isPrivate = url.searchParams.get('private') === '1';
+      const immutable = url.searchParams.get('immutable') === '1';
+      const vary = url.searchParams.get('vary') || '';
+
+      // Noi dung PHAI on dinh theo key, neu khong ETag doi moi lan va revalidation
+      // se khong bao gio tra 304 — mot loi rat de mac phai.
+      const key = url.searchParams.get('key') || 'doc1';
+      const body = JSON.stringify({ key, value: `noi dung on dinh cua ${key}`, servedBy: INSTANCE });
+      // ETag yeu, tinh tu chinh noi dung. Dung hash don gian de khong can dependency.
+      let h = 2166136261;
+      for (let i = 0; i < body.length; i++) {
+        h ^= body.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      const etag = `"${(h >>> 0).toString(16)}"`;
+
+      const headers = { 'Content-Type': 'application/json; charset=utf-8', 'X-Instance': INSTANCE };
+      if (immutable) headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+      else if (isPrivate) headers['Cache-Control'] = `private, max-age=${ttl}`;
+      else headers['Cache-Control'] = `public, max-age=${ttl}, s-maxage=${ttl}`;
+      if (wantEtag) headers['ETag'] = etag;
+      if (vary) headers['Vary'] = vary === 'cookie' ? 'Cookie' : vary;
+
+      // Revalidation: client/edge gui lai ETag da co. Neu con dung thi tra 304 KHONG BODY.
+      const inm = req.headers['if-none-match'];
+      if (wantEtag && inm && inm.split(',').some((v) => v.trim() === etag)) {
+        res.writeHead(304, headers);
+        return res.end();
+      }
+
+      // Cho tre nhe de thay ro chenh lech giua MISS (co cho) va HIT (khong cho).
+      await sleep(Number(url.searchParams.get('originMs') || 30));
+      headers['Content-Length'] = Buffer.byteLength(body);
+      res.writeHead(200, headers);
+      return res.end(body);
     }
 
     if (p === '/whoami') {

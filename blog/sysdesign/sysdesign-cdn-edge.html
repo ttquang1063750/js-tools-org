@@ -1,0 +1,1473 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 6: CDN &amp; Edge Caching — js-tools</title>
+    <meta
+      name="description"
+      content="Khoảng cách địa lý là hằng số vật lý: 1 ms cho mỗi 100 km khứ hồi, và HTTPS cần 2 RTT trước khi request được gửi; tầng edge nginx đo được 25 lần throughput với origin chỉ xử lý 4 trong 208.173 request; no-cache vẫn cache còn no-store mới là không lưu; ETag và 304; proxy_cache_use_stale giữ site sống khi origin sập nhưng URL chưa từng cache vẫn 504 sau 6 giây; và cache key chứa tham số theo dõi làm tải origin tăng 251 lần trong khi mọi số liệu phía client không đổi."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-cdn-edge" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-cdn-edge" />
+    <meta property="og:title" content="Bài 6: CDN &amp; Edge Caching — js-tools" />
+    <meta
+      property="og:description"
+      content="Khoảng cách địa lý là hằng số vật lý: 1 ms cho mỗi 100 km khứ hồi, và HTTPS cần 2 RTT trước khi request được gửi; tầng edge nginx đo được 25 lần throughput với origin chỉ xử lý 4 trong 208.173 request; no-cache vẫn cache còn no-store mới là không lưu; ETag và 304; proxy_cache_use_stale giữ site sống khi origin sập nhưng URL chưa từng cache vẫn 504 sau 6 giây; và cache key chứa tham số theo dõi làm tải origin tăng 251 lần trong khi mọi số liệu phía client không đổi."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 6: CDN &amp; Edge Caching — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Khoảng cách địa lý là hằng số vật lý: 1 ms cho mỗi 100 km khứ hồi, và HTTPS cần 2 RTT trước khi request được gửi; tầng edge nginx đo được 25 lần throughput với origin chỉ xử lý 4 trong 208.173 request; no-cache vẫn cache còn no-store mới là không lưu; ETag và 304; proxy_cache_use_stale giữ site sống khi origin sập nhưng URL chưa từng cache vẫn 504 sau 6 giây; và cache key chứa tham số theo dõi làm tải origin tăng 251 lần trong khi mọi số liệu phía client không đổi."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script src="../katex/katex.min.js" defer></script>
+    <script src="../katex/contrib/auto-render.min.js" defer></script>
+    <script src="../katex-render.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 6: CDN & Edge Caching",
+        "description": "Khoảng cách địa lý là hằng số vật lý: 1 ms cho mỗi 100 km khứ hồi, và HTTPS cần 2 RTT trước khi request được gửi; tầng edge nginx đo được 25 lần throughput với origin chỉ xử lý 4 trong 208.173 request; no-cache vẫn cache còn no-store mới là không lưu; ETag và 304; proxy_cache_use_stale giữ site sống khi origin sập nhưng URL chưa từng cache vẫn 504 sau 6 giây; và cache key chứa tham số theo dõi làm tải origin tăng 251 lần trong khi mọi số liệu phía client không đổi.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-cdn-edge",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+        "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 6: CDN &amp; Edge Caching</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 21 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-caching">Bài 5</a> đặt cache cạnh app. Bài này đặt cache <em>cạnh người dùng</em> — và
+              lý do phải làm vậy không phải là một quyết định kiến trúc, mà là một giới hạn vật lý không có đoạn code
+              nào vượt qua được.
+            </p>
+
+            <p>
+              Lab của bài này dựng một tầng edge thật bằng nginx và đo được <strong>25 lần</strong> throughput, với
+              origin chỉ phải xử lý <strong>4 request trong 208.173</strong>. Nhưng phát hiện đáng giá hơn là ở phép đo
+              thứ hai: một lỗi cấu hình cache key rất phổ biến làm tải origin tăng <strong>251 lần</strong> mà
+              <strong>mọi số liệu phía client đều không đổi</strong> — cùng throughput, cùng p50, cùng p99. Nó hoàn toàn
+              vô hình từ bên ngoài.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo, và một phân biệt quan trọng</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64 (Node v22.23.2),
+                nginx 1.27-alpine, ba app replica mỗi replica 1 CPU / 256 MB, bộ đo tải 2 CPU. Cache của tầng edge nằm
+                trên <code>tmpfs</code> — có chủ ý, để phép đo không lẫn chi phí bind-mount của Docker Desktop, đúng cái
+                bẫy đã gặp ở <a href="sysdesign-api-gateway">Bài 4</a> mục 4.3.<br /><br />
+                <strong>Phân biệt cần thiết:</strong> mục 6.1 nói về khoảng cách địa lý, và lab trên một máy tính
+                <em>không thể</em> đo được điều đó. Mọi con số trong mục 6.1 là
+                <strong>tính toán từ tốc độ truyền trong sợi quang</strong>, có ghi rõ cách tính, chứ không phải số đo.
+                Từ mục 6.2 trở đi mọi con số đều là đo thật trong lab.
+              </div>
+            </div>
+
+            <!-- ================= 6.1 ================= -->
+            <h2>6.1 Giới hạn không code nào vượt được</h2>
+
+            <p>
+              Trong sợi quang, tín hiệu đi với tốc độ khoảng $200.000$ km/s — chậm hơn tốc độ ánh sáng trong chân không
+              vì chiết suất của thuỷ tinh. Đổi đơn vị cho dễ dùng: <strong>200 km mỗi millisecond</strong>. Một request
+              phải đi và về, nên thời gian khứ hồi tối thiểu cho khoảng cách $d$ (km) là:
+            </p>
+
+            <p>$$RTT_{min} = \frac{2d}{200} = \frac{d}{100} \text{ ms}$$</p>
+
+            <p>
+              Tức là <strong>1 ms cho mỗi 100 km khứ hồi</strong>, và đó là con số của một sợi quang thẳng, không thiết
+              bị trung gian, không xếp hàng. Thực tế luôn xấu hơn 2–3 lần vì cáp không đi đường thẳng, vì mỗi router
+              trên đường thêm một chút, và vì đường truyền có tải.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Tuyến</th>
+                  <th>Khoảng cách xấp xỉ</th>
+                  <th>RTT tối thiểu (tính toán)</th>
+                  <th>RTT thực tế thường thấy</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Hà Nội → edge trong nước</td>
+                  <td>~20 km</td>
+                  <td>0,2 ms</td>
+                  <td>5–15 ms</td>
+                </tr>
+                <tr>
+                  <td>Hà Nội → Singapore</td>
+                  <td>~2.500 km</td>
+                  <td>25 ms</td>
+                  <td>40–60 ms</td>
+                </tr>
+                <tr>
+                  <td>Hà Nội → Frankfurt</td>
+                  <td>~9.000 km</td>
+                  <td>90 ms</td>
+                  <td>180–250 ms</td>
+                </tr>
+                <tr>
+                  <td>Hà Nội → Virginia (Mỹ)</td>
+                  <td>~13.500 km</td>
+                  <td>135 ms</td>
+                  <td>220–280 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Bây giờ ghép với thứ đã đo ở <a href="sysdesign-api-gateway">Bài 4</a> mục 4.2: một kết nối HTTPS mới cần
+              1 RTT cho bắt tay TCP, cộng 1 RTT nữa cho bắt tay TLS 1.3. Với origin ở Virginia và RTT 250 ms, người dùng
+              ở Hà Nội mất <strong>khoảng 500 ms trước khi request đầu tiên được gửi đi</strong>. Backend của bạn chưa
+              nhận được gì cả.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: tối ưu sai đầu bài toán</div>
+              <div class="callout__content">
+                Tối ưu backend từ 50 ms xuống 20 ms là một thắng lợi thật — nhưng nó cải thiện
+                <strong>30 ms trên tổng 780 ms</strong> mà người dùng ở nửa vòng trái đất đang chịu (500 ms bắt tay +
+                250 ms cho request + 30 ms xử lý). Chưa tới 4%.<br /><br />
+                Cùng công sức đó, đưa nội dung ra một edge cách người dùng 20 km biến 250 ms thành 10 ms cho
+                <em>mọi</em> round-trip. Đó là lý do mục này nằm ngay đầu bài: câu hỏi đúng không phải "làm sao server
+                nhanh hơn" mà là "làm sao dữ liệu ở gần hơn". Trước khi tối ưu, hãy biết
+                <strong>người dùng của bạn ở đâu</strong> — con số đó thay đổi thứ tự ưu tiên của mọi việc còn lại.
+              </div>
+            </div>
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 330"
+                width="100%"
+                role="img"
+                aria-label="Cùng một người dùng ở Hà Nội: đường tới origin ở Virginia so với đường tới edge trong nước, kèm khoảng cách và thời gian khứ hồi"
+              >
+                <rect width="720" height="330" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Cùng một người dùng, hai khoảng cách — 1 ms cho mỗi 100 km khứ hồi
+                </text>
+
+                <!-- nguoi dung -->
+                <circle cx="70" cy="130" r="16" fill="#151d30" stroke="#f3f4f6" stroke-width="1.5" />
+                <text
+                  x="70"
+                  y="134"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="11"
+                  text-anchor="middle"
+                >
+                  👤
+                </text>
+                <text
+                  x="70"
+                  y="162"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  Hà Nội
+                </text>
+
+                <!-- ==== duong ngan: tơi edge ==== -->
+                <line x1="88" y1="118" x2="176" y2="82" stroke="#22c55e" stroke-width="2" />
+                <polygon points="176,82 168,82 171,88" fill="#22c55e" />
+                <rect x="180" y="62" width="118" height="40" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="239"
+                  y="79"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  EDGE trong nước
+                </text>
+                <text
+                  x="239"
+                  y="94"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  ~20 km
+                </text>
+                <text x="112" y="92" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  0,2 ms
+                </text>
+
+                <!-- ==== duong dai: toi origin ==== -->
+                <path d="M88 142 Q 300 260 640 200" fill="none" stroke="#ef4444" stroke-width="2" />
+                <polygon points="640,200 632,197 633,204" fill="#ef4444" />
+                <rect x="586" y="158" width="118" height="40" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="645"
+                  y="175"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  ORIGIN · Virginia
+                </text>
+                <text
+                  x="645"
+                  y="190"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  ~13.500 km
+                </text>
+                <text
+                  x="376"
+                  y="276"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  135 ms lý thuyết · 220–280 ms thực tế
+                </text>
+
+                <!-- cac chang trung gian tren duong dai -->
+                <circle cx="230" cy="222" r="3" fill="#6b7280" />
+                <circle cx="360" cy="240" r="3" fill="#6b7280" />
+                <circle cx="490" cy="232" r="3" fill="#6b7280" />
+                <text x="196" y="216" fill="#6b7280" font-family="system-ui, sans-serif" font-size="7">router</text>
+                <text x="332" y="258" fill="#6b7280" font-family="system-ui, sans-serif" font-size="7">cáp biển</text>
+                <text x="470" y="224" fill="#6b7280" font-family="system-ui, sans-serif" font-size="7">router</text>
+
+                <!-- bang chi phi that -->
+                <rect x="180" y="112" width="380" height="34" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="192" y="132" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Và mỗi kết nối HTTPS mới cần 2 RTT trước khi request được gửi (Bài 4 mục 4.2)
+                </text>
+
+                <text
+                  x="16"
+                  y="288"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Tổng thời gian tới byte đầu tiên, cùng một backend xử lý 30 ms:
+                </text>
+                <text x="16" y="306" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  qua origin: 250 (TCP) + 250 (TLS) + 250 (request) + 30 = ~780 ms
+                </text>
+                <text x="380" y="306" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  qua edge: 10 + 10 + 10 + 3 (cache hit) = ~33 ms
+                </text>
+                <text x="16" y="322" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Tối ưu backend 50 → 20 ms cải thiện 30 ms trên 780 — chưa tới 4%. Khoảng cách mới là biến chi phối.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Các số RTT ở đây là tính toán từ tốc độ truyền trong sợi quang, không phải số đo của lab. Điểm cần nhớ:
+                khoảng cách là hằng số bạn không sửa được bằng code — chỉ có thể tránh nó.
+              </figcaption>
+            </figure>
+            <!-- ================= 6.2 ================= -->
+            <h2>6.2 Kiến trúc CDN, và tầng edge đo được bao nhiêu</h2>
+
+            <p>
+              CDN là một mạng gồm nhiều <strong>PoP</strong> (point of presence) đặt rải rác về mặt địa lý, mỗi PoP là
+              một tầng cache đứng trước <strong>origin</strong> của bạn. Người dùng luôn nói chuyện với PoP gần nhất, và
+              việc "gần nhất" được quyết định bằng <strong>anycast</strong>: cùng một địa chỉ IP được quảng bá từ nhiều
+              nơi, định tuyến BGP tự đưa gói tin tới nơi gần nhất về mặt mạng.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thành phần</th>
+                  <th>Vai trò</th>
+                  <th>Vì sao cần</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>PoP / edge</strong></td>
+                  <td>Tầng cache gần người dùng nhất</td>
+                  <td>Xoá phần lớn khoảng cách địa lý — biến 250 ms thành 10 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>Cache tier trung gian</strong></td>
+                  <td>Tầng cache giữa các PoP và origin</td>
+                  <td>
+                    Có 200 PoP thì mỗi lần nội dung hết hạn là 200 request về origin. Tầng giữa gom chúng lại còn vài
+                    request
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Origin shield</strong></td>
+                  <td>Một PoP được chỉ định làm cửa duy nhất tới origin</td>
+                  <td>Origin chỉ thấy lưu lượng từ một nơi — dễ giới hạn, dễ theo dõi, và giảm mạnh tải đột biến</td>
+                </tr>
+                <tr>
+                  <td><strong>Origin</strong></td>
+                  <td>Hệ thống thật của bạn</td>
+                  <td>Nơi duy nhất có dữ liệu gốc; mục tiêu là để nó nhận càng ít request càng tốt</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Lab dựng đúng tầng đầu tiên: một nginx thứ hai, nhưng khác hẳn <code>lb.conf</code> và
+              <code>gw.conf</code> — nó <em>lưu lại</em> phản hồi thay vì chỉ chuyển tiếp. So sánh 32 kết nối, 10 giây,
+              origin có độ trễ xử lý 30 ms:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Đường đi</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                  <th>Origin phải xử lý</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Gọi trực tiếp app</td>
+                  <td>826 rps</td>
+                  <td>38,55 ms</td>
+                  <td>48,89 ms</td>
+                  <td>10.756 / 8.257 request</td>
+                </tr>
+                <tr>
+                  <td><strong>Qua tầng edge có cache</strong></td>
+                  <td><strong>20.815 rps</strong></td>
+                  <td><strong>1,44 ms</strong></td>
+                  <td><strong>3,10 ms</strong></td>
+                  <td><strong>4 / 208.173 request</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Throughput gấp <strong>25 lần</strong>, p50 giảm <strong>27 lần</strong>. Nhưng cột cuối là cột đáng nhìn
+              nhất: origin xử lý <strong>4 request trong 208.173</strong> — tức <strong>0,002%</strong>. Toàn bộ phần
+              còn lại được nginx trả từ cache của chính nó, và app hoàn toàn không biết chuyện gì đang diễn ra.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 CDN không chỉ để phục vụ ảnh</div>
+              <div class="callout__content">
+                Quan niệm "CDN dùng cho file tĩnh" là quan niệm của mười năm trước. Phản hồi API đọc-nhiều, HTML đã
+                render, kết quả tìm kiếm phổ biến, thậm chí trang cá nhân hoá một phần — tất cả đều cache được ở edge,
+                chỉ cần phát header cho đúng (mục 6.3) và đặt cache key cho đúng (mục 6.4).<br /><br />
+                Cách nghĩ hữu ích: <strong>bất cứ phản hồi nào giống nhau cho nhiều người dùng đều là ứng viên</strong>.
+                Câu hỏi không phải "đây có phải file tĩnh không" mà là "phản hồi này phụ thuộc vào những gì".
+              </div>
+            </div>
+
+            <!-- ================= 6.3 ================= -->
+            <h2>6.3 Header caching cho đúng</h2>
+
+            <p>
+              Tầng edge không tự đoán được nội dung nào cache được bao lâu — nó làm theo header mà origin phát ra. Đây
+              là phần API duy nhất giữa app của bạn và CDN, và nó nhỏ hơn nhiều người tưởng.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Chỉ thị</th>
+                  <th>Nghĩa thật</th>
+                  <th>Điều dễ hiểu sai</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>max-age=N</code></td>
+                  <td>Còn tươi trong N giây, với <em>mọi</em> tầng cache kể cả trình duyệt</td>
+                  <td>Trình duyệt cũng tuân theo — đặt quá dài thì không cách nào rút lại</td>
+                </tr>
+                <tr>
+                  <td><code>s-maxage=N</code></td>
+                  <td>Chỉ dành cho cache <em>chia sẻ</em> (CDN, proxy), ghi đè <code>max-age</code></td>
+                  <td>Đây là cách đặt TTL dài ở CDN nhưng ngắn ở trình duyệt — rất hữu ích</td>
+                </tr>
+                <tr>
+                  <td><code>public</code></td>
+                  <td>Cache chia sẻ được phép lưu</td>
+                  <td>Cần thiết khi có <code>Authorization</code>, vì mặc định lúc đó là không cache</td>
+                </tr>
+                <tr>
+                  <td><code>private</code></td>
+                  <td>Chỉ trình duyệt được lưu; CDN <strong>không</strong></td>
+                  <td>Đúng cho nội dung cá nhân hoá — và lab đã kiểm chứng: luôn MISS ở edge</td>
+                </tr>
+                <tr>
+                  <td><code>no-cache</code></td>
+                  <td><strong>Vẫn lưu</strong>, nhưng phải revalidate trước mỗi lần dùng</td>
+                  <td>Tên gọi gây nhầm nhất trong HTTP. Nó không có nghĩa "đừng cache"</td>
+                </tr>
+                <tr>
+                  <td><code>no-store</code></td>
+                  <td>Không được lưu ở bất cứ đâu</td>
+                  <td>Đây mới là "đừng cache". Dùng cho dữ liệu thật sự nhạy cảm</td>
+                </tr>
+                <tr>
+                  <td><code>immutable</code></td>
+                  <td>Nội dung sẽ không bao giờ đổi, đừng revalidate</td>
+                  <td>Chỉ dùng được khi URL có hash nội dung trong tên (mục 6.5)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: <code>no-cache</code> không có nghĩa là không cache</div>
+              <div class="callout__content">
+                <code>no-cache</code> nghĩa là "được lưu, nhưng mỗi lần dùng phải hỏi origin xem còn hạn không". Nội
+                dung vẫn nằm trong cache của CDN và của trình duyệt.<br /><br />
+                Nếu bạn đặt <code>no-cache</code> cho một phản hồi chứa dữ liệu nhạy cảm và nghĩ mình đã an toàn thì bản
+                đó vẫn đang nằm trên đĩa của một proxy nào đó. Thứ bạn cần là <code>no-store</code>. Đây là loại lỗi
+                không bao giờ xuất hiện trong test vì hệ thống vẫn hoạt động đúng.
+              </div>
+            </div>
+
+            <h3>Revalidation: ETag và 304</h3>
+
+            <p>
+              Khi TTL hết, tầng cache không nhất thiết phải tải lại toàn bộ. Nó gửi lại
+              <code>If-None-Match</code> kèm ETag đã có; nếu nội dung chưa đổi, origin trả <code>304 Not Modified</code>
+              <strong>không kèm body</strong>. Đo thật trên lab:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">revalidation.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">E=http://localhost:8082
+
+etag=$(curl -s -D - -o /dev/null "$E/cacheable?key=b&ttl=60" | grep -i '^etag:' | cut -d' ' -f2)
+echo "ETag = $etag"                    # ETag = "7e9134f4"
+
+curl -s -o /dev/null -w '%{http_code} %{size_download} byte\n' \
+  "$E/cacheable?key=b&ttl=60"
+# 200 62 byte                          ← tai lai toan bo
+
+curl -s -o /dev/null -H "If-None-Match: $etag" \
+  -w '%{http_code} %{size_download} byte\n' "$E/cacheable?key=b&ttl=60"
+# 304 0 byte                           ← chi xac nhan "con dung", khong tai gi</code></pre>
+            </div>
+
+            <p>
+              Với một payload 62 byte thì tiết kiệm này vô nghĩa. Với một file JavaScript 800 KB thì mỗi lần revalidate
+              tiết kiệm đúng 800 KB. Đó là lý do <code>proxy_cache_revalidate on</code> nằm trong cấu hình edge của lab:
+              nó biến "hết hạn" từ chuyện phải tải lại thành chuyện chỉ cần hỏi một câu.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ ETag phải ổn định theo nội dung, không theo thời điểm</div>
+              <div class="callout__content">
+                Nếu ETag được sinh từ thời điểm phản hồi (hoặc từ một số ngẫu nhiên, hoặc từ hostname của replica đang
+                phục vụ) thì nó đổi ở mỗi lần trả — và <code>304</code> sẽ <strong>không bao giờ</strong> xảy ra. Hệ
+                thống vẫn đúng, chỉ là toàn bộ cơ chế revalidation lặng lẽ không hoạt động.<br /><br />
+                Endpoint <code>/cacheable</code> của lab tính ETag bằng hash của chính body, nên ba replica khác nhau
+                vẫn sinh cùng một ETag cho cùng nội dung. Đây là điều kiện bắt buộc khi có nhiều replica — và là chỗ rất
+                dễ sai nếu ETag lấy từ thời điểm sửa file trên đĩa, vì ba máy có ba mốc thời gian khác nhau.
+              </div>
+            </div>
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 344"
+                width="100%"
+                role="img"
+                aria-label="Bốn nhánh của một request tại tầng edge: HIT, MISS, 304 Not Modified và STALE, kèm thời gian đo được"
+              >
+                <rect width="720" height="344" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Bốn nhánh của cùng một request — giá trị X-Cache cho biết bạn đang ở nhánh nào
+                </text>
+
+                <!-- cot tieu de -->
+                <text
+                  x="60"
+                  y="48"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  client
+                </text>
+                <text
+                  x="250"
+                  y="48"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  edge (nginx)
+                </text>
+                <text
+                  x="470"
+                  y="48"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  origin (app)
+                </text>
+
+                <!-- ======= 1. HIT ======= -->
+                <rect x="16" y="58" width="688" height="54" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text x="30" y="76" fill="#22c55e" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  HIT
+                </text>
+                <line x1="60" y1="92" x2="240" y2="92" stroke="#9ca3af" />
+                <polygon points="240,92 232,89 232,95" fill="#9ca3af" />
+                <line x1="250" y1="104" x2="64" y2="104" stroke="#22c55e" />
+                <polygon points="64,104 72,101 72,107" fill="#22c55e" />
+                <text x="286" y="82" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Còn trong cache và còn tươi → trả ngay, KHÔNG chạm origin
+                </text>
+                <text
+                  x="286"
+                  y="100"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  đo được: 2,3–3,6 ms
+                </text>
+                <text x="600" y="100" fill="#4b5563" font-family="system-ui, sans-serif" font-size="8">
+                  origin: rảnh
+                </text>
+
+                <!-- ======= 2. MISS ======= -->
+                <rect x="16" y="120" width="688" height="60" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="30"
+                  y="138"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  MISS
+                </text>
+                <line x1="60" y1="154" x2="240" y2="154" stroke="#9ca3af" />
+                <polygon points="240,154 232,151 232,157" fill="#9ca3af" />
+                <line x1="260" y1="154" x2="460" y2="154" stroke="#38bdf8" />
+                <polygon points="460,154 452,151 452,157" fill="#38bdf8" />
+                <line x1="460" y1="168" x2="264" y2="168" stroke="#38bdf8" />
+                <polygon points="264,168 272,165 272,171" fill="#38bdf8" />
+                <line x1="250" y1="172" x2="64" y2="172" stroke="#f59e0b" />
+                <polygon points="64,172 72,169 72,175" fill="#f59e0b" />
+                <text x="490" y="150" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  origin xử lý,
+                </text>
+                <text x="490" y="164" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  edge LƯU lại
+                </text>
+                <text
+                  x="120"
+                  y="150"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  đo được: 36–44 ms
+                </text>
+
+                <!-- ======= 3. 304 ======= -->
+                <rect x="16" y="188" width="688" height="60" rx="6" fill="#0d2436" stroke="#38bdf8" />
+                <text
+                  x="30"
+                  y="206"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  304
+                </text>
+                <line x1="60" y1="222" x2="240" y2="222" stroke="#9ca3af" />
+                <polygon points="240,222 232,219 232,225" fill="#9ca3af" />
+                <line x1="260" y1="222" x2="460" y2="222" stroke="#38bdf8" stroke-dasharray="4 2" />
+                <polygon points="460,222 452,219 452,225" fill="#38bdf8" />
+                <line x1="460" y1="236" x2="264" y2="236" stroke="#38bdf8" stroke-dasharray="4 2" />
+                <polygon points="264,236 272,233 272,239" fill="#38bdf8" />
+                <text x="286" y="218" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  TTL hết → edge gửi If-None-Match, origin trả 304 KHÔNG body
+                </text>
+                <text
+                  x="486"
+                  y="240"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  đo được: 0 byte tải về
+                </text>
+
+                <!-- ======= 4. STALE ======= -->
+                <rect x="16" y="256" width="688" height="62" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="30"
+                  y="274"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  STALE
+                </text>
+                <line x1="60" y1="288" x2="240" y2="288" stroke="#9ca3af" />
+                <polygon points="240,288 232,285 232,291" fill="#9ca3af" />
+                <line x1="256" y1="288" x2="428" y2="288" stroke="#ef4444" stroke-dasharray="3 3" />
+                <text x="434" y="292" fill="#ef4444" font-family="system-ui, sans-serif" font-size="13">✕</text>
+                <line x1="250" y1="302" x2="64" y2="302" stroke="#22c55e" />
+                <polygon points="64,302 72,299 72,305" fill="#22c55e" />
+                <text x="452" y="292" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  origin SẬP hoàn toàn
+                </text>
+                <text x="286" y="274" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  TTL hết + origin không trả lời → edge trả BẢN CŨ, 200 OK
+                </text>
+                <text
+                  x="286"
+                  y="312"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  đo được: 200 trong 2,4 ms — người dùng không thấy sự cố
+                </text>
+
+                <text x="16" y="336" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Nhưng STALE chỉ cứu được URL ĐÃ TỪNG được cache. URL chưa có trong cache: đo được 504 sau 6,03 giây.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Bốn giá trị này là bốn trạng thái rất khác nhau về tải origin và về trải nghiệm. Nếu không phơi
+                <code>X-Cache</code> ra thì bạn không phân biệt được chúng.
+              </figcaption>
+            </figure>
+            <h3>Trả bản cũ khi origin sập — và giới hạn của nó</h3>
+
+            <p>
+              Nhánh STALE đáng được đo riêng, vì nó là thứ giữ cho site còn sống. Thí nghiệm: nạp cache với TTL 2 giây,
+              rồi <strong>dừng toàn bộ ba app</strong>, chờ TTL hết, và gọi lại:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">origin_sap_edge_van_song.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># 1) nap cache voi TTL 2s
+curl -sI "$E/cacheable?key=stale&ttl=2"     # X-Cache=MISS  36,5 ms
+curl -sI "$E/cacheable?key=stale&ttl=2"     # X-Cache=HIT    3,6 ms
+
+# 2) dung toan bo origin
+docker compose stop app1 app2 app3
+sleep 3                                      # de TTL het han
+
+# 3) TTL het + origin sap -> edge lam gi?
+curl -sI "$E/cacheable?key=stale&ttl=2"     # 200  X-Cache=STALE     2,4 ms
+curl -sI "$E/cacheable?key=stale&ttl=2"     # 200  X-Cache=UPDATING  2,5 ms
+curl -sI "$E/cacheable?key=stale&ttl=2"     # 200  X-Cache=UPDATING  2,5 ms
+
+# 4) mot URL CHUA TUNG duoc cache, origin van sap
+curl -sI "$E/cacheable?key=chua-tung-co"    # 504  X-Cache=MISS   6,03 GIAY</code></pre>
+            </div>
+
+            <p>
+              Ba dòng ở bước 3 là kết quả tốt nhất có thể: origin đã chết hoàn toàn mà người dùng vẫn nhận
+              <code>200 OK</code> trong 2,4 ms. <code>UPDATING</code> nghĩa là nginx đang thử làm mới ở nền trong khi
+              vẫn trả bản cũ cho người dùng — đúng tinh thần <code>proxy_cache_background_update</code>.
+            </p>
+
+            <p>
+              Nhưng bước 4 là dòng phải nhớ. Một URL <strong>chưa từng nằm trong cache</strong> thì edge không có gì để
+              trả: <code>504</code> sau <strong>6,03 giây</strong>. Và con số 6 giây đó không phải ngẫu nhiên — đó là 3
+              upstream × <code>proxy_connect_timeout 2s</code>, đúng cơ chế đã gặp ở
+              <a href="sysdesign-load-balancing">Bài 3</a>. Người dùng chờ 6 giây rồi nhận lỗi, tệ hơn nhiều so với nhận
+              lỗi ngay.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Hệ quả thiết kế: cache warm là một phần của kế hoạch chống sự cố</div>
+              <div class="callout__content">
+                <code>proxy_cache_use_stale</code> chỉ bảo vệ được phần nội dung <em>đang</em> ở trong cache. Nghĩa là
+                mức độ chịu đựng sự cố của bạn phụ thuộc trực tiếp vào
+                <strong>độ phủ của cache tại thời điểm sự cố xảy ra</strong> — một biến số mà hầu như không ai theo
+                dõi.<br /><br />
+                Hai hệ quả thực hành. Thứ nhất: <strong>đừng flush cache rồi deploy</strong>; nếu origin gặp vấn đề ngay
+                sau deploy thì bạn vừa tự tay bỏ đi lớp bảo vệ duy nhất. Thứ hai: với những URL quan trọng nhất — trang
+                chủ, trang đăng nhập, vài API cốt lõi — hãy <strong>nạp trước</strong> chúng vào cache sau mỗi lần
+                deploy, và giảm <code>proxy_connect_timeout</code> để trường hợp không có bản cũ thì thất bại
+                <em>nhanh</em> thay vì bắt người dùng chờ 6 giây.
+              </div>
+            </div>
+
+            <!-- ================= 6.4 ================= -->
+            <h2>6.4 Cache key và <code>Vary</code> — nơi hit ratio âm thầm về 0</h2>
+
+            <p>
+              Cache key quyết định hai phản hồi có được coi là "cùng một thứ" hay không. Nó gồm URL (mặc định của nginx
+              là <code>$scheme$proxy_host$request_uri</code>, tức <em>bao gồm toàn bộ query string</em>) cộng với những
+              header mà origin khai báo trong <code>Vary</code>.
+            </p>
+
+            <p>
+              Hai cơ chế này là hai cách phổ biến nhất để phá hit ratio, và cả hai đều không tạo ra lỗi nào — cấu hình
+              nhìn vào vẫn thấy "đã bật cache".
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 320"
+                width="100%"
+                role="img"
+                aria-label="Cache bị băm nhỏ bởi tham số theo dõi trong URL và bởi header Vary Cookie"
+              >
+                <rect width="720" height="320" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Cùng MỘT nội dung, bốn bản cache — hai cách băm nhỏ cache
+                </text>
+
+                <!-- ==== 1. tham so theo doi ==== -->
+                <text x="16" y="50" fill="#ef4444" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  1 · THAM SỐ THEO DÕI trong URL (key thô)
+                </text>
+                <rect x="16" y="58" width="330" height="88" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="76" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  /doc?utm_source=facebook
+                </text>
+                <text x="28" y="90" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  /doc?utm_source=twitter
+                </text>
+                <text x="28" y="104" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  /doc?fbclid=abc123
+                </text>
+                <text x="28" y="118" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  /doc?gclid=xyz789
+                </text>
+                <text x="28" y="138" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  → 4 cache key · đo được 4/4 MISS
+                </text>
+                <text x="236" y="76" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">nội dung:</text>
+                <text x="236" y="90" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">y hệt</text>
+                <text x="236" y="104" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">y hệt</text>
+                <text x="236" y="118" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">y hệt</text>
+
+                <!-- ==== 2. key chuan hoa ==== -->
+                <text
+                  x="374"
+                  y="50"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  2 · KEY CHUẨN HOÁ (danh sách cho phép)
+                </text>
+                <rect x="374" y="58" width="330" height="88" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text x="386" y="76" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  proxy_cache_key "$uri|key=$arg_key"
+                </text>
+                <text x="386" y="94" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  utm_source, fbclid, gclid không có trong key
+                </text>
+                <text x="386" y="108" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  ⇒ bốn URL trên thành CÙNG một key
+                </text>
+                <text
+                  x="386"
+                  y="128"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  → 1 cache key · đo được 1 MISS + 3 HIT
+                </text>
+
+                <!-- ==== 3. Vary: Cookie ==== -->
+                <text
+                  x="16"
+                  y="172"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  3 · Vary: Cookie — cạm bẫy tốn kém nhất
+                </text>
+                <rect x="16" y="180" width="688" height="76" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="198" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Origin phát "Vary: Cookie" ⇒ cache key gồm cả giá trị cookie. Mà mỗi người dùng có cookie riêng…
+                </text>
+                <text x="28" y="216" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Cookie: sid=user1 → MISS
+                </text>
+                <text x="200" y="216" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  sid=user2 → MISS
+                </text>
+                <text x="340" y="216" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  sid=user3 → MISS
+                </text>
+                <text x="480" y="216" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="8">
+                  sid=user1 lần 2 → HIT
+                </text>
+                <text x="28" y="234" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  ⇒ MỖI NGƯỜI DÙNG MỘT BẢN CACHE RIÊNG. Hit ratio về gần 0 khi lượng người dùng lớn.
+                </text>
+                <text x="28" y="250" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Bỏ "Vary" đi, cùng ba cookie đó: đo được 1 MISS + 2 HIT.
+                </text>
+
+                <!-- ket luan -->
+                <rect x="16" y="264" width="688" height="44" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="28" y="282" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  "Vary: Accept-Encoding" là hợp lý (gzip và br là hai nội dung thật sự khác nhau).
+                </text>
+                <text x="28" y="298" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  "Vary: User-Agent" băm cache thành hàng nghìn bản. "Vary: Cookie" băm thành mỗi-người-một-bản.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Cả ba tình huống đều được kiểm chứng bằng <code>X-Cache</code> trong lab. Không có tình huống nào tạo ra
+                lỗi — đó chính là điều làm chúng nguy hiểm.
+              </figcaption>
+            </figure>
+            <h3>Đo mức thiệt hại: 251 lần tải origin, và hoàn toàn vô hình</h3>
+
+            <p>
+              Kiểm chứng bằng số ở quy mô tải. Cùng một nội dung, nhưng bộ đo tải gắn thêm một tham số
+              <code>utm_source</code> lấy ngẫu nhiên trong 1.000 giá trị — đúng như lưu lượng thật từ các chiến dịch
+              quảng cáo. So hai cấu hình cache key, 32 kết nối, 10 giây:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cấu hình cache key</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                  <th>Origin phải xử lý</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Thô — gồm toàn bộ query string</td>
+                  <td>20.866 rps</td>
+                  <td>1,43 ms</td>
+                  <td>3,10 ms</td>
+                  <td><strong>1.003</strong> request</td>
+                </tr>
+                <tr>
+                  <td>Chuẩn hoá — chỉ tham số được phép</td>
+                  <td>20.552 rps</td>
+                  <td>1,46 ms</td>
+                  <td>3,15 ms</td>
+                  <td><strong>4</strong> request</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Tải origin chênh <strong>251 lần</strong>. Và ba cột trước đó — throughput, p50, p99 —
+              <strong>giống nhau đến mức không phân biệt được</strong>. Từ phía client, hai cấu hình này là một. Không
+              có dashboard latency nào, không có alert nào, không có lỗi nào cho bạn biết.
+            </p>
+
+            <p>
+              Con số 1.003 cũng đáng để đọc: 1.000 giá trị <code>utm_source</code> khác nhau tạo ra đúng 1.000 cache key
+              khác nhau, mỗi key một lần MISS. Cache vẫn "hoạt động" — nó chỉ đang lưu 1.000 bản của cùng một nội dung
+              và không bản nào được dùng lại.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Điều này chỉ lộ ra ở một chỗ duy nhất</div>
+              <div class="callout__content">
+                Phân mảnh cache không hiện trong latency của client. Nó chỉ hiện ở
+                <strong>tải origin và tỉ lệ HIT/MISS tại tầng edge</strong>. Nghĩa là nếu bạn không theo dõi hai số liệu
+                đó thì bạn không có cách nào phát hiện.<br /><br />
+                Cụ thể cần có: log hoặc metric của <code>$upstream_cache_status</code> ở tầng edge, và số request/giây
+                mà origin thật sự nhận. Khi lưu lượng tăng gấp đôi, số của origin cho bạn biết ngay cache đang che chắn
+                hay chỉ đang giả vờ che chắn. Đây là bản chất giống hệt bài học "đánh giá cache bằng hit ratio, không
+                phải bằng có nhanh hơn không" ở <a href="sysdesign-caching">Bài 5</a> mục 5.1 — nhìn từ tầng edge.
+              </div>
+            </div>
+
+            <p>Cấu hình tạo ra hai hành vi trên, khác nhau đúng một dòng:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">nginx/edge.conf</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">location /cacheable {
+    # KEY THO: mac dinh cua nginx, gom CA query string.
+    # ?utm_source=facebook => mot ban cache rieng cho dung cung mot noi dung.
+    proxy_cache_key "$scheme$proxy_host$request_uri";
+    proxy_pass http://edge_origin;
+    include /etc/nginx/snippets/edge-common.conf;
+}
+
+location /norm/cacheable {
+    # KEY CHUAN HOA: chi liet ke nhung tham so THAT SU quyet dinh noi dung.
+    # nginx khong co vong lap, nen "danh sach cho phep" o day la liet ke tuong minh
+    # tung $arg_* minh chap nhan. Tham so la (utm_*, fbclid, gclid) bi bo qua vi
+    # don gian la chung KHONG CO trong key.
+    proxy_cache_key "norm|$uri|key=$arg_key|ttl=$arg_ttl|vary=$arg_vary";
+    proxy_pass http://edge_origin/cacheable$is_args$args;
+    include /etc/nginx/snippets/edge-common.conf;
+}</code></pre>
+            </div>
+
+            <!-- ================= 6.5 ================= -->
+            <h2>6.5 Purge, URL có version, và cách làm trắng trang toàn bộ người dùng</h2>
+
+            <p>
+              Khi nội dung đổi, có hai cách để người dùng thấy bản mới: <strong>xoá</strong> bản cũ khỏi cache (purge),
+              hoặc <strong>đổi URL</strong> để bản mới nằm ở một địa chỉ khác. Cách thứ hai gần như luôn tốt hơn, và lý
+              do rất thực dụng.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Purge</th>
+                  <th>URL có version</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Cơ chế</td>
+                  <td>Gọi API của CDN để xoá một URL khỏi mọi PoP</td>
+                  <td>Đặt hash nội dung vào tên file: <code>app.a3f9c1.js</code></td>
+                </tr>
+                <tr>
+                  <td>Thời gian có hiệu lực</td>
+                  <td>Vài giây tới vài phút, khác nhau theo PoP</td>
+                  <td>Tức thì — URL mới chưa từng được cache ở đâu</td>
+                </tr>
+                <tr>
+                  <td>Kiểm chứng được không</td>
+                  <td>Khó: không biết PoP nào đã xoá xong</td>
+                  <td>Được: URL khác nhau thì nội dung khác nhau, không có gì phải tin</td>
+                </tr>
+                <tr>
+                  <td>Quay lại bản cũ</td>
+                  <td>Phải deploy lại và purge lại</td>
+                  <td>Chỉ cần trỏ về URL cũ — bản cũ vẫn còn nguyên trong cache</td>
+                </tr>
+                <tr>
+                  <td>TTL đặt được</td>
+                  <td>Phải ngắn, vì còn phải sửa được</td>
+                  <td><code>max-age=31536000, immutable</code> — một năm</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>Từ đó ra một quy tắc rất gọn cho việc đặt header, chia theo loại tài nguyên:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Loại tài nguyên</th>
+                  <th><code>Cache-Control</code></th>
+                  <th>Vì sao</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>JS/CSS có hash trong tên</td>
+                  <td><code>public, max-age=31536000, immutable</code></td>
+                  <td>Nội dung không bao giờ đổi; đổi nội dung là đổi tên file</td>
+                </tr>
+                <tr>
+                  <td>Ảnh, font</td>
+                  <td><code>public, max-age=2592000</code></td>
+                  <td>Đổi rất ít; một tháng là đủ an toàn</td>
+                </tr>
+                <tr>
+                  <td>HTML</td>
+                  <td><code>public, max-age=0, s-maxage=60, must-revalidate</code></td>
+                  <td>
+                    <strong>Đây là file trỏ tới các asset khác</strong> — phải luôn tươi, nhưng CDN vẫn được giữ 60 giây
+                  </td>
+                </tr>
+                <tr>
+                  <td>API đọc chung cho nhiều người</td>
+                  <td><code>public, s-maxage=30, stale-while-revalidate=60</code></td>
+                  <td>Edge trả bản cũ trong lúc làm mới; không ai phải chờ</td>
+                </tr>
+                <tr>
+                  <td>API cá nhân hoá</td>
+                  <td><code>private, no-store</code></td>
+                  <td>Không được để lọt vào cache chia sẻ</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy làm trắng trang toàn bộ người dùng</div>
+              <div class="callout__content">
+                Kịch bản này xảy ra thường xuyên hơn mức nó nên xảy ra. Bạn deploy: asset mới thành
+                <code>app.b7d2e4.js</code>, asset cũ <code>app.a3f9c1.js</code> bị xoá khỏi origin. Nhưng
+                <strong>HTML đang được cache ở edge với TTL dài</strong>, nên nó vẫn trỏ tới
+                <code>app.a3f9c1.js</code> — file đã không còn tồn tại.<br /><br />
+                Kết quả: người dùng nhận HTML cũ, HTML đó xin một file 404, JavaScript không tải được,
+                <strong>trắng trang</strong>. Và purge không cứu kịp vì nó cần vài phút để có hiệu lực trên mọi PoP.<br /><br />
+                Hai cách phòng, nên làm cả hai: (1) <strong>HTML luôn phải có TTL ngắn</strong> hoặc bắt buộc revalidate
+                — nó là file trỏ đường, không phải nội dung; (2) <strong>giữ lại asset của bản deploy trước</strong> ít
+                nhất vài giờ thay vì xoá ngay. Cách (2) rẻ đến mức không có lý do gì để không làm: vài trăm KB trên đĩa
+                đổi lấy việc không bao giờ gặp tình huống này.
+              </div>
+            </div>
+
+            <h3>Tự làm lại các phép đo</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+docker compose --profile edge up -d
+E=http://localhost:8082
+purge() { docker compose exec -T edge sh -c 'rm -rf /var/cache/nginx/edge/*'; }
+
+# --- MISS roi HIT ---
+purge
+for i in 1 2 3; do
+  curl -s -o /dev/null -D /tmp/h -w "%{time_total}s " "$E/cacheable?key=a&ttl=60"
+  grep -i '^x-cache:' /tmp/h
+done
+
+# --- Vary: Cookie bam nho cache ---
+purge
+for c in user1 user2 user3 user1; do
+  curl -s -o /dev/null -D /tmp/h -H "Cookie: sid=$c" "$E/cacheable?key=e&ttl=60&vary=cookie"
+  echo "sid=$c -> $(grep -i '^x-cache:' /tmp/h)"
+done
+
+# --- Tai origin: key THO vs key CHUAN HOA (1000 utm_source ngau nhien) ---
+purge && ./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://edge:8082/cacheable?key=a&ttl=60" \
+  -c 32 -d 10 -w 3 --key-space 1000 --key-param utm_source --json
+./tools/cache-stats.sh          # xem origin da xu ly bao nhieu request
+
+purge && ./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://edge:8082/norm/cacheable?key=a&ttl=60" \
+  -c 32 -d 10 -w 3 --key-space 1000 --key-param utm_source --json
+./tools/cache-stats.sh          # so sanh: 1.003 vs 4</code></pre>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Khoảng cách địa lý là hằng số vật lý: 1 ms cho mỗi 100 km khứ hồi, và một kết nối HTTPS mới cần 2 RTT
+              trước khi request được gửi đi. Không có cách nào sửa bằng code — chỉ có cách đặt dữ liệu gần hơn. Tầng
+              edge trong lab cho 25 lần throughput và đẩy 99,998% request ra khỏi origin, chỉ bằng nginx với
+              <code>proxy_cache</code>.
+            </p>
+
+            <p>
+              Ba điều dễ sai nhất đều nằm ở phần header và cache key, và không cái nào tạo ra lỗi:
+              <code>no-cache</code> vẫn cache (muốn không lưu phải dùng <code>no-store</code>); ETag sinh từ thời điểm
+              thay vì từ nội dung làm <code>304</code> không bao giờ xảy ra; và cache key chứa tham số theo dõi làm tải
+              origin tăng 251 lần trong khi mọi số liệu phía client không đổi một chút nào.
+            </p>
+
+            <p>
+              Cuối cùng, <code>proxy_cache_use_stale</code> giữ được site sống khi origin sập — nhưng chỉ cho những URL
+              <em>đã</em> ở trong cache. Điều đó biến độ phủ của cache thành một phần của kế hoạch chống sự cố, và biến
+              "flush cache rồi deploy" thành một việc cần nghĩ lại.
+            </p>
+
+            <p>
+              <strong>Bài 7</strong> rời tầng cache để xuống tầng dữ liệu: replication. Lab sẽ có PostgreSQL primary và
+              replica thật, đo replication lag bằng <code>pg_stat_replication</code>, và tự tay tái tạo bug mà mọi hệ
+              thống có replica đều gặp — người dùng đổi ảnh đại diện rồi reload và thấy ảnh cũ.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/nginx/edge.conf"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về edge.conf
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-caching" class="article-related__link article-related__link--prev">
+                  Bài 5: Caching — Cache-Aside, TTL &amp; Vô Hiệu Hoá
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 7: Replication &amp; Scale Tầng Đọc (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

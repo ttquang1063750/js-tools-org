@@ -39,6 +39,7 @@ function parseArgs(argv) {
     json: false,
     keepAlive: true,
     keySpace: 0,
+    keyParam: 'key',
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -55,9 +56,13 @@ function parseArgs(argv) {
     // chi co y nghia khi khong gian key duoc kiem soat, vi hit ratio phu thuoc truc tiep
     // vao ty le giua so key va so request.
     else if (a === '--key-space') out.keySpace = Number(argv[++i]);
+    // Ten tham so duoc sinh ngau nhien. Mac dinh 'key' (Bai 5). Doi thanh 'utm_source'
+    // de mo phong tham so THEO DOI: noi dung y het nhau nhung cache key khac nhau,
+    // dung de do phan manh cache o tang edge (Bai 6, muc 6.4).
+    else if (a === '--key-param') out.keyParam = argv[++i];
     else if (a === '--help' || a === '-h') {
       console.log(
-        'node loadgen.js --url <URL> [-c connections] [-d giây] [-w warmupGiây] [--json] [--no-keepalive] [--key-space N]'
+        'node loadgen.js --url <URL> [-c connections] [-d giây] [-w warmupGiây] [--json] [--no-keepalive] [--key-space N] [--key-param TEN]'
       );
       process.exit(0);
     }
@@ -115,7 +120,7 @@ function requestPath() {
   const base = target.pathname + target.search;
   if (!(cfg.keySpace > 0)) return base;
   const k = 'k' + Math.floor(Math.random() * cfg.keySpace);
-  return base + (target.search ? '&' : '?') + 'key=' + k;
+  return base + (target.search ? '&' : '?') + cfg.keyParam + '=' + k;
 }
 
 function oneRequest() {
@@ -191,6 +196,7 @@ setTimeout(
       connections: cfg.connections,
       keepAlive: cfg.keepAlive,
       keySpace: cfg.keySpace || null,
+      keyParam: cfg.keySpace ? cfg.keyParam : null,
       durationSec: Number(elapsedSec.toFixed(2)),
       requests: ok,
       errors,
