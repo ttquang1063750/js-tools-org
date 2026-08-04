@@ -1,0 +1,1490 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 7: Replication &amp; Scale Tầng Đọc — js-tools</title>
+    <meta
+      name="description"
+      content="Ba mục đích của replica cần ba cấu hình khác nhau và replica không phải backup; từ async lên sync độ trễ ghi tăng 79% và throughput ghi giảm 44%; phát hiện chính — replication lag chỉ 0,557 ms vẫn phá vỡ read-your-writes trong 87,21% lệnh đọc, vì điều quyết định là lag có lớn hơn khoảng cách giữa lệnh ghi và lệnh đọc hay không; hai bản vá đều cho 0% với giá 4,6% và 12,6% throughput; và split-brain tái tạo thật bằng docker network disconnect cộng pg_promote."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-replication" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-replication" />
+    <meta property="og:title" content="Bài 7: Replication &amp; Scale Tầng Đọc — js-tools" />
+    <meta
+      property="og:description"
+      content="Ba mục đích của replica cần ba cấu hình khác nhau và replica không phải backup; từ async lên sync độ trễ ghi tăng 79% và throughput ghi giảm 44%; phát hiện chính — replication lag chỉ 0,557 ms vẫn phá vỡ read-your-writes trong 87,21% lệnh đọc, vì điều quyết định là lag có lớn hơn khoảng cách giữa lệnh ghi và lệnh đọc hay không; hai bản vá đều cho 0% với giá 4,6% và 12,6% throughput; và split-brain tái tạo thật bằng docker network disconnect cộng pg_promote."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 7: Replication &amp; Scale Tầng Đọc — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Ba mục đích của replica cần ba cấu hình khác nhau và replica không phải backup; từ async lên sync độ trễ ghi tăng 79% và throughput ghi giảm 44%; phát hiện chính — replication lag chỉ 0,557 ms vẫn phá vỡ read-your-writes trong 87,21% lệnh đọc, vì điều quyết định là lag có lớn hơn khoảng cách giữa lệnh ghi và lệnh đọc hay không; hai bản vá đều cho 0% với giá 4,6% và 12,6% throughput; và split-brain tái tạo thật bằng docker network disconnect cộng pg_promote."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 7: Replication & Scale Tầng Đọc",
+        "description": "Ba mục đích của replica cần ba cấu hình khác nhau và replica không phải backup; từ async lên sync độ trễ ghi tăng 79% và throughput ghi giảm 44%; phát hiện chính — replication lag chỉ 0,557 ms vẫn phá vỡ read-your-writes trong 87,21% lệnh đọc, vì điều quyết định là lag có lớn hơn khoảng cách giữa lệnh ghi và lệnh đọc hay không; hai bản vá đều cho 0% với giá 4,6% và 12,6% throughput; và split-brain tái tạo thật bằng docker network disconnect cộng pg_promote.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-replication",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+        "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+        "datePublished": "2026-08-03"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 7: Replication &amp; Scale Tầng Đọc</h1>
+          <div class="article-hero__meta">3 tháng 8, 2026 · 23 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              Năm bài trước đều là các lớp <em>đứng trước</em> database. Bài này bước vào chính nó, và câu hỏi đầu tiên
+              là câu rẻ nhất trong toàn bộ series: nếu tỉ lệ đọc trên ghi là 100:1 — con số rất thường gặp — thì chỉ cần
+              thêm bản sao để đọc là đã giải quyết được 99% khối lượng công việc.
+            </p>
+
+            <p>
+              Lab của bài này dựng PostgreSQL primary và một read replica <strong>thật</strong>, có streaming
+              replication. Và phép đo đầu tiên đã cho một con số mình không lường trước: replication lag của lab chỉ
+              <strong>0,557 ms</strong> — nhỏ hơn nửa phần nghìn giây — mà tỉ lệ người dùng "ghi rồi đọc lại thấy dữ
+              liệu cũ" vẫn là <strong>87,21%</strong>. Lag không cần phải lớn để phá vỡ hệ thống; nó chỉ cần lớn hơn
+              khoảng thời gian giữa lệnh ghi và lệnh đọc của chính người dùng đó.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo và một điều cần nói trước</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64.
+                <strong>PostgreSQL 18.3</strong> (bản Debian), primary và replica là hai container riêng, streaming
+                replication không đồng bộ. Ba app replica mỗi replica 1 CPU / 256 MB, nginx 1.27-alpine, bộ đo tải 2
+                CPU.<br /><br />
+                Vì cả hai node PostgreSQL nằm trên cùng một máy, lag tự nhiên chỉ dưới 1 ms — nhỏ hơn nhiều so với một
+                replica ở vùng địa lý khác. Nên ngoài các phép đo ở lag tự nhiên, bài này còn dùng
+                <code>recovery_min_apply_delay</code> để đặt lag <strong>có kiểm soát</strong> ở 200 ms, mô phỏng
+                replica xa. Mỗi bảng số liệu đều ghi rõ đang ở chế độ nào.
+              </div>
+            </div>
+
+            <!-- ================= 7.1 ================= -->
+            <h2>7.1 Ba mục đích khác nhau, thường bị gộp làm một</h2>
+
+            <p>
+              "Thêm replica" nghe như một việc, nhưng nó phục vụ ba mục tiêu khác nhau — và ba mục tiêu đó cần ba cấu
+              hình khác nhau. Gộp chúng lại là nguồn gốc của phần lớn thất vọng về replica.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Mục đích</th>
+                  <th>Cần gì</th>
+                  <th>Điều KHÔNG đạt được</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Scale tầng đọc</strong></td>
+                  <td>Nhiều replica, async là đủ, chấp nhận dữ liệu cũ chút ít</td>
+                  <td>
+                    Không giúp gì cho <strong>throughput ghi</strong> — mọi lệnh ghi vẫn dồn về một primary. Cũng không
+                    tăng dung lượng lưu trữ
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Tính sẵn sàng cao (HA)</strong></td>
+                  <td>Ít nhất bán đồng bộ, có cơ chế bầu chọn và fencing, replica ở vùng khác</td>
+                  <td>Không tự có được nếu chỉ bật async replica rồi promote thủ công lúc sự cố</td>
+                </tr>
+                <tr>
+                  <td><strong>Bản sao dự phòng</strong></td>
+                  <td>
+                    Bản sao <em>trễ</em> có chủ ý, hoặc snapshot theo thời điểm, hoặc backup logic ở nơi khác hoàn toàn
+                  </td>
+                  <td>
+                    <strong>Replica không phải backup.</strong> Xem cạm bẫy ngay dưới — đây là ngộ nhận tốn kém nhất
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: coi replica là backup</div>
+              <div class="callout__content">
+                Replica sao chép <em>mọi</em> thay đổi, trung thực và rất nhanh — kể cả câu
+                <code>DELETE FROM orders</code> thiếu <code>WHERE</code> mà bạn vừa chạy. Trong lab, lag là 0,557 ms.
+                Nghĩa là bạn có khoảng nửa phần nghìn giây để hối hận.<br /><br />
+                Replica bảo vệ bạn khỏi <strong>hỏng phần cứng</strong>. Backup bảo vệ bạn khỏi
+                <strong>lỗi logic</strong> — của bạn, của một lần deploy, hoặc của một kẻ tấn công. Hai loại sự cố khác
+                nhau, cần hai công cụ khác nhau. Nếu bạn chỉ có replica thì bạn chưa có backup, và điều đó chỉ được phát
+                hiện vào đúng lúc tệ nhất.<br /><br />
+                Có một thứ ở giữa và rất đáng biết: <strong>replica trễ có chủ ý</strong>. Bằng đúng cơ chế mà bài này
+                dùng để mô phỏng lag — <code>recovery_min_apply_delay</code> — bạn có thể giữ một replica luôn chậm 1
+                giờ. Nó vẫn là replica, nhưng nó cho bạn một giờ để nhận ra và ngăn một lệnh xoá sai.
+              </div>
+            </div>
+
+            <!-- ================= 7.2 ================= -->
+            <h2>7.2 Cơ chế sao chép, và cái giá của từng mức an toàn</h2>
+
+            <p>
+              PostgreSQL không sao chép "dữ liệu" mà sao chép <strong>WAL</strong> (write-ahead log) — dòng nhật ký ghi
+              lại từng thay đổi trước khi nó được áp dụng. Replica nhận dòng đó rồi <em>chạy lại</em>. MySQL gọi là
+              binlog, ý tưởng như nhau.
+            </p>
+
+            <p>
+              Điều quan trọng nằm ở một câu hỏi duy nhất: <strong>primary trả lời "ghi xong" ở thời điểm nào?</strong>
+              Trả lời sớm thì ghi nhanh nhưng có thể mất dữ liệu khi primary chết; trả lời muộn thì an toàn hơn nhưng
+              mỗi lệnh ghi phải chờ replica.
+            </p>
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 338"
+                width="100%"
+                role="img"
+                aria-label="Bốn mức đồng bộ của replication, đánh dấu thời điểm primary coi lệnh ghi là xong, kèm độ trễ và tps đo được"
+              >
+                <rect width="720" height="338" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Primary trả lời "ghi xong" ở thời điểm nào — bốn lựa chọn, bốn cái giá
+                </text>
+
+                <!-- cot moc -->
+                <text
+                  x="196"
+                  y="46"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  primary ghi WAL
+                </text>
+                <text
+                  x="330"
+                  y="46"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  replica NHẬN
+                </text>
+                <text
+                  x="452"
+                  y="46"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  replica FLUSH
+                </text>
+                <text
+                  x="574"
+                  y="46"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  replica APPLY
+                </text>
+                <text
+                  x="666"
+                  y="46"
+                  fill="#6b7280"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  đo được
+                </text>
+
+                <!-- ===== 1 ASYNC ===== -->
+                <rect x="16" y="54" width="688" height="58" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text x="28" y="72" fill="#22c55e" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  ASYNC · synchronous_commit = local
+                </text>
+                <line x1="120" y1="90" x2="196" y2="90" stroke="#22c55e" stroke-width="2" />
+                <circle cx="196" cy="90" r="6" fill="#22c55e" />
+                <text
+                  x="196"
+                  y="93"
+                  fill="#0b0f19"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                  font-weight="700"
+                >
+                  ✓
+                </text>
+                <line x1="202" y1="90" x2="580" y2="90" stroke="#374151" stroke-dasharray="3 3" />
+                <text x="212" y="86" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  replica bắt kịp SAU, primary không chờ
+                </text>
+                <text x="612" y="86" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  0,468 ms
+                </text>
+                <text x="612" y="100" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">17.096 tps</text>
+                <text x="28" y="104" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  primary chết ⇒ MẤT phần chưa gửi
+                </text>
+
+                <!-- ===== 2 SEMI-SYNC ===== -->
+                <rect x="16" y="120" width="688" height="52" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="28"
+                  y="138"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  SEMI-SYNC · remote_write
+                </text>
+                <line x1="120" y1="156" x2="330" y2="156" stroke="#38bdf8" stroke-width="2" />
+                <circle cx="330" cy="156" r="6" fill="#38bdf8" />
+                <text
+                  x="330"
+                  y="159"
+                  fill="#0b0f19"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                  font-weight="700"
+                >
+                  ✓
+                </text>
+                <line x1="336" y1="156" x2="580" y2="156" stroke="#374151" stroke-dasharray="3 3" />
+                <text x="346" y="152" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  chờ replica NHẬN được WAL
+                </text>
+                <text
+                  x="612"
+                  y="152"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  0,660 ms
+                </text>
+                <text x="612" y="166" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">12.122 tps</text>
+
+                <!-- ===== 3 SYNC flush ===== -->
+                <rect x="16" y="180" width="688" height="52" rx="6" fill="#151d30" stroke="#a78bfa" />
+                <text
+                  x="28"
+                  y="198"
+                  fill="#a78bfa"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  SYNC · on (mặc định)
+                </text>
+                <line x1="120" y1="216" x2="452" y2="216" stroke="#a78bfa" stroke-width="2" />
+                <circle cx="452" cy="216" r="6" fill="#a78bfa" />
+                <text
+                  x="452"
+                  y="219"
+                  fill="#0b0f19"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                  font-weight="700"
+                >
+                  ✓
+                </text>
+                <line x1="458" y1="216" x2="580" y2="216" stroke="#374151" stroke-dasharray="3 3" />
+                <text x="468" y="212" fill="#6b7280" font-family="system-ui, sans-serif" font-size="8">
+                  đã bền vững
+                </text>
+                <text
+                  x="612"
+                  y="212"
+                  fill="#a78bfa"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  0,836 ms
+                </text>
+                <text x="612" y="226" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">9.574 tps</text>
+
+                <!-- ===== 4 remote_apply ===== -->
+                <rect x="16" y="240" width="688" height="58" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="28"
+                  y="258"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  SYNC MẠNH NHẤT · remote_apply
+                </text>
+                <line x1="120" y1="276" x2="574" y2="276" stroke="#f59e0b" stroke-width="2" />
+                <circle cx="574" cy="276" r="6" fill="#f59e0b" />
+                <text
+                  x="574"
+                  y="279"
+                  fill="#0b0f19"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                  font-weight="700"
+                >
+                  ✓
+                </text>
+                <text
+                  x="612"
+                  y="272"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  0,811 ms
+                </text>
+                <text x="612" y="286" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">9.867 tps</text>
+                <text x="28" y="292" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  Đọc trên replica LUÔN thấy dữ liệu mới ⇒ đo được 0% đọc ra dữ liệu cũ (mục 7.3)
+                </text>
+
+                <text x="16" y="318" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Từ async lên sync: độ trễ ghi +79%, throughput ghi −44%. Đó là giá của việc không mất dữ liệu khi
+                  primary chết.
+                </text>
+                <text x="16" y="332" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Cả hai node ở cùng một máy nên khoảng cách giữa các mốc rất nhỏ. Với replica ở vùng khác, mỗi mốc cộng
+                  thêm một RTT liên vùng.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Dấu ✓ là thời điểm primary trả lời cho client. Càng đẩy dấu ✓ sang phải càng an toàn và càng chậm —
+                không có lựa chọn nào đúng cho mọi trường hợp.
+              </figcaption>
+            </figure>
+            <p>
+              Số liệu trong hình lấy từ <code>pgbench</code> chạy trong container primary, 8 kết nối, 10 giây, script
+              chỉ gồm một lệnh <code>INSERT</code> — nghĩa là đo gần như thuần chi phí commit:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">do_chi_phi_commit.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+docker compose --profile replica up -d
+
+# Script ghi toi gian
+docker compose exec -T postgres sh -c 'echo "INSERT INTO write_load (filler)
+  VALUES (repeat(md5(random()::text), 8));" > /tmp/w.sql'
+
+# Doi che do roi do lai. `walreceiver` la application_name cua replica trong lab —
+# lay tu: SELECT application_name FROM pg_stat_replication;
+for cfg in "'':local" "walreceiver:remote_write" "walreceiver:on" "walreceiver:remote_apply"; do
+  names="${cfg%%:*}"; mode="${cfg##*:}"
+  docker compose exec -T postgres psql -U lab -d lab -q \
+    -c "ALTER SYSTEM SET synchronous_standby_names = $names;" \
+    -c "ALTER SYSTEM SET synchronous_commit = '$mode';" \
+    -c "SELECT pg_reload_conf();"
+  echo "== $mode"
+  docker compose exec -T postgres pgbench -U lab -d lab -n -f /tmp/w.sql -c 8 -j 2 -T 10
+done</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Một chi tiết bất ngờ trong số đo</div>
+              <div class="callout__content">
+                <code>remote_apply</code> đo được <strong>0,811 ms</strong> — <em>nhanh hơn</em> một chút so với
+                <code>on</code> ở mức 0,836 ms, dù về lý thuyết nó chờ nhiều hơn (chờ replica áp dụng xong, không chỉ
+                flush xong). Chênh lệch 0,025 ms này nằm trong dao động giữa các lần chạy, nên kết luận đúng là
+                <strong>hai chế độ này tốn như nhau trong lab</strong>, chứ không phải remote_apply rẻ hơn.<br /><br />
+                Lý do: cả hai node ở cùng một máy, nên bước "apply" gần như miễn phí so với bước "flush xuống đĩa". Với
+                replica ở vùng địa lý khác thì khoảng cách này giãn ra rõ rệt, và <code>remote_apply</code> sẽ đắt hơn
+                hẳn. Đây là ví dụ cho một điều cần cẩn thận suốt series: lab loại bỏ khoảng cách địa lý, nên nó
+                <strong>đo đúng cơ chế nhưng không đo đúng tỉ lệ</strong>.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: bật đồng bộ với replica ở vùng khác</div>
+              <div class="callout__content">
+                Nếu <code>synchronous_standby_names</code> trỏ tới một replica ở vùng địa lý khác, mỗi lệnh ghi phải chờ
+                trọn một RTT liên vùng. Với con số ở <a href="sysdesign-cdn-edge">Bài 6</a> — 150 ms cho một tuyến xa —
+                thì throughput ghi tối đa trên một kết nối tụt xuống khoảng 6 giao dịch/giây, bất kể máy mạnh cỡ nào.<br /><br />
+                Dấu hiệu nhận biết rất đặc trưng: throughput ghi sụp nhưng <strong>CPU của database vẫn rảnh</strong>.
+                Không có gì đang tính toán cả — mọi thứ đang chờ mạng. Nếu bạn thấy tổ hợp đó thì hãy kiểm tra
+                <code>synchronous_standby_names</code> trước khi đi tối ưu query.
+              </div>
+            </div>
+
+            <!-- ================= 7.3 ================= -->
+            <h2>7.3 Replication lag và bug mà mọi hệ thống có replica đều gặp</h2>
+
+            <p>
+              Đây là mục trung tâm của bài. Kịch bản quen thuộc: người dùng đổi ảnh đại diện — lệnh ghi đi vào primary.
+              Trang tải lại — lệnh đọc đi vào replica. Nếu replica chưa kịp áp dụng, họ thấy
+              <strong>ảnh cũ</strong> và kết luận hệ thống hỏng. Đó là vi phạm <strong>read-your-writes</strong>: bạn
+              phải luôn đọc được thứ chính bạn vừa ghi.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Trục thời gian cho thấy lệnh đọc xảy ra trước khi replica kịp áp dụng nên trả về dữ liệu cũ"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Lag chỉ cần lớn hơn khoảng cách giữa lệnh ghi và lệnh đọc của CHÍNH người đó
+                </text>
+
+                <!-- truc thoi gian -->
+                <line x1="60" y1="150" x2="690" y2="150" stroke="#374151" />
+                <text x="694" y="154" fill="#6b7280" font-family="system-ui, sans-serif" font-size="9">t</text>
+
+                <!-- t0: ghi -->
+                <line x1="120" y1="80" x2="120" y2="220" stroke="#a78bfa" stroke-dasharray="3 3" />
+                <circle cx="120" cy="150" r="5" fill="#a78bfa" />
+                <text
+                  x="120"
+                  y="72"
+                  fill="#a78bfa"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  t₀
+                </text>
+                <text
+                  x="120"
+                  y="240"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  GHI vào primary
+                </text>
+                <text
+                  x="120"
+                  y="253"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  version 5 → 6
+                </text>
+
+                <!-- t0+eps: doc -->
+                <line x1="200" y1="100" x2="200" y2="220" stroke="#ef4444" stroke-dasharray="3 3" />
+                <circle cx="200" cy="150" r="5" fill="#ef4444" />
+                <text
+                  x="200"
+                  y="92"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  t₀+ε
+                </text>
+                <text x="214" y="240" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">
+                  ĐỌC từ replica → trả về version 5
+                </text>
+                <text x="214" y="253" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  người dùng thấy ảnh CŨ
+                </text>
+
+                <!-- t0+delta: replica apply -->
+                <line x1="420" y1="100" x2="420" y2="200" stroke="#22c55e" stroke-dasharray="3 3" />
+                <circle cx="420" cy="150" r="5" fill="#22c55e" />
+                <text
+                  x="420"
+                  y="92"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  t₀+Δ
+                </text>
+                <text x="434" y="188" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  replica áp dụng xong → từ đây mới thấy version 6
+                </text>
+
+                <!-- khoang eps va delta -->
+                <line x1="120" y1="116" x2="200" y2="116" stroke="#ef4444" stroke-width="1.5" />
+                <text
+                  x="160"
+                  y="112"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  ε
+                </text>
+                <line x1="120" y1="132" x2="420" y2="132" stroke="#22c55e" stroke-width="1.5" />
+                <text
+                  x="270"
+                  y="128"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  Δ = replication lag
+                </text>
+
+                <!-- vung nguy hiem -->
+                <rect x="120" y="140" width="300" height="20" fill="#ef4444" opacity="0.14" />
+                <text
+                  x="270"
+                  y="176"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  mọi lệnh đọc trong vùng này đều trả về dữ liệu cũ
+                </text>
+
+                <!-- ket luan bang so do duoc -->
+                <rect x="16" y="262" width="688" height="30" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="28" y="281" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Đo thật: Δ = 0,557 ms — nhưng vì ε còn nhỏ hơn (app ghi rồi đọc ngay), 87,21% lệnh đọc rơi vào vùng
+                  đỏ.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Điều thường bị hiểu sai: bug này không đòi hỏi lag "lớn". Nó chỉ đòi hỏi ε &lt; Δ, và trong một request
+                web thì ε thường được tính bằng microsecond.
+              </figcaption>
+            </figure>
+
+            <p>
+              Lab có endpoint <code>/rww</code> làm đúng hai việc: ghi vào primary (dùng
+              <code>RETURNING version</code> để biết chính xác đã ghi version nào), rồi đọc ngay từ replica. Nếu version
+              đọc ra <em>nhỏ hơn</em> version vừa ghi thì đó là dữ liệu cũ — một điều đo được, không phải cảm nhận:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">router_doc_ghi.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">// 1) GHI vao primary. RETURNING cho biet chinh xac version vua ghi.
+const wrote = await pgPrimary.query(
+  `UPDATE profiles SET avatar = 'avatar-v' || (version + 1) || '.png',
+                       version = version + 1, updated_at = now()
+   WHERE id = ${id} RETURNING version`
+);
+const wroteVersion = Number(wrote[0].version);
+if (usePin &amp;&amp; READ_PIN_MS &gt; 0) readPin.set(id, Date.now() + READ_PIN_MS);
+
+// 2) DOC NGAY LAP TUC. Day la thoi diem quyet dinh: chua chac replica da kip.
+const pinned = usePin &amp;&amp; shouldReadPrimary(id, Date.now());
+const target = pinned ? pgPrimary : pgReplica;
+const read = await target.query(`SELECT version FROM profiles WHERE id = ${id}`);
+
+// "Cu" la mot dieu DO DUOC: doc ra version NHO HON version vua ghi.
+const stale = Number(read[0].version) &lt; wroteVersion;</code></pre>
+            </div>
+
+            <p>Bốn cấu hình, mỗi cấu hình 16 kết nối, 12 giây, khoảng 100.000 lượt ghi-rồi-đọc:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cấu hình</th>
+                  <th><code>replay_lag</code></th>
+                  <th>Tỉ lệ đọc ra dữ liệu cũ</th>
+                  <th>Throughput</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>A · lag tự nhiên, không ghim</td>
+                  <td>0,557 ms</td>
+                  <td><strong>87,21%</strong> (90.376/103.627)</td>
+                  <td>7.547 rps</td>
+                  <td>4,71 ms</td>
+                </tr>
+                <tr>
+                  <td>B · lag đặt 200 ms, không ghim</td>
+                  <td>200,3 ms</td>
+                  <td><strong>100,00%</strong> (102.625/102.625)</td>
+                  <td>7.516 rps</td>
+                  <td>4,88 ms</td>
+                </tr>
+                <tr>
+                  <td>C · lag 200 ms, <strong>ghim về primary 500 ms</strong></td>
+                  <td>200,2 ms</td>
+                  <td><strong>0,00%</strong> (0/98.358)</td>
+                  <td>7.200 rps</td>
+                  <td>5,16 ms</td>
+                </tr>
+                <tr>
+                  <td>D · lag 200 ms, tắt ghim cho từng request</td>
+                  <td>200,9 ms</td>
+                  <td>100,00%</td>
+                  <td>7.295 rps</td>
+                  <td>5,10 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Dòng A là dòng đáng dừng lại. Lag <strong>0,557 ms</strong> — một con số mà không dashboard nào báo động,
+              và nhiều người sẽ gọi là "gần như không có lag" — vẫn làm <strong>87% lệnh đọc</strong> trả về dữ liệu cũ.
+              Vì app ghi rồi đọc ngay trong cùng một request, khoảng cách ε giữa hai lệnh chỉ vài chục microsecond. So
+              với ε đó thì nửa millisecond là rất dài.
+            </p>
+
+            <p>
+              Dòng C cho thấy bản vá hoạt động tuyệt đối: 0 trên 98.358 lượt. Và cái giá rẻ đến mức đáng ngạc nhiên —
+              throughput giảm từ 7.547 xuống 7.200, tức <strong>4,6%</strong>. Dòng D là đối chứng: cùng cấu hình đó
+              nhưng tắt ghim theo từng request thì tỉ lệ quay lại 100%, chứng minh chính cơ chế ghim là thứ tạo ra khác
+              biệt chứ không phải một thay đổi ngẫu nhiên nào khác.
+            </p>
+            <h3>Bản vá thứ hai: để chính database lo</h3>
+
+            <p>
+              Có một cách khác, không cần sửa dòng code nào ở tầng app: đặt
+              <code>synchronous_commit = remote_apply</code>. Lúc đó primary chỉ trả lời "ghi xong" sau khi replica đã
+              <em>áp dụng</em> xong, nên mọi lệnh đọc sau đó trên replica đều thấy dữ liệu mới. Đo thật, lag tự nhiên,
+              không ghim gì cả:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cách vá</th>
+                  <th>Tỉ lệ đọc dữ liệu cũ</th>
+                  <th>Throughput <code>/rww</code></th>
+                  <th>Cái giá thật</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Không vá</td>
+                  <td>87,21%</td>
+                  <td>7.547 rps</td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <td><strong>Ghim đọc về primary (tầng app)</strong></td>
+                  <td><strong>0,00%</strong></td>
+                  <td>7.200 rps (−4,6%)</td>
+                  <td>Thêm code và thêm trạng thái; chỉ đúng cho người vừa ghi</td>
+                </tr>
+                <tr>
+                  <td>
+                    <strong><code>remote_apply</code> (tầng database)</strong>
+                  </td>
+                  <td><strong>0,00%</strong></td>
+                  <td>6.594 rps (−12,6%)</td>
+                  <td>Mọi lệnh ghi đều chậm hơn, kể cả của người không đọc lại; ghi thuần −42% tps</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Hai bản vá cùng cho 0%, nhưng chúng trả giá ở hai chỗ khác nhau.
+              <strong>Ghim ở tầng app</strong> chỉ làm chậm đúng những lệnh đọc của người vừa ghi — một phần rất nhỏ lưu
+              lượng. <strong><code>remote_apply</code></strong> làm chậm <em>mọi</em> lệnh ghi trong hệ thống, kể cả của
+              người không bao giờ đọc lại. Đó là lý do bản vá tầng app phổ biến hơn, dù nó cần viết code.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Giới hạn của bảng ghim, và vì sao nó không phải Map trong RAM</div>
+              <div class="callout__content">
+                Trong lab, bảng ghim là một <code>Map</code> trong bộ nhớ của tiến trình app. Nó cho 0% vì
+                <code>/rww</code> ghi và đọc trong <em>cùng một request</em>, nên luôn là cùng một tiến trình.<br /><br />
+                Hệ thống thật không như vậy: người dùng ghi (request đi vào app1) rồi tải lại trang (request đi vào
+                app2). app2 không biết gì về lệnh ghi đó và vẫn đọc replica — <strong>bug quay lại</strong>. Và nó quay
+                lại theo cách khó chịu nhất: chỉ xảy ra với một phần người dùng, không tái tạo được theo yêu cầu, và
+                biến mất khi bạn thử trên máy dev với một replica app. Cùng dạng với bug state cục bộ ở
+                <a href="sysdesign-load-balancing">Bài 3</a> mục 3.5.<br /><br />
+                Ba cách làm cho trạng thái ghim dùng chung được, từ đơn giản tới chặt chẽ: (1) đặt cờ vào
+                <strong>cookie hoặc token của chính người dùng</strong> — không cần hạ tầng gì thêm, và tự nhiên đi theo
+                đúng người đó; (2) lưu vào <strong>Redis</strong> (đã có ở <a href="sysdesign-caching">Bài 5</a>); (3)
+                chặt chẽ nhất là truyền <strong>LSN</strong> — vị trí trong WAL — mà người dùng cần thấy, rồi chỉ đọc
+                replica đã replay tới vị trí đó, dùng <code>pg_last_wal_replay_lsn()</code> để so. Cách (3) không cần
+                ghim thời gian và không cần đoán, nhưng đòi hỏi mang LSN xuyên qua tầng API.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: chia đều lệnh đọc cho nhiều replica có lag khác nhau</div>
+              <div class="callout__content">
+                Có ba replica, round robin lệnh đọc cho cả ba. Replica A đang chậm 5 ms, replica B chậm 400 ms. Người
+                dùng bấm F5 hai lần: lần đầu vào A thấy dữ liệu mới, lần sau vào B thấy dữ liệu cũ. Dữ liệu
+                <strong>nhảy tiến rồi lùi</strong>.<br /><br />
+                Đây là vi phạm <strong>monotonic reads</strong>, và là loại bug tệ nhất để xử lý: người dùng báo "nó cứ
+                nhảy loạn", bạn thử mười lần đều đúng, và không có log nào ghi lại vì không có request nào lỗi. Bản vá
+                thông thường là <strong>ghim mỗi session vào một replica cố định</strong> — không đảm bảo dữ liệu mới,
+                nhưng đảm bảo không bao giờ lùi. Với người dùng, "hơi cũ nhưng ổn định" dễ chấp nhận hơn nhiều so với
+                "nhảy qua nhảy lại".
+              </div>
+            </div>
+
+            <h3>Đo lag cho đúng</h3>
+
+            <p>PostgreSQL phơi ba loại lag khác nhau, và chỉ một trong ba là con số người đọc thật sự cảm nhận:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tools/pg-lag.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">docker compose exec -T postgres psql -U lab -d lab -x -c "
+  SELECT application_name, state, sync_state,
+         pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn))   AS chua_gui,
+         pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)) AS chua_replay,
+         write_lag, flush_lag, replay_lag
+  FROM pg_stat_replication;"
+
+# write_lag   toi khi replica GHI duoc WAL
+# flush_lag   toi khi replica FLUSH xong (ben vung)
+# replay_lag  toi khi replica AP DUNG xong  ← DAY moi la cai nguoi doc thay</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚡ Đừng alert theo <code>pg_last_xact_replay_timestamp()</code> khi hệ thống rảnh
+              </div>
+              <div class="callout__content">
+                Cách đo lag hay được truyền tay nhất là lấy <code>now() - pg_last_xact_replay_timestamp()</code> trên
+                replica. Vấn đề: khi <strong>không có lưu lượng ghi</strong>, con số này tăng dần theo thời gian dù
+                replica đã bắt kịp hoàn hảo — vì nó đo "đã bao lâu kể từ giao dịch cuối cùng được replay", không phải
+                "còn chậm bao nhiêu".<br /><br />
+                Hệ quả rất thực tế: alert dựng theo công thức đó sẽ nổ vào 3 giờ sáng đúng lúc hệ thống rảnh nhất và
+                không có gì sai cả. Trong lab, số này đo được 0,944 giây trong khi <code>replay_lag</code> thật là
+                0,000465 giây — chênh nhau hai nghìn lần.<br /><br />
+                Cách đúng: alert theo <code>replay_lag</code> từ <code>pg_stat_replication</code> ở phía primary, hoặc
+                theo khoảng cách LSN (<code>chua_replay</code> trong script trên). Cả hai đều bằng 0 khi thật sự đã bắt
+                kịp.
+              </div>
+            </div>
+            <!-- ================= 7.4 ================= -->
+            <h2>7.4 Failover và split-brain — tự tay tạo ra thảm hoạ</h2>
+
+            <p>
+              Khi primary chết, một replica phải được <strong>promote</strong> lên làm primary mới. Nghe đơn giản, và
+              PostgreSQL làm việc đó bằng đúng một câu lệnh. Vấn đề không nằm ở việc promote, mà ở câu hỏi:
+              <em>làm sao chắc chắn primary cũ đã thật sự chết?</em>
+            </p>
+
+            <p>
+              Lab cho phép tái tạo đúng trường hợp tệ nhất. Ta <strong>tách mạng</strong> replica khỏi primary — mô
+              phỏng một partition, chứ primary vẫn sống và vẫn nhận ghi — rồi promote replica mà <em>không</em> có cơ
+              chế nào đảm bảo primary cũ đã dừng:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_tao_split_brain.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+
+# Truoc: replica la standby va TU CHOI moi lenh ghi
+docker compose exec -T postgres-replica psql -U lab -d lab -tAc "SELECT pg_is_in_recovery();"
+# t
+
+# 1) TACH MANG replica khoi primary (primary VAN SONG va van nhan ghi)
+docker network disconnect sysdesign-lab_default sysdesign-lab-postgres-replica-1
+
+# 2) PROMOTE replica — khong co fencing, khong ai xac nhan primary cu da chet
+docker compose exec -T postgres-replica psql -U lab -d lab -tAc "SELECT pg_promote(wait => true);"
+docker compose exec -T postgres-replica psql -U lab -d lab -tAc "SELECT pg_is_in_recovery();"
+# f        ← gio no la mot primary
+
+# 3) CA HAI cung nhan ghi cho CUNG mot dong
+docker compose exec -T postgres psql -U lab -d lab -tAc \
+  "UPDATE profiles SET avatar='tu-PRIMARY-CU.png',  version=version+100 WHERE id=500 RETURNING version, avatar;"
+# 762|tu-PRIMARY-CU.png
+docker compose exec -T postgres-replica psql -U lab -d lab -tAc \
+  "UPDATE profiles SET avatar='tu-PRIMARY-MOI.png', version=version+200 WHERE id=500 RETURNING version, avatar;"
+# 862|tu-PRIMARY-MOI.png
+
+# 4) Noi lai mang. Co tu hoa giai duoc khong?
+docker network connect sysdesign-lab_default sysdesign-lab-postgres-replica-1
+docker compose logs postgres-replica | tail -4
+# LOG:  selected new timeline ID: 2
+# LOG:  archive recovery complete
+# LOG:  database system is ready to accept connections</code></pre>
+            </div>
+
+            <p>
+              Kết quả: cùng một dòng <code>id=500</code>, primary cũ có <code>762 | tu-PRIMARY-CU.png</code>, primary
+              mới có <code>862 | tu-PRIMARY-MOI.png</code>. Dữ liệu đã <strong>phân kỳ</strong>. Và nối lại mạng
+              <em>không</em> hoà giải gì cả — dòng log <code>selected new timeline ID: 2</code> là chính PostgreSQL nói
+              với bạn rằng lịch sử đã phân nhánh thành hai.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 306"
+                width="100%"
+                role="img"
+                aria-label="Split-brain: hai node cùng làm primary và nhận ghi cho cùng một dòng, lịch sử phân nhánh thành hai timeline"
+              >
+                <rect width="720" height="306" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Split-brain — và vì sao không có cách nào merge tự động
+                </text>
+
+                <!-- truc thoi gian chung -->
+                <line x1="60" y1="96" x2="300" y2="96" stroke="#a78bfa" stroke-width="2" />
+                <text x="70" y="88" fill="#a78bfa" font-family="system-ui, sans-serif" font-size="9">
+                  một lịch sử duy nhất · timeline 1
+                </text>
+                <circle cx="300" cy="96" r="5" fill="#ef4444" />
+                <text
+                  x="300"
+                  y="76"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  PARTITION
+                </text>
+                <text
+                  x="300"
+                  y="64"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  mạng bị tách
+                </text>
+
+                <!-- nhanh tren: primary cu -->
+                <line x1="300" y1="96" x2="420" y2="52" stroke="#38bdf8" stroke-width="2" />
+                <line x1="420" y1="52" x2="660" y2="52" stroke="#38bdf8" stroke-width="2" />
+                <text x="430" y="44" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  PRIMARY CŨ — vẫn sống, vẫn nhận ghi
+                </text>
+                <circle cx="560" cy="52" r="4" fill="#38bdf8" />
+                <text x="470" y="68" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  id=500 → 762 | tu-PRIMARY-CU.png
+                </text>
+
+                <!-- nhanh duoi: primary moi -->
+                <line x1="300" y1="96" x2="420" y2="146" stroke="#f59e0b" stroke-width="2" />
+                <line x1="420" y1="146" x2="660" y2="146" stroke="#f59e0b" stroke-width="2" />
+                <text
+                  x="430"
+                  y="138"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  PRIMARY MỚI — vừa được promote · timeline 2
+                </text>
+                <circle cx="560" cy="146" r="4" fill="#f59e0b" />
+                <text x="470" y="162" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="8">
+                  id=500 → 862 | tu-PRIMARY-MOI.png
+                </text>
+
+                <!-- noi lai mang -->
+                <line x1="660" y1="52" x2="660" y2="146" stroke="#ef4444" stroke-dasharray="4 3" />
+                <text x="666" y="102" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">nối</text>
+                <text x="666" y="114" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9">lại</text>
+
+                <rect x="16" y="180" width="336" height="70" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="28"
+                  y="198"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Vì sao không merge được
+                </text>
+                <text x="28" y="216" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Cả hai nhánh đều là ghi HỢP LỆ, đã được commit
+                </text>
+                <text x="28" y="230" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  và đã trả lời "thành công" cho client.
+                </text>
+                <text x="28" y="244" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Không có quy tắc nào nói nhánh nào đúng — phải BỎ một nhánh.
+                </text>
+
+                <rect x="368" y="180" width="336" height="70" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="380"
+                  y="198"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Cách phòng: FENCING trước khi promote
+                </text>
+                <text x="380" y="216" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Chỉ promote khi đã CHẮC primary cũ không thể ghi:
+                </text>
+                <text x="380" y="230" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  tắt máy, thu hồi quyền ghi, hoặc chặn ở tầng mạng.
+                </text>
+                <text x="380" y="244" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Và cần quorum/witness quyết định — không để mỗi node tự quyết.
+                </text>
+
+                <text x="16" y="272" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  Điểm mấu chốt: partition KHÔNG cho node nào biết bên kia đã chết hay chỉ mất liên lạc. Hai tình huống
+                  đó giống nhau hoàn toàn từ bên trong.
+                </text>
+                <text x="16" y="290" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="9">
+                  Đây chính là bài toán mà Bài 9 (CAP) hình thức hoá: khi partition xảy ra, phải chọn giữa nhất quán và
+                  sẵn sàng.
+                </text>
+              </svg>
+              <figcaption style="font-size: 13px; color: #666; margin-top: 8px">
+                Toàn bộ tình huống này được tái tạo bằng hai lệnh <code>docker network</code> và một lệnh
+                <code>pg_promote</code> — đáng làm một lần để thấy nó dễ xảy ra đến mức nào.
+              </figcaption>
+            </figure>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: failover tự động không có fencing</div>
+              <div class="callout__content">
+                Đây chính xác là thí nghiệm ở trên, và nó là cấu hình mặc định của rất nhiều hướng dẫn "dựng HA cho
+                PostgreSQL trong 10 phút". Cơ chế theo dõi thấy primary không trả lời, nó promote replica. Nhưng "không
+                trả lời" có thể chỉ là <strong>mất liên lạc mạng</strong> — primary cũ vẫn sống, vẫn đang nhận ghi từ
+                những client còn kết nối được với nó.<br /><br />
+                Sau khi mạng hồi phục, bạn có hai tập dữ liệu đều hợp lệ và không cách nào hoà giải tự động. Phần dữ
+                liệu của một bên <em>phải</em> bị bỏ, và trong thời gian phân kỳ thì client ở cả hai phía đều đã nhận
+                xác nhận "thành công".<br /><br />
+                Vì thế mọi hệ thống failover đáng tin đều có ba thứ: <strong>fencing</strong> (đảm bảo node cũ không thể
+                ghi), <strong>quorum</strong> (số đông quyết định ai làm primary, không để node tự quyết), và
+                <strong>witness</strong> (một node thứ ba chỉ để phá thế cân bằng 1–1). Thiếu fencing thì hai thứ còn
+                lại cũng không cứu được.
+              </div>
+            </div>
+            <!-- ================= 7.5 ================= -->
+            <h2>7.5 Vận hành: theo dõi cái gì, và mâu thuẫn kinh điển</h2>
+
+            <p>
+              Replica là thành phần dễ bị bỏ quên nhất trong hệ thống, vì khi nó hoạt động thì không ai thấy nó, và khi
+              nó chậm thì triệu chứng xuất hiện ở nơi khác hoàn toàn — người dùng báo "dữ liệu sai" chứ không ai báo
+              "replica chậm".
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Theo dõi</th>
+                  <th>Vì sao</th>
+                  <th>Ngưỡng bắt đầu từ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>replay_lag</code> theo từng replica</td>
+                  <td>Đây là con số người đọc thật sự cảm nhận</td>
+                  <td>Cảnh báo khi vượt ngưỡng mà logic app đang giả định (ví dụ thời gian ghim)</td>
+                </tr>
+                <tr>
+                  <td>Khoảng cách LSN chưa replay</td>
+                  <td>Không bị hiện tượng "tăng dần khi rảnh" như cách đo theo thời gian</td>
+                  <td>Bất kỳ giá trị tăng liên tục không giảm</td>
+                </tr>
+                <tr>
+                  <td>Số dòng trong <code>pg_stat_replication</code></td>
+                  <td>Replica <em>ngắt kết nối</em> thì biến mất khỏi bảng này — im lặng hoàn toàn</td>
+                  <td>Ít hơn số replica bạn nghĩ mình đang có</td>
+                </tr>
+                <tr>
+                  <td>WAL còn giữ lại trên primary</td>
+                  <td>
+                    Replica chậm quá mà WAL đã bị xoá thì nó phải <code>pg_basebackup</code> lại từ đầu — vài giờ với
+                    database lớn
+                  </td>
+                  <td>Khi dung lượng WAL tiến gần <code>wal_keep_size</code></td>
+                </tr>
+                <tr>
+                  <td><strong>KHÔNG</strong> alert theo CPU của replica</td>
+                  <td>
+                    Replay WAL là một tiến trình đơn luồng: replica có thể tụt lại rất xa trong khi CPU tổng vẫn nhìn
+                    rất rảnh
+                  </td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: chạy báo cáo trên replica đang phục vụ người dùng</div>
+              <div class="callout__content">
+                Đây là mâu thuẫn kinh điển, và nó rất hấp dẫn: đã có replica rồi, cho bộ phận phân tích chạy báo cáo
+                trên đó thay vì trên primary — nghe như dùng tài nguyên hiệu quả.<br /><br />
+                Vấn đề: một truy vấn phân tích quét toàn bảng sẽ tranh I/O và bộ nhớ với tiến trình replay WAL, làm
+                <strong>lag phình lên</strong>. Và lag phình lên nghĩa là read path của người dùng bắt đầu trả dữ liệu
+                cũ — một báo cáo nội bộ vừa phá vỡ trải nghiệm của khách hàng. Tệ hơn, PostgreSQL còn có thể phải huỷ
+                chính truy vấn đó (<em>conflict with recovery</em>) hoặc phải hoãn replay để giữ cho nó chạy, tuỳ
+                <code>hot_standby_feedback</code> và <code>max_standby_streaming_delay</code>.<br /><br />
+                Cách đúng gần như luôn là <strong>một replica riêng cho phân tích</strong>, không nằm trong pool phục vụ
+                người dùng. Nó tốn thêm tiền, và đó là toàn bộ nội dung của quyết định này: bạn đang mua sự tách biệt
+                giữa hai loại tải có yêu cầu hoàn toàn khác nhau.
+              </div>
+            </div>
+
+            <h3>Tự làm lại các phép đo</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+docker compose --profile replica up -d      # primary + replica that, streaming replication
+
+# Kiem tra replication da chay
+./tools/pg-lag.sh
+docker compose exec -T postgres-replica psql -U lab -d lab -tAc "SELECT count(*) FROM profiles;"   # 1000
+docker compose exec -T postgres-replica psql -U lab -d lab -tAc "UPDATE profiles SET version=99 WHERE id=1;"
+# ERROR: cannot execute UPDATE in a read-only transaction     ← dung, replica chi doc
+
+# --- A: ti le doc ra du lieu cu o lag TU NHIEN ---
+./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/rww" -c 16 -d 12 -w 2 --json
+./tools/cache-stats.sh          # xem dong READ-YOUR-WRITES
+
+# --- B: dat lag CO KIEM SOAT 200ms de mo phong replica o vung khac ---
+docker compose exec -T postgres-replica psql -U lab -d lab \
+  -c "ALTER SYSTEM SET recovery_min_apply_delay = '200ms';" -c "SELECT pg_reload_conf();"
+./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/rww" -c 16 -d 12 -w 2 --json
+./tools/cache-stats.sh          # 100%
+
+# --- C: bat ghim ve primary ---
+# doi READ_PIN_MS thanh '500' cho app1/app2/app3 trong docker-compose.yml, roi:
+docker compose --profile replica up -d --force-recreate app1 app2 app3
+./tools/cache-stats.sh reset
+docker compose run --rm loadgen loadgen.js --url "http://lb:8080/rww" -c 16 -d 12 -w 2 --json
+./tools/cache-stats.sh          # 0%
+
+# Tra ve mac dinh
+docker compose exec -T postgres-replica psql -U lab -d lab \
+  -c "ALTER SYSTEM SET recovery_min_apply_delay = '0';" -c "SELECT pg_reload_conf();"</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Sau thí nghiệm split-brain, lab cần dựng lại</div>
+              <div class="callout__content">
+                Khi bạn promote replica, nó trở thành một primary trên timeline mới và <strong>không thể</strong> quay
+                lại làm standby của primary cũ được nữa. Cách dựng lại sạch nhất là xoá luôn dữ liệu để replica tự
+                <code>pg_basebackup</code> lại từ đầu:<br /><br />
+                <code>docker compose --profile replica down -v</code> rồi
+                <code>docker compose --profile replica up -d</code>.<br /><br />
+                Cờ <code>-v</code> xoá volume — nghĩa là xoá luôn dữ liệu của cả primary. Trong lab thì không sao vì
+                schema được nạp lại tự động từ <code>postgres/init/</code>, nhưng hãy nhớ nó là một lệnh phá dữ liệu.
+              </div>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Replica phục vụ ba mục đích khác nhau cần ba cấu hình khác nhau, và replica
+              <strong>không phải backup</strong> — trong lab, bạn có 0,557 ms để hối hận về một lệnh xoá sai. Chọn mức
+              đồng bộ là chọn một điểm trên trục durability ↔ độ trễ ghi: từ async lên sync, độ trễ ghi tăng 79% và
+              throughput ghi giảm 44%.
+            </p>
+
+            <p>
+              Bài học lớn nhất là dòng A của bảng ở mục 7.3. Replication lag <strong>0,557 ms</strong> — con số mà mọi
+              dashboard sẽ hiển thị màu xanh — vẫn phá vỡ read-your-writes trong <strong>87%</strong> lệnh đọc. Vì điều
+              quyết định không phải lag lớn hay nhỏ, mà là lag có lớn hơn khoảng cách giữa lệnh ghi và lệnh đọc của
+              chính người dùng đó hay không. Trong một request web, khoảng cách đó tính bằng microsecond.
+            </p>
+
+            <p>
+              Hai bản vá đều cho đúng 0%: ghim đọc về primary (tầng app, −4,6% throughput) và
+              <code>synchronous_commit = remote_apply</code> (tầng database, −12,6%). Chúng khác nhau ở chỗ trả giá: bản
+              vá tầng app chỉ làm chậm người vừa ghi, còn bản vá tầng database làm chậm mọi lệnh ghi trong hệ thống.
+            </p>
+
+            <p>
+              <strong>Bài 8</strong> đặt câu hỏi mà replica không trả lời được: khi chính <em>lệnh ghi</em> vượt quá sức
+              một máy, hoặc khi dữ liệu không còn vừa một ổ đĩa. Đó là lúc phải sharding — bước đắt nhất về độ phức tạp
+              trong toàn bộ series, và cũng là bước dễ làm quá sớm nhất.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/app/minipg.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về minipg.js (client PostgreSQL 0 dependency)
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-cdn-edge" class="article-related__link article-related__link--prev">
+                  Bài 6: CDN &amp; Edge Caching
+                </a>
+                <span class="article-related__link article-related__link--next article-related__link--locked">
+                  Bài 8: Sharding &amp; Consistent Hashing (sắp xuất bản)
+                </span>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

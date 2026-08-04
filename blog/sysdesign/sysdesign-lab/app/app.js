@@ -17,9 +17,11 @@
  *   GET /client-ip     → phơi bày lỗ hổng X-Forwarded-For (Bài 4, mục 4.2)
  *   GET /aggregate     → gộp nhiều nhánh (BFF); so song song vs tuần tự (Bài 4, mục 4.4)
  *   GET /cacheable     → phát header cache cho tầng edge; ETag/304, Vary (Bài 6)
+ *   GET /rww?id=&pin=  → ghi primary rồi đọc ngay replica: tái tạo bug read-your-writes,
+ *                        và bật/tắt cơ chế ghim-về-primary để kiểm chứng bản vá (Bài 7)
  *
  * Biến môi trường: PORT, INSTANCE, REDIS_URL, DB_DELAY_MS, DB_MAX_CONCURRENCY, GRACEFUL,
- *                  TRUST_PROXY_HOPS
+ *                  TRUST_PROXY_HOPS, PG_PRIMARY, PG_REPLICA, READ_PIN_MS
  */
 
 'use strict';
@@ -42,6 +44,12 @@ const DB_DELAY_MS = Number(process.env.DB_DELAY_MS || 40);
 // bài học mất hẳn phần quan trọng nhất. Database thật luôn có giới hạn kết nối.
 const DB_MAX_CONCURRENCY = Number(process.env.DB_MAX_CONCURRENCY || 10);
 const REDIS_URL = process.env.REDIS_URL || '';
+// Bài 7: hai đích khác nhau cho ghi và đọc. Nếu không đặt thì phần /rww bị tắt.
+const PG_PRIMARY = process.env.PG_PRIMARY || '';
+const PG_REPLICA = process.env.PG_REPLICA || '';
+// Sau khi một người dùng GHI, ghim lệnh ĐỌC của chính họ về primary trong bao nhiêu ms.
+// 0 = tắt (để thấy bug trước đã).
+const READ_PIN_MS = Number(process.env.READ_PIN_MS || 0);
 const GRACEFUL = process.env.GRACEFUL !== '0';
 
 let healthy = true;
@@ -51,6 +59,9 @@ let cacheHits = 0;
 let dbQueries = 0;
 let singleFlightJoins = 0;
 let dbWaitTotalMs = 0;
+let rwwTotal = 0;
+let rwwStale = 0;
+let rwwPinned = 0;
 let dbMaxQueueDepth = 0;
 let cacheMisses = 0;
 
@@ -158,6 +169,34 @@ class MiniRedis {
 }
 
 const redis = REDIS_URL ? new MiniRedis(REDIS_URL) : null;
+
+// ---------------------------------------------------------------------------
+// Bài 7 — router đọc/ghi
+// ---------------------------------------------------------------------------
+const { PgPool } = require('./minipg');
+const pgPrimary = PG_PRIMARY ? new PgPool({ host: PG_PRIMARY }, 6) : null;
+const pgReplica = PG_REPLICA ? new PgPool({ host: PG_REPLICA }, 6) : null;
+
+/**
+ * Bảng ghim: id người dùng -> thời điểm hết ghim.
+ *
+ * GIỚI HẠN PHẢI BIẾT (và bài học đo được ở mục 7.3): bảng này nằm trong bộ nhớ của MỘT
+ * replica app. Nếu request ghi đi vào app1 mà request đọc kế tiếp đi vào app2 thì app2
+ * không biết gì về lệnh ghi đó và vẫn đọc replica — bug quay lại. Muốn đúng thì trạng
+ * thái ghim phải nằm ở chỗ dùng chung (cookie của chính người dùng, hoặc Redis).
+ */
+const readPin = new Map();
+
+function shouldReadPrimary(id, now) {
+  if (READ_PIN_MS <= 0) return false;
+  const until = readPin.get(id);
+  if (until === undefined) return false;
+  if (until <= now) {
+    readPin.delete(id);
+    return false;
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Tiện ích
@@ -423,6 +462,52 @@ const server = http.createServer(async (req, res) => {
       return res.end(body);
     }
 
+    if (p === '/rww') {
+      // Tai tao dung mot bug: nguoi dung doi anh dai dien (GHI vao primary) roi tai lai
+      // trang (DOC tu replica) va thay anh CU. Day la vi pham read-your-writes.
+      //
+      // ?id=N     dong du lieu de ghi/doc (mac dinh ngau nhien trong 1..1000)
+      // ?pin=1    dung co che ghim-ve-primary neu READ_PIN_MS > 0
+      if (!pgPrimary || !pgReplica) {
+        return json(res, 503, { error: 'chua dat PG_PRIMARY / PG_REPLICA' });
+      }
+      const id = Number(url.searchParams.get('id') || 1 + Math.floor(Math.random() * 1000));
+      const usePin = url.searchParams.get('pin') !== '0';
+      const now = Date.now();
+
+      // 1) GHI vao primary. RETURNING cho biet chinh xac version vua ghi.
+      const wrote = await pgPrimary.query(
+        `UPDATE profiles SET avatar = 'avatar-v' || (version + 1) || '.png',
+                             version = version + 1, updated_at = now()
+         WHERE id = ${id} RETURNING version`
+      );
+      const wroteVersion = Number(wrote[0] && wrote[0].version);
+      if (usePin && READ_PIN_MS > 0) readPin.set(id, Date.now() + READ_PIN_MS);
+
+      // 2) DOC NGAY LAP TUC. Day la thoi diem quyet dinh: chua chac replica da kip.
+      const pinned = usePin && shouldReadPrimary(id, Date.now());
+      if (pinned) rwwPinned++;
+      const target = pinned ? pgPrimary : pgReplica;
+      const read = await target.query(`SELECT version, avatar FROM profiles WHERE id = ${id}`);
+      const readVersion = Number(read[0] && read[0].version);
+
+      rwwTotal++;
+      // "Cu" la mot dieu DO DUOC, khong phai cam nhan: doc ra version NHO HON version
+      // vua ghi thi khong the tranh cai.
+      const stale = readVersion < wroteVersion;
+      if (stale) rwwStale++;
+
+      return json(res, 200, {
+        instance: INSTANCE,
+        id,
+        wroteVersion,
+        readVersion,
+        readFrom: pinned ? 'primary' : 'replica',
+        stale,
+        lostVersions: stale ? wroteVersion - readVersion : 0,
+      });
+    }
+
     if (p === '/whoami') {
       return json(res, 200, { instance: INSTANCE, pid: process.pid, totalRequests });
     }
@@ -438,6 +523,11 @@ const server = http.createServer(async (req, res) => {
         dbMaxQueueDepth,
         dbAvgWaitMs: dbQueries ? Number((dbWaitTotalMs / dbQueries).toFixed(2)) : 0,
         dbMaxConcurrency: DB_MAX_CONCURRENCY,
+        rwwTotal,
+        rwwStale,
+        rwwPinned,
+        rwwStaleRatio: rwwTotal ? Number((rwwStale / rwwTotal).toFixed(4)) : null,
+        readPinMs: READ_PIN_MS,
         cacheMisses,
         hitRatio: cacheHits + cacheMisses === 0 ? null : cacheHits / (cacheHits + cacheMisses),
       });
@@ -467,6 +557,9 @@ const server = http.createServer(async (req, res) => {
       dbQueries = 0;
       singleFlightJoins = 0;
       totalRequests = 0;
+      rwwTotal = 0;
+      rwwStale = 0;
+      rwwPinned = 0;
       dbWaitTotalMs = 0;
       dbMaxQueueDepth = 0;
       return json(res, 200, { ok: true, instance: INSTANCE });

@@ -46,14 +46,15 @@ docker compose exec app1 node -e "console.log(process.arch)"   # phải khớp u
 
 ## Các profile theo từng bài
 
-| Bài | Lệnh                                   | Có gì trong stack                                      |
-| --- | -------------------------------------- | ------------------------------------------------------ |
-| 2   | `docker compose --profile base up -d`  | 1 app server (cổng 3001)                               |
-| 3   | `docker compose --profile lb up -d`    | nginx làm load balancer (cổng 8080) + 3 app replica    |
-| 4   | `docker compose --profile gw up -d`    | nginx làm API gateway (HTTP 8081 + HTTPS 8443) + 3 app |
-| 6   | `docker compose --profile edge up -d`  | tầng edge có proxy_cache (cổng 8082) + 3 app           |
-| 5   | `docker compose --profile cache up -d` | thêm Redis (cổng 6379)                                 |
-| 7   | `docker compose --profile db up -d`    | thêm PostgreSQL (cổng 5432)                            |
+| Bài | Lệnh                                     | Có gì trong stack                                      |
+| --- | ---------------------------------------- | ------------------------------------------------------ |
+| 2   | `docker compose --profile base up -d`    | 1 app server (cổng 3001)                               |
+| 3   | `docker compose --profile lb up -d`      | nginx làm load balancer (cổng 8080) + 3 app replica    |
+| 4   | `docker compose --profile gw up -d`      | nginx làm API gateway (HTTP 8081 + HTTPS 8443) + 3 app |
+| 6   | `docker compose --profile edge up -d`    | tầng edge có proxy_cache (cổng 8082) + 3 app           |
+| 5   | `docker compose --profile cache up -d`   | thêm Redis (cổng 6379)                                 |
+| 7   | `docker compose --profile db up -d`      | thêm PostgreSQL (cổng 5432)                            |
+| 7   | `docker compose --profile replica up -d` | PostgreSQL primary (5432) + read replica (5433)        |
 
 ### Bài 4 cần một bước chuẩn bị: chứng chỉ tự ký
 
@@ -81,9 +82,20 @@ Dừng và xoá sạch:
 docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db down
 ```
 
-> Cấu hình **replica primary/standby** của PostgreSQL và **worker cho message queue** sẽ được
-> bổ sung vào chính file `docker-compose.yml` này khi tới Bài 7 và Bài 12. Hiện `db` chỉ dựng
-> một node PostgreSQL.
+> `replica` dựng **streaming replication thật**: replica tự chạy `pg_basebackup` từ primary
+> trong entrypoint, không cần Dockerfile. Đo lag bằng `./tools/pg-lag.sh`.
+>
+> **Lưu ý về image:** compose dùng `postgres:18` (bản Debian) chứ không phải `postgres:16-alpine`.
+> Hai khác biệt quan trọng nếu bạn đổi tag: `PGDATA` của PostgreSQL 18 bản Debian là
+> `/var/lib/postgresql/18/docker`, không phải `/var/lib/postgresql/data`; và bản Alpine
+> **không có** `bash`, nên entrypoint của replica được viết bằng POSIX `sh`.
+>
+> Sau thí nghiệm split-brain (Bài 7 mục 7.4), replica đã thành primary trên timeline mới và
+> không quay lại làm standby được. Dựng lại bằng `docker compose --profile replica down -v`
+> rồi `up -d` — cờ `-v` **xoá dữ liệu** của cả primary, schema sẽ được nạp lại từ
+> `postgres/init/`.
+>
+> Còn thiếu: **worker cho message queue** (Bài 12).
 
 ## Các endpoint của app
 

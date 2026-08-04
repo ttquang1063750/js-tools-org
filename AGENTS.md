@@ -196,6 +196,9 @@ js-tools-org/
 │           │   ├── nginx/edge-common.conf   #   cache settings shared by raw-key and normalized-key locations
 │           │   ├── static/hello.json        #   file served by the gateway itself (Lesson 4)
 │           │   ├── tools/cache-stats.sh     #   sums cache counters across all 3 replicas (Lesson 5)
+│           │   ├── tools/pg-lag.sh          #   real replication lag from pg_stat_replication (Lesson 7)
+│           │   ├── app/minipg.js            #   PostgreSQL wire-protocol client, 0 deps (Lesson 7)
+│           │   ├── postgres/init/           #   replication role + pg_hba + schema, runs once on initdb
 │           │   └── README.md                #   MANDATORY CPU-architecture preflight
 │           └── ... System Design lesson files ...
 └── README.md

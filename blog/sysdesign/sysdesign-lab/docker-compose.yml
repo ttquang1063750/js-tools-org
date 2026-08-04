@@ -8,7 +8,7 @@
 #   Bài 4  →  docker compose --profile gw up -d        (API gateway: TLS + route theo path)
 #   Bài 5  →  docker compose --profile cache up -d     (thêm Redis)
 #   Bài 6  →  docker compose --profile edge up -d      (tầng edge có proxy_cache)
-#   Bài 7  →  docker compose --profile db up -d        (thêm PostgreSQL)
+#   Bài 7  →  docker compose --profile replica up -d   (PostgreSQL primary + read replica)
 #
 # KHÔNG có Dockerfile và KHÔNG cần `npm install`: code được bind-mount thẳng vào image
 # node chính thức, nên bạn sửa file là chạy lại thấy ngay, và đọc được toàn bộ code.
@@ -52,7 +52,7 @@ services:
   # load balancer phân phối thật sự ra sao (Bài 3).
   app1:
     <<: *app-base
-    profiles: ['base', 'gw', 'lb', 'edge', 'cache', 'db']
+    profiles: ['base', 'gw', 'lb', 'edge', 'cache', 'db', 'replica']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -61,13 +61,18 @@ services:
       INSTANCE: 'app1'
       TRUST_PROXY_HOPS: '0'
       REDIS_URL: 'redis://redis:6379'
+      # Bai 7: GHI di primary, DOC di replica. Doi READ_PIN_MS thanh vi du '500' de bat
+      # co che ghim-ve-primary sau khi ghi, roi do lai ti le doc ra du lieu cu.
+      PG_PRIMARY: 'postgres'
+      PG_REPLICA: 'postgres-replica'
+      READ_PIN_MS: '0'
     ports:
       # Chỉ app1 mở cổng ra host, để Bài 2 gọi trực tiếp không qua LB.
       - '3001:3000'
 
   app2:
     <<: *app-base
-    profiles: ['gw', 'lb', 'edge', 'cache', 'db']
+    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -76,10 +81,15 @@ services:
       INSTANCE: 'app2'
       TRUST_PROXY_HOPS: '0'
       REDIS_URL: 'redis://redis:6379'
+      # Bai 7: GHI di primary, DOC di replica. Doi READ_PIN_MS thanh vi du '500' de bat
+      # co che ghim-ve-primary sau khi ghi, roi do lai ti le doc ra du lieu cu.
+      PG_PRIMARY: 'postgres'
+      PG_REPLICA: 'postgres-replica'
+      READ_PIN_MS: '0'
 
   app3:
     <<: *app-base
-    profiles: ['gw', 'lb', 'edge', 'cache', 'db']
+    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -88,13 +98,18 @@ services:
       INSTANCE: 'app3'
       TRUST_PROXY_HOPS: '0'
       REDIS_URL: 'redis://redis:6379'
+      # Bai 7: GHI di primary, DOC di replica. Doi READ_PIN_MS thanh vi du '500' de bat
+      # co che ghim-ve-primary sau khi ghi, roi do lai ti le doc ra du lieu cu.
+      PG_PRIMARY: 'postgres'
+      PG_REPLICA: 'postgres-replica'
+      READ_PIN_MS: '0'
 
   # ─────────────────────────────────────────────────────────────
   # LOAD BALANCER (Bài 3, Bài 4)
   # ─────────────────────────────────────────────────────────────
   lb:
     image: nginx:1.27-alpine
-    profiles: ['lb', 'cache', 'db']
+    profiles: ['lb', 'cache', 'db', 'replica']
     ports:
       - '8080:8080'
     volumes:
@@ -170,18 +185,85 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────────────────────
-  # DATABASE (Bài 7 — hiện là một node; cấu hình primary/replica sẽ thêm ở Bài 7)
+  # DATABASE — PRIMARY (Bài 7, Bài 8)
+  #
+  # `command` bat cac tham so can cho streaming replication:
+  #   wal_level=replica    ghi du thong tin vao WAL de replica dung lai duoc
+  #   max_wal_senders      so ket noi replication dong thoi toi da
+  #   wal_keep_size        giu lai WAL de replica bi cham con bat kip; het thi
+  #                        replica phai basebackup lai tu dau
+  #   hot_standby=on       cho phep DOC tren replica (khong co no replica chi la ban sao)
   # ─────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
-    profiles: ['db']
+    image: postgres:18
+    profiles: ['db', 'replica']
     environment:
       POSTGRES_PASSWORD: labpass
       POSTGRES_USER: lab
       POSTGRES_DB: lab
+      # `trust` CHI dung cho lab: no cho ket noi khong can mat khau trong mang noi bo
+      # cua compose, nho do minipg.js khong phai cai dat SCRAM-SHA-256.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command:
+      - postgres
+      - '-c'
+      - 'wal_level=replica'
+      - '-c'
+      - 'max_wal_senders=10'
+      - '-c'
+      - 'wal_keep_size=128MB'
+      - '-c'
+      - 'hot_standby=on'
+      - '-c'
+      - 'log_min_duration_statement=500'
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
       - '5432:5432'
     restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # DATABASE — READ REPLICA (Bài 7)
+  #
+  # KHONG co Dockerfile: replica tu dung chinh minh bang pg_basebackup trong entrypoint.
+  #   -Fp  ghi ra dang thu muc thuong (khong nen thanh tar)
+  #   -Xs  stream WAL song song luc backup => backup xong la dung ngay duoc
+  #   -R   tu sinh standby.signal + primary_conninfo, nho do khoi phai viet tay
+  #
+  # `restart: no` co chu y: neu replica chet vi cau hinh sai thi ta muon THAY loi
+  # trong log, khong muon Docker che no di bang cach khoi dong lai lien tuc.
+  # ─────────────────────────────────────────────────────────────
+  postgres-replica:
+    image: postgres:18
+    profiles: ['replica']
+    user: postgres
+    environment:
+      # PGDATA cua PostgreSQL 18 ban Debian KHONG phai /var/lib/postgresql/data.
+      # Dat sai thi pg_basebackup ghi vao mot cho ma server khong doc — replica len
+      # duoc nhung la mot database rong, va loi nay rat kho nhan ra.
+      PGDATA: /var/lib/postgresql/18/docker
+    # Dung `sh` cho chac: image postgres ban Debian co bash nhung ban Alpine thi KHONG,
+    # nen script nay viet bang POSIX sh de chay duoc voi ca hai.
+    entrypoint:
+      - sh
+      - '-c'
+      - |
+        set -e
+        until pg_isready -h postgres -U lab -q; do
+          echo "[replica] cho primary..."; sleep 1
+        done
+        if [ ! -s "$$PGDATA/PG_VERSION" ]; then
+          echo "[replica] chua co du lieu -> pg_basebackup tu primary"
+          rm -rf "$$PGDATA"/*
+          pg_basebackup -h postgres -U replicator -D "$$PGDATA" -Fp -Xs -R -P
+          echo "[replica] basebackup xong"
+        fi
+        exec postgres -c hot_standby=on
+    ports:
+      - '5433:5432'
+    depends_on:
+      - postgres
+    restart: 'no'
 
   # ─────────────────────────────────────────────────────────────
   # BỘ ĐO TẢI

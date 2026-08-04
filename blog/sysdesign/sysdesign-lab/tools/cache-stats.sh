@@ -38,6 +38,7 @@ const get = (host) =>
   const sum = (f) => rows.reduce((a, r) => a + (r[f] || 0), 0);
   const hits = sum("cacheHits"), misses = sum("cacheMisses"), db = sum("dbQueries");
   const joins = sum("singleFlightJoins"), reqs = sum("totalRequests");
+  const rwwT = sum("rwwTotal"), rwwS = sum("rwwStale"), rwwP = sum("rwwPinned");
   for (const r of rows) {
     console.log(`  ${r.instance}: req=${r.totalRequests} hit=${r.cacheHits} miss=${r.cacheMisses} db=${r.dbQueries} join=${r.singleFlightJoins} qDepth=${r.dbMaxQueueDepth} wait=${r.dbAvgWaitMs}ms pool=${r.dbMaxConcurrency}`);
   }
@@ -46,6 +47,9 @@ const get = (host) =>
   const maxQ = Math.max(...rows.map((r) => r.dbMaxQueueDepth || 0));
   const avgWait = rows.length ? rows.reduce((a, r) => a + (r.dbAvgWaitMs || 0), 0) / rows.length : 0;
   console.log(`  ---- HÀNG ĐỢI DB: sâu nhất=${maxQ} · chờ trung bình=${avgWait.toFixed(2)}ms · pool=${rows[0] ? rows[0].dbMaxConcurrency : "?"}/replica`);
+  if (rwwT) {
+    console.log(`  ---- READ-YOUR-WRITES: tong=${rwwT} doc_ra_du_lieu_cu=${rwwS} ghim_ve_primary=${rwwP} · ti le cu = ${((rwwS / rwwT) * 100).toFixed(2)}% · READ_PIN_MS=${rows[0] ? rows[0].readPinMs : "?"}`);
+  }
   if (total) console.log(`  hit ratio = ${((hits / total) * 100).toFixed(2)}%   ·   truy vấn DB / request = ${(db / reqs).toFixed(4)}`);
 })();
 ' 2>/dev/null
