@@ -24,11 +24,19 @@
  *   GET /chain?mode=   → cùng N bước việc, chạy trong tiến trình (mono) hay qua N hop
  *                        HTTP (micro); ?fail= để thấy độ khả dụng nhân dồn (Bài 15)
  *   GET /saga?failAt=  → saga 3 service, ?compensate=0 để thấy dữ liệu lệch (Bài 15)
+ *   GET /metrics       → histogram RED tự viết; METRIC_LABELS quyết định cardinality (Bài 16)
+ *   GET /trace?id=     → waterfall các chặng của một correlation ID (Bài 16)
+ *   GET /incident?p=   → đa số nhanh, một tỉ lệ nhỏ rất chậm — hình dạng mà trung bình che đi
+ *   GET /traced-chain  → chuỗi hop CÓ truyền correlation ID; ?propagate=0 để thấy trace đứt
+ *   GET /layer?depth=&retries= → chuỗi N tầng, mỗi tầng thử lại R lần: đo retry
+ *                        amplification thật; ?budget=1 để bật retry budget (Bài 17)
+ *   GET /leaf          → service tận cùng, chỉ đếm số lần bị gọi (Bài 17)
  *   GET /rww?id=&pin=  → ghi primary rồi đọc ngay replica: tái tạo bug read-your-writes,
  *                        và bật/tắt cơ chế ghim-về-primary để kiểm chứng bản vá (Bài 7)
  *
  * Biến môi trường: PORT, INSTANCE, REDIS_URL, DB_DELAY_MS, DB_MAX_CONCURRENCY, GRACEFUL,
- *                  TRUST_PROXY_HOPS, PG_PRIMARY, PG_REPLICA, READ_PIN_MS, PG_SHARDS
+ *                  TRUST_PROXY_HOPS, PG_PRIMARY, PG_REPLICA, READ_PIN_MS, PG_SHARDS,
+ *                  RATE_LIMIT, RATE_WINDOW_MS, PEERS, PEERS_SAGA, METRIC_LABELS, TRACE_MAX
  */
 
 'use strict';
@@ -430,11 +438,37 @@ function doUnitOfWork(w) {
   return acc;
 }
 
-/** Gọi một instance khác qua HTTP. Trả { ok, status }. */
-function callPeer(peer, path) {
+/** Gọi peer và đọc luôn JSON trả về (dùng cho bộ thu gom span ở Bài 16). */
+function fetchPeerJson(peer, path) {
   const [host, port] = peer.split(':');
   return new Promise((resolve) => {
     const r = http.get({ host, port: Number(port || 3000), path, agent: sagaAgent }, (pr) => {
+      let b = '';
+      pr.on('data', (c) => (b += c));
+      pr.on('end', () => {
+        try {
+          resolve(JSON.parse(b));
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    r.on('error', () => resolve(null));
+  });
+}
+
+/**
+ * Gọi một instance khác qua HTTP. Trả { ok, status }.
+ *
+ * Tham số `corrId` là toàn bộ phần "distributed" của distributed tracing: chỉ cần một
+ * header đi kèm thì chặng sau ghi span vào ĐÚNG trace của request gốc. Bỏ nó đi thì
+ * mỗi chặng thành một trace riêng lẻ và waterfall không bao giờ dựng lại được.
+ */
+function callPeer(peer, path, corrId) {
+  const [host, port] = peer.split(':');
+  const headers = corrId ? { 'X-Correlation-Id': corrId } : {};
+  return new Promise((resolve) => {
+    const r = http.get({ host, port: Number(port || 3000), path, agent: sagaAgent, headers }, (pr) => {
       pr.resume();
       pr.on('end', () => resolve({ ok: pr.statusCode >= 200 && pr.statusCode < 300, status: pr.statusCode }));
     });
@@ -445,6 +479,127 @@ function callPeer(peer, path) {
 }
 
 // ---------------------------------------------------------------------------
+// Bài 16 — observability: metrics, correlation ID, tracing
+//
+// Ba trụ cột được cài ở đây đúng theo thứ tự chi phí tăng dần: metrics (rẻ nhất,
+// tổng hợp sẵn), log có cấu trúc (đắt hơn, một dòng mỗi request), trace (đắt nhất,
+// một bản ghi cho mỗi chặng). Cả ba tự viết, không thư viện, để thấy rõ chỗ nào tốn.
+// ---------------------------------------------------------------------------
+
+// Vành đai histogram cố định (đơn vị ms). Vì sao histogram chứ không phải trung bình:
+// từ histogram tính được percentile, còn từ trung bình thì KHÔNG — và Bài 1 đã chứng
+// minh trung bình che mất chính thứ người dùng cảm nhận.
+const HIST_BUCKETS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, Infinity];
+
+// Nhãn nào được đưa vào khoá chuỗi thời gian. 'route' là an toàn (số route hữu hạn).
+// Thêm 'user' để TÁI TẠO vụ nổ cardinality ở mục 16.2 — mỗi người dùng thành một
+// chuỗi thời gian riêng.
+const METRIC_LABELS = (process.env.METRIC_LABELS || 'route,status').split(',').filter(Boolean);
+
+const metrics = new Map(); // khoá chuỗi thời gian -> { count, sumMs, buckets }
+
+function observe(labels, ms) {
+  const key = METRIC_LABELS.map((l) => `${l}=${labels[l] ?? '-'}`).join('|');
+  let s = metrics.get(key);
+  if (!s) {
+    s = { count: 0, sumMs: 0, buckets: new Array(HIST_BUCKETS.length).fill(0) };
+    metrics.set(key, s);
+  }
+  s.count++;
+  s.sumMs += ms;
+  for (let i = 0; i < HIST_BUCKETS.length; i++) {
+    if (ms <= HIST_BUCKETS[i]) {
+      s.buckets[i]++;
+      break;
+    }
+  }
+}
+
+/** Percentile suy ra TỪ HISTOGRAM (nội suy tuyến tính trong vành đai) — cách các hệ metrics thật làm. */
+function histPercentile(s, p) {
+  const target = (p / 100) * s.count;
+  let cum = 0;
+  for (let i = 0; i < HIST_BUCKETS.length; i++) {
+    const prev = cum;
+    cum += s.buckets[i];
+    if (cum >= target) {
+      const lo = i === 0 ? 0 : HIST_BUCKETS[i - 1];
+      const hi = HIST_BUCKETS[i] === Infinity ? lo * 2 : HIST_BUCKETS[i];
+      const frac = s.buckets[i] === 0 ? 0 : (target - prev) / s.buckets[i];
+      return Number((lo + (hi - lo) * frac).toFixed(2));
+    }
+  }
+  return 0;
+}
+
+// Trace: mỗi correlation ID giữ danh sách span. Ring buffer giới hạn, vì giữ mọi trace
+// trong bộ nhớ là cách nhanh nhất để chính hệ giám sát giết chết ứng dụng.
+const TRACE_MAX = Number(process.env.TRACE_MAX || 200);
+const traces = new Map();
+let tracesDropped = 0;
+
+function addSpan(corrId, span) {
+  if (!corrId) return;
+  if (!traces.has(corrId)) {
+    if (traces.size >= TRACE_MAX) {
+      traces.delete(traces.keys().next().value);
+      tracesDropped++;
+    }
+    traces.set(corrId, []);
+  }
+  traces.get(corrId).push(span);
+}
+
+/**
+ * Correlation ID sinh ở chặng ĐẦU TIÊN rồi truyền đi khắp nơi.
+ *
+ * Điểm mấu chốt: nếu một chặng nào đó quên truyền tiếp, trace đứt tại đúng chỗ đó —
+ * và chỗ hay quên nhất là ranh giới bất đồng bộ (queue), tức là chỗ khó debug nhất.
+ */
+function corrIdOf(req) {
+  return req.headers['x-correlation-id'] || `c-${INSTANCE}-${Date.now().toString(36)}-${(corrSeq++).toString(36)}`;
+}
+let corrSeq = 0;
+
+// ---------------------------------------------------------------------------
+// Bài 17 — bộ đếm cho chuỗi nhiều tầng và retry budget
+// ---------------------------------------------------------------------------
+let leafHits = 0;
+let leafErrors = 0;
+let retryCount = 0;
+let retryBudgetDenied = 0;
+let abandonedResponses = 0;
+
+// Retry budget: giữ dấu thời gian của các lần gọi gần đây để tính TỈ LỆ retry.
+// Ngưỡng 10% là con số hay dùng trong thực tế: đủ để chịu lỗi lẻ tẻ, không đủ để
+// biến một sự cố nhỏ thành một cơn bão retry.
+const RETRY_BUDGET_RATIO = Number(process.env.RETRY_BUDGET_RATIO || 0.1);
+const retryWindow = []; // { t, retry } cho MỌI lần gọi, không chỉ lần thử lại
+
+/** Ghi nhận một lần gọi vào cửa sổ 5 giây. `isRetry` phân biệt lần đầu và lần thử lại. */
+function recordAttempt(isRetry) {
+  const now = Date.now();
+  while (retryWindow.length && now - retryWindow[0].t > 5000) retryWindow.shift();
+  retryWindow.push({ t: now, retry: isRetry });
+}
+
+/**
+ * Có được phép thử lại nữa không.
+ *
+ * Điểm khác biệt so với "tối đa N lần": giới hạn theo TỈ LỆ trên tổng lưu lượng. Khi
+ * mọi thứ bình thường, vài lỗi lẻ tẻ vẫn được thử lại thoải mái. Khi toàn hệ đang
+ * hỏng, tỉ lệ retry vọt lên và budget đóng cửa — tổng lượng retry bị chặn thay vì
+ * nhân lên theo số tầng.
+ */
+function retryBudgetAllows() {
+  const now = Date.now();
+  while (retryWindow.length && now - retryWindow[0].t > 5000) retryWindow.shift();
+  if (retryWindow.length < 20) return true; // chưa đủ mẫu để kết luận
+  const retries = retryWindow.filter((e) => e.retry).length;
+  return retries / retryWindow.length < RETRY_BUDGET_RATIO;
+}
+
+// ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
@@ -452,6 +607,21 @@ const server = http.createServer(async (req, res) => {
   inFlight++;
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const p = url.pathname;
+  const reqT0 = process.hrtime.bigint();
+  const corrId = corrIdOf(req);
+  // Trả lại cho client để họ đính kèm ID này khi báo lỗi — một dòng code, tiết kiệm
+  // hàng giờ dò log sau này.
+  res.setHeader('X-Correlation-Id', corrId);
+  // Bài 17: client bỏ đi TRƯỚC khi ta trả lời xong = toàn bộ công đã làm là công toi.
+  // Đây là thứ không dashboard nào mặc định đo, vì nhìn từ phía server thì "request
+  // hoàn tất bình thường".
+  let clientGone = false;
+  res.on('close', () => {
+    if (!res.writableFinished) {
+      clientGone = true;
+      abandonedResponses++;
+    }
+  });
 
   try {
     if (p === '/health') {
@@ -770,6 +940,214 @@ const server = http.createServer(async (req, res) => {
     }
 
     // -----------------------------------------------------------------------
+    // Bài 16 — observability
+    // -----------------------------------------------------------------------
+    if (p === '/metrics') {
+      // Trả về đúng những gì một hệ metrics thật giữ: mỗi tổ hợp nhãn là MỘT chuỗi
+      // thời gian, và mỗi chuỗi tốn bộ nhớ riêng. `soChuoiThoiGian` chính là con số
+      // làm sập hệ giám sát khi bạn đặt nhầm nhãn (mục 16.2).
+      const out = [];
+      let bytes = 0;
+      for (const [key, s] of metrics) {
+        bytes += key.length * 2 + 8 * (HIST_BUCKETS.length + 2);
+        out.push({
+          series: key,
+          count: s.count,
+          // RED: Rate - Errors - Duration. Cả ba đều suy được từ chính histogram này.
+          meanMs: Number((s.sumMs / s.count).toFixed(3)),
+          p50: histPercentile(s, 50),
+          p99: histPercentile(s, 99),
+          p999: histPercentile(s, 99.9),
+        });
+      }
+      out.sort((a, b) => b.count - a.count);
+
+      // SLI tính TỪ HISTOGRAM: tỉ lệ "sự kiện tốt" trên tổng sự kiện, trong đó "tốt"
+      // nghĩa là request thành công và dưới ngưỡng thời gian. Đây đúng là cách các hệ
+      // thật tính SLI — và nó chỉ làm được nhờ có histogram, không làm được từ trung bình.
+      const sloMs = Number(url.searchParams.get('sloMs') || 250);
+      const sloTarget = Number(url.searchParams.get('sloTarget') || 99.9);
+      let good = 0;
+      let total = 0;
+      for (const [key, s] of metrics) {
+        if (!key.includes('route=/metrics')) {
+          total += s.count;
+          const isErr = key.includes('status=5');
+          for (let i = 0; i < HIST_BUCKETS.length; i++) {
+            if (!isErr && HIST_BUCKETS[i] <= sloMs) good += s.buckets[i];
+          }
+        }
+      }
+      const sli = total ? (good / total) * 100 : null;
+
+      return json(res, 200, {
+        instance: INSTANCE,
+        labels: METRIC_LABELS,
+        soChuoiThoiGian: metrics.size,
+        uocLuongBytes: bytes,
+        bytesMoiChuoi: metrics.size ? Math.round(bytes / metrics.size) : 0,
+        slo: {
+          nguongMs: sloMs,
+          mucTieu: sloTarget,
+          sli: sli === null ? null : Number(sli.toFixed(3)),
+          // Error budget là phần "được phép hỏng". Đốt hết budget nghĩa là phải dừng
+          // ship tính năng để đi vá độ tin cậy — nó biến độ tin cậy thành một con số
+          // có thể ra quyết định, thay vì một cuộc tranh luận.
+          budgetDaDot: sli === null ? null : Number((((sloTarget - sli) / (100 - sloTarget)) * 100).toFixed(1)) + '%',
+          datSlo: sli === null ? null : sli >= sloTarget,
+        },
+        top: out.slice(0, Number(url.searchParams.get('top') || 8)),
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Bài 17 — chế độ lỗi & khả năng chống chịu
+    // -----------------------------------------------------------------------
+    if (p === '/leaf') {
+      // Service tận cùng của chuỗi — nơi hứng toàn bộ lưu lượng khuếch đại. Nó chỉ
+      // đếm, không làm gì khác, để con số đếm được là con số sạch.
+      leafHits++;
+      const fail = Number(url.searchParams.get('fail') || 0);
+      const ms = Number(url.searchParams.get('ms') || 0);
+      if (ms > 0) await sleep(ms);
+      if (fail > 0 && Math.random() < fail) {
+        leafErrors++;
+        return json(res, 503, { ok: false, instance: INSTANCE });
+      }
+      return json(res, 200, { ok: true, instance: INSTANCE, leafHits });
+    }
+
+    if (p === '/layer') {
+      // Một tầng trong chuỗi. Mỗi tầng thử lại `retries` lần khi tầng dưới lỗi — nghe
+      // rất hợp lý khi nhìn riêng một tầng, và đó chính là lý do retry amplification
+      // luôn xảy ra: KHÔNG AI nhìn thấy tích của cả chuỗi (mục 17.1).
+      const depth = Math.max(1, Math.min(5, Number(url.searchParams.get('depth') || 3)));
+      const retries = Math.max(1, Math.min(5, Number(url.searchParams.get('retries') || 3)));
+      const fail = url.searchParams.get('fail') || '1';
+      const budget = url.searchParams.get('budget') === '1';
+      const next =
+        depth > 1
+          ? `/layer?depth=${depth - 1}&retries=${retries}&fail=${fail}&budget=${budget ? 1 : 0}`
+          : `/leaf?fail=${fail}`;
+      const peer = PEERS[(depth - 1) % PEERS.length];
+
+      let lastStatus = 0;
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        // Retry budget: chỉ cho phép thử lại khi tỉ lệ retry gần đây còn dưới ngưỡng.
+        // Khác biệt then chốt so với "retry tối đa N lần": giới hạn theo TỈ LỆ nên khi
+        // toàn hệ đang hỏng, tổng lượng retry bị chặn lại thay vì nhân lên.
+        if (budget && attempt > 1 && !retryBudgetAllows()) {
+          retryBudgetDenied++;
+          break;
+        }
+        recordAttempt(attempt > 1);
+        if (attempt > 1) retryCount++;
+        const r = await callPeer(peer, next, corrId);
+        lastStatus = r.status;
+        if (r.ok) return json(res, 200, { ok: true, depth, attempt, instance: INSTANCE });
+      }
+      return json(res, 503, { ok: false, depth, retries, lastStatus, instance: INSTANCE });
+    }
+
+    if (p === '/leaf-stats') {
+      return json(res, 200, {
+        instance: INSTANCE,
+        leafHits,
+        leafErrors,
+        retryCount,
+        retryBudgetDenied,
+        // Response đã sinh ra xong nhưng client đã bỏ đi từ trước — công toi hoàn toàn.
+        abandonedResponses,
+      });
+    }
+
+    if (p === '/leaf-reset') {
+      leafHits = 0;
+      leafErrors = 0;
+      retryCount = 0;
+      retryBudgetDenied = 0;
+      abandonedResponses = 0;
+      retryWindow.length = 0;
+      return json(res, 200, { ok: true, instance: INSTANCE });
+    }
+
+    if (p === '/metrics-reset') {
+      metrics.clear();
+      traces.clear();
+      tracesDropped = 0;
+      return json(res, 200, { ok: true, instance: INSTANCE });
+    }
+
+    if (p === '/trace') {
+      // Không có id thì liệt kê các trace đang giữ; có id thì trả waterfall.
+      const id = url.searchParams.get('id');
+      if (!id) {
+        return json(res, 200, {
+          instance: INSTANCE,
+          soTraceDangGiu: traces.size,
+          traceBiBo: tracesDropped,
+          ids: [...traces.keys()].slice(-10),
+        });
+      }
+      const spans = traces.get(id) || [];
+      return json(res, 200, {
+        correlationId: id,
+        soChang: spans.length,
+        // Waterfall: chặng nào ăn hết thời gian hiện ra ngay, không phải đoán.
+        spans,
+        tongMs: Number(spans.reduce((a, b) => a + b.ms, 0).toFixed(3)),
+      });
+    }
+
+    if (p === '/trace-all') {
+      // Span nằm rải trong bộ nhớ của TỪNG service — không chỗ nào tự nhiên nhìn thấy
+      // toàn bộ. Vì thế mọi hệ tracing thật đều cần một bộ THU GOM. Ở đây instance này
+      // đóng vai thu gom bằng cách hỏi từng peer rồi ghép lại theo thứ tự thời gian.
+      const id = url.searchParams.get('id');
+      const all = [];
+      for (const peer of PEERS) {
+        const r = await fetchPeerJson(peer, `/trace?id=${encodeURIComponent(id)}`);
+        for (const s of (r && r.spans) || []) all.push({ ...s, peer });
+      }
+      all.sort((a, b) => b.ms - a.ms);
+      const tong = all.reduce((a, b) => a + b.ms, 0);
+      return json(res, 200, {
+        correlationId: id,
+        soChang: all.length,
+        // Sắp theo thời gian giảm dần: chặng đầu tiên trong danh sách chính là thủ phạm.
+        spans: all.map((s) => ({ ...s, phanTram: tong ? Number(((s.ms / tong) * 100).toFixed(1)) : 0 })),
+        tongMs: Number(tong.toFixed(3)),
+      });
+    }
+
+    if (p === '/incident') {
+      // Endpoint tái tạo một sự cố THẬT có hình dạng điển hình: đại đa số request
+      // nhanh, một tỉ lệ nhỏ rất chậm. Đây là hình dạng mà trung bình che đi hoàn toàn.
+      const rate = Number(url.searchParams.get('p') || 0.01);
+      const slowMs = Number(url.searchParams.get('ms') || 300);
+      if (Math.random() < rate) {
+        await sleep(slowMs);
+        return json(res, 200, { ok: true, slow: true, instance: INSTANCE });
+      }
+      return json(res, 200, { ok: true, slow: false, instance: INSTANCE });
+    }
+
+    if (p === '/traced-chain') {
+      // Như /chain mode=micro nhưng CÓ truyền correlation ID sang từng chặng, nên
+      // /trace?id=... dựng lại được toàn bộ waterfall. Đặt ?propagate=0 để thấy trace
+      // đứt đúng tại chặng đầu tiên — mục 16.3.
+      const hops = Math.max(1, Math.min(6, Number(url.searchParams.get('hops') || 3)));
+      const slowHop = Number(url.searchParams.get('slowHop') || 0);
+      const propagate = url.searchParams.get('propagate') !== '0';
+      for (let i = 0; i < hops; i++) {
+        const peer = PEERS[i % PEERS.length];
+        const ms = i + 1 === slowHop ? Number(url.searchParams.get('slowMs') || 200) : 5;
+        await callPeer(peer, `/slow-async?ms=${ms}`, propagate ? corrId : null);
+      }
+      return json(res, 200, { ok: true, correlationId: corrId, hops, propagate });
+    }
+
+    // -----------------------------------------------------------------------
     // Bài 15 — cùng một use case, hai kiến trúc
     // -----------------------------------------------------------------------
     if (p === '/step') {
@@ -1027,6 +1405,18 @@ const server = http.createServer(async (req, res) => {
     return json(res, 500, { error: String((err && err.message) || err) });
   } finally {
     inFlight--;
+    // Ghi metric + span cho MỌI request, kể cả request lỗi. Bỏ sót nhánh lỗi là lỗi
+    // đo lường phổ biến nhất: dashboard trông hoàn hảo vì nó chỉ đếm những gì thành công.
+    const took = msSince(reqT0);
+    observe(
+      {
+        route: p,
+        status: clientGone ? 'abandoned' : String(res.statusCode),
+        user: url.searchParams.get('user') || 'anon',
+      },
+      took
+    );
+    addSpan(corrId, { name: `${INSTANCE}${p}`, ms: Number(took.toFixed(3)), status: res.statusCode });
   }
 });
 

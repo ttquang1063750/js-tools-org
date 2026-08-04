@@ -85,7 +85,7 @@ biệt cấu hình. Đó là lý do cổng HTTP tồn tại — chỉ để làm
 Dừng và xoá sạch:
 
 ```bash
-docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard --profile lock --profile queue --profile ratelimit --profile eventstore --profile micro down
+docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard --profile lock --profile queue --profile ratelimit --profile eventstore --profile micro --profile capstone down
 ```
 
 > `replica` dựng **streaming replication thật**: replica tự chạy `pg_basebackup` từ primary
@@ -168,6 +168,67 @@ docker compose --profile base --profile lb --profile gw --profile edge --profile
 > Ba service của saga được ghim vào ba instance cố định (`PEERS_SAGA`), vì mỗi service phải
 > sở hữu dữ liệu của riêng nó. Đó cũng là lý do `read_state` phải hỏi cả ba container — không
 > có chỗ nào nhìn thấy toàn bộ trạng thái cùng lúc.
+
+## Bài 16: observability
+
+```bash
+./tools/observe-test.sh percentile   # 1% cham -> p99 = 0,90ms (mu hoan toan); 2% -> p99 = 300ms
+./tools/observe-test.sh cardinality  # them nhan user_id: 2 chuoi -> 49.317 chuoi (330 B -> 8,4 MB)
+./tools/observe-test.sh trace        # co truyen corr ID: 4 span, thay ngay app2 an 45,7% thoi gian
+                                     # khong truyen: 1 span, do het cho app1 - thu pham vo hinh
+./tools/observe-test.sh slo          # SLI 99,034% voi muc tieu 99,9% -> dot 865,5% error budget
+```
+
+> **Metrics, log và trace ở đây đều tự viết trong `app.js`**, không thư viện — để thấy rõ
+> chi phí của từng trụ cột nằm ở đâu. Histogram dùng vành đai cố định, nên
+> **độ phân giải của histogram chặn trên độ chính xác của percentile**: vành đai đầu tiên là
+> 1 ms, vì thế `/metrics` báo p50 = 0,5 ms trong khi `loadgen` đo được 0,13 ms. Đây là hạn chế
+> thật của mọi hệ metrics dạng histogram, không phải lỗi của lab.
+>
+> `/trace-all` đóng vai **bộ thu gom**: span nằm rải trong bộ nhớ từng service và không tiến
+> trình nào tự nhìn thấy toàn bộ đường đi của một request.
+
+## Bài 17: chống chịu
+
+```bash
+./tools/resilience-test.sh amplify 30 0  # 30 request -> 810 lan dap vao service tan cung (27x)
+./tools/resilience-test.sh amplify 30 1  # co retry budget 10% ->  69 lan (giam 11,7 lan)
+./tools/resilience-test.sh jitter        # dinh/20ms: 185 -> 65 · he so don cuc 19,6x -> 5,3x
+./tools/resilience-test.sh breaker       # goi vao dependency om: 17 -> 7 · cho lang phi 5.291ms -> 2.173ms
+./tools/resilience-test.sh deadline      # 100 timeout phia client, server VAN lam du 50.000ms cong toi
+```
+
+> **Circuit breaker nằm ở phía client** (`worker/resilience.js`), đúng chỗ nó thuộc về:
+> người gọi mới là người biết khi nào nên thôi gọi.
+>
+> **Một bug có thật gặp khi viết lab này** và đã giữ lại trong code kèm chú thích: nếu
+> `half-open` gặp thăm dò thất bại mà không quay về `open` ngay, breaker sẽ **kẹt vĩnh viễn**
+> ở `half-open` sau khi cạn số thăm dò — nó từ chối mọi request mãi mãi, kể cả sau khi
+> dependency đã hồi phục, và không có lỗi nào được ghi.
+
+## Bài 18: capstone — hệ rút gọn URL
+
+```bash
+./tools/capstone-test.sh seed   # gieo 1.000 link (chay mot lan)
+./tools/capstone-test.sh all    # chay lan luot v1 -> v5
+
+#   v1 goc                 rps  6.115   p99 14,71ms   dbReads 90.431  dbWrites 90.431
+#   v2 + cache             rps  7.122   p99  5,94ms   dbReads  1.006  dbWrites 103.775
+#   v3 + click bat dong bo rps 25.853   p99  1,75ms   dbReads      0  dbWrites 0
+#   v4 + read replica      rps 24.803   p99  1,85ms   <- KHONG cai thien gi
+#   v5 + rate limit        rps 25.786   p99  1,28ms
+```
+
+> **Mỗi phiên bản chỉ đổi ĐÚNG MỘT tham số.** Đổi hai thứ cùng lúc thì bạn chỉ biết "có gì
+> đó tốt hơn", không biết là thứ nào — và lần sau sẽ lặp lại cả hai dù chỉ một cái có tác dụng.
+>
+> **v4 là bài học đắt nhất của cả series:** read replica là tối ưu hợp lý trên giấy, nhưng ở
+> đây nó **không cải thiện gì** (thậm chí kém đi một chút) vì cache đã hấp thụ 100% lượt đọc —
+> không còn truy vấn nào để chuyển sang replica. Chỉ có phép đo mới nói ra điều đó.
+>
+> Lưu ý khi đọc v4: tập dữ liệu nóng ở đây chỉ có 1.000 link nên nằm gọn trong cache. Với
+> không gian khoá lớn hơn nhiều lần bộ nhớ cache, kết luận sẽ khác — hãy đo lại với
+> `--key-space` lớn hơn thay vì tin vào con số này.
 
 ## Các endpoint của app
 

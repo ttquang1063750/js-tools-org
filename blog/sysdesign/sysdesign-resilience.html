@@ -1,0 +1,1337 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 17: Chế Độ Lỗi &amp; Khả Năng Chống Chịu — js-tools</title>
+    <meta
+      name="description"
+      content="Hệ thống tự đánh sập mình bằng lưu lượng của chính nó, đo bằng số: chuỗi ba tầng mỗi tầng thử lại ba lần biến 30 request người dùng thành 810 lần đập vào service tận cùng — đúng 27 lần, và không tầng nào làm gì sai; retry budget 10% kéo xuống 69 lần; backoff không jitter dồn cục gấp 19,6 lần mức trung bình còn có jitter chỉ 5,3 lần và lại xong sớm hơn; circuit breaker biến 5.291 ms ngồi chờ thành 2.173 ms; và timeout đặt sai chỗ khiến server làm trọn 50.000 ms công toi mà dashboard vẫn xanh."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-resilience" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-resilience" />
+    <meta property="og:title" content="Bài 17: Chế Độ Lỗi &amp; Khả Năng Chống Chịu — js-tools" />
+    <meta
+      property="og:description"
+      content="Hệ thống tự đánh sập mình bằng lưu lượng của chính nó, đo bằng số: chuỗi ba tầng mỗi tầng thử lại ba lần biến 30 request người dùng thành 810 lần đập vào service tận cùng — đúng 27 lần, và không tầng nào làm gì sai; retry budget 10% kéo xuống 69 lần; backoff không jitter dồn cục gấp 19,6 lần mức trung bình còn có jitter chỉ 5,3 lần và lại xong sớm hơn; circuit breaker biến 5.291 ms ngồi chờ thành 2.173 ms; và timeout đặt sai chỗ khiến server làm trọn 50.000 ms công toi mà dashboard vẫn xanh."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 17: Chế Độ Lỗi &amp; Khả Năng Chống Chịu — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Hệ thống tự đánh sập mình bằng lưu lượng của chính nó, đo bằng số: chuỗi ba tầng mỗi tầng thử lại ba lần biến 30 request người dùng thành 810 lần đập vào service tận cùng — đúng 27 lần, và không tầng nào làm gì sai; retry budget 10% kéo xuống 69 lần; backoff không jitter dồn cục gấp 19,6 lần mức trung bình còn có jitter chỉ 5,3 lần và lại xong sớm hơn; circuit breaker biến 5.291 ms ngồi chờ thành 2.173 ms; và timeout đặt sai chỗ khiến server làm trọn 50.000 ms công toi mà dashboard vẫn xanh."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script src="../katex/katex.min.js" defer></script>
+    <script src="../katex/contrib/auto-render.min.js" defer></script>
+    <script src="../katex-render.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 17: Chế Độ Lỗi & Khả Năng Chống Chịu",
+        "description": "Hệ thống tự đánh sập mình bằng lưu lượng của chính nó, đo bằng số: chuỗi ba tầng mỗi tầng thử lại ba lần biến 30 request người dùng thành 810 lần đập vào service tận cùng — đúng 27 lần, và không tầng nào làm gì sai; retry budget 10% kéo xuống 69 lần; backoff không jitter dồn cục gấp 19,6 lần mức trung bình còn có jitter chỉ 5,3 lần và lại xong sớm hơn; circuit breaker biến 5.291 ms ngồi chờ thành 2.173 ms; và timeout đặt sai chỗ khiến server làm trọn 50.000 ms công toi mà dashboard vẫn xanh.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-resilience",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+        "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+        "datePublished": "2026-08-04"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 17: Chế Độ Lỗi &amp; Khả Năng Chống Chịu</h1>
+          <div class="article-hero__meta">4 tháng 8, 2026 · 21 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-observability">Bài 16</a> vừa dựng xong bộ đo. Bài này dùng nó để nhìn một hiện tượng
+              mà nếu chỉ nghe kể thì rất khó tin: <strong>hệ thống tự đánh sập chính mình</strong> bằng lưu lượng do
+              chính nó sinh ra, sau khi nguyên nhân gốc đã qua từ lâu.
+            </p>
+
+            <p>
+              Bốn phép đo của lab. Thứ nhất, một chuỗi ba tầng mà mỗi tầng thử lại ba lần biến
+              <strong>30 request người dùng thành 810 lần</strong> đập vào service tận cùng — đúng 27 lần, và không tầng
+              nào làm gì sai cả. Thứ hai, backoff không jitter làm lưu lượng dồn cục gấp <strong>19,6 lần</strong> mức
+              trung bình; thêm jitter kéo xuống 5,3 lần. Thứ ba, circuit breaker cắt số lời gọi vào một dependency đang
+              ốm từ 17 xuống 7 và biến <strong>5.291 ms ngồi chờ</strong> thành 2.173 ms. Thứ tư, timeout đặt sai chỗ
+              khiến server làm trọn <strong>50.000 ms công toi</strong> — 100 phản hồi hoàn chỉnh mà không ai nhận.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Ba container
+                <code>node:22-alpine</code> (app1/app2/app3) đóng vai ba tầng service, mỗi container 1 CPU và 256 MB;
+                phần retry/breaker/deadline nằm ở <code>worker/resilience.js</code> chạy trong container thứ tư, không
+                dependency.<br /><br />
+                Circuit breaker được đặt ở <strong>phía client</strong> — đúng chỗ nó thuộc về trong thực tế: người gọi
+                mới là người biết khi nào nên thôi gọi. Phép đo breaker và deadline dùng <em>một</em> client tuần tự,
+                nên các con số throughput trong đó không phải số đo năng lực; thứ cần đọc là
+                <em>số lời gọi đi xuống dependency</em> và <em>thời gian ngồi chờ</em>.
+              </div>
+            </div>
+
+            <!-- ================= 17.1 ================= -->
+            <h2>17.1 Cascade failure: khi hệ thống tự đánh sập mình</h2>
+
+            <p>
+              Cơ chế lan truyền luôn giống nhau và không phụ thuộc công nghệ. Một dependency chậm đi — chưa chết, chỉ
+              chậm. Người gọi nó giữ kết nối và luồng để chờ. Kết nối bị giữ lâu hơn nghĩa là pool cạn nhanh hơn. Pool
+              cạn thì chính người gọi cũng bắt đầu chậm, và người gọi <em>nó</em> cũng bắt đầu giữ kết nối lâu hơn.
+              Trong vài chục giây, một sự cố nhỏ ở tầng dưới cùng đã lan ngược lên tới người dùng.
+            </p>
+
+            <p>
+              Đặc điểm nguy hiểm nhất của cascade là nó <strong>tự duy trì</strong>: sau khi nguyên nhân gốc đã được
+              khắc phục, hệ thống vẫn tiếp tục sập, vì bây giờ thứ giữ nó sập là chính lưu lượng retry đang dồn ứ. Và
+              nguồn khuếch đại lớn nhất của lưu lượng đó là một thứ trông vô hại trong code review.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">🚨 Cascade sống lâu hơn nguyên nhân sinh ra nó</div>
+              <div class="callout__content">
+                Đây là điều làm cascade khác mọi loại sự cố khác, và là điều khiến nó khó xử lý nhất khi đang trực. Bạn
+                tìm ra nguyên nhân gốc — một truy vấn chậm, một node chết — và bạn vá xong. Hệ thống
+                <strong>vẫn sập</strong>. Vì thứ đang giữ nó sập không còn là nguyên nhân gốc nữa mà là lượng retry đang
+                dồn ứ, và lượng đó tự nuôi chính nó.<br /><br />
+                Hệ quả rất phản trực giác: cách thoát nhanh nhất thường là
+                <strong>chủ động giảm tải xuống gần bằng không</strong> — chặn hẳn lưu lượng vào, để hàng đợi rút cạn,
+                rồi mở lại từ từ. Nghe như đang tự làm hại mình giữa lúc sự cố, nhưng nếu không làm thì hệ thống không
+                bao giờ có đủ khoảng trống để hồi phục. Đây cũng là lý do load shedding ở
+                <a href="sysdesign-rate-limiting">Bài 13</a> là một công cụ <em>cứu hộ</em>, không chỉ là công cụ phòng
+                ngừa.
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tang_nao_cung_the.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// Doan code nay xuat hien o MOI tang, va o moi tang no deu hop ly:
+// "goi that bai thi thu lai vai lan, mang co the chi truc trac nhat thoi".
+for (let attempt = 1; attempt &lt;= 3; attempt++) {
+  const r = await callDownstream();
+  if (r.ok) return r;
+}
+throw new Error('downstream failed');</code></pre>
+            </div>
+
+            <p>
+              Không ai nhìn thấy vấn đề khi review đoạn đó, vì vấn đề không nằm trong đoạn đó — nó nằm ở
+              <strong>tích của cả chuỗi</strong>. Lab dựng ba tầng thật, mỗi tầng chạy đúng đoạn code trên, rồi đếm số
+              lần service tận cùng bị gọi:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ket_qua_amplify.txt</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">$ ./tools/resilience-test.sh amplify 30 0
+  30 request nguoi dung · chuoi 3 tang · moi tang thu lai 3 lan · budget=0
+     app1 leafHits=810 retry=60  budgetDenied=0
+     app2 leafHits=0   retry=540 budgetDenied=0
+     app3 leafHits=0   retry=180 budgetDenied=0
+  (30 x 27 = 810 lan dap vao service tan cung)</code></pre>
+            </div>
+
+            <p>
+              <strong>810 lần cho 30 request.</strong> Hệ số 27 = 3 × 3 × 3, và nó xuất hiện đúng vào lúc service tận
+              cùng đang yếu nhất — vì chính sự yếu đó mới sinh ra retry. Đây là vòng phản hồi dương thuần tuý: càng yếu
+              thì càng bị gọi nhiều, càng bị gọi nhiều thì càng yếu.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 280"
+                width="100%"
+                role="img"
+                aria-label="Retry amplification qua ba tầng: một request người dùng trở thành 27 lần gọi service tận cùng"
+              >
+                <rect width="720" height="280" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Mỗi tầng thử lại 3 lần — không tầng nào làm gì sai
+                </text>
+
+                <!-- user -->
+                <rect x="16" y="46" width="110" height="30" rx="5" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="71"
+                  y="66"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  1 request
+                </text>
+                <line x1="126" y1="61" x2="152" y2="61" stroke="#9ca3af" />
+                <polygon points="156,61 148,58 148,64" fill="#9ca3af" />
+
+                <!-- tang 1 -->
+                <rect x="158" y="46" width="110" height="30" rx="5" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="213"
+                  y="60"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  Tầng 1 (gateway)
+                </text>
+                <text
+                  x="213"
+                  y="71"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  retry × 3
+                </text>
+                <line x1="268" y1="61" x2="294" y2="61" stroke="#f59e0b" />
+                <polygon points="298,61 290,58 290,64" fill="#f59e0b" />
+                <text
+                  x="283"
+                  y="52"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  ×3
+                </text>
+
+                <!-- tang 2 -->
+                <rect x="300" y="46" width="110" height="30" rx="5" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="355"
+                  y="60"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  Tầng 2 (BFF)
+                </text>
+                <text
+                  x="355"
+                  y="71"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  nhận 3 · retry × 3
+                </text>
+                <line x1="410" y1="61" x2="436" y2="61" stroke="#f59e0b" />
+                <polygon points="440,61 432,58 432,64" fill="#f59e0b" />
+                <text
+                  x="425"
+                  y="52"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  ×3
+                </text>
+
+                <!-- tang 3 -->
+                <rect x="442" y="46" width="110" height="30" rx="5" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="497"
+                  y="60"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  Tầng 3 (service)
+                </text>
+                <text
+                  x="497"
+                  y="71"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  nhận 9 · retry × 3
+                </text>
+                <line x1="552" y1="61" x2="578" y2="61" stroke="#ef4444" />
+                <polygon points="582,61 574,58 574,64" fill="#ef4444" />
+                <text
+                  x="567"
+                  y="52"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  ×3
+                </text>
+
+                <!-- leaf -->
+                <rect x="584" y="42" width="120" height="38" rx="5" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="644"
+                  y="58"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  27 lần
+                </text>
+                <text
+                  x="644"
+                  y="72"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  service tận cùng
+                </text>
+
+                <!-- so do cot -->
+                <text x="16" y="112" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  Lưu lượng tại mỗi tầng (số đo thật với 30 request người dùng):
+                </text>
+                <rect x="16" y="122" width="20" height="20" rx="2" fill="#22c55e" opacity="0.6" />
+                <text x="44" y="137" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  vào tầng 1: 30
+                </text>
+                <rect x="160" y="122" width="60" height="20" rx="2" fill="#f59e0b" opacity="0.6" />
+                <text x="228" y="137" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  vào tầng 2: 90
+                </text>
+                <rect x="330" y="122" width="120" height="20" rx="2" fill="#f59e0b" opacity="0.7" />
+                <text x="458" y="137" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  vào tầng 3: 270
+                </text>
+                <rect x="16" y="150" width="500" height="20" rx="2" fill="#ef4444" opacity="0.7" />
+                <text
+                  x="524"
+                  y="165"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  font-weight="600"
+                >
+                  vào service tận cùng: 810
+                </text>
+
+                <!-- retry budget -->
+                <rect x="16" y="186" width="688" height="80" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="28"
+                  y="206"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Cùng kịch bản, bật retry budget 10% (số đo thật)
+                </text>
+                <rect x="28" y="216" width="43" height="18" rx="2" fill="#22c55e" opacity="0.7" />
+                <text x="82" y="230" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9">
+                  69 lần — thay vì 810. Giảm 11,7 lần.
+                </text>
+                <text x="28" y="252" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Budget giới hạn theo TỈ LỆ retry trên tổng lưu lượng, nên khi cả hệ đang hỏng thì cửa đóng lại — khác
+                  hẳn
+                </text>
+                <text x="28" y="264" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  "tối đa 3 lần", vốn cho phép nhân lên đúng lúc không nên nhân.
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Hệ số 27 không nằm trong code của tầng nào — nó chỉ tồn tại ở mức toàn hệ thống.
+              </figcaption>
+            </figure>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: retry ở nhiều tầng cùng lúc</div>
+              <div class="callout__content">
+                Quy tắc thực dụng đơn giản đến bất ngờ: <strong>chỉ một tầng được retry</strong>, và tầng đó nên là tầng
+                gần người dùng nhất còn đủ ngữ cảnh để quyết định. Mọi tầng khác thất bại thì trả lỗi lên trên ngay.
+                <br /><br />
+                Vấn đề là không ai <em>cố ý</em> vi phạm quy tắc này — nó bị vi phạm vì các tầng do các đội khác nhau
+                viết, và mỗi đội chỉ nhìn thấy tầng của mình. Tệ hơn, retry thường nằm sẵn trong thư viện HTTP client
+                với cấu hình mặc định đã bật, nên nó không xuất hiện trong bất kỳ dòng code nào để mà review. Cách kiểm
+                tra duy nhất đáng tin: <strong>đếm số lần service tận cùng bị gọi</strong> cho một request, đúng như
+                phép đo trên.
+              </div>
+            </div>
+
+            <!-- ================= 17.2 ================= -->
+            <h2>17.2 Retry cho đúng: điều kiện, backoff, và jitter</h2>
+
+            <p>Ba điều kiện phải thoả <em>đồng thời</em> thì mới được retry. Thiếu một là hỏng:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Điều kiện</th>
+                  <th>Vì sao</th>
+                  <th>Hỏng thế nào nếu bỏ qua</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Lỗi phải là tạm thời</strong></td>
+                  <td>Timeout, 503, đứt kết nối — thứ có thể khác đi ở lần sau</td>
+                  <td>Retry một lỗi <code>400</code> hay <code>404</code> chỉ đốt tài nguyên; lần sau vẫn sai y hệt</td>
+                </tr>
+                <tr>
+                  <td><strong>Thao tác phải idempotent</strong></td>
+                  <td>Retry nghĩa là thao tác có thể chạy hai lần (<a href="sysdesign-idempotency">Bài 11</a>)</td>
+                  <td>Trừ tiền hai lần, gửi email hai lần — và bạn không biết chuyện đó đã xảy ra</td>
+                </tr>
+                <tr>
+                  <td><strong>Phải có backoff kèm jitter</strong></td>
+                  <td>Thử lại ngay là dồn thêm tải vào đúng lúc hệ đang yếu</td>
+                  <td>Sóng retry đồng bộ đánh sập lại server vừa hồi phục</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Điều kiện thứ ba là điều kiện hay bị làm nửa vời nhất: nhiều hệ có backoff nhưng
+              <em>không có jitter</em>. Hậu quả rất cụ thể — khi một service sập rồi sống lại, tất cả client đã cùng gặp
+              lỗi tại một thời điểm, nên chúng cũng cùng chờ đúng 100 ms, rồi cùng chờ đúng 200 ms, rồi 400 ms. Mỗi mốc
+              đó là một đợt sóng đồng bộ.
+            </p>
+
+            <p>Lab cho 200 client cùng hỏng một lúc rồi thử lại 4 lần, hai chế độ dùng cùng công thức backoff:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Chế độ</th>
+                  <th>Đỉnh mỗi 20 ms</th>
+                  <th>Trung bình mỗi 20 ms</th>
+                  <th>Hệ số dồn cục</th>
+                  <th>Kéo dài</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Backoff <strong>không</strong> jitter</td>
+                  <td><strong>185</strong></td>
+                  <td>9,4</td>
+                  <td><strong>19,6×</strong></td>
+                  <td>1.694 ms</td>
+                </tr>
+                <tr>
+                  <td>Backoff <strong>có</strong> jitter</td>
+                  <td><strong>65</strong></td>
+                  <td>12,3</td>
+                  <td><strong>5,3×</strong></td>
+                  <td>1.302 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Cột đáng nhìn là <em>hệ số dồn cục</em> — đỉnh cao gấp bao nhiêu lần mức trung bình. Không jitter cho 19,6
+              lần: server vừa hồi phục phải hứng một cú gấp gần 20 lần tải trung bình, và cú đó thường đủ để giết nó lần
+              nữa, sinh ra vòng lặp sập–hồi–sập. Thêm jitter kéo hệ số xuống 5,3 và đỉnh xuống còn một phần ba.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Jitter còn làm mọi thứ xong sớm hơn</div>
+              <div class="callout__content">
+                Chi tiết dễ bỏ qua trong bảng trên: chế độ có jitter kết thúc sau <strong>1.302 ms</strong> trong khi
+                chế độ không jitter mất 1.694 ms. Nghe ngược trực giác — thêm ngẫu nhiên mà lại nhanh hơn?<br /><br />
+                Lý do: "full jitter" chờ một khoảng ngẫu nhiên trong <code>[0, backoff]</code> thay vì đúng
+                <code>backoff</code>, nên thời gian chờ kỳ vọng chỉ bằng một nửa. Bạn được cả hai thứ cùng lúc: tải trải
+                đều hơn <em>và</em> độ trễ trung bình thấp hơn. Đây là một trong số rất ít chỗ trong series này mà một
+                thay đổi cải thiện cả hai chiều của đánh đổi.
+              </div>
+            </div>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 260"
+                width="100%"
+                role="img"
+                aria-label="Sóng retry đồng bộ khi không có jitter so với phân bố trải đều khi có jitter"
+              >
+                <rect width="720" height="260" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  200 client cùng hỏng một lúc — lưu lượng thử lại theo thời gian
+                </text>
+
+                <!-- khong jitter -->
+                <text x="16" y="48" fill="#ef4444" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  KHÔNG JITTER — đỉnh 185 / 20 ms · dồn cục 19,6×
+                </text>
+                <line x1="40" y1="120" x2="700" y2="120" stroke="#4b5563" />
+                <rect x="106" y="58" width="8" height="62" fill="#ef4444" opacity="0.85" />
+                <rect x="172" y="58" width="8" height="62" fill="#ef4444" opacity="0.85" />
+                <rect x="304" y="58" width="8" height="62" fill="#ef4444" opacity="0.85" />
+                <rect x="568" y="58" width="8" height="62" fill="#ef4444" opacity="0.85" />
+                <text
+                  x="110"
+                  y="134"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  100ms
+                </text>
+                <text
+                  x="176"
+                  y="134"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  300ms
+                </text>
+                <text
+                  x="308"
+                  y="134"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  700ms
+                </text>
+                <text
+                  x="572"
+                  y="134"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  1500ms
+                </text>
+                <text x="600" y="80" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  4 cột dựng đứng,
+                </text>
+                <text x="600" y="92" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  ở giữa trống trơn
+                </text>
+
+                <!-- co jitter -->
+                <text
+                  x="16"
+                  y="168"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  CÓ JITTER — đỉnh 65 / 20 ms · dồn cục 5,3×
+                </text>
+                <line x1="40" y1="230" x2="700" y2="230" stroke="#4b5563" />
+                <rect x="60" y="212" width="6" height="18" fill="#22c55e" opacity="0.7" />
+                <rect x="86" y="206" width="6" height="24" fill="#22c55e" opacity="0.7" />
+                <rect x="112" y="200" width="6" height="30" fill="#22c55e" opacity="0.7" />
+                <rect x="140" y="208" width="6" height="22" fill="#22c55e" opacity="0.7" />
+                <rect x="168" y="198" width="6" height="32" fill="#22c55e" opacity="0.7" />
+                <rect x="196" y="204" width="6" height="26" fill="#22c55e" opacity="0.7" />
+                <rect x="226" y="196" width="6" height="34" fill="#22c55e" opacity="0.7" />
+                <rect x="256" y="206" width="6" height="24" fill="#22c55e" opacity="0.7" />
+                <rect x="288" y="202" width="6" height="28" fill="#22c55e" opacity="0.7" />
+                <rect x="320" y="210" width="6" height="20" fill="#22c55e" opacity="0.7" />
+                <rect x="354" y="204" width="6" height="26" fill="#22c55e" opacity="0.7" />
+                <rect x="390" y="212" width="6" height="18" fill="#22c55e" opacity="0.7" />
+                <rect x="428" y="208" width="6" height="22" fill="#22c55e" opacity="0.7" />
+                <rect x="466" y="214" width="6" height="16" fill="#22c55e" opacity="0.7" />
+                <rect x="506" y="210" width="6" height="20" fill="#22c55e" opacity="0.7" />
+                <rect x="546" y="216" width="6" height="14" fill="#22c55e" opacity="0.7" />
+                <rect x="588" y="218" width="6" height="12" fill="#22c55e" opacity="0.7" />
+                <text x="612" y="200" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  trải đều, và
+                </text>
+                <text x="612" y="212" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  xong sớm hơn
+                </text>
+                <text x="612" y="224" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  (1.302 vs 1.694 ms)
+                </text>
+
+                <text x="16" y="250" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Cùng công thức backoff, cùng số lần thử. Khác biệt duy nhất: chờ đúng backoff, hay chờ ngẫu nhiên
+                  trong [0, backoff].
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Hình dạng lưu lượng, không phải tổng lưu lượng, mới là thứ quyết định server có sống nổi hay không.
+              </figcaption>
+            </figure>
+
+            <!-- ================= 17.3 ================= -->
+            <h2>17.3 Timeout và deadline: đừng làm việc cho một request đã chết</h2>
+
+            <p>
+              Mọi lời gọi mạng phải có timeout. Câu này nghe hiển nhiên tới mức dễ bỏ qua, nhưng mặc định của rất nhiều
+              thư viện HTTP là <strong>vô hạn</strong> — nghĩa là mặc định của bạn cũng đang là vô hạn, trừ khi bạn đã
+              chủ động đặt. Một lời gọi không timeout giữ kết nối vô thời hạn, và đó chính là bước đầu tiên của cơ chế
+              cascade ở mục 17.1.
+            </p>
+
+            <p>
+              Nhưng có timeout thôi chưa đủ; timeout phải <strong>giảm dần theo độ sâu</strong>. Nếu tầng ngoài chờ 1
+              giây còn tầng trong chờ 3 giây, thì tầng ngoài bỏ cuộc trước trong khi cả chuỗi phía sau vẫn cày tiếp cho
+              một request không còn ai chờ. Lab đo đúng tình huống đó: client bỏ cuộc sau 100 ms, server làm việc 500
+              ms.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ket_qua_deadline.json</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-json">{
+  "role": "deadline",
+  "soRequest": 100,
+  "timeoutPhiaClient": 100,       // client bo cuoc ca 100 request
+  "serverVanLamViec": 100,        // server VAN lam du 100 lan viec 500ms
+  "phanHoiKhongAiNhan": 100,      // 100 phan hoi hoan chinh, khong ai nhan
+  "congToiMs": 50000              // 50 giay CPU va I/O cho khong ai
+}</code></pre>
+            </div>
+
+            <p>
+              Điểm đáng sợ nhất của con số này là nó <strong>vô hình trên dashboard</strong>. Nhìn từ phía server, 100
+              request đó hoàn tất bình thường, không lỗi, thời gian xử lý đúng như thiết kế. Nhìn từ phía người dùng, cả
+              100 đều thất bại. Hai bên nhìn cùng một hệ thống và thấy hai sự thật trái ngược — và bên có dashboard là
+              bên đang nhìn sai.
+            </p>
+
+            <p>
+              Cách sửa gọi là <strong>truyền deadline</strong>: thay vì mỗi tầng tự đặt timeout riêng, tầng đầu tính ra
+              một <em>mốc thời gian tuyệt đối</em> mà request phải xong trước đó, rồi truyền mốc ấy xuống dưới. Mỗi tầng
+              kiểm tra mốc đó trước khi làm việc, và bỏ ngay nếu đã quá hạn. Kết quả: không ai làm việc cho một request
+              đã chết.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: timeout tầng ngoài ngắn hơn tầng trong</div>
+              <div class="callout__content">
+                Đây là cấu hình sai phổ biến nhất, và nó thường phát sinh một cách vô tình: mỗi đội đặt timeout hợp lý
+                cho service <em>của mình</em>, không ai nhìn tổng thể chuỗi. Kết quả là toàn bộ tài nguyên phía sau bị
+                đốt để tạo ra kết quả không ai nhận — và tệ hơn, nếu tầng ngoài lại <em>retry</em> sau khi timeout thì
+                bạn có đồng thời cả hai vấn đề: công toi <strong>nhân</strong> với hệ số khuếch đại của mục 17.1.<br /><br />
+                Kiểm tra rẻ nhất mà hiếm ai làm: <strong>vẽ ra timeout của từng chặng trên một dòng thời gian</strong>.
+                Chúng phải giảm dần từ ngoài vào trong, và tổng timeout của các chặng con phải nhỏ hơn timeout của chặng
+                cha. Nếu chưa từng vẽ, khả năng cao là bạn đang có ít nhất một chỗ ngược.
+              </div>
+            </div>
+
+            <!-- ================= 17.4 ================= -->
+            <h2>17.4 Circuit breaker và bulkhead</h2>
+
+            <p>
+              Retry giả định lỗi là tạm thời. Khi một dependency đã hỏng thật sự, giả định đó sai — và mỗi lần thử lại
+              chỉ thêm một khoảng chờ nữa trước khi nhận cùng một lỗi. <strong>Circuit breaker</strong> là cơ chế nhận
+              ra điều đó và ngừng gọi hẳn trong một khoảng thời gian, cho dependency chỗ thở và cho chính mình khỏi phải
+              ngồi chờ.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 250"
+                width="100%"
+                role="img"
+                aria-label="Máy trạng thái circuit breaker với ba trạng thái closed, open, half-open và điều kiện chuyển"
+              >
+                <rect width="720" height="250" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Circuit breaker — ba trạng thái và điều kiện chuyển
+                </text>
+
+                <!-- closed -->
+                <rect x="40" y="70" width="150" height="60" rx="8" fill="#0f2419" stroke="#22c55e" stroke-width="2" />
+                <text
+                  x="115"
+                  y="94"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="12"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  CLOSED
+                </text>
+                <text
+                  x="115"
+                  y="112"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  cho qua · đếm lỗi
+                </text>
+
+                <!-- open -->
+                <rect x="285" y="70" width="150" height="60" rx="8" fill="#2a1520" stroke="#ef4444" stroke-width="2" />
+                <text
+                  x="360"
+                  y="94"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="12"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  OPEN
+                </text>
+                <text
+                  x="360"
+                  y="112"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  từ chối NGAY · không gọi xuống
+                </text>
+
+                <!-- half-open -->
+                <rect x="530" y="70" width="150" height="60" rx="8" fill="#151d30" stroke="#f59e0b" stroke-width="2" />
+                <text
+                  x="605"
+                  y="94"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="12"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  HALF-OPEN
+                </text>
+                <text
+                  x="605"
+                  y="112"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  thả đúng N request thăm dò
+                </text>
+
+                <!-- closed -> open -->
+                <line x1="190" y1="88" x2="279" y2="88" stroke="#ef4444" />
+                <polygon points="285,88 276,84 276,92" fill="#ef4444" />
+                <text
+                  x="234"
+                  y="80"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  đủ N lỗi liên tiếp
+                </text>
+
+                <!-- open -> half-open -->
+                <line x1="435" y1="88" x2="524" y2="88" stroke="#f59e0b" />
+                <polygon points="530,88 521,84 521,92" fill="#f59e0b" />
+                <text
+                  x="480"
+                  y="80"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  hết thời gian chờ
+                </text>
+
+                <!-- half-open -> closed -->
+                <path d="M 560 130 Q 340 190 130 130" fill="none" stroke="#22c55e" />
+                <polygon points="130,130 136,138 140,130" fill="#22c55e" />
+                <text
+                  x="345"
+                  y="182"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  thăm dò THÀNH CÔNG → đóng lại
+                </text>
+
+                <!-- half-open -> open -->
+                <path d="M 605 62 Q 480 26 380 62" fill="none" stroke="#ef4444" />
+                <polygon points="380,62 388,58 386,66" fill="#ef4444" />
+                <text
+                  x="492"
+                  y="30"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  thăm dò THẤT BẠI → mở lại NGAY
+                </text>
+
+                <rect x="16" y="196" width="688" height="42" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="214" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  Thiếu mũi tên "thăm dò thất bại → mở lại ngay" là một bug thật đã gặp khi viết lab này
+                </text>
+                <text x="28" y="230" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Breaker kẹt vĩnh viễn ở half-open sau khi cạn số thăm dò: từ chối MỌI request mãi mãi, kể cả sau khi
+                  dependency đã hồi phục — và im lặng hoàn toàn.
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Bốn mũi tên, và mũi tên hay bị quên nhất lại là mũi tên khiến breaker không bao giờ tự phục hồi.
+              </figcaption>
+            </figure>
+
+            <p>Lab cho một dependency chết trong 5 giây đầu (mỗi lời gọi treo 300 ms rồi trả 503) rồi sống lại:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Gọi xuống dependency đang ốm</th>
+                  <th>Thời gian ngồi chờ lãng phí</th>
+                  <th>Từ chối tức thì</th>
+                  <th>Hồi phục sau</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Không breaker</strong></td>
+                  <td>17</td>
+                  <td><strong>5.291 ms</strong></td>
+                  <td>0</td>
+                  <td>299 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>Có breaker</strong></td>
+                  <td><strong>7</strong></td>
+                  <td><strong>2.173 ms</strong></td>
+                  <td>407</td>
+                  <td>188 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Đọc bảng theo hai chiều. Với <em>dependency</em>: số lời gọi đập vào nó giảm 59% đúng lúc nó cần yên tĩnh
+              nhất. Với <em>chính người gọi</em>: 5,3 giây ngồi chờ biến thành 2,2 giây, và 407 request được trả lời
+              ngay lập tức thay vì treo — nghĩa là luồng và kết nối được giải phóng, tức là cascade bị chặn ngay tại
+              đây.
+            </p>
+
+            <p>
+              <strong>Bulkhead</strong> giải một vấn đề anh em: ngay cả khi có breaker, nếu mọi dependency dùng chung
+              một connection pool thì một dependency chậm vẫn hút cạn pool trước khi breaker kịp mở. Cách vá là chia
+              pool riêng cho từng dependency — đúng như khoang kín trên tàu thuỷ mà cái tên gợi ra: một khoang ngập nước
+              không làm chìm cả tàu.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Vì sao một dependency chậm hút cạn pool nhanh đến thế</div>
+              <div class="callout__content">
+                Con số dễ tính và đáng giật mình. Giả sử service của bạn có pool 50 kết nối và phục vụ 500 request/giây.
+                Bình thường mỗi lời gọi mất 10 ms, nên theo <a href="sysdesign-latency-queueing">định luật Little</a> số
+                kết nối đang dùng là 500 × 0,01 = <strong>5</strong> — thoải mái trong 50.<br /><br />
+                Giờ dependency chậm đi thành 2 giây (chưa chết, chỉ chậm). Cùng lưu lượng đó cần 500 × 2 =
+                <strong>1.000 kết nối</strong> — gấp 20 lần sức chứa. Pool cạn trong chưa tới một trăm mili giây, và từ
+                giây đó mọi request khác, kể cả request <em>không liên quan gì</em> tới dependency chậm, đều xếp hàng
+                chờ một kết nối.<br /><br />
+                Đó là toàn bộ lý lẽ của <strong>bulkhead</strong>: nếu dependency chậm chỉ được dùng 10 kết nối trong
+                pool riêng của nó, thì nó cạn pool <em>của nó</em> và dừng lại ở đó — 40 kết nối còn lại vẫn phục vụ mọi
+                thứ khác bình thường. Giới hạn không phải để bảo vệ dependency, mà để <em>khoanh vùng thiệt hại</em> khi
+                nó hỏng.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: breaker đặt phạm vi quá rộng, hoặc half-open thả quá nhiều</div>
+              <div class="callout__content">
+                Một breaker cho <em>toàn bộ</em> service nghĩa là một endpoint hỏng sẽ chặn luôn mọi endpoint khác — kể
+                cả những endpoint hoàn toàn khoẻ mạnh. Phạm vi đúng thường là
+                <strong>một breaker cho mỗi dependency</strong>, đôi khi mỗi endpoint quan trọng.<br /><br />
+                Ở đầu kia, half-open thả quá nhiều request thăm dò cùng lúc là cách chắc chắn để giết lại dependency vừa
+                ngóc đầu dậy — nó vừa hồi phục với năng lực 10%, và bạn ném vào 100% tải. Lab dùng đúng
+                <strong>2</strong> request thăm dò. Con số nhỏ là chủ ý: mục tiêu của half-open là <em>hỏi một câu</em>,
+                không phải nối lại dịch vụ.
+              </div>
+            </div>
+
+            <!-- ================= 17.5 ================= -->
+            <h2>17.5 Suy giảm có kiểm soát và chaos engineering</h2>
+
+            <p>
+              Ba mục trên đều nói về chuyện <em>không làm hệ thống tệ thêm</em>. Mục này nói về chuyện làm nó
+              <em>vẫn còn dùng được</em> khi một phần đã hỏng. Nguyên tắc: một kết quả suy giảm gần như luôn tốt hơn một
+              trang lỗi.
+            </p>
+
+            <ul>
+              <li>Trang sản phẩm mất phần gợi ý cá nhân hoá — vẫn mua được hàng.</li>
+              <li>Dữ liệu cache cũ 10 phút thay vì lỗi — với đa số màn hình, không ai nhận ra.</li>
+              <li>Ẩn số lượt xem khi service thống kê chết — không ai vào vì con số đó.</li>
+              <li>Giá trị mặc định an toàn thay vì gọi service cấu hình — miễn là mặc định đó được kiểm thử.</li>
+            </ul>
+
+            <p>
+              Điều kiện tiên quyết giống hệt điều kiện của load shedding có ưu tiên ở
+              <a href="sysdesign-rate-limiting">Bài 13</a>: bạn phải biết trước
+              <strong>đường đi nào phải sống bằng mọi giá</strong>, và biết trước phần nào có thể tắt. Đó là quyết định
+              sản phẩm, không phải quyết định kỹ thuật, và nó phải có trước sự cố.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: đường fallback lại gọi chính thứ đang chết</div>
+              <div class="callout__content">
+                Mẫu quen thuộc: "gọi service gợi ý; nếu lỗi thì đọc gợi ý mặc định từ database". Nghe rất hợp lý — cho
+                tới khi bạn nhận ra service gợi ý chết <em>vì</em> database đang quá tải. Lúc đó đường fallback đổ thêm
+                tải vào đúng thành phần đang hấp hối, và nó biến một sự cố cục bộ thành sự cố toàn hệ.<br /><br />
+                Fallback phải phụ thuộc vào <strong>ít thứ hơn</strong> đường chính, không phải phụ thuộc vào những thứ
+                khác. Giá trị hằng số nhúng trong code là fallback tốt nhất vì nó không phụ thuộc vào gì cả.<br /><br />
+                Người anh em của cạm bẫy này: cơ chế failover <em>chưa bao giờ được diễn tập</em>. Một đường dự phòng
+                không chạy suốt sáu tháng thì đến lúc cần nó cũng hỏng — quyền đã hết hạn, cấu hình đã lệch, hoặc đơn
+                giản là không ai còn nhớ cách bật. Đó chính là lý do <strong>chaos engineering</strong> tồn tại: chủ
+                động tiêm lỗi vào giờ hành chính, khi mọi người còn tỉnh táo, thay vì để lỗi tự tìm đến lúc 3 giờ sáng.
+              </div>
+            </div>
+
+            <h3>Tự làm lại các phép đo</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+
+# --- Retry amplification: chuoi 3 tang, moi tang thu lai 3 lan ---
+./tools/resilience-test.sh amplify 30 0   # 810 lan dap vao service tan cung (27x)
+./tools/resilience-test.sh amplify 30 1   #  69 lan khi bat retry budget 10% (giam 11,7x)
+
+# --- Song retry: co va khong jitter ---
+./tools/resilience-test.sh jitter
+#   khong jitter: dinh 185/20ms · trung binh 9,4  · don cuc 19,6x · keo dai 1.694ms
+#   co jitter   : dinh  65/20ms · trung binh 12,3 · don cuc  5,3x · keo dai 1.302ms
+
+# --- Circuit breaker: dependency chet 5 giay roi song lai ---
+./tools/resilience-test.sh breaker
+#   khong breaker: 17 lan goi xuong · 5.291ms ngoi cho ·   0 tu choi ngay
+#   co breaker   :  7 lan goi xuong · 2.173ms ngoi cho · 407 tu choi ngay
+
+# --- Timeout dat sai cho ---
+./tools/resilience-test.sh deadline
+#   100 timeout phia client · server VAN lam du 100 lan · 50.000ms cong toi</code></pre>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Cascade failure không phải một loại lỗi mà là một <em>chế độ hoạt động</em> mà hệ thống rơi vào, và nó tự
+              duy trì sau khi nguyên nhân gốc đã qua. Nguồn năng lượng nuôi nó là retry: ba tầng, mỗi tầng ba lần, biến
+              30 request thành <strong>810</strong> lần đập vào service tận cùng — đúng lúc service đó yếu nhất. Không
+              tầng nào làm gì sai; hệ số 27 chỉ tồn tại ở mức toàn hệ thống, nên cách duy nhất phát hiện là
+              <strong>đếm số lần service tận cùng bị gọi cho một request</strong>.
+            </p>
+
+            <p>
+              Ba cơ chế vá, mỗi cái giải một phần khác nhau. <strong>Retry budget</strong> chặn chính sự khuếch đại: 810
+              xuống 69, giảm 11,7 lần, vì nó giới hạn theo <em>tỉ lệ</em> chứ không theo số lần.
+              <strong>Jitter</strong> chặn sóng đồng bộ: hệ số dồn cục 19,6 lần xuống 5,3 lần, và còn xong sớm hơn.
+              <strong>Circuit breaker</strong> chặn việc ngồi chờ: 5,3 giây chờ thành 2,2 giây, 407 request được trả lời
+              ngay thay vì treo — và đó chính là chỗ luồng, kết nối được giải phóng.
+            </p>
+
+            <p>
+              Về timeout, con số đáng nhớ nhất của bài là <strong>50.000 ms công toi</strong>: 100 phản hồi hoàn chỉnh
+              mà không ai nhận, và <em>không có gì trên dashboard của server báo hiệu điều đó</em> — từ phía nó, mọi
+              request đều hoàn tất bình thường. Timeout phải giảm dần từ ngoài vào trong, và cách đúng là truyền
+              deadline tuyệt đối chứ không phải để mỗi tầng tự đặt số của mình.
+            </p>
+
+            <p>
+              Cuối cùng, một bài học đến từ chính quá trình viết lab này: bản circuit breaker đầu tiên thiếu nhánh "thăm
+              dò thất bại → mở lại ngay", và nó <strong>kẹt vĩnh viễn ở half-open</strong> — từ chối mọi request mãi mãi
+              kể cả sau khi dependency đã khoẻ, mà không ném ra một lỗi nào. Cơ chế chống chịu cũng là code, và code
+              cũng có bug; khác biệt là bug ở đây chỉ lộ ra đúng lúc bạn cần nó nhất. Đó là toàn bộ lý lẽ của chaos
+              engineering.
+            </p>
+
+            <p>
+              <strong>Bài 18</strong> là bài cuối: ghép tất cả lại thành một hệ thống thật, chạy nó, đo nó, tìm nút cổ
+              chai, vá, rồi đo lại — với số liệu trước và sau cho từng bước, để thấy rõ bước nào đáng công và bước nào
+              chỉ thêm phức tạp.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/worker/resilience.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về resilience.js (circuit breaker, jitter, deadline — 0 dependency)
+              </a>
+            </div>
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-observability" class="article-related__link article-related__link--prev">
+                  Bài 16: Observability — Metrics, Logs &amp; Tracing
+                </a>
+                <a href="sysdesign-capstone" class="article-related__link article-related__link--next">
+                  Bài 18: Capstone — Thiết Kế &amp; Chạy Thật Một Hệ Thống
+                </a>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

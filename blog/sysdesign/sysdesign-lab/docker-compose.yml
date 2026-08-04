@@ -13,6 +13,7 @@
 #   Bài 10 →  docker compose --profile lock up -d      (Redis + hai worker tranh lock)
 #   Bài 12 →  docker compose --profile queue up -d     (Redis Streams + producer/consumer)
 #   Bài 13 →  docker compose --profile ratelimit up -d (Redis + 4 thuật toán rate limit)
+#   Bài 18 →  docker compose --profile capstone up -d  (he rut gon URL + PG primary/replica)
 #   Bài 14 →  docker compose --profile eventstore up -d (PostgreSQL + event log append-only)
 #   Bài 15 →  docker compose --profile micro up -d     (3 app goi nhau qua HTTP + saga)
 #
@@ -81,6 +82,9 @@ services:
       # Bai 15: cac instance goi lan nhau qua HTTP de do chi phi tach service.
       PEERS: 'app1:3000,app2:3000,app3:3000'
       PEERS_SAGA: 'app1:3000,app2:3000,app3:3000'
+      # Bai 16: nhan nao duoc dua vao khoa chuoi thoi gian. Them 'user' de TAI TAO
+      # vu no cardinality — moi nguoi dung thanh mot chuoi thoi gian rieng.
+      METRIC_LABELS: '${METRIC_LABELS:-route,status}'
     ports:
       # Chỉ app1 mở cổng ra host, để Bài 2 gọi trực tiếp không qua LB.
       - '3001:3000'
@@ -110,6 +114,9 @@ services:
       # Bai 15: cac instance goi lan nhau qua HTTP de do chi phi tach service.
       PEERS: 'app1:3000,app2:3000,app3:3000'
       PEERS_SAGA: 'app1:3000,app2:3000,app3:3000'
+      # Bai 16: nhan nao duoc dua vao khoa chuoi thoi gian. Them 'user' de TAI TAO
+      # vu no cardinality — moi nguoi dung thanh mot chuoi thoi gian rieng.
+      METRIC_LABELS: '${METRIC_LABELS:-route,status}'
 
   app3:
     <<: *app-base
@@ -136,6 +143,9 @@ services:
       # Bai 15: cac instance goi lan nhau qua HTTP de do chi phi tach service.
       PEERS: 'app1:3000,app2:3000,app3:3000'
       PEERS_SAGA: 'app1:3000,app2:3000,app3:3000'
+      # Bai 16: nhan nao duoc dua vao khoa chuoi thoi gian. Them 'user' de TAI TAO
+      # vu no cardinality — moi nguoi dung thanh mot chuoi thoi gian rieng.
+      METRIC_LABELS: '${METRIC_LABELS:-route,status}'
 
   # ─────────────────────────────────────────────────────────────
   # LOAD BALANCER (Bài 3, Bài 4)
@@ -209,7 +219,7 @@ services:
   # ─────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    profiles: ['cache', 'db', 'lock', 'queue', 'ratelimit']
+    profiles: ['cache', 'db', 'lock', 'queue', 'ratelimit', 'capstone']
     ports:
       - '6379:6379'
     # maxmemory nhỏ có chủ ý: để bạn tự gây ra tình trạng eviction và quan sát
@@ -229,7 +239,7 @@ services:
   # ─────────────────────────────────────────────────────────────
   postgres:
     image: postgres:18
-    profiles: ['db', 'replica', 'shard', 'eventstore']
+    profiles: ['db', 'replica', 'shard', 'eventstore', 'capstone']
     environment:
       POSTGRES_PASSWORD: labpass
       POSTGRES_USER: lab
@@ -276,7 +286,7 @@ services:
   # ─────────────────────────────────────────────────────────────
   postgres-replica:
     image: postgres:18
-    profiles: ['replica']
+    profiles: ['replica', 'capstone']
     user: postgres
     environment:
       # PGDATA cua PostgreSQL 18 ban Debian KHONG phai /var/lib/postgresql/data.
@@ -446,6 +456,64 @@ services:
       resources:
         limits:
           cpus: '1.0'
+
+  # ─────────────────────────────────────────────────────────────
+  # WORKER CHỐNG CHỊU (Bài 17)
+  #
+  # Circuit breaker và logic retry nằm ở phía CLIENT — đúng chỗ chúng thuộc về trong
+  # thực tế: người gọi mới là người biết khi nào nên thôi gọi.
+  # ─────────────────────────────────────────────────────────────
+  resworker:
+    image: node:22-alpine
+    profiles: ['micro']
+    working_dir: /worker
+    volumes:
+      - ./worker:/worker:ro
+    entrypoint: ['node']
+    command: ['resilience.js']
+    environment:
+      TARGET: 'app1:3000'
+      ROLE: 'jitter'
+    depends_on:
+      - app1
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+
+  # ─────────────────────────────────────────────────────────────
+  # CAPSTONE — HỆ RÚT GỌN URL (Bài 18)
+  #
+  # Mọi tối ưu đều là một biến môi trường, để mỗi vòng đo chỉ đổi ĐÚNG MỘT tham số.
+  # Đó là điều kiện để quy kết cải thiện cho đúng nguyên nhân.
+  # ─────────────────────────────────────────────────────────────
+  shortener:
+    image: node:22-alpine
+    profiles: ['capstone']
+    working_dir: /app
+    volumes:
+      - ./app:/app:ro
+    command: ['node', 'shortener.js']
+    ports:
+      - '3010:3000'
+    environment:
+      PORT: '3000'
+      PG_PRIMARY: 'postgres'
+      PG_REPLICA: 'postgres-replica'
+      REDIS_URL: 'redis://redis:6379'
+      CACHE: '${CACHE:-0}'
+      ASYNC_CLICKS: '${ASYNC_CLICKS:-0}'
+      READ_REPLICA: '${READ_REPLICA:-0}'
+      RATE_LIMIT: '${SHORT_RATE_LIMIT:-0}'
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
 
   # ─────────────────────────────────────────────────────────────
   # BỘ ĐO TẢI
