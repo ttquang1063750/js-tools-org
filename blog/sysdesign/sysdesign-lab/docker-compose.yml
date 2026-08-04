@@ -12,6 +12,9 @@
 #   Bài 8  →  docker compose --profile shard up -d     (hai shard PostgreSQL + router)
 #   Bài 10 →  docker compose --profile lock up -d      (Redis + hai worker tranh lock)
 #   Bài 12 →  docker compose --profile queue up -d     (Redis Streams + producer/consumer)
+#   Bài 13 →  docker compose --profile ratelimit up -d (Redis + 4 thuật toán rate limit)
+#   Bài 14 →  docker compose --profile eventstore up -d (PostgreSQL + event log append-only)
+#   Bài 15 →  docker compose --profile micro up -d     (3 app goi nhau qua HTTP + saga)
 #
 # KHÔNG có Dockerfile và KHÔNG cần `npm install`: code được bind-mount thẳng vào image
 # node chính thức, nên bạn sửa file là chạy lại thấy ngay, và đọc được toàn bộ code.
@@ -55,7 +58,7 @@ services:
   # load balancer phân phối thật sự ra sao (Bài 3).
   app1:
     <<: *app-base
-    profiles: ['base', 'gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard']
+    profiles: ['base', 'gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard', 'ratelimit', 'micro']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -71,13 +74,20 @@ services:
       PG_PRIMARY: 'postgres'
       PG_REPLICA: 'postgres-replica'
       READ_PIN_MS: '0'
+      # Bai 13: 0 = tat limiter (mac dinh, de cac bai truoc khong doi hanh vi).
+      # Dat cao (vd 100000) de do CHI PHI thuan; dat thap de thay 429.
+      RATE_LIMIT: '${RATE_LIMIT:-0}'
+      RATE_WINDOW_MS: '${RATE_WINDOW_MS:-1000}'
+      # Bai 15: cac instance goi lan nhau qua HTTP de do chi phi tach service.
+      PEERS: 'app1:3000,app2:3000,app3:3000'
+      PEERS_SAGA: 'app1:3000,app2:3000,app3:3000'
     ports:
       # Chỉ app1 mở cổng ra host, để Bài 2 gọi trực tiếp không qua LB.
       - '3001:3000'
 
   app2:
     <<: *app-base
-    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard']
+    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard', 'ratelimit', 'micro']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -93,10 +103,17 @@ services:
       PG_PRIMARY: 'postgres'
       PG_REPLICA: 'postgres-replica'
       READ_PIN_MS: '0'
+      # Bai 13: 0 = tat limiter (mac dinh, de cac bai truoc khong doi hanh vi).
+      # Dat cao (vd 100000) de do CHI PHI thuan; dat thap de thay 429.
+      RATE_LIMIT: '${RATE_LIMIT:-0}'
+      RATE_WINDOW_MS: '${RATE_WINDOW_MS:-1000}'
+      # Bai 15: cac instance goi lan nhau qua HTTP de do chi phi tach service.
+      PEERS: 'app1:3000,app2:3000,app3:3000'
+      PEERS_SAGA: 'app1:3000,app2:3000,app3:3000'
 
   app3:
     <<: *app-base
-    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard']
+    profiles: ['gw', 'lb', 'edge', 'cache', 'db', 'replica', 'shard', 'ratelimit', 'micro']
     environment:
       PORT: '3000'
       DB_DELAY_MS: '40'
@@ -112,13 +129,20 @@ services:
       PG_PRIMARY: 'postgres'
       PG_REPLICA: 'postgres-replica'
       READ_PIN_MS: '0'
+      # Bai 13: 0 = tat limiter (mac dinh, de cac bai truoc khong doi hanh vi).
+      # Dat cao (vd 100000) de do CHI PHI thuan; dat thap de thay 429.
+      RATE_LIMIT: '${RATE_LIMIT:-0}'
+      RATE_WINDOW_MS: '${RATE_WINDOW_MS:-1000}'
+      # Bai 15: cac instance goi lan nhau qua HTTP de do chi phi tach service.
+      PEERS: 'app1:3000,app2:3000,app3:3000'
+      PEERS_SAGA: 'app1:3000,app2:3000,app3:3000'
 
   # ─────────────────────────────────────────────────────────────
   # LOAD BALANCER (Bài 3, Bài 4)
   # ─────────────────────────────────────────────────────────────
   lb:
     image: nginx:1.27-alpine
-    profiles: ['lb', 'cache', 'db', 'replica', 'shard']
+    profiles: ['lb', 'cache', 'db', 'replica', 'shard', 'ratelimit', 'micro']
     ports:
       - '8080:8080'
     volumes:
@@ -185,7 +209,7 @@ services:
   # ─────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    profiles: ['cache', 'db', 'lock', 'queue']
+    profiles: ['cache', 'db', 'lock', 'queue', 'ratelimit']
     ports:
       - '6379:6379'
     # maxmemory nhỏ có chủ ý: để bạn tự gây ra tình trạng eviction và quan sát
@@ -205,7 +229,7 @@ services:
   # ─────────────────────────────────────────────────────────────
   postgres:
     image: postgres:18
-    profiles: ['db', 'replica', 'shard']
+    profiles: ['db', 'replica', 'shard', 'eventstore']
     environment:
       POSTGRES_PASSWORD: labpass
       POSTGRES_USER: lab
@@ -238,7 +262,6 @@ services:
         limits:
           cpus: '1.0'
           memory: 512M
-
 
   # ─────────────────────────────────────────────────────────────
   # DATABASE — READ REPLICA (Bài 7)
@@ -313,7 +336,6 @@ services:
           cpus: '1.0'
           memory: 512M
 
-
   # ─────────────────────────────────────────────────────────────
   # WORKER TRANH LOCK (Bài 10)
   #
@@ -366,6 +388,60 @@ services:
       MAX_ATTEMPTS: '0'
     depends_on:
       - redis
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+
+  # ─────────────────────────────────────────────────────────────
+  # RATE LIMITER (Bài 13)
+  #
+  # Bốn thuật toán trong một file worker/ratelimit.js, mỗi thuật toán là một script
+  # Lua nạp sẵn vào Redis. Không tự chạy — gọi qua tools/ratelimit-test.sh.
+  # ─────────────────────────────────────────────────────────────
+  rlworker:
+    image: node:22-alpine
+    profiles: ['ratelimit']
+    working_dir: /worker
+    volumes:
+      - ./worker:/worker:ro
+    entrypoint: ['node']
+    command: ['ratelimit.js']
+    environment:
+      REDIS_URL: 'redis://redis:6379'
+      ROLE: 'boundary'
+      LIMIT: '100'
+      WINDOW_MS: '1000'
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+
+  # ─────────────────────────────────────────────────────────────
+  # EVENT STORE (Bài 14)
+  #
+  # Mount THÊM ./app vào /app để dùng lại `minipg.js` — client PostgreSQL viết tay ở
+  # Bài 7. Không sao chép file: một client, hai nơi dùng.
+  # ─────────────────────────────────────────────────────────────
+  esworker:
+    image: node:22-alpine
+    profiles: ['eventstore']
+    working_dir: /worker
+    volumes:
+      - ./worker:/worker:ro
+      - ./app:/app:ro
+    entrypoint: ['node']
+    command: ['eventstore.js']
+    environment:
+      PG_HOST: 'postgres'
+      ROLE: 'seed'
+      EVENTS: '200000'
+      AGGREGATES: '1000'
+      IDEMPOTENT: '0'
+    depends_on:
+      - postgres
     deploy:
       resources:
         limits:

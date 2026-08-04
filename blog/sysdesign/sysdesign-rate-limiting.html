@@ -1,0 +1,1506 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 13: Rate Limiting &amp; Backpressure — js-tools</title>
+    <meta
+      name="description"
+      content="Bốn thuật toán rate limit chạy thật trên Redis: cùng hạn mức 100/giây, fixed window cho lọt 200 request trong một giây ở mốc giao cửa sổ còn sliding window log giữ đúng 100 — nhưng tốn gấp hơn 10 lần bộ nhớ; token bucket cũng cho burst (119%) chỉ khác là burst có chặn trên. Viết limiter bằng INCR rồi EXPIRE ở hai lệnh riêng làm 20/200 khoá mắc kẹt không TTL, tức 20 người dùng bị chặn vĩnh viễn. Ba replica dùng chung một script Lua nguyên tử giữ hạn mức toàn cục sai lệch 0,13%. Và vì sao phải trả 429 kèm Retry-After chứ không bao giờ 5xx."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-rate-limiting" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-rate-limiting" />
+    <meta property="og:title" content="Bài 13: Rate Limiting &amp; Backpressure — js-tools" />
+    <meta
+      property="og:description"
+      content="Bốn thuật toán rate limit chạy thật trên Redis: cùng hạn mức 100/giây, fixed window cho lọt 200 request trong một giây ở mốc giao cửa sổ còn sliding window log giữ đúng 100 — nhưng tốn gấp hơn 10 lần bộ nhớ; token bucket cũng cho burst (119%) chỉ khác là burst có chặn trên. Viết limiter bằng INCR rồi EXPIRE ở hai lệnh riêng làm 20/200 khoá mắc kẹt không TTL, tức 20 người dùng bị chặn vĩnh viễn. Ba replica dùng chung một script Lua nguyên tử giữ hạn mức toàn cục sai lệch 0,13%. Và vì sao phải trả 429 kèm Retry-After chứ không bao giờ 5xx."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 13: Rate Limiting &amp; Backpressure — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Bốn thuật toán rate limit chạy thật trên Redis: cùng hạn mức 100/giây, fixed window cho lọt 200 request trong một giây ở mốc giao cửa sổ còn sliding window log giữ đúng 100 — nhưng tốn gấp hơn 10 lần bộ nhớ; token bucket cũng cho burst (119%) chỉ khác là burst có chặn trên. Viết limiter bằng INCR rồi EXPIRE ở hai lệnh riêng làm 20/200 khoá mắc kẹt không TTL, tức 20 người dùng bị chặn vĩnh viễn. Ba replica dùng chung một script Lua nguyên tử giữ hạn mức toàn cục sai lệch 0,13%. Và vì sao phải trả 429 kèm Retry-After chứ không bao giờ 5xx."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script src="../katex/katex.min.js" defer></script>
+    <script src="../katex/contrib/auto-render.min.js" defer></script>
+    <script src="../katex-render.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 13: Rate Limiting & Backpressure",
+        "description": "Bốn thuật toán rate limit chạy thật trên Redis: cùng hạn mức 100/giây, fixed window cho lọt 200 request trong một giây ở mốc giao cửa sổ còn sliding window log giữ đúng 100 — nhưng tốn gấp hơn 10 lần bộ nhớ; token bucket cũng cho burst (119%) chỉ khác là burst có chặn trên. Viết limiter bằng INCR rồi EXPIRE ở hai lệnh riêng làm 20/200 khoá mắc kẹt không TTL, tức 20 người dùng bị chặn vĩnh viễn. Ba replica dùng chung một script Lua nguyên tử giữ hạn mức toàn cục sai lệch 0,13%. Và vì sao phải trả 429 kèm Retry-After chứ không bao giờ 5xx.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-rate-limiting",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+        "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+        "datePublished": "2026-08-04"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 13: Rate Limiting &amp; Backpressure</h1>
+          <div class="article-hero__meta">4 tháng 8, 2026 · 19 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              <a href="sysdesign-message-queue">Bài 12</a> kết thúc bằng bốn cách để một hệ bất đồng bộ nói
+              <em>không</em>, và hẹn rằng cách cuối cùng — giảm tốc chính người gửi — là nội dung của bài này. Rate
+              limiting là cơ chế để hệ thống từ chối <strong>có kiểm soát</strong>, thay vì nhận hết rồi vỡ, hoặc nhận
+              hết rồi hứa một tồn đọng sáu tiếng.
+            </p>
+
+            <p>
+              Lab của bài này chạy cả bốn thuật toán rate limit thật trên Redis, mỗi thuật toán là một script Lua. Ba
+              phép đo đáng chú ý. Thứ nhất, với cùng hạn mức 100 request/giây, fixed window cho lọt
+              <strong>200 request trong một giây</strong> ở đúng mốc giao cửa sổ — gấp đôi hạn mức, và con số này lặp
+              lại y hệt qua cả ba lần chạy. Thứ hai, viết limiter bằng <code>INCR</code> rồi <code>EXPIRE</code> ở hai
+              lệnh riêng làm <strong>20 trên 200 khoá</strong> mắc kẹt không có TTL — tức 20 người dùng bị chặn vĩnh
+              viễn. Thứ ba, bốn thuật toán chênh nhau <em>không đáng kể</em> về tốc độ (p50 đều quanh 0,08 ms), nhưng
+              chênh nhau <strong>hơn 10 lần</strong> về bộ nhớ.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Container native arm64: Redis 7-alpine và
+                Node v22 (<code>node:22-alpine</code>), mỗi container giới hạn 1 CPU, không dependency — bốn thuật toán
+                nằm trong <code>worker/ratelimit.js</code>, nạp vào Redis bằng <code>SCRIPT LOAD</code> rồi gọi bằng
+                <code>EVALSHA</code>.<br /><br />
+                Một lưu ý quan trọng khi đọc mọi số độ trễ trong bài: Redis ở đây nằm
+                <strong>cùng máy</strong> với app, nối qua mạng nội bộ của Docker, nên một vòng mạng chỉ tốn khoảng
+                <strong>0,07 ms</strong>. Redis thật trong production thường nằm khác máy, có khi khác vùng sẵn sàng, và
+                một vòng mạng ở đó là <strong>1–2 ms</strong> — tức đắt hơn 15–30 lần. Kết luận về <em>tỉ lệ</em> giữa
+                các thuật toán vẫn đúng, còn kết luận "limiter gần như miễn phí" thì chỉ đúng trong điều kiện đo này.
+              </div>
+            </div>
+
+            <!-- ================= 13.1 ================= -->
+            <h2>13.1 Rate limit bảo vệ bạn khỏi ai</h2>
+
+            <p>
+              Câu trả lời quen thuộc là "khỏi kẻ tấn công". Câu trả lời đó không sai nhưng nó dẫn người ta đặt rate
+              limit sai chỗ. Trong phần lớn sự cố thật, thứ đánh sập hệ thống không phải người lạ mà là
+              <strong>chính client của bạn</strong>: một ứng dụng di động vừa ra bản mới có vòng retry không jitter, một
+              job cron của đội khác chạy lúc 0 giờ, hoặc một service nội bộ đang thử lại điên cuồng vì service phía sau
+              nó chậm. Người lạ thì bị chặn ở tầng khác (WAF, chống DDoS); còn client của chính bạn thì có khoá API hợp
+              lệ và đi thẳng vào đường chính.
+            </p>
+
+            <p>
+              Ba khái niệm hay bị gộp làm một, trong khi chúng phục vụ ba mục đích khác hẳn nhau và thường được cài ở ba
+              chỗ khác nhau:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Khái niệm</th>
+                  <th>Mục đích</th>
+                  <th>Ai quyết định con số</th>
+                  <th>Vượt ngưỡng thì sao</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Rate limit</strong></td>
+                  <td>Bảo vệ hệ thống khỏi nhận nhiều hơn khả năng xử lý</td>
+                  <td>Kỹ thuật — suy từ năng lực thật đo được (Bài 2)</td>
+                  <td>Từ chối ngay, <code>429</code></td>
+                </tr>
+                <tr>
+                  <td><strong>Quota</strong></td>
+                  <td>Phân bổ tài nguyên theo gói cước</td>
+                  <td>Thương mại — nằm trong hợp đồng</td>
+                  <td>Từ chối hoặc tính tiền thêm, thường theo tháng</td>
+                </tr>
+                <tr>
+                  <td><strong>Throttle</strong></td>
+                  <td>Làm phẳng đầu ra thay vì từ chối</td>
+                  <td>Kỹ thuật — theo năng lực của bên nhận</td>
+                  <td>Xếp hàng và chậm lại, không mất request</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Khác biệt đáng nhớ nhất nằm ở cột cuối. Rate limit <em>nói không</em>; throttle <em>nói chờ</em>. Throttle
+              nghe tử tế hơn, và đó chính là cái bẫy: mỗi request bị làm chậm vẫn đang chiếm một kết nối, một luồng, một
+              chỗ trong hàng đợi. Ở Bài 1 ta đã thấy điều gì xảy ra khi hàng đợi dâng — throttle không xoá tải, nó chỉ
+              đổi tải thành độ trễ. Khi thật sự quá tải, từ chối nhanh là hành động tử tế hơn.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 260"
+                width="100%"
+                role="img"
+                aria-label="Ba vị trí đặt rate limiter: ở biên cho người ngoài, giữa các service nội bộ, và trước tài nguyên dùng chung"
+              >
+                <rect width="720" height="260" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Đặt limiter ở đâu — và chỗ nào hay bị bỏ quên nhất
+                </text>
+
+                <!-- client -->
+                <rect x="16" y="46" width="96" height="54" rx="6" fill="#151d30" stroke="#9ca3af" />
+                <text
+                  x="64"
+                  y="70"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                >
+                  client
+                </text>
+                <text
+                  x="64"
+                  y="86"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  đang retry
+                </text>
+
+                <!-- limiter 1 -->
+                <rect x="140" y="46" width="86" height="54" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="183"
+                  y="66"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  limiter ①
+                </text>
+                <text
+                  x="183"
+                  y="82"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  ở biên
+                </text>
+                <line x1="112" y1="73" x2="136" y2="73" stroke="#9ca3af" />
+                <polygon points="140,73 132,70 132,76" fill="#9ca3af" />
+
+                <!-- gateway -->
+                <rect x="254" y="46" width="86" height="54" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="297"
+                  y="76"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                >
+                  gateway
+                </text>
+                <line x1="226" y1="73" x2="250" y2="73" stroke="#9ca3af" />
+                <polygon points="254,73 246,70 246,76" fill="#9ca3af" />
+
+                <!-- service A -->
+                <rect x="368" y="46" width="86" height="54" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="411"
+                  y="76"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                >
+                  service A
+                </text>
+                <line x1="340" y1="73" x2="364" y2="73" stroke="#9ca3af" />
+                <polygon points="368,73 360,70 360,76" fill="#9ca3af" />
+
+                <!-- limiter 2 (missing) -->
+                <rect
+                  x="482"
+                  y="46"
+                  width="86"
+                  height="54"
+                  rx="6"
+                  fill="#2a1520"
+                  stroke="#ef4444"
+                  stroke-dasharray="4 3"
+                />
+                <text
+                  x="525"
+                  y="66"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  limiter ② ?
+                </text>
+                <text
+                  x="525"
+                  y="82"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  thường KHÔNG có
+                </text>
+                <line x1="454" y1="73" x2="478" y2="73" stroke="#9ca3af" />
+                <polygon points="482,73 474,70 474,76" fill="#9ca3af" />
+
+                <!-- service B -->
+                <rect x="596" y="46" width="86" height="54" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="639"
+                  y="76"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                >
+                  service B
+                </text>
+                <line x1="568" y1="73" x2="592" y2="73" stroke="#9ca3af" />
+                <polygon points="596,73 588,70 588,76" fill="#9ca3af" />
+
+                <!-- explanation -->
+                <rect x="16" y="122" width="688" height="52" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text x="28" y="142" fill="#22c55e" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  ① CÓ: chặn được lưu lượng từ ngoài vào
+                </text>
+                <text x="28" y="160" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Nhưng nó KHÔNG chặn được lưu lượng sinh ra bên trong: service A retry service B, job nền, migration dữ
+                  liệu.
+                </text>
+
+                <rect x="16" y="186" width="688" height="58" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="206" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  ② THIẾU: đây là nơi cascade failure thật sự bắt đầu (Bài 17)
+                </text>
+                <text x="28" y="224" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  B chậm → A retry → B chậm hơn → A retry nhiều hơn. Vòng lặp này nằm HOÀN TOÀN sau limiter ở biên,
+                </text>
+                <text x="28" y="238" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  nên limiter ở biên không nhìn thấy gì cả — biểu đồ lưu lượng vào vẫn phẳng trong khi hệ thống đang
+                  cháy.
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Limiter ở biên đo lưu lượng <em>đi vào</em>. Cascade failure sinh ra lưu lượng <em>bên trong</em> — hai
+                thứ đó không nhìn thấy nhau.
+              </figcaption>
+            </figure>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: chỉ đặt rate limit ở biên</div>
+              <div class="callout__content">
+                Đây là cấu hình mặc định gần như ở mọi nơi, vì nó là cấu hình dễ nhất: một limiter ở API gateway, xong.
+                Vấn đề là hầu hết sự cố quá tải nội bộ <strong>không đi qua biên</strong>. Khi service B chậm và service
+                A thử lại ba lần cho mỗi request, lưu lượng tới B tăng gấp bốn mà lưu lượng vào biên
+                <em>không đổi một chút nào</em> — biểu đồ bạn đang nhìn vẫn phẳng.<br /><br />
+                Câu hỏi kiểm tra rẻ nhất:
+                <strong>nếu một service nội bộ đột nhiên gọi bạn gấp mười lần, có gì chặn nó lại không?</strong> Nếu câu
+                trả lời là "chắc là không ai làm thế đâu", thì bạn chưa có câu trả lời — bạn đang có một giả định.
+              </div>
+            </div>
+
+            <!-- ================= 13.2 ================= -->
+            <h2>13.2 Bốn thuật toán, và cái giá thật của từng cái</h2>
+
+            <p>
+              Bốn thuật toán dưới đây trả lời cùng một câu hỏi — "request này có được đi qua không" — nhưng chúng định
+              nghĩa chữ "một giây" theo bốn cách khác nhau, và toàn bộ khác biệt nằm ở đó.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thuật toán</th>
+                  <th>Cách hiểu "một giây"</th>
+                  <th>Lưu gì trong Redis</th>
+                  <th>Điểm yếu</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Fixed window</strong></td>
+                  <td>Từ giây thứ N đến giây thứ N+1 theo đồng hồ tuyệt đối</td>
+                  <td>Một số nguyên cho mỗi (người dùng × cửa sổ)</td>
+                  <td>Bộ đếm reset đột ngột ở mốc giao cửa sổ → burst gấp đôi</td>
+                </tr>
+                <tr>
+                  <td><strong>Sliding window log</strong></td>
+                  <td>1000 ms vừa qua tính từ <em>lúc này</em></td>
+                  <td>Dấu thời gian của <em>từng</em> request (ZSET)</td>
+                  <td>Bộ nhớ tỉ lệ với số request được cho qua</td>
+                </tr>
+                <tr>
+                  <td><strong>Sliding window counter</strong></td>
+                  <td>Xấp xỉ: phần còn lại của cửa sổ trước + cửa sổ này</td>
+                  <td>Hai số nguyên</td>
+                  <td>Là ước lượng — giả định lưu lượng rải đều trong cửa sổ trước</td>
+                </tr>
+                <tr>
+                  <td><strong>Token bucket</strong></td>
+                  <td>Không có cửa sổ nào cả — token rót đều theo thời gian</td>
+                  <td>Số token + dấu thời gian lần cập nhật cuối</td>
+                  <td>Cho phép burst bằng đúng sức chứa của xô</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Điểm yếu của fixed window được nhắc tới ở khắp nơi, nhưng gần như luôn dưới dạng lời kể. Lab của bài này
+              dựng đúng kịch bản đó và đếm: hạn mức 100 request mỗi 1000 ms, bắn 100 request ngay
+              <em>trước</em> mốc giao cửa sổ rồi 100 request ngay <em>sau</em> mốc đó, và đo con số duy nhất mà server
+              phía sau thật sự quan tâm —
+              <strong>số request lọt qua nhiều nhất trong một cửa sổ trượt 1 giây bất kỳ</strong>.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Bốn thuật toán rate limit tại mốc giao cửa sổ, so sánh số request lọt qua trong một giây tệ nhất"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Hạn mức 100/giây — số lọt qua thật trong một giây tệ nhất (số đo lab)
+                </text>
+
+                <!-- moc giao cua so -->
+                <line x1="330" y1="42" x2="330" y2="284" stroke="#f59e0b" stroke-dasharray="4 3" />
+                <text x="336" y="54" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="9">
+                  mốc giao cửa sổ
+                </text>
+
+                <!-- fixed -->
+                <text x="16" y="82" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">fixed window</text>
+                <rect x="230" y="70" width="98" height="18" rx="2" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="279"
+                  y="83"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  100 qua
+                </text>
+                <rect x="332" y="70" width="98" height="18" rx="2" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="381"
+                  y="83"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  100 qua
+                </text>
+                <text
+                  x="446"
+                  y="83"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  → 200 trong 1 giây (200% hạn mức)
+                </text>
+
+                <!-- sliding log -->
+                <text x="16" y="132" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  sliding window log
+                </text>
+                <rect x="230" y="120" width="98" height="18" rx="2" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="279"
+                  y="133"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  100 qua
+                </text>
+                <rect x="332" y="120" width="98" height="18" rx="2" fill="#151d30" stroke="#4b5563" />
+                <text
+                  x="381"
+                  y="133"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  0 qua
+                </text>
+                <text
+                  x="446"
+                  y="133"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  → 100 (100% — chính xác tuyệt đối)
+                </text>
+
+                <!-- sliding counter -->
+                <text x="16" y="182" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  sliding window counter
+                </text>
+                <rect x="230" y="170" width="98" height="18" rx="2" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="279"
+                  y="183"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  100 qua
+                </text>
+                <rect x="332" y="170" width="12" height="18" rx="2" fill="#151d30" stroke="#4b5563" />
+                <text x="352" y="183" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">5</text>
+                <text
+                  x="446"
+                  y="183"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  → 105 (105% — xấp xỉ, rẻ như fixed)
+                </text>
+
+                <!-- token bucket -->
+                <text x="16" y="232" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="9">
+                  token bucket
+                </text>
+                <rect x="230" y="220" width="98" height="18" rx="2" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="279"
+                  y="233"
+                  fill="#f3f4f6"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  100 qua
+                </text>
+                <rect x="332" y="220" width="24" height="18" rx="2" fill="#151d30" stroke="#4b5563" />
+                <text x="364" y="233" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">19</text>
+                <text
+                  x="446"
+                  y="233"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  → 119 (119% — burst CÓ CHẶN TRÊN)
+                </text>
+
+                <text x="16" y="272" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Khác biệt then chốt: 200% của fixed window đến từ chỗ bộ đếm reset đột ngột — không cấu hình nào làm
+                  nó nhỏ đi.
+                </text>
+                <text x="16" y="286" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  119% của token bucket đến từ sức chứa của xô — hạ sức chứa xuống là hạ burst xuống, đổi lại mất khả
+                  năng hấp thụ đỉnh ngắn.
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Số đo thật, lặp lại ba lần: fixed 200/200/200 · log 100/100/100 · counter 105/104/105 · token
+                119/118/117.
+              </figcaption>
+            </figure>
+
+            <p>
+              Con số 200% của fixed window không phải trường hợp xấu hiếm gặp — nó xảy ra
+              <strong>mỗi lần</strong> lưu lượng dồn quanh mốc giao cửa sổ, và mốc đó là một thời điểm cố định trong
+              ngày nên rất dễ bị dồn: các job cron đều hẹn giờ tròn, các client retry đều làm tròn về giây. Điều tệ hơn
+              là không có tham số nào chỉnh được: 2× là hệ quả trực tiếp của việc bộ đếm reset đột ngột.
+            </p>
+
+            <p>
+              Điểm cần nói cho đúng: <strong>token bucket cũng cho burst</strong> — 119% trong phép đo trên, chứ không
+              phải 100%. Nhiều bài viết trình bày token bucket như thể nó "không có vấn đề burst", điều đó không đúng.
+              Khác biệt thật nằm ở chỗ burst của token bucket <em>có chặn trên và chỉnh được</em>: nó tối đa bằng sức
+              chứa của xô, nên nếu bạn cần đầu ra phẳng thì hạ sức chứa xuống dưới tốc độ rót. Còn burst của fixed
+              window là 2× bất kể bạn cấu hình thế nào.
+            </p>
+
+            <p>
+              Vậy tại sao không dùng sliding window log cho mọi thứ, khi nó chính xác tuyệt đối? Câu trả lời không nằm ở
+              tốc độ mà nằm ở bộ nhớ. Đo 20.000 lời gọi cho mỗi thuật toán, cả bốn cho ra thời gian gần như y hệt nhau —
+              vì thứ tốn thời gian là vòng mạng tới Redis chứ không phải phép tính bên trong:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Thuật toán</th>
+                  <th>p50 (ms)</th>
+                  <th>p99 (ms)</th>
+                  <th>Lời gọi/giây</th>
+                  <th>Bộ nhớ mỗi người dùng</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <em>mốc so sánh: một lệnh <code>GET</code> rỗng</em>
+                  </td>
+                  <td>0,073</td>
+                  <td>0,142</td>
+                  <td>12.682</td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <td>Fixed window</td>
+                  <td>0,082</td>
+                  <td>0,148</td>
+                  <td>11.527</td>
+                  <td><strong>121 B</strong></td>
+                </tr>
+                <tr>
+                  <td>Sliding window log</td>
+                  <td>0,084</td>
+                  <td>0,141</td>
+                  <td>11.223</td>
+                  <td><strong>1.499 B</strong></td>
+                </tr>
+                <tr>
+                  <td>Sliding window counter</td>
+                  <td>0,083</td>
+                  <td>0,143</td>
+                  <td>11.442</td>
+                  <td><strong>136 B</strong></td>
+                </tr>
+                <tr>
+                  <td>Token bucket</td>
+                  <td>0,084</td>
+                  <td>0,148</td>
+                  <td>11.274</td>
+                  <td><strong>171 B</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Bốn cột đầu gần như không phân biệt được; cột cuối chênh nhau <strong>hơn 10 lần</strong>. Đó là vì
+              sliding window log phải nhớ dấu thời gian của từng request còn hiệu lực, nên bộ nhớ của nó tỉ lệ với
+              <em>hạn mức</em> chứ không phải với số người dùng: hạn mức 100 tốn 1.499 byte mỗi người, hạn mức 10.000 sẽ
+              tốn gấp trăm lần. Với một triệu người dùng hoạt động, đó là khác biệt giữa vài trăm megabyte và vài chục
+              gigabyte — tức khác biệt giữa "một node Redis" và "một cụm Redis phải vận hành".
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Chọn thế nào cho nhanh</div>
+              <div class="callout__content">
+                <strong>Token bucket</strong> là mặc định đúng cho API công khai: cho phép burst ngắn (người dùng thật
+                bấm nhanh vài cái là chuyện bình thường) nhưng burst có chặn trên.
+                <strong>Sliding window counter</strong> khi bạn muốn đầu ra phẳng và không cần chính xác tuyệt đối.
+                <strong>Sliding window log</strong> chỉ khi con số <em>phải</em> chính xác vì nó nằm trong hợp đồng — và
+                khi đó hãy tính trước hoá đơn bộ nhớ. <strong>Fixed window</strong> khi hạn mức rộng đến mức vượt gấp
+                đôi cũng không sao (ví dụ "1000 request/giờ cho mỗi khoá API"), lúc đó sự đơn giản của nó là ưu điểm
+                thật.
+              </div>
+            </div>
+
+            <!-- ================= 13.3 ================= -->
+            <h2>13.3 Trong hệ phân tán, bộ đếm phải là nguyên tử</h2>
+
+            <p>
+              Bài 3 đã cho hệ thống ba app replica, và điều đó làm hỏng ngay cách viết limiter tự nhiên nhất: giữ bộ đếm
+              trong bộ nhớ tiến trình. Với ba replica, mỗi replica đếm riêng, và hạn mức thật trở thành ba lần hạn mức
+              bạn cấu hình. Bộ đếm phải nằm ở chỗ dùng chung — nhưng chỉ dùng chung thôi chưa đủ.
+            </p>
+
+            <p>Đây là cách viết limiter phổ biến nhất trên mạng, và nó có một lỗi nghiêm trọng:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">cach_viet_sai.js</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-js">// SAI: hai lenh rieng biet, co mot khoang trong o giua
+const n = await redis.incr(key);
+if (n === 1) {
+  await redis.expire(key, 60); // (!) neu tien trinh chet TRUOC dong nay...
+}
+if (n > limit) return deny();</code></pre>
+            </div>
+
+            <p>
+              Khoảng trống giữa <code>INCR</code> và <code>EXPIRE</code> nhỏ, nhưng nó có thật. Nếu tiến trình chết đúng
+              lúc ấy — deploy, OOM kill, container bị siết CPU rồi bị thanh lý — thì khoá đó tồn tại
+              <strong>vĩnh viễn không có TTL</strong>. Bộ đếm không bao giờ reset, và người dùng đó bị chặn mãi mãi cho
+              tới khi có người vào xoá khoá bằng tay. Lab tái tạo đúng chuyện này với 200 người dùng, "chết" ở 1 trên 10
+              lần:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ket_qua_nonatomic.json</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-json">{
+  "role": "nonatomic",
+  "crashEvery": 10,
+  "report": [
+    { "mode": "hai-lenh", "soKhoa": 200, "khoaKhongTtl": 20, "hauQua": "20 nguoi dung bi chan VINH VIEN" },
+    { "mode": "lua",      "soKhoa": 200, "khoaKhongTtl":  0, "hauQua": "khong khoa nao mac ket" }
+  ]
+}</code></pre>
+            </div>
+
+            <p>
+              Cách sửa là gộp toàn bộ "đọc — quyết định — ghi" vào <strong>một</strong> script Lua. Redis chạy trọn một
+              script như một lệnh đơn, nên hoặc cả hai lệnh cùng chạy, hoặc không lệnh nào chạy. Đây là bản token bucket
+              thật đang chạy trong lab:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">token_bucket.lua</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">local cap  = tonumber(ARGV[1])          -- suc chua xo
+local win  = tonumber(ARGV[2])          -- thoi gian rot day xo (ms)
+local k    = KEYS[1]
+
+-- Lay gio o REDIS, khong nhan `now` tu client: nhieu app instance goi cung mot
+-- limiter ma dong ho cua chung lech nhau. De client gui `now` thi mot may chay
+-- nhanh 200ms tu cho minh sang cua so moi som hon phan con lai.
+local t    = redis.call('TIME')
+local now  = t[1] * 1000 + math.floor(t[2] / 1000)
+
+local d = redis.call('HMGET', k, 'tokens', 'ts')
+local tokens = tonumber(d[1])
+local ts     = tonumber(d[2])
+if tokens == nil then tokens = cap; ts = now end
+
+-- Rot them token theo thoi gian da troi qua, khong bao gio vuot suc chua.
+local delta = now - ts
+if delta &lt; 0 then delta = 0 end
+tokens = math.min(cap, tokens + delta * cap / win)
+
+if tokens &lt; 1 then
+  redis.call('HSET', k, 'tokens', tokens, 'ts', now)
+  redis.call('PEXPIRE', k, win * 2)
+  return '0|0|' .. math.ceil((1 - tokens) * win / cap)   -- tu choi + bao cho bao lau
+end
+
+tokens = tokens - 1
+redis.call('HSET', k, 'tokens', tokens, 'ts', now)
+redis.call('PEXPIRE', k, win * 2)                        -- PEXPIRE nam TRONG script
+return '1|' .. math.floor(tokens) .. '|0'</code></pre>
+            </div>
+
+            <p>
+              Bản này chạy trên cả ba app replica cùng lúc trong lab, sau load balancer, với hạn mức 500 request/giây
+              toàn cục. Bắn 20 kết nối trong 10 giây:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Chỉ số</th>
+                  <th>Giá trị đo được</th>
+                  <th>Đối chiếu lý thuyết</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Request được cho qua (<code>200</code>)</td>
+                  <td><strong>5.493</strong></td>
+                  <td>500 (xô đầy lúc bắt đầu) + 500/giây × 10 giây = <strong>5.500</strong></td>
+                </tr>
+                <tr>
+                  <td>Request bị từ chối (<code>429</code>)</td>
+                  <td><strong>185.660</strong></td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <td>Throughput thật được phục vụ</td>
+                  <td>549,4 req/s</td>
+                  <td>Đúng hạn mức, dù ba replica không hề nói chuyện với nhau</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Sai lệch 7 trên 5.500 — tức 0,13%. Đó là bằng chứng đo được rằng bộ đếm nguyên tử dùng chung thật sự giữ
+              được hạn mức <em>toàn cục</em>, chứ không phải hạn mức nhân với số replica.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Vì sao script gọi <code>redis.call('TIME')</code></div>
+              <div class="callout__content">
+                Tài liệu Redis cũ (trước 5.0) cấm hẳn việc này: hồi đó script được nhân bản sang replica
+                <em>nguyên văn</em>, nên một script gọi <code>TIME</code> sẽ cho kết quả khác nhau ở primary và replica,
+                làm dữ liệu hai bên lệch nhau. Từ Redis 5.0, chế độ mặc định đổi sang nhân bản
+                <strong>hiệu ứng</strong> (chỉ các lệnh ghi thực tế được truyền đi), nên gọi <code>TIME</code> trong
+                script là an toàn.<br /><br />
+                Vì sao chi tiết này đáng bận tâm: lựa chọn thay thế là để mỗi app gửi đồng hồ của
+                <em>chính nó</em> vào script. Với ba replica chạy trên ba máy, đó là ba đồng hồ khác nhau — và bạn vừa
+                đưa clock drift vào đúng thành phần cần một nguồn thời gian duy nhất. Đây là phiên bản nhẹ hơn của vấn
+                đề đã gặp ở <a href="sysdesign-distributed-lock">Bài 10</a>.
+              </div>
+            </div>
+
+            <p>
+              Còn một quyết định nữa quan trọng không kém thuật toán: <strong>giới hạn theo chiều nào</strong>. Theo
+              người dùng đã đăng nhập là chính xác nhất nhưng không bảo vệ được endpoint đăng nhập (lúc đó chưa có người
+              dùng nào). Theo IP thì bảo vệ được endpoint công khai nhưng đụng NAT. Theo endpoint thì bảo vệ được đúng
+              chỗ đắt tiền. Thực tế bạn cần vài chiều cùng lúc, và mỗi chiều là một khoá Redis riêng.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: giới hạn theo IP khi client nằm sau NAT</div>
+              <div class="callout__content">
+                Một công ty, một trường học, một nhà mạng di động — tất cả có thể đi ra Internet bằng
+                <em>một</em> địa chỉ IP. Đặt hạn mức 100 request/phút theo IP nghĩa là toàn bộ nhân viên của công ty đó
+                chia nhau 100 request, và khi hết, tất cả cùng bị chặn. Từ phía bạn nhìn vào thì đó là "một client hung
+                hăng"; từ phía họ thì đó là "dịch vụ này hỏng".<br /><br />
+                Tệ hơn, IPv6 lật ngược vấn đề: một máy khách có thể có sẵn cả một dải
+                <code>/64</code> địa chỉ và đổi địa chỉ sau mỗi request, nên giới hạn theo IPv6 đơn lẻ gần như vô dụng —
+                phải giới hạn theo prefix. Và nhớ lại <a href="sysdesign-api-gateway">Bài 4</a>: nếu bạn lấy IP từ
+                <code>X-Forwarded-For</code> mà không đếm đúng số chặng proxy tin cậy, kẻ tấn công tự đặt header đó và
+                vượt qua limiter một cách hợp lệ.
+              </div>
+            </div>
+
+            <!-- ================= 13.4 ================= -->
+            <h2>13.4 Từ chối cho đúng cách</h2>
+
+            <p>
+              Từ chối là một hành động giao tiếp. Client bị từ chối sẽ làm <em>gì đó</em>, và cái nó làm phụ thuộc hoàn
+              toàn vào những gì bạn nói với nó. Đây là phản hồi thật của lab khi xô đã cạn:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">phan_hoi_429.txt</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">$ curl -si "localhost:3001/limited?user=drain2"
+
+HTTP/1.1 429 Too Many Requests
+X-RateLimit-Limit: 500          # han muc cua ban
+X-RateLimit-Remaining: 0        # con lai bao nhieu
+X-RateLimit-Reset: 1            # bao lau nua thi co lai (giay)
+Retry-After: 1                  # HAY CHO DUNG TUNG NAY GIAY
+Content-Type: application/json; charset=utf-8
+
+{"error":"rate_limited","retryAfterMs":2}</code></pre>
+            </div>
+
+            <p>
+              Bốn header đó là hợp đồng. <code>Retry-After</code> nói cho client biết chính xác khi nào quay lại — không
+              có nó, client chỉ còn cách đoán, và cách đoán phổ biến nhất là thử lại ngay lập tức, đúng thứ bạn đang cố
+              ngăn. Ba header <code>X-RateLimit-*</code> còn cho phép client tự điều tiết <em>trước khi</em> chạm hạn
+              mức: một SDK tử tế thấy <code>Remaining: 3</code> thì tự chậm lại thay vì lao vào tường.
+            </p>
+
+            <p>
+              Phản hồi thật ở trên phơi bày một chi tiết đáng chú ý: thời gian chờ thật là
+              <strong>2 mili giây</strong> (token bucket rót 500 token mỗi giây nên token kế tiếp có sau 2 ms), nhưng
+              <code>Retry-After</code> tính bằng <em>giây</em> nên giá trị nhỏ nhất nó nói được là <code>1</code> — chậm
+              hơn 500 lần so với sự thật. Đó là lý do phần thân phản hồi kèm thêm <code>retryAfterMs</code>: header giữ
+              đúng chuẩn HTTP cho client phổ thông, còn client hiểu API của bạn thì đọc con số chính xác. Nếu chỉ có
+              header, mọi client bị từ chối sẽ cùng chờ tròn 1 giây rồi cùng quay lại một lúc — bạn vừa tự tạo ra một
+              đợt đồng bộ hoá, đúng vấn đề mà jitter ở Bài 17 sinh ra để giải.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: trả <code>500</code> hoặc <code>503</code> khi vượt hạn mức</div>
+              <div class="callout__content">
+                Đây là lỗi phổ biến đến mức đáng ngạc nhiên, thường vì limiter được cài như một exception handler chung.
+                Hậu quả rất cụ thể: mọi thư viện HTTP client đều coi <code>5xx</code> là
+                <em>lỗi tạm thời của server</em> và thử lại ngay — thường kèm cả retry tự động mà lập trình viên bên đó
+                không biết là đang bật. Bạn vừa nói với client "server tôi đang trục trặc, thử lại đi" trong khi ý bạn
+                là "bạn đang gửi quá nhanh, hãy chậm lại".<br /><br />
+                <code>429</code> nói rõ lỗi nằm ở phía client (lớp <code>4xx</code>) và kèm hạn chờ. Khác biệt giữa hai
+                mã này là khác biệt giữa hệ thống tự ổn định lại và hệ thống tự khuếch đại tải lên chính mình —
+                <a href="sysdesign-message-queue">Bài 12</a> đã gọi tên hiện tượng đó, và <strong>Bài 17</strong> sẽ đo
+                nó.
+              </div>
+            </div>
+
+            <p>
+              Một câu hỏi thường bị bỏ qua: <em>limiter tốn bao nhiêu?</em> Nó nằm trên đường đi của mọi request, kể cả
+              request được cho qua, nên chi phí của nó cộng thẳng vào p99 của toàn hệ thống. Đo bằng cách so cùng một
+              endpoint có và không có limiter, đặt hạn mức cao đến mức không request nào bị từ chối (bốn cặp lần chạy,
+              20 kết nối, 10 giây mỗi lần):
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Endpoint</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p95</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>/fast</code> — không limiter</td>
+                  <td>25.849 – 27.115 req/s</td>
+                  <td>0,64 – 0,66 ms</td>
+                  <td>1,26 – 1,32 ms</td>
+                  <td>1,59 – 1,75 ms</td>
+                </tr>
+                <tr>
+                  <td><code>/limited</code> — có limiter</td>
+                  <td>26.554 – 28.354 req/s</td>
+                  <td>0,67 – 0,69 ms</td>
+                  <td>1,04 – 1,16 ms</td>
+                  <td>1,41 – 1,50 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              p50 tăng khoảng <strong>0,04 ms</strong> — đúng bằng một vòng mạng tới Redis, không có gì bất ngờ. Điều
+              bất ngờ là p95 và p99 lại <em>thấp hơn</em> một cách nhất quán, ở cả bốn cặp lần chạy. Giải thích khả dĩ:
+              <code>/fast</code> trả lời hoàn toàn đồng bộ nên nhiều request được xử lý dồn thành cụm trong một lượt
+              event loop, còn <code>/limited</code> có một điểm nhường (<code>await</code> chờ Redis) chia nhỏ các cụm
+              đó ra. Đây là <em>giả thuyết</em> chứ không phải kết luận đã chứng minh — lab này không đo trực tiếp độ
+              trễ event loop, nên mình ghi lại đúng những gì đo được.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">🚨 Đừng mang con số 0,04 ms này ra khỏi lab</div>
+              <div class="callout__content">
+                Redis ở đây nằm cùng máy với app. Trong production, Redis thường nằm khác máy — đôi khi khác vùng sẵn
+                sàng — và một vòng mạng ở đó là <strong>1–2 ms</strong>. Với dịch vụ có p99 khoảng 20 ms, thêm 2 ms là
+                thêm 10%; với dịch vụ có p99 khoảng 5 ms, đó là thêm 40%.<br /><br />
+                Đó là lý do các limiter hiệu năng cao thật sự thường dùng kiến trúc lai: đếm
+                <em>cục bộ</em> trong bộ nhớ mỗi instance với một phần hạn mức được chia sẵn, chỉ đồng bộ với Redis định
+                kỳ. Đổi lại là mất tính chính xác tuyệt đối — lại đúng cái đánh đổi ở
+                <a href="sysdesign-cap-consistency">Bài 9</a>, lần này xuất hiện trong một bài toán rất cụ thể.
+              </div>
+            </div>
+
+            <!-- ================= 13.5 ================= -->
+            <h2>13.5 Load shedding: khi từ chối phải có chọn lọc</h2>
+
+            <p>
+              Rate limit trả lời câu hỏi "client này đã dùng quá phần của mình chưa". Load shedding trả lời một câu hỏi
+              khác hẳn: "<em>hệ thống</em> đang quá tải, giờ bỏ cái gì". Câu thứ hai chỉ xuất hiện khi mọi client đều
+              trong hạn mức mà tổng vẫn vượt năng lực — và lúc đó rate limit không giúp được gì, vì không ai vi phạm cả.
+            </p>
+
+            <p>
+              Số liệu từ phép đo toàn cục ở mục 13.3 cho thấy điều đầu tiên cần biết về từ chối:
+              <strong>nó không miễn phí, nhưng nó rẻ hơn rất nhiều so với phục vụ</strong>. Trong 10 giây, lab phục vụ
+              5.493 request và từ chối 185.660 — tức nó xử lý được khoảng <strong>18.500 lần từ chối mỗi giây</strong>,
+              gấp 34 lần số request nó thật sự phục vụ. Đó là lý do "từ chối nhanh" là một chiến lược sống được: bạn vẫn
+              trả một cái giá, nhưng cái giá đó nhỏ hơn một bậc độ lớn.
+            </p>
+
+            <p>
+              Nhưng cái giá đó chỉ nhỏ khi từ chối xảy ra <strong>sớm</strong>. Từ chối sau khi đã truy vấn database để
+              kiểm tra hạn mức thì bạn đã trả gần hết chi phí rồi mới nói không. Nguyên tắc: limiter phải nằm trước mọi
+              thứ đắt tiền — trước xác thực nếu có thể, chắc chắn là trước database.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 250"
+                width="100%"
+                role="img"
+                aria-label="So sánh load shedding đồng đều và load shedding có ưu tiên khi hệ thống chỉ còn 40 phần trăm năng lực"
+              >
+                <rect width="720" height="250" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Chỉ còn 40% năng lực — bỏ đều hay bỏ có ưu tiên?
+                </text>
+
+                <!-- bo deu -->
+                <rect x="16" y="40" width="688" height="88" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="58" fill="#ef4444" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  BỎ ĐỀU — giữ 40% của mỗi loại
+                </text>
+                <rect x="28" y="66" width="120" height="16" rx="2" fill="#151d30" stroke="#4b5563" />
+                <text
+                  x="88"
+                  y="78"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  health check 40%
+                </text>
+                <rect x="156" y="66" width="120" height="16" rx="2" fill="#151d30" stroke="#4b5563" />
+                <text
+                  x="216"
+                  y="78"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  thanh toán 40%
+                </text>
+                <rect x="284" y="66" width="120" height="16" rx="2" fill="#151d30" stroke="#4b5563" />
+                <text
+                  x="344"
+                  y="78"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  xem sản phẩm 40%
+                </text>
+                <rect x="412" y="66" width="120" height="16" rx="2" fill="#151d30" stroke="#4b5563" />
+                <text
+                  x="472"
+                  y="78"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  gợi ý cá nhân 40%
+                </text>
+                <text x="28" y="100" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  60% health check trượt → load balancer tưởng node chết → rút node ra → 40% năng lực còn lại thành 0.
+                </text>
+                <text x="28" y="116" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  60% thanh toán trượt → mất doanh thu thật, trong khi vẫn đang phục vụ 40% các gợi ý không ai cần lúc
+                  này.
+                </text>
+
+                <!-- co uu tien -->
+                <rect x="16" y="142" width="688" height="92" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="28"
+                  y="160"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  BỎ CÓ ƯU TIÊN — cùng tổng năng lực, phân bổ khác
+                </text>
+                <rect x="28" y="168" width="120" height="16" rx="2" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="88"
+                  y="180"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  health check 100%
+                </text>
+                <rect x="156" y="168" width="120" height="16" rx="2" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="216"
+                  y="180"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  thanh toán 100%
+                </text>
+                <rect x="284" y="168" width="120" height="16" rx="2" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="344"
+                  y="180"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  xem sản phẩm 55%
+                </text>
+                <rect x="412" y="168" width="120" height="16" rx="2" fill="#2a1520" stroke="#ef4444" />
+                <text
+                  x="472"
+                  y="180"
+                  fill="#ef4444"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  gợi ý cá nhân 0%
+                </text>
+                <text x="28" y="202" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  Health check luôn qua → không bị rút node oan. Thanh toán luôn qua → không mất doanh thu.
+                </text>
+                <text x="28" y="218" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Thứ bị bỏ là thứ có thể sống thiếu: gợi ý cá nhân tắt hẳn, trang sản phẩm rơi về bản không cá nhân
+                  hoá.
+                </text>
+                <text x="28" y="230" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Điều kiện tiên quyết: mỗi request phải MANG THEO mức ưu tiên của nó — thứ phải thiết kế từ đầu.
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Cùng một lượng tải bị bỏ, hai kết quả hoàn toàn khác nhau. Khác biệt duy nhất là thứ tự ưu tiên.
+              </figcaption>
+            </figure>
+
+            <p>
+              Chi tiết dễ bỏ sót nhất trong hình trên là dòng đầu: <strong>health check</strong>. Nếu load shedding bỏ
+              cả health check thì load balancer kết luận node đã chết và rút nó ra khỏi vòng phục vụ (Bài 3), dồn tải
+              sang các node còn lại, khiến chúng cũng bắt đầu shed, cũng trượt health check, cũng bị rút ra. Cơ chế sinh
+              ra để cứu hệ thống trở thành cơ chế giết hệ thống. Đây là dạng cascade failure sẽ được mổ xẻ đầy đủ ở Bài
+              17.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: shed đồng đều tất cả</div>
+              <div class="callout__content">
+                Bỏ ngẫu nhiên 60% request nghe có vẻ công bằng, và nó dễ cài đặt đến mức thường được chọn mặc định.
+                Nhưng "công bằng" ở đây nghĩa là bạn phá SLO của nhóm quan trọng nhất
+                <em>đúng bằng mức</em> bạn phá SLO của nhóm ít quan trọng nhất. Người đang thanh toán bị mất giao dịch
+                với xác suất y hệt người đang xem gợi ý.<br /><br />
+                Load shedding có ưu tiên đòi hỏi một thứ phải có <strong>từ trước khi sự cố xảy ra</strong>: mỗi request
+                mang theo mức ưu tiên của nó (header, loại endpoint, phân hạng người dùng). Không thể thêm chiều thông
+                tin đó vào lúc 3 giờ sáng khi hệ thống đang cháy. Nếu hôm nay bạn không phân loại được request nào quan
+                trọng hơn request nào, thì phương án shed duy nhất bạn có là phương án tệ nhất.
+              </div>
+            </div>
+
+            <h3>Tự làm lại các phép đo</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+
+# --- Bien cua so: cung han muc 100/s, do so lot qua trong 1 giay te nhat ---
+./tools/ratelimit-test.sh boundary     # fixed=200 · log=100 · counter=105 · token=119
+
+# --- Thoi gian vs bo nho: 4 thuat toan gan nhu bang nhau ve toc do... ---
+./tools/ratelimit-test.sh bench        # p50 deu ~0.08ms (moc GET rong: 0.073ms)
+# --- ...nhung chenh hon 10 lan ve bo nho ---
+./tools/ratelimit-test.sh memory       # log 1499 B/user vs 121-171 B/user
+
+# --- INCR + EXPIRE tach roi: khoa mac ket vinh vien ---
+./tools/ratelimit-test.sh nonatomic    # hai-lenh: 20/200 khoa khong TTL · lua: 0/200
+
+# --- Chi phi limiter cong vao moi request ---
+./tools/ratelimit-test.sh overhead     # /fast vs /limited: p50 +0.04ms
+
+# --- 3 replica sau LB, han muc 500/s TOAN CUC, 10 giay ---
+./tools/ratelimit-test.sh e2e 500      # 5493 qua (ky vong 5500) · 185.660 x 429</code></pre>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Rate limit chủ yếu bảo vệ bạn khỏi chính client của mình, không phải khỏi kẻ tấn công — nên đặt nó chỉ ở
+              biên là bỏ trống đúng chỗ cascade failure bắt đầu.
+            </p>
+
+            <p>
+              Về thuật toán, phép đo cho một kết luận gọn: chọn thuật toán <em>không</em> phải chuyện tốc độ. Cả bốn đều
+              cho p50 quanh 0,08 ms vì thứ tốn thời gian là vòng mạng chứ không phải phép tính. Khác biệt thật nằm ở hai
+              chỗ khác — hành vi ở mốc giao cửa sổ (fixed window cho lọt 200% và không cấu hình nào sửa được) và bộ nhớ
+              (sliding window log tốn 1.499 byte mỗi người dùng, gấp hơn 10 lần ba cái còn lại). Token bucket cũng cho
+              burst, 119% chứ không phải 100% — nhưng burst của nó có chặn trên và chỉnh được, và đó mới là điểm khác
+              biệt đáng nói.
+            </p>
+
+            <p>
+              Về cài đặt, một điều gần như không có ngoại lệ: gộp toàn bộ quyết định vào một script Lua. Bản
+              <code>INCR</code> rồi <code>EXPIRE</code> tách rời làm 20 trên 200 khoá mắc kẹt không TTL trong phép đo —
+              tức 20 người dùng bị chặn vĩnh viễn bởi chính cơ chế bảo vệ họ. Bù lại, bộ đếm nguyên tử dùng chung giữ
+              được hạn mức toàn cục rất sát: 5.493 trên kỳ vọng 5.500 với ba replica không hề nói chuyện với nhau.
+            </p>
+
+            <p>
+              Và về cách từ chối: <code>429</code> kèm <code>Retry-After</code>, không bao giờ <code>5xx</code>. Từ chối
+              rẻ hơn phục vụ khoảng 34 lần trong lab này — nhưng chỉ khi nó xảy ra sớm, và chỉ khi nó
+              <em>có chọn lọc</em>. Shed đồng đều là cách chắc chắn để phá SLO của nhóm quan trọng nhất.
+            </p>
+
+            <p>
+              <strong>Bài 14</strong> đổi hướng: thay vì lưu trạng thái hiện tại rồi ghi đè liên tục, ta lưu
+              <em>chuỗi sự kiện</em> đã xảy ra và tính lại trạng thái từ đó. Nó mở ra khả năng tua lại lịch sử để tìm
+              lỗi — và đòi hỏi một thứ đã học ở Bài 11 làm điều kiện bắt buộc: tính idempotent.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/worker/ratelimit.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về ratelimit.js (4 thuật toán, Lua nguyên tử, 0 dependency)
+              </a>
+            </div>
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-message-queue" class="article-related__link article-related__link--prev">
+                  Bài 12: Message Queue &amp; Xử Lý Bất Đồng Bộ
+                </a>
+                <a href="sysdesign-event-sourcing" class="article-related__link article-related__link--next">
+                  Bài 14: Event Sourcing &amp; CQRS
+                </a>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>

@@ -19,6 +19,11 @@
  *   GET /cacheable     → phát header cache cho tầng edge; ETag/304, Vary (Bài 6)
  *   GET /shard?key=&mode= → router theo shard key; so shard key tốt vs lệch (Bài 8)
  *   GET /charge?key=&idem= → trừ tiền có/không idempotency key (Bài 11)
+ *   GET /limited?user=  → như /fast nhưng qua rate limiter token bucket; so p99 với
+ *                        /fast ra chi phí limiter, hạ RATE_LIMIT xuống thì thấy 429 (Bài 13)
+ *   GET /chain?mode=   → cùng N bước việc, chạy trong tiến trình (mono) hay qua N hop
+ *                        HTTP (micro); ?fail= để thấy độ khả dụng nhân dồn (Bài 15)
+ *   GET /saga?failAt=  → saga 3 service, ?compensate=0 để thấy dữ liệu lệch (Bài 15)
  *   GET /rww?id=&pin=  → ghi primary rồi đọc ngay replica: tái tạo bug read-your-writes,
  *                        và bật/tắt cơ chế ghim-về-primary để kiểm chứng bản vá (Bài 7)
  *
@@ -181,6 +186,59 @@ class MiniRedis {
 const redis = REDIS_URL ? new MiniRedis(REDIS_URL) : null;
 
 // ---------------------------------------------------------------------------
+// Bài 13 — rate limiter token bucket
+//
+// Chỉ token bucket, không phải cả bốn thuật toán: bốn bản đầy đủ nằm ở
+// `worker/ratelimit.js` để so sánh cạnh nhau, còn ở đây ta cần đúng một thuật toán
+// để đo CHI PHÍ mà limiter cộng vào đường đi của request thật. Token bucket là lựa
+// chọn mặc định hợp lý cho API: cho phép burst nhưng burst bị chặn trên bởi sức chứa.
+//
+// Toàn bộ "đọc số token - tính lượng rót thêm - quyết định - ghi lại" nằm trong MỘT
+// script Lua, vì ba app replica cùng chạm một khoá: tách ra nhiều lệnh là mở cửa cho
+// hai replica cùng đọc "còn 1 token" rồi cùng cho qua.
+// ---------------------------------------------------------------------------
+const RATE_LIMIT = Number(process.env.RATE_LIMIT || 0);
+const RATE_WINDOW_MS = Number(process.env.RATE_WINDOW_MS || 1000);
+const RATE_LIMIT_ON = RATE_LIMIT > 0;
+let rateAllowed = 0;
+let rateLimited = 0;
+
+const RATE_LUA = `
+local cap  = tonumber(ARGV[1])
+local win  = tonumber(ARGV[2])
+local k    = KEYS[1]
+local t    = redis.call('TIME')
+local now  = t[1] * 1000 + math.floor(t[2] / 1000)
+local d    = redis.call('HMGET', k, 'tokens', 'ts')
+local tokens = tonumber(d[1])
+local ts     = tonumber(d[2])
+if tokens == nil then tokens = cap; ts = now end
+local delta = now - ts
+if delta < 0 then delta = 0 end
+tokens = math.min(cap, tokens + delta * cap / win)
+if tokens < 1 then
+  redis.call('HSET', k, 'tokens', tokens, 'ts', now)
+  redis.call('PEXPIRE', k, win * 2)
+  return '0|0|' .. math.ceil((1 - tokens) * win / cap)
+end
+tokens = tokens - 1
+redis.call('HSET', k, 'tokens', tokens, 'ts', now)
+redis.call('PEXPIRE', k, win * 2)
+return '1|' .. math.floor(tokens) .. '|0'`;
+
+let rateSha = null;
+
+/** Trả { allowed, remaining, retryAfterMs } cho một chiều giới hạn (ở đây: theo user). */
+async function rateLimit(who) {
+  // SCRIPT LOAD một lần rồi EVALSHA: gửi lại toàn bộ script mỗi request là tự cộng
+  // vài trăm byte vào mọi lời gọi, và chi phí đó nằm đúng trên đường đi nóng nhất.
+  if (!rateSha) rateSha = await redis.cmd('SCRIPT', 'LOAD', RATE_LUA);
+  const out = await redis.cmd('EVALSHA', rateSha, '1', `lab:rl:app:${who}`, String(RATE_LIMIT), String(RATE_WINDOW_MS));
+  const [a, rem, retry] = String(out).split('|');
+  return { allowed: a === '1', remaining: Number(rem), retryAfterMs: Number(retry) };
+}
+
+// ---------------------------------------------------------------------------
 // Bài 7 — router đọc/ghi
 // ---------------------------------------------------------------------------
 const { PgPool } = require('./minipg');
@@ -338,6 +396,52 @@ function ttlWithJitter(baseSec, ratio) {
   if (!(ratio > 0)) return baseSec;
   const delta = baseSec * ratio * (Math.random() * 2 - 1);
   return Math.max(1, Math.round(baseSec + delta));
+}
+
+// ---------------------------------------------------------------------------
+// Bài 15 — monolith vs microservices
+//
+// Toàn bộ bài học nằm ở chỗ: CÙNG một lượng công việc (`doUnitOfWork`) được gọi theo
+// hai cách. Gọi trong tiến trình thì chi phí gọi gần bằng 0; gọi qua HTTP thì mỗi lần
+// cộng thêm một vòng mạng, một lần serialize, một lần parse — và một xác suất hỏng.
+// ---------------------------------------------------------------------------
+const PEERS = (process.env.PEERS || 'app1:3000,app2:3000,app3:3000').split(',').filter(Boolean);
+// Ba service của saga được GHIM vào ba instance cố định, vì mỗi service phải sở hữu
+// dữ liệu của riêng nó. Nếu để round-robin thì trạng thái `order` nằm rải ở cả ba
+// tiến trình và không còn ranh giới service nào cả.
+const PEERS_SAGA = (process.env.PEERS_SAGA || 'app1:3000,app2:3000,app3:3000').split(',').filter(Boolean);
+const sagaAgent = new http.Agent({ keepAlive: true, maxSockets: 64 });
+const sagaState = { order: 0, payment: 0, inventory: 0 };
+let sagaCompleted = 0;
+let sagaFailed = 0;
+let sagaCompensations = 0;
+let stepFailures = 0;
+
+/**
+ * Một đơn vị công việc xác định: `w` vòng lặp số học.
+ *
+ * Cố ý dùng việc TỐN CPU chứ không phải `sleep`: nếu mỗi bước chỉ là một khoảng chờ
+ * thì chi phí thật của việc tách service bị chìm mất trong khoảng chờ đó, và phép đo
+ * sẽ cho kết luận sai theo hướng có lợi cho microservices.
+ */
+function doUnitOfWork(w) {
+  let acc = 0;
+  for (let i = 0; i < w; i++) acc = (acc + Math.imul(i ^ acc, 2654435761)) >>> 0;
+  return acc;
+}
+
+/** Gọi một instance khác qua HTTP. Trả { ok, status }. */
+function callPeer(peer, path) {
+  const [host, port] = peer.split(':');
+  return new Promise((resolve) => {
+    const r = http.get({ host, port: Number(port || 3000), path, agent: sagaAgent }, (pr) => {
+      pr.resume();
+      pr.on('end', () => resolve({ ok: pr.statusCode >= 200 && pr.statusCode < 300, status: pr.statusCode }));
+    });
+    // Lỗi kết nối cũng là một dạng thất bại của bước — và nó CHỈ tồn tại ở kiến trúc
+    // tách service. Gọi hàm trong cùng tiến trình không có chế độ lỗi này.
+    r.on('error', () => resolve({ ok: false, status: 0 }));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -650,11 +754,187 @@ const server = http.createServer(async (req, res) => {
         shardHits,
         cacheMisses,
         hitRatio: cacheHits + cacheMisses === 0 ? null : cacheHits / (cacheHits + cacheMisses),
+        rateLimit: RATE_LIMIT_ON ? RATE_LIMIT : null,
+        rateAllowed,
+        rateLimited,
+        sagaState,
+        sagaCompleted,
+        sagaFailed,
+        sagaCompensations,
+        stepFailures,
       });
     }
 
     if (p === '/fast') {
       return json(res, 200, { ok: true, instance: INSTANCE });
+    }
+
+    // -----------------------------------------------------------------------
+    // Bài 15 — cùng một use case, hai kiến trúc
+    // -----------------------------------------------------------------------
+    if (p === '/step') {
+      // Một "service" lá: làm đúng `w` đơn vị việc rồi trả lời. Đây là đơn vị công việc
+      // dùng chung cho CẢ HAI kiến trúc, nên chênh lệch đo được KHÔNG đến từ việc một
+      // bên làm nhiều việc hơn — nó chỉ đến từ chỗ việc đó được gọi như thế nào.
+      const w = Number(url.searchParams.get('w') || 0);
+      const fail = Number(url.searchParams.get('fail') || 0);
+      const out = doUnitOfWork(w);
+      if (fail > 0 && Math.random() < fail) {
+        stepFailures++;
+        return json(res, 500, { ok: false, instance: INSTANCE, loi: 'step_failed' });
+      }
+      return json(res, 200, { ok: true, instance: INSTANCE, out });
+    }
+
+    if (p === '/chain') {
+      // ?mode=mono   N bước chạy TRONG tiến trình này — không hop mạng nào
+      // ?mode=micro  N bước là N request HTTP tới các instance khác
+      //
+      // Cùng số bước, cùng lượng việc mỗi bước. Hiệu số p99 giữa hai chế độ chính là
+      // cái giá của việc tách service, và `fail` cho thấy độ khả dụng nhân dồn: chuỗi
+      // N bước mỗi bước hỏng với xác suất p thì thành công với xác suất (1-p)^N.
+      const hops = Math.max(1, Math.min(8, Number(url.searchParams.get('hops') || 4)));
+      const w = Number(url.searchParams.get('w') || 200);
+      const fail = Number(url.searchParams.get('fail') || 0);
+      const mode = url.searchParams.get('mode') === 'micro' ? 'micro' : 'mono';
+      const t0 = process.hrtime.bigint();
+
+      if (mode === 'mono') {
+        for (let i = 0; i < hops; i++) {
+          doUnitOfWork(w);
+          if (fail > 0 && Math.random() < fail) {
+            return json(res, 500, { ok: false, mode, hops, buocHong: i + 1, totalMs: Number(msSince(t0).toFixed(3)) });
+          }
+        }
+        return json(res, 200, { ok: true, mode, hops, instance: INSTANCE, totalMs: Number(msSince(t0).toFixed(3)) });
+      }
+
+      for (let i = 0; i < hops; i++) {
+        const peer = PEERS[i % PEERS.length];
+        const r = await callPeer(peer, `/step?w=${w}&fail=${fail}`);
+        if (!r.ok) {
+          return json(res, 500, {
+            ok: false,
+            mode,
+            hops,
+            buocHong: i + 1,
+            peer,
+            totalMs: Number(msSince(t0).toFixed(3)),
+          });
+        }
+      }
+      return json(res, 200, { ok: true, mode, hops, instance: INSTANCE, totalMs: Number(msSince(t0).toFixed(3)) });
+    }
+
+    if (p === '/saga-step') {
+      // Mỗi instance đóng vai MỘT service và chỉ giữ trạng thái của riêng nó — đúng
+      // nguyên tắc "mỗi service sở hữu dữ liệu của mình" (mục 15.4).
+      const svc = url.searchParams.get('svc') || 'order';
+      const op = url.searchParams.get('op') || 'do';
+      if (!(svc in sagaState)) return json(res, 400, { loi: 'svc khong hop le' });
+      if (url.searchParams.get('fail') === '1') return json(res, 500, { ok: false, svc, loi: 'buoc that bai' });
+      sagaState[svc] += op === 'undo' ? -1 : 1;
+      if (op === 'undo') sagaCompensations++;
+      return json(res, 200, { ok: true, svc, op, giaTri: sagaState[svc], instance: INSTANCE });
+    }
+
+    if (p === '/saga') {
+      // Saga ba bước qua ba service THẬT: order (app1) → payment (app2) → inventory (app3).
+      // ?failAt=3       bước thứ mấy thất bại (0 = không bước nào)
+      // ?compensate=1   có chạy hành động bù cho các bước ĐÃ THÀNH CÔNG hay không
+      //
+      // Không có 2PC ở đây, và đó là điểm mấu chốt: vượt qua ranh giới service là mất
+      // ACID, nên "rollback" phải do chính ứng dụng viết ra dưới dạng hành động bù.
+      const failAt = Number(url.searchParams.get('failAt') || 0);
+      const compensate = url.searchParams.get('compensate') !== '0';
+      const steps = [
+        { svc: 'order', peer: PEERS_SAGA[0] },
+        { svc: 'payment', peer: PEERS_SAGA[1] },
+        { svc: 'inventory', peer: PEERS_SAGA[2] },
+      ];
+      const done = [];
+      for (let i = 0; i < steps.length; i++) {
+        const s = steps[i];
+        const willFail = failAt === i + 1 ? '&fail=1' : '';
+        const r = await callPeer(s.peer, `/saga-step?svc=${s.svc}&op=do${willFail}`);
+        if (!r.ok) {
+          sagaFailed++;
+          const buLai = [];
+          if (compensate) {
+            // Hành động bù chạy NGƯỢC thứ tự — bước sau được gỡ trước.
+            for (const d of done.reverse()) {
+              await callPeer(d.peer, `/saga-step?svc=${d.svc}&op=undo`);
+              buLai.push(d.svc);
+            }
+          }
+          return json(res, 200, {
+            ok: false,
+            hongTaiBuoc: i + 1,
+            svcHong: s.svc,
+            daBu: compensate,
+            buLai,
+            // Khi compensate=0, các bước đã thành công KHÔNG được gỡ — đó chính là chỗ
+            // dữ liệu bắt đầu lệch, và nó lệch một cách hoàn toàn im lặng.
+            canhBao: compensate ? null : 'cac buoc da thanh cong bi bo lai — du lieu lech',
+          });
+        }
+        done.push(s);
+      }
+      sagaCompleted++;
+      return json(res, 200, { ok: true, hoanTat: steps.map((s) => s.svc) });
+    }
+
+    if (p === '/saga-reset') {
+      sagaState.order = 0;
+      sagaState.payment = 0;
+      sagaState.inventory = 0;
+      sagaCompleted = 0;
+      sagaFailed = 0;
+      sagaCompensations = 0;
+      stepFailures = 0;
+      return json(res, 200, { ok: true, instance: INSTANCE });
+    }
+
+    if (p === '/limited') {
+      // Bài 13 — cùng một việc như /fast, nhưng đi qua rate limiter trước.
+      //
+      // So p99 của /limited với p99 của /fast là ra ngay chi phí mà limiter cộng vào
+      // MỌI request. Đặt RATE_LIMIT thật cao thì không request nào bị chặn, nên hiệu
+      // số là chi phí thuần; hạ RATE_LIMIT xuống thì thấy 429 và cách trả lời đúng.
+      if (!redis || !RATE_LIMIT_ON) return json(res, 200, { ok: true, limiter: 'off', instance: INSTANCE });
+      const who = url.searchParams.get('user') || req.socket.remoteAddress || 'anon';
+      const verdict = await rateLimit(who);
+      const headers = {
+        // Ba header này là hợp đồng với client: còn bao nhiêu, khi nào bộ đếm mở lại.
+        // Thiếu chúng thì client chỉ còn cách đoán, và cách đoán phổ biến nhất là
+        // thử lại ngay lập tức — đúng thứ ta đang cố ngăn.
+        'X-RateLimit-Limit': String(RATE_LIMIT),
+        'X-RateLimit-Remaining': String(verdict.remaining),
+        'X-RateLimit-Reset': String(Math.ceil(verdict.retryAfterMs / 1000)),
+      };
+      if (!verdict.allowed) {
+        rateLimited++;
+        const body = JSON.stringify({ error: 'rate_limited', retryAfterMs: verdict.retryAfterMs });
+        // 429 chứ KHÔNG phải 500/503: client coi 5xx là lỗi tạm thời của server và
+        // thử lại ngay, còn 429 kèm Retry-After nói rõ "lỗi ở phía bạn, chờ N giây".
+        res.writeHead(429, {
+          ...headers,
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': Buffer.byteLength(body),
+          'Retry-After': String(Math.max(1, Math.ceil(verdict.retryAfterMs / 1000))),
+          'X-Instance': INSTANCE,
+        });
+        return res.end(body);
+      }
+      rateAllowed++;
+      const body = JSON.stringify({ ok: true, instance: INSTANCE, remaining: verdict.remaining });
+      res.writeHead(200, {
+        ...headers,
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(body),
+        'X-Instance': INSTANCE,
+      });
+      return res.end(body);
     }
 
     if (p === '/slow-async') {
@@ -685,6 +965,8 @@ const server = http.createServer(async (req, res) => {
       chargeReplays = 0;
       dbWaitTotalMs = 0;
       dbMaxQueueDepth = 0;
+      rateAllowed = 0;
+      rateLimited = 0;
       return json(res, 200, { ok: true, instance: INSTANCE });
     }
 

@@ -46,18 +46,21 @@ docker compose exec app1 node -e "console.log(process.arch)"   # phải khớp u
 
 ## Các profile theo từng bài
 
-| Bài | Lệnh                                     | Có gì trong stack                                      |
-| --- | ---------------------------------------- | ------------------------------------------------------ |
-| 2   | `docker compose --profile base up -d`    | 1 app server (cổng 3001)                               |
-| 3   | `docker compose --profile lb up -d`      | nginx làm load balancer (cổng 8080) + 3 app replica    |
-| 4   | `docker compose --profile gw up -d`      | nginx làm API gateway (HTTP 8081 + HTTPS 8443) + 3 app |
-| 6   | `docker compose --profile edge up -d`    | tầng edge có proxy_cache (cổng 8082) + 3 app           |
-| 5   | `docker compose --profile cache up -d`   | thêm Redis (cổng 6379)                                 |
-| 7   | `docker compose --profile db up -d`      | thêm PostgreSQL (cổng 5432)                            |
-| 7   | `docker compose --profile replica up -d` | PostgreSQL primary (5432) + read replica (5433)        |
-| 8   | `docker compose --profile shard up -d`   | hai shard PostgreSQL độc lập (5432, 5434) + router     |
-| 10  | `docker compose --profile lock up -d`    | Redis + hai worker tranh một lock (chạy qua `tools/`)  |
-| 12  | `docker compose --profile queue up -d`   | Redis Streams + producer/consumer (chạy qua `tools/`)  |
+| Bài | Lệnh                                        | Có gì trong stack                                       |
+| --- | ------------------------------------------- | ------------------------------------------------------- |
+| 2   | `docker compose --profile base up -d`       | 1 app server (cổng 3001)                                |
+| 3   | `docker compose --profile lb up -d`         | nginx làm load balancer (cổng 8080) + 3 app replica     |
+| 4   | `docker compose --profile gw up -d`         | nginx làm API gateway (HTTP 8081 + HTTPS 8443) + 3 app  |
+| 6   | `docker compose --profile edge up -d`       | tầng edge có proxy_cache (cổng 8082) + 3 app            |
+| 5   | `docker compose --profile cache up -d`      | thêm Redis (cổng 6379)                                  |
+| 7   | `docker compose --profile db up -d`         | thêm PostgreSQL (cổng 5432)                             |
+| 7   | `docker compose --profile replica up -d`    | PostgreSQL primary (5432) + read replica (5433)         |
+| 8   | `docker compose --profile shard up -d`      | hai shard PostgreSQL độc lập (5432, 5434) + router      |
+| 10  | `docker compose --profile lock up -d`       | Redis + hai worker tranh một lock (chạy qua `tools/`)   |
+| 12  | `docker compose --profile queue up -d`      | Redis Streams + producer/consumer (chạy qua `tools/`)   |
+| 13  | `docker compose --profile ratelimit up -d`  | Redis + 4 thuật toán rate limit + LB (qua `tools/`)     |
+| 14  | `docker compose --profile eventstore up -d` | PostgreSQL + event log append-only (qua `tools/`)       |
+| 15  | `docker compose --profile micro up -d`      | 3 app gọi nhau qua HTTP + saga 3 service (qua `tools/`) |
 
 ### Bài 4 cần một bước chuẩn bị: chứng chỉ tự ký
 
@@ -82,7 +85,7 @@ biệt cấu hình. Đó là lý do cổng HTTP tồn tại — chỉ để làm
 Dừng và xoá sạch:
 
 ```bash
-docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard --profile lock --profile queue down
+docker compose --profile base --profile lb --profile gw --profile edge --profile cache --profile db --profile replica --profile shard --profile lock --profile queue --profile ratelimit --profile eventstore --profile micro down
 ```
 
 > `replica` dựng **streaming replication thật**: replica tự chạy `pg_basebackup` từ primary
@@ -103,7 +106,68 @@ docker compose --profile base --profile lb --profile gw --profile edge --profile
 > hạn đó thì lab đo ra kết quả **ngược hẳn**, vì hai shard chia nhau CPU của cùng một máy —
 > đúng cái giới hạn mà sharding sinh ra để vượt qua (xem Bài 8 mục 8.2).
 >
-> Còn thiếu: **worker cho message queue** (Bài 12).
+> **Bài 13** thêm `rlworker` (bốn thuật toán rate limit, mỗi thuật toán là một script Lua)
+> và endpoint `/limited` trong app. Limiter **mặc định TẮT** (`RATE_LIMIT=0`) để không đổi
+> hành vi của các bài trước; bật bằng biến môi trường khi chạy `up`, ví dụ
+> `RATE_LIMIT=500 docker compose --profile ratelimit up -d`.
+
+## Bài 13: rate limiting
+
+```bash
+./tools/ratelimit-test.sh boundary    # fixed=200 · slidinglog=100 · slidingcounter=105 · token=119
+./tools/ratelimit-test.sh bench       # ca 4 thuat toan ~0.08ms p50 — chenh nhau khong dang ke
+./tools/ratelimit-test.sh memory      # slidinglog 1499 B/user vs 121-171 B/user cua 3 cai kia
+./tools/ratelimit-test.sh nonatomic   # 20/200 khoa KHONG co TTL khi tach INCR va EXPIRE
+./tools/ratelimit-test.sh overhead    # /fast vs /limited: p50 +0.04ms
+./tools/ratelimit-test.sh e2e 500     # 3 replica, han muc 500/s toan cuc -> 5493 qua, 185.660 x 429
+```
+
+> **Limiter mặc định TẮT.** `RATE_LIMIT=0` để các bài trước không đổi hành vi. Bật bằng biến
+> môi trường lúc `up` (compose đọc `${RATE_LIMIT:-0}`), và nhớ rằng `restart` **không** đọc
+> lại biến môi trường — phải `up -d` lại hoặc `--force-recreate`.
+>
+> **Con số then chốt của `boundary` là `maxIn1s`**, không phải tổng số request được cho qua:
+> nó trả lời câu hỏi duy nhất mà server phía sau quan tâm — trong một giây tệ nhất thì thực
+> sự có bao nhiêu request lọt vào.
+
+## Bài 14: event sourcing
+
+```bash
+./tools/eventstore-test.sh seed 200000    # 200k su kien trong ~1.8s (111.003 su kien/s)
+./tools/eventstore-test.sh replay2x 0     # projection ngay tho: so du GAP DOI sau lan 2
+./tools/eventstore-test.sh replay2x 1     # projection idempotent: hai lan y het nhau
+./tools/eventstore-test.sh projectApp     # replay bang code ung dung: 850k su kien/s
+./tools/eventstore-test.sh snapshot       # aggregate DAI 100k: 7,4ms -> 1,1ms (nhanh 6,6x)
+./tools/eventstore-test.sh snapshot acc-0 # aggregate NGAN 200: 0,38ms -> 0,98ms (CHAM hon)
+./tools/eventstore-test.sh concurrent     # hai nguoi ghi cung version -> mot nguoi bi tu choi
+```
+
+> **Bảng `events` chỉ có `INSERT`.** Không một lệnh `UPDATE`/`DELETE` nào trong
+> `worker/eventstore.js` chạm vào nó — đó là điều kiện để mọi phép replay cho ra cùng kết quả.
+>
+> `esworker` mount thêm `./app` để dùng lại `minipg.js` (client PostgreSQL viết tay ở Bài 7),
+> nên không có bản sao thứ hai của client nào cả.
+>
+> Schema của Bài 14 được tạo bằng `CREATE TABLE IF NOT EXISTS` ngay trong worker, không nằm
+> trong `postgres/init/` — nhờ vậy bạn không phải xoá volume để chạy được bài này.
+
+## Bài 15: monolith vs microservices
+
+```bash
+./tools/micro-test.sh cost          # mono p99 2,06ms / 18.887 rps  vs  micro p99 8,25ms / 3.744 rps
+./tools/micro-test.sh availability  # 1/2/4/8 hop, moi hop hong 1% -> 98,95 / 98,08 / 96,01 / 92,18%
+./tools/micro-test.sh saga 200 1    # co hanh dong bu  -> ca ba service ve 0
+./tools/micro-test.sh saga 200 0    # KHONG bu         -> order=200, payment=200, inventory=0
+```
+
+> **Mỗi bước ở cả hai kiến trúc làm đúng cùng một lượng việc** (`doUnitOfWork` trong `app.js`),
+> nên chênh lệch đo được chỉ đến từ _cách gọi_, không đến từ lượng việc. Công việc là phép tính
+> tốn CPU chứ không phải `sleep` — nếu là `sleep` thì chi phí hop bị chìm mất trong khoảng chờ
+> và phép đo sẽ có lợi cho microservices một cách giả tạo.
+>
+> Ba service của saga được ghim vào ba instance cố định (`PEERS_SAGA`), vì mỗi service phải
+> sở hữu dữ liệu của riêng nó. Đó cũng là lý do `read_state` phải hỏi cả ba container — không
+> có chỗ nào nhìn thấy toàn bộ trạng thái cùng lúc.
 
 ## Các endpoint của app
 

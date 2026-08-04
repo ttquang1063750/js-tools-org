@@ -1,0 +1,1422 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bài 14: Event Sourcing &amp; CQRS — js-tools</title>
+    <meta
+      name="description"
+      content="Event store thật trên PostgreSQL với 200.000 sự kiện: projection không idempotent chạy lại lần hai cho số dư gấp đúng 2,00 lần mà không một cảnh báo nào; replay toàn bộ read model bằng code ứng dụng mất 235 ms nên sửa bug rồi dựng lại là việc trong giờ hành chính; snapshot nhanh hơn 6,6 lần với aggregate 100.000 sự kiện nhưng CHẬM hơn 2,6 lần với aggregate 200 sự kiện; và UNIQUE(aggregate, version) chặn lost update mà không cần lock phân tán nào."
+    />
+    <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-event-sourcing" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-event-sourcing" />
+    <meta property="og:title" content="Bài 14: Event Sourcing &amp; CQRS — js-tools" />
+    <meta
+      property="og:description"
+      content="Event store thật trên PostgreSQL với 200.000 sự kiện: projection không idempotent chạy lại lần hai cho số dư gấp đúng 2,00 lần mà không một cảnh báo nào; replay toàn bộ read model bằng code ứng dụng mất 235 ms nên sửa bug rồi dựng lại là việc trong giờ hành chính; snapshot nhanh hơn 6,6 lần với aggregate 100.000 sự kiện nhưng CHẬM hơn 2,6 lần với aggregate 200 sự kiện; và UNIQUE(aggregate, version) chặn lost update mà không cần lock phân tán nào."
+    />
+    <meta property="og:image" content="https://js-tools.org/assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bài 14: Event Sourcing &amp; CQRS — js-tools" />
+    <meta
+      name="twitter:description"
+      content="Event store thật trên PostgreSQL với 200.000 sự kiện: projection không idempotent chạy lại lần hai cho số dư gấp đúng 2,00 lần mà không một cảnh báo nào; replay toàn bộ read model bằng code ứng dụng mất 235 ms nên sửa bug rồi dựng lại là việc trong giờ hành chính; snapshot nhanh hơn 6,6 lần với aggregate 100.000 sự kiện nhưng CHẬM hơn 2,6 lần với aggregate 200 sự kiện; và UNIQUE(aggregate, version) chặn lost update mà không cần lock phân tán nào."
+    />
+    <meta name="twitter:image" content="https://js-tools.org/assets/og-image.png" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../blog.css" />
+    <link rel="stylesheet" href="../prism.css" />
+    <link rel="stylesheet" href="../ide.css" />
+    <link rel="stylesheet" href="../katex/katex.min.css" />
+    <script src="../katex/katex.min.js" defer></script>
+    <script src="../katex/contrib/auto-render.min.js" defer></script>
+    <script src="../katex-render.js" defer></script>
+    <script src="../prism.js" defer></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Bài 14: Event Sourcing & CQRS",
+        "description": "Event store thật trên PostgreSQL với 200.000 sự kiện: projection không idempotent chạy lại lần hai cho số dư gấp đúng 2,00 lần mà không một cảnh báo nào; replay toàn bộ read model bằng code ứng dụng mất 235 ms nên sửa bug rồi dựng lại là việc trong giờ hành chính; snapshot nhanh hơn 6,6 lần với aggregate 100.000 sự kiện nhưng CHẬM hơn 2,6 lần với aggregate 200 sự kiện; và UNIQUE(aggregate, version) chặn lost update mà không cần lock phân tán nào.",
+        "url": "https://js-tools.org/blog/sysdesign/sysdesign-event-sourcing",
+        "inLanguage": "vi",
+        "image": "https://js-tools.org/assets/og-image.png",
+        "isPartOf": { "@type": "Blog", "name": "js-tools Blog", "url": "https://js-tools.org/blog/" },
+        "publisher": { "@type": "Organization", "name": "js-tools", "url": "https://js-tools.org" },
+        "datePublished": "2026-08-04"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo" aria-label="js-tools home">
+          <img src="../../assets/logo.svg" alt="js-tools Logo" height="30" />
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle menu">
+          <svg
+            class="icon-open"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </label>
+        <nav aria-label="Main navigation">
+          <a href="https://snapcast.js-tools.org" class="nav-link nav-link--sc" target="_blank" rel="noopener">
+            <img src="../../assets/snapcast.svg" alt="SnapCast Logo" width="80" height="30" style="background: white" />
+          </a>
+          <a href="https://colorquarium.js-tools.org" class="nav-link nav-link--cq" target="_blank" rel="noopener">
+            <img src="../../assets/coloraquarium.png" alt="ColorQuarium Logo" width="32" height="32" />
+            <span data-i18n="nav.cq">ColorQuarium</span>
+          </a>
+          <a href="/blog/" class="nav-link nav-link--blog">
+            <span data-i18n="nav.blog">Blog</span>
+          </a>
+          <a href="https://js-tools.org/donate" class="nav-link nav-link--cq">
+            ☕
+            <span data-i18n="nav.donate">Donate</span>
+          </a>
+          <button id="langToggle" class="btn-lang" title="Switch language">🇻🇳 Việt Nam</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="article-hero article-hero--sysdesign">
+        <div class="container">
+          <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
+          <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
+          <h1 class="article-hero__title">Bài 14: Event Sourcing &amp; CQRS</h1>
+          <div class="article-hero__meta">4 tháng 8, 2026 · 19 phút đọc</div>
+        </div>
+      </section>
+
+      <div class="container">
+        <div class="article-wrap">
+          <div class="article-body">
+            <p>
+              Mọi hệ thống trong series này tới giờ đều lưu <em>trạng thái hiện tại</em>: số dư là 100, ảnh đại diện là
+              <code>avatar-v3.png</code>, đơn hàng đang ở trạng thái <code>shipped</code>. Mỗi lần có gì thay đổi, ta
+              ghi đè giá trị cũ. Bài này đảo ngược điều đó: lưu <strong>chuỗi việc đã xảy ra</strong>, và coi trạng thái
+              hiện tại chỉ là kết quả tính ra từ chuỗi đó.
+            </p>
+
+            <p>
+              Lab dựng một event store thật trên PostgreSQL với 200.000 sự kiện. Ba phép đo đáng chú ý. Thứ nhất, một
+              projection <em>không</em> idempotent bị chạy lại lần thứ hai cho ra số dư
+              <strong>gấp đúng 2,00 lần</strong> — 9.132.892 thay vì 4.566.446 — và không có lỗi nào được ném ra, read
+              model chỉ đơn giản là sai. Thứ hai, dựng lại toàn bộ read model từ 200.000 sự kiện mất
+              <strong>235 ms</strong> khi replay bằng code ứng dụng, tức replay ở quy mô này là chuyện thường ngày chứ
+              không phải thao tác khẩn cấp. Thứ ba, snapshot giúp aggregate dài nhanh <strong>6,6 lần</strong> nhưng lại
+              làm aggregate ngắn <strong>chậm đi</strong> — nó là công cụ có điều kiện, không phải bước bắt buộc.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Cấu hình máy đo</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 lõi, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. PostgreSQL 18 trong container native
+                arm64, giới hạn 1 CPU và 512 MB RAM; worker chạy <code>node:22-alpine</code>, không dependency, dùng lại
+                <code>minipg.js</code> — client PostgreSQL viết tay từ
+                <a href="sysdesign-replication">Bài 7</a>.<br /><br />
+                Toàn bộ số liệu đến từ <code>worker/eventstore.js</code> với 200.000 sự kiện trải trên 1.000 aggregate.
+                Cả database lẫn worker nằm cùng một máy, nên các con số mili giây ở đây
+                <strong>không tính chi phí mạng thật</strong>; hãy đọc chúng như tỉ lệ giữa các phương án, đừng đọc như
+                giá trị tuyệt đối cho hệ thống của bạn.
+              </div>
+            </div>
+
+            <!-- ================= 14.1 ================= -->
+            <h2>14.1 Trạng thái là kết quả của lịch sử</h2>
+
+            <p>
+              Cùng một tài khoản ngân hàng, hai cách lưu. Cách quen thuộc: một dòng, cột
+              <code>balance = 100</code>, mỗi giao dịch là một lệnh <code>UPDATE</code>. Cách của event sourcing: ba
+              dòng <code>Deposited(+50)</code>, <code>Deposited(+70)</code>, <code>Withdrawn(-20)</code>, và số 100 là
+              thứ ta cộng ra khi cần.
+            </p>
+
+            <p>
+              Khác biệt không nằm ở chỗ cách nào "đúng hơn" mà ở chỗ chúng
+              <strong>bảo toàn được gì và mất gì</strong>. Từ chuỗi sự kiện, luôn tính ra được trạng thái hiện tại. Từ
+              trạng thái hiện tại, <em>không thể</em> tái tạo lịch sử — thông tin đó đã bị lệnh <code>UPDATE</code> ghi
+              đè và không nằm ở đâu nữa cả. Phép biến đổi này một chiều, và toàn bộ giá trị của event sourcing nằm ở
+              chiều bị mất đó.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 280"
+                width="100%"
+                role="img"
+                aria-label="So sánh lưu trạng thái hiện tại và lưu chuỗi sự kiện cho cùng một tài khoản"
+              >
+                <rect width="720" height="280" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Cùng ba giao dịch — hai cách lưu, hai thứ còn lại sau cùng
+                </text>
+
+                <!-- luu trang thai -->
+                <rect x="16" y="40" width="688" height="98" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="28" y="58" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  LƯU TRẠNG THÁI — mỗi giao dịch là một UPDATE
+                </text>
+                <rect x="28" y="68" width="96" height="22" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="76"
+                  y="83"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  balance = 0
+                </text>
+                <text x="132" y="83" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="146" y="68" width="96" height="22" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="194"
+                  y="83"
+                  fill="#4b5563"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  balance = 50
+                </text>
+                <text x="250" y="83" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="264" y="68" width="96" height="22" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="312"
+                  y="83"
+                  fill="#4b5563"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  balance = 120
+                </text>
+                <text x="368" y="83" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="382" y="68" width="96" height="22" rx="3" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="430"
+                  y="83"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  balance = 100
+                </text>
+                <text x="500" y="83" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  ← chỉ ô này còn tồn tại
+                </text>
+                <text x="28" y="110" fill="#ef4444" font-family="system-ui, sans-serif" font-size="8">
+                  Ba ô mờ ở trên đã bị ghi đè. Không có cách nào biết số dư từng là 120, hay ai đã rút 20, hay lúc nào.
+                </text>
+                <text x="28" y="126" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Câu hỏi "tháng trước số dư trung bình là bao nhiêu" không trả lời được — dữ liệu để trả lời đã bị xoá.
+                </text>
+
+                <!-- luu su kien -->
+                <rect x="16" y="150" width="688" height="112" rx="6" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="28"
+                  y="168"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  LƯU SỰ KIỆN — chỉ có INSERT, không bao giờ UPDATE
+                </text>
+                <rect x="28" y="178" width="120" height="22" rx="3" fill="#0b0f19" stroke="#38bdf8" />
+                <text
+                  x="88"
+                  y="193"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  Deposited +50
+                </text>
+                <rect x="156" y="178" width="120" height="22" rx="3" fill="#0b0f19" stroke="#38bdf8" />
+                <text
+                  x="216"
+                  y="193"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  Deposited +70
+                </text>
+                <rect x="284" y="178" width="120" height="22" rx="3" fill="#0b0f19" stroke="#38bdf8" />
+                <text
+                  x="344"
+                  y="193"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  Withdrawn −20
+                </text>
+                <text x="414" y="193" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  cả ba đều còn nguyên
+                </text>
+                <line x1="88" y1="204" x2="88" y2="218" stroke="#22c55e" />
+                <line x1="216" y1="204" x2="216" y2="218" stroke="#22c55e" />
+                <line x1="344" y1="204" x2="344" y2="218" stroke="#22c55e" />
+                <line x1="88" y1="218" x2="344" y2="218" stroke="#22c55e" />
+                <line x1="216" y1="218" x2="216" y2="228" stroke="#22c55e" />
+                <polygon points="216,232 212,224 220,224" fill="#22c55e" />
+                <rect x="156" y="232" width="120" height="20" rx="3" fill="#0b0f19" stroke="#22c55e" />
+                <text
+                  x="216"
+                  y="246"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  gấp lại → 100
+                </text>
+                <text x="290" y="246" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Trạng thái là thứ TÍNH RA, không phải thứ được lưu. Muốn biết số dư ngày 3/7 thì gấp tới ngày đó.
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Từ log tính ra được trạng thái. Từ trạng thái không tính ngược lại được log — phép biến đổi này một
+                chiều.
+              </figcaption>
+            </figure>
+
+            <p>
+              Ba khả năng có được gần như miễn phí từ cách lưu này. <strong>Audit trail đầy đủ</strong>: mỗi thay đổi là
+              một dòng có thời điểm và nguyên nhân, không phải một trường <code>updated_at</code> nói rằng "có gì đó đã
+              đổi". <strong>Debug bằng cách tua lại</strong>: gấp log tới đúng thời điểm trước khi sự cố xảy ra rồi xem
+              trạng thái lúc đó, thay vì đoán từ log ứng dụng.
+              <strong>Trả lời câu hỏi chưa nghĩ tới lúc thiết kế</strong> — và đây là khả năng đáng giá nhất: khi bộ
+              phận kinh doanh hỏi "bao nhiêu người nạp tiền rồi rút hết trong vòng 24 giờ", với bảng trạng thái bạn phải
+              trả lời "chúng tôi không lưu dữ liệu đó"; với event log, câu trả lời đã nằm sẵn trong lịch sử.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: áp event sourcing cho CRUD thường</div>
+              <div class="callout__content">
+                Với một bảng cấu hình, một danh mục sản phẩm, một form hồ sơ người dùng —
+                <em>không ai</em> cần biết trường "mô tả" từng có nội dung gì ba tháng trước. Đổi lại, mọi lập trình
+                viên chạm vào phần đó phải hiểu event, projection, replay, versioning; mọi truy vấn đơn giản trở thành
+                một câu hỏi kiến trúc; và một câu <code>SELECT</code> mà lẽ ra là một dòng thì phải đi qua read model.
+                <br /><br />
+                Câu hỏi kiểm tra: <strong>có ai từng hỏi bạn "trước đây giá trị này là gì" chưa?</strong> Nếu chưa, và
+                không có ràng buộc pháp lý nào bắt lưu lịch sử, thì bạn đang trả một cái giá rất cao cho một khả năng
+                không ai dùng. Event sourcing thường chỉ đáng cho vài aggregate cốt lõi — tiền, đơn hàng, quyền hạn —
+                chứ không phải cho toàn hệ thống.
+              </div>
+            </div>
+
+            <!-- ================= 14.2 ================= -->
+            <h2>14.2 Sự kiện là sự thật bất biến</h2>
+
+            <p>
+              Một quy ước đặt tên rất nhỏ nhưng quyết định gần như mọi thứ phía sau: sự kiện được đặt tên ở
+              <strong>thì quá khứ</strong>. <code>OrderPlaced</code>, không phải <code>PlaceOrder</code>. Cái thứ hai là
+              một <em>command</em> — một yêu cầu, có thể bị từ chối, có thể thất bại. Cái thứ nhất là một
+              <em>fact</em> — nó đã xảy ra rồi, và không có cách nào làm nó chưa từng xảy ra.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Command</th>
+                  <th>Event</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Đặt tên</strong></td>
+                  <td><code>PlaceOrder</code>, <code>Withdraw</code></td>
+                  <td><code>OrderPlaced</code>, <code>Withdrawn</code></td>
+                </tr>
+                <tr>
+                  <td><strong>Có thể bị từ chối?</strong></td>
+                  <td>Có — validate, không đủ số dư, không đủ quyền</td>
+                  <td>Không — nó đã xảy ra rồi</td>
+                </tr>
+                <tr>
+                  <td><strong>Số người nhận</strong></td>
+                  <td>Đúng một — người xử lý nó</td>
+                  <td>Bao nhiêu cũng được — mỗi projection là một người nghe</td>
+                </tr>
+                <tr>
+                  <td><strong>Sửa sai bằng cách</strong></td>
+                  <td>Không gửi, hoặc gửi lại</td>
+                  <td>Ghi thêm <strong>sự kiện bù</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Dòng cuối là dòng hay bị vi phạm nhất. Khi phát hiện một sự kiện ghi sai số tiền, phản xạ tự nhiên là
+              <code>UPDATE</code> lại cho đúng. Đừng. Ghi thêm một sự kiện <code>AmountCorrected</code> — đúng như kế
+              toán chưa bao giờ tẩy xoá một bút toán mà luôn ghi một bút toán đảo. Lý do không phải sự thuần khiết mà
+              rất thực tế: mọi projection đã dựng từ sự kiện cũ vẫn đang tồn tại, và mọi projection sẽ dựng lại trong
+              tương lai sẽ đọc bản đã sửa. Hai thế giới đó không còn khớp nhau, và không ai truy được vì sao.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Cạm bẫy: chạy <code>UPDATE</code> lên bảng event để "sửa nhanh một lỗi"
+              </div>
+              <div class="callout__content">
+                Đây là lỗi phá huỷ triệt để nhất trong bài này, và nó luôn bắt đầu bằng ý định tốt: một sự kiện ghi sai,
+                sửa một dòng là xong. Nhưng toàn bộ mô hình đứng trên đúng một giả định — log là
+                <strong>bất biến</strong>. Bỏ giả định đó thì replay không còn tái lập được quá khứ, hai read model dựng
+                ở hai thời điểm khác nhau cho hai kết quả khác nhau, và audit trail — lý do chính bạn chọn event
+                sourcing — trở thành một thứ không tin được.<br /><br />
+                Phòng vệ rẻ nhất và hiệu quả nhất: <strong>thu hồi quyền</strong> <code>UPDATE</code> và
+                <code>DELETE</code> trên bảng event ở tầng database, để cả bạn cũng không làm được kể cả lúc 3 giờ sáng.
+                Toàn bộ <code>worker/eventstore.js</code> của lab này không có một lệnh <code>UPDATE</code> nào chạm vào
+                bảng <code>events</code> — đó là một ràng buộc tự đặt, và nó là điều kiện để mọi con số trong bài lặp
+                lại được.
+              </div>
+            </div>
+
+            <p>
+              Tính bất biến còn cho thêm một thứ miễn phí: <strong>khoá đồng thời lạc quan</strong>. Nếu mỗi sự kiện
+              mang số version trong aggregate của nó, và có ràng buộc <code>UNIQUE(aggregate, version)</code>, thì hai
+              tiến trình cùng đọc "tài khoản đang ở version 1" rồi cùng ghi version 2 sẽ có đúng một người thắng. Lab
+              chạy đúng tình huống đó:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ket_qua_concurrent.json</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-json">{
+  "role": "concurrent",
+  "ketQua": [
+    { "who": "A", "ketQua": "THANG — su kien duoc ghi" },
+    { "who": "B", "ketQua": "THUA — bi tu choi",
+      "loi": "postgres: duplicate key value violates unique constraint \"events_aggregate_version_key\"" }
+  ],
+  "soSuKienCuoiCung": 2,
+  "ghiChu": "Dung 2 su kien: version 1 va version 2. Nguoi thua KHONG de mat du lieu cua nguoi thang."
+}</code></pre>
+            </div>
+
+            <p>
+              Đáng so sánh với bảng trạng thái thông thường: hai lệnh <code>UPDATE balance = ...</code> chạy cùng lúc
+              thì lệnh sau đè lên lệnh trước, cả hai đều báo thành công, và
+              <strong>không ai biết một thay đổi đã biến mất</strong>. Ở đây người thua nhận lỗi ngay lập tức — mà "nhận
+              lỗi ngay" là thứ xử lý được: đọc lại version mới nhất, áp lại luật nghiệp vụ, thử lại. Đây chính là lost
+              update mà <a href="sysdesign-distributed-lock">Bài 10</a> phải dùng distributed lock để tránh; ở đây nó
+              được chặn bởi một ràng buộc <code>UNIQUE</code>, không cần lock nào cả.
+            </p>
+
+            <!-- ================= 14.3 ================= -->
+            <h2>14.3 Projection: đọc log, dựng bảng đọc</h2>
+
+            <p>
+              Không ai truy vấn thẳng vào event log để hiển thị giao diện — gấp lại mấy nghìn sự kiện cho mỗi lần tải
+              trang là không khả thi. Thay vào đó, một <strong>projection worker</strong> đọc log và dựng nên các bảng
+              đã tối ưu sẵn cho từng màn hình. Bảng số dư là một projection. Danh sách giao dịch gần đây là một
+              projection khác. Báo cáo tháng là projection thứ ba. Cả ba dựng từ <em>cùng một</em> log.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 300"
+                width="100%"
+                role="img"
+                aria-label="Một event log sinh ra nhiều read model, và quy trình sửa lỗi projection bằng cách replay lại"
+              >
+                <rect width="720" height="300" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Một log — nhiều read model — và cách sửa lỗi bằng replay
+                </text>
+
+                <!-- log -->
+                <rect x="16" y="42" width="150" height="150" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="91"
+                  y="62"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  text-anchor="middle"
+                  font-weight="600"
+                >
+                  EVENT LOG
+                </text>
+                <text
+                  x="91"
+                  y="78"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  append-only
+                </text>
+                <rect x="30" y="88" width="122" height="15" rx="2" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="91"
+                  y="99"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  seq 1 · Deposited
+                </text>
+                <rect x="30" y="107" width="122" height="15" rx="2" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="91"
+                  y="118"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  seq 2 · Withdrawn
+                </text>
+                <rect x="30" y="126" width="122" height="15" rx="2" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="91"
+                  y="137"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  seq 3 · Deposited
+                </text>
+                <text
+                  x="91"
+                  y="156"
+                  fill="#4b5563"
+                  font-family="system-ui, sans-serif"
+                  font-size="9"
+                  text-anchor="middle"
+                >
+                  ⋮
+                </text>
+                <text
+                  x="91"
+                  y="176"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  200.000 sự kiện
+                </text>
+
+                <!-- projections -->
+                <line x1="166" y1="90" x2="228" y2="72" stroke="#9ca3af" />
+                <polygon points="232,71 224,69 225,76" fill="#9ca3af" />
+                <line x1="166" y1="117" x2="228" y2="117" stroke="#9ca3af" />
+                <polygon points="232,117 224,114 224,120" fill="#9ca3af" />
+                <line x1="166" y1="144" x2="228" y2="162" stroke="#9ca3af" />
+                <polygon points="232,163 225,158 224,165" fill="#9ca3af" />
+
+                <rect x="234" y="56" width="170" height="34" rx="5" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="319"
+                  y="70"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  read_balances
+                </text>
+                <text
+                  x="319"
+                  y="83"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  cho màn hình tài khoản
+                </text>
+
+                <rect x="234" y="100" width="170" height="34" rx="5" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="319"
+                  y="114"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  recent_transactions
+                </text>
+                <text
+                  x="319"
+                  y="127"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  cho màn hình lịch sử
+                </text>
+
+                <rect
+                  x="234"
+                  y="144"
+                  width="170"
+                  height="34"
+                  rx="5"
+                  fill="#151d30"
+                  stroke="#38bdf8"
+                  stroke-dasharray="4 3"
+                />
+                <text
+                  x="319"
+                  y="158"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  monthly_report
+                </text>
+                <text
+                  x="319"
+                  y="171"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  thêm hôm nay — replay là có ngay
+                </text>
+
+                <!-- replay flow -->
+                <rect x="16" y="208" width="688" height="76" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text
+                  x="28"
+                  y="226"
+                  fill="#f59e0b"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  Phát hiện projection tính sai thuế từ 6 tháng trước — sửa thế nào?
+                </text>
+                <rect x="28" y="236" width="140" height="20" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="98"
+                  y="250"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  ① sửa code projection
+                </text>
+                <text x="174" y="250" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="188" y="236" width="140" height="20" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="258"
+                  y="250"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  ② xoá read model
+                </text>
+                <text x="334" y="250" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="348" y="236" width="140" height="20" rx="3" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="418"
+                  y="250"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  ③ replay từ đầu
+                </text>
+                <text x="500" y="250" fill="#22c55e" font-family="system-ui, sans-serif" font-size="8">
+                  235 ms cho 200.000 sự kiện
+                </text>
+                <text x="28" y="272" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Không có event log thì bước ③ không tồn tại: dữ liệu sai là dữ liệu duy nhất bạn có, và phải sửa tay
+                  từng dòng.
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Read model là thứ dùng một lần rồi vứt được. Đó là điều làm nên khác biệt khi có bug.
+              </figcaption>
+            </figure>
+
+            <p>Lab đo cả hai cách dựng read model từ 200.000 sự kiện:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cách replay</th>
+                  <th>Thời gian</th>
+                  <th>Tốc độ</th>
+                  <th>Khi nào đúng với thực tế</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Một câu <code>SQL GROUP BY</code></td>
+                  <td>43 ms</td>
+                  <td>~4,6 triệu sự kiện/s</td>
+                  <td>Chỉ khi projection gấp gọn được thành một phép tổng hợp</td>
+                </tr>
+                <tr>
+                  <td>Kéo về ứng dụng rồi gấp trong code</td>
+                  <td>235 ms <em>(174 ms là kéo dữ liệu)</em></td>
+                  <td>~850 nghìn sự kiện/s</td>
+                  <td>Sát thực tế hơn — projection thật có luật nghiệp vụ, rẽ nhánh theo loại sự kiện</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Con số cần mang theo là con số thứ hai, và nó nói điều này: ở quy mô hàng trăm nghìn sự kiện, dựng lại
+              toàn bộ read model là chuyện của <em>vài trăm mili giây</em>. Ở quy mô hàng trăm triệu, cùng tốc độ đó cho
+              ra vài phút. Cả hai đều nằm trong khoảng "chạy được trong giờ làm việc", chứ không phải "phải xin lịch bảo
+              trì". Đó là lý do câu "sửa bug rồi replay lại" là một câu nói thật chứ không phải khẩu hiệu.
+            </p>
+
+            <p>
+              Nhưng nó chỉ thật khi projection <strong>idempotent</strong>. Lab chạy đúng một projection ngây thơ — loại
+              chỉ cộng dồn mọi sự kiện nó đọc được — rồi cho chạy lần thứ hai:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">ket_qua_replay2x.json</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-json">// IDEMPOTENT=0 — projection ngay tho
+{
+  "soSuKienTrongLog": 200000,
+  "dungPhaiLa": 4566446,
+  "lan1": { "eventsApplied": 200000, "ms": 44, "tongSoDu": 4566446 },
+  "lan2": { "eventsApplied": 200000, "ms": 39, "tongSoDu": 9132892 },
+  "ketLuan": "SAI — read model lech 4566446 (gap 2.00 lan)"
+}
+
+// IDEMPOTENT=1 — co checkpoint `projection_state.last_seq`
+{
+  "lan1": { "eventsApplied": 200000, "ms": 43, "tongSoDu": 4566446 },
+  "lan2": { "eventsApplied": 0,      "ms": 1,  "tongSoDu": 4566446 },
+  "ketLuan": "DUNG — replay bao nhieu lan cung ra cung ket qua"
+}</code></pre>
+            </div>
+
+            <p>
+              Chi tiết đáng sợ nhất không phải con số gấp đôi mà là dòng <code>"ms": 39</code>: lần chạy sai
+              <em>thành công</em>, nhanh hơn cả lần đầu, không một cảnh báo nào. Read model chỉ đơn giản là sai từ giây
+              đó trở đi. Bản idempotent thì lần thứ hai áp <strong>0 sự kiện</strong> và kết thúc trong 1 ms — vì nó nhớ
+              được mình đã xử lý tới <code>seq</code> nào.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: projection không idempotent</div>
+              <div class="callout__content">
+                Bạn sẽ replay <em>ngoài ý muốn</em>, không phải theo kế hoạch. Worker bị restart giữa chừng, deploy chạy
+                hai bản cùng lúc trong vài giây, một job cron chạy đè lên chính nó, message queue giao lại một sự kiện
+                đã giao (<a href="sysdesign-message-queue">Bài 12</a> — at-least-once là tất yếu). Mọi tình huống đó đều
+                dẫn tới cùng một chuyện: một sự kiện được áp hai lần.<br /><br />
+                Đây chính xác là lý do <a href="sysdesign-idempotency">Bài 11</a> phải học trước bài này. Hai cách rẻ
+                nhất để có tính idempotent: lưu <strong>checkpoint</strong> (<code>last_seq</code> đã xử lý, như lab
+                làm), hoặc viết phép cập nhật ở dạng <strong>đặt giá trị</strong> thay vì
+                <strong>cộng dồn</strong> (<code>SET balance = &lt;tổng tính lại&gt;</code> thay vì
+                <code>SET balance = balance + x</code>). Phép cộng dồn là thứ không bao giờ idempotent.
+              </div>
+            </div>
+
+            <!-- ================= 14.4 ================= -->
+            <h2>14.4 CQRS: tách đường ghi khỏi đường đọc</h2>
+
+            <p>
+              Khi đã có event log và projection, hệ thống tự nhiên tách thành hai nửa với hai bộ yêu cầu khác hẳn nhau.
+              CQRS (Command Query Responsibility Segregation) chỉ là tên gọi của việc thừa nhận sự tách đó và thiết kế
+              cho đúng nó.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Đường GHI (command)</th>
+                  <th>Đường ĐỌC (query)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Việc phải làm</strong></td>
+                  <td>Validate luật nghiệp vụ, sinh sự kiện, append</td>
+                  <td>Đọc bảng đã dựng sẵn cho đúng màn hình</td>
+                </tr>
+                <tr>
+                  <td><strong>Tối ưu cho</strong></td>
+                  <td>Tính đúng đắn và thứ tự</td>
+                  <td>Tốc độ đọc — được phép trùng lặp dữ liệu thoải mái</td>
+                </tr>
+                <tr>
+                  <td><strong>Scale thế nào</strong></td>
+                  <td>Khó — phải giữ thứ tự trong mỗi aggregate</td>
+                  <td>Dễ — nhân bản bao nhiêu bản đọc cũng được (Bài 7)</td>
+                </tr>
+                <tr>
+                  <td><strong>Nhất quán</strong></td>
+                  <td>Mạnh — ràng buộc do database thực thi</td>
+                  <td><strong>Nhất quán cuối</strong> — luôn trễ sau log một nhịp</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Dòng cuối là dòng phải trả giá. Read model được dựng <em>sau khi</em> sự kiện đã ghi, nên luôn có một
+              khoảng thời gian mà log đã có sự kiện còn bảng đọc thì chưa. Khoảng đó thường vài mili giây và không ai để
+              ý — trừ đúng một người: chính người vừa bấm nút.
+            </p>
+
+            <figure style="margin: 28px 0">
+              <svg
+                viewBox="0 0 720 260"
+                width="100%"
+                role="img"
+                aria-label="Đường ghi và đường đọc trong CQRS, và khoảng trễ nhất quán cuối giữa hai đường"
+              >
+                <rect width="720" height="260" fill="#0b0f19" rx="8" />
+                <text x="16" y="24" fill="#f3f4f6" font-family="system-ui, sans-serif" font-size="13" font-weight="600">
+                  Hai đường tách hẳn nhau — và khoảng trễ nằm ở giữa
+                </text>
+
+                <!-- duong ghi -->
+                <rect x="16" y="42" width="330" height="96" rx="6" fill="#151d30" stroke="#f59e0b" />
+                <text x="28" y="60" fill="#f59e0b" font-family="system-ui, sans-serif" font-size="10" font-weight="600">
+                  ĐƯỜNG GHI — command
+                </text>
+                <rect x="28" y="70" width="86" height="20" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="71"
+                  y="84"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  Withdraw(20)
+                </text>
+                <text x="120" y="84" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="134" y="70" width="86" height="20" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="177"
+                  y="84"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  validate luật
+                </text>
+                <text x="226" y="84" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="240" y="70" width="94" height="20" rx="3" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="287"
+                  y="84"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  append Withdrawn
+                </text>
+                <text x="28" y="110" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Nhất quán MẠNH: UNIQUE(aggregate, version) do database thực thi.
+                </text>
+                <text x="28" y="126" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Khó scale: thứ tự trong mỗi aggregate phải giữ nguyên.
+                </text>
+
+                <!-- duong doc -->
+                <rect x="374" y="42" width="330" height="96" rx="6" fill="#151d30" stroke="#38bdf8" />
+                <text
+                  x="386"
+                  y="60"
+                  fill="#38bdf8"
+                  font-family="system-ui, sans-serif"
+                  font-size="10"
+                  font-weight="600"
+                >
+                  ĐƯỜNG ĐỌC — query
+                </text>
+                <rect x="386" y="70" width="86" height="20" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="429"
+                  y="84"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  GET /balance
+                </text>
+                <text x="478" y="84" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="492" y="70" width="98" height="20" rx="3" fill="#0b0f19" stroke="#4b5563" />
+                <text
+                  x="541"
+                  y="84"
+                  fill="#9ca3af"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  read_balances
+                </text>
+                <text x="596" y="84" fill="#4b5563" font-family="system-ui, sans-serif" font-size="9">→</text>
+                <rect x="610" y="70" width="82" height="20" rx="3" fill="#0f2419" stroke="#22c55e" />
+                <text
+                  x="651"
+                  y="84"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="7"
+                  text-anchor="middle"
+                >
+                  1 truy vấn
+                </text>
+                <text x="386" y="110" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Nhất quán CUỐI: bảng này được dựng SAU khi sự kiện đã ghi.
+                </text>
+                <text x="386" y="126" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Dễ scale: nhân bao nhiêu bản đọc cũng được, dữ liệu trùng lặp thoải mái.
+                </text>
+
+                <!-- khoang tre -->
+                <line x1="290" y1="138" x2="290" y2="164" stroke="#22c55e" />
+                <polygon points="290,168 286,160 294,160" fill="#22c55e" />
+                <line x1="290" y1="168" x2="540" y2="168" stroke="#22c55e" stroke-dasharray="3 3" />
+                <line x1="540" y1="168" x2="540" y2="138" stroke="#22c55e" />
+                <polygon points="540,134 536,142 544,142" fill="#22c55e" />
+                <text
+                  x="415"
+                  y="162"
+                  fill="#22c55e"
+                  font-family="system-ui, sans-serif"
+                  font-size="8"
+                  text-anchor="middle"
+                >
+                  projection worker
+                </text>
+
+                <rect x="16" y="184" width="688" height="60" rx="6" fill="#2a1520" stroke="#ef4444" />
+                <text x="28" y="202" fill="#ef4444" font-family="system-ui, sans-serif" font-size="9" font-weight="600">
+                  Khoảng giữa hai đường là chỗ người vừa bấm nút rơi vào
+                </text>
+                <text x="28" y="220" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  Sự kiện đã nằm trong log — nhưng bảng đọc chưa kịp cập nhật. Người dùng tải lại trang và thấy số dư
+                  cũ,
+                </text>
+                <text x="28" y="234" fill="#9ca3af" font-family="system-ui, sans-serif" font-size="8">
+                  kết luận "giao dịch thất bại", rồi bấm lại lần nữa. Không có cách ghim-về-primary nào cứu được ở đây.
+                </text>
+              </svg>
+              <figcaption
+                style="text-align: center; color: #94a3b8; font-size: 0.85rem; margin-top: 8px; font-style: italic"
+              >
+                Read model không phải bản sao chậm của bảng ghi — nó có cấu trúc khác hẳn, nên bản vá của Bài 7 không áp
+                dụng được.
+              </figcaption>
+            </figure>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">🚨 Đây chính là bug read-your-writes của Bài 7, ở tầng kiến trúc</div>
+              <div class="callout__content">
+                <a href="sysdesign-replication">Bài 7</a> gặp đúng hiện tượng này giữa primary và replica: ghi xong đọc
+                ngay lại thấy dữ liệu cũ. Ở đó có một bản vá gọn — ghim lệnh đọc của người vừa ghi về primary trong vài
+                trăm mili giây.<br /><br />
+                Với CQRS thì <strong>bản vá đó không tồn tại</strong>, vì read model không phải bản sao chậm của bảng
+                ghi — nó có <em>cấu trúc hoàn toàn khác</em>, và không có "primary" nào để ghim về. Ba cách thường dùng
+                thay thế: (1) đường ghi trả về luôn kết quả đã tính, giao diện dùng nó mà không đọc lại; (2)
+                <strong>optimistic update</strong> — giao diện tự vẽ trạng thái mới rồi đồng bộ sau; (3) đường ghi trả
+                về số version, giao diện chờ read model đạt tới version đó rồi mới đọc. Điểm chung: cả ba đều phải thiết
+                kế <em>từ đầu</em> ở tầng giao diện, không vá được sau.
+              </div>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 CQRS không bắt buộc đi kèm event sourcing</div>
+              <div class="callout__content">
+                Hai khái niệm này bị gộp làm một quá thường xuyên. Bạn hoàn toàn có thể làm CQRS trên một database quan
+                hệ bình thường: đường ghi làm việc với bảng chuẩn hoá, đường đọc dùng vài bảng phi chuẩn hoá được cập
+                nhật bằng trigger hoặc job nền. Đó vẫn là CQRS, và nó rẻ hơn nhiều.<br /><br />
+                Chiều ngược lại cũng đúng: có event sourcing mà không CQRS cũng được, nếu bạn chỉ cần một read model duy
+                nhất. Cái đắt là event sourcing, không phải CQRS — nên nếu vấn đề của bạn chỉ là "đọc chậm", hãy thử
+                CQRS trước và giữ nguyên cách lưu trạng thái.
+              </div>
+            </div>
+
+            <!-- ================= 14.5 ================= -->
+            <h2>14.5 Vận hành thật: snapshot, đổi schema, và những gì bạn mất</h2>
+
+            <p>
+              Mục 14.3 nói replay 200.000 sự kiện mất 235 ms. Nhưng đó là replay
+              <em>toàn bộ hệ thống</em> để dựng read model — một việc hiếm. Việc thường xuyên hơn là đọc trạng thái hiện
+              tại của <em>một</em> aggregate để xử lý một command, và khi một aggregate tích luỹ hàng chục nghìn sự
+              kiện, gấp lại từ đầu mỗi lần là không chấp nhận được. Snapshot là câu trả lời: lưu sẵn trạng thái tại
+              version N, rồi chỉ gấp phần sự kiện sau đó.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Aggregate</th>
+                  <th>Gấp lại toàn bộ</th>
+                  <th>Snapshot + phần đuôi</th>
+                  <th>Kết quả</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Dài</strong> — 100.000 sự kiện, snapshot tại v90.000</td>
+                  <td>7,398 ms</td>
+                  <td><strong>1,120 ms</strong></td>
+                  <td>Nhanh hơn <strong>6,6 lần</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Ngắn</strong> — 200 sự kiện, snapshot tại v180</td>
+                  <td><strong>0,377 ms</strong></td>
+                  <td>0,981 ms</td>
+                  <td><strong>Chậm hơn 2,6 lần</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Kết quả thứ hai là kết quả đáng nhớ hơn. Với aggregate ngắn, snapshot
+              <em>làm chậm đi</em> — vì nó thêm một vòng truy vấn nữa (đọc snapshot rồi mới đọc phần đuôi), và chi phí
+              vòng đó lớn hơn phần tiết kiệm được. Snapshot không phải bước bắt buộc của event sourcing; nó là tối ưu có
+              điều kiện, và điều kiện là aggregate phải đủ dài. Cách làm đúng là đo phân bố độ dài aggregate của chính
+              bạn rồi đặt ngưỡng, thay vì bật snapshot cho tất cả.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Snapshot là cache, và mọi luật của cache đều áp dụng</div>
+              <div class="callout__content">
+                Snapshot có thể xoá bất cứ lúc nào mà không mất dữ liệu — dựng lại từ log là được. Điều đó có nghĩa nó
+                là một <strong>cache</strong>, và toàn bộ <a href="sysdesign-caching">Bài 5</a> áp dụng nguyên vẹn: nó
+                cần chiến lược vô hiệu hoá (đổi luật gấp sự kiện thì mọi snapshot cũ thành rác), nó có thể bị lệch
+                (snapshot ghi từ một bản code có bug thì mọi lần đọc sau đều mang theo bug đó), và nó tốn dung lượng lưu
+                trữ.<br /><br />
+                Hệ quả thực tế quan trọng nhất: khi bạn sửa logic gấp sự kiện, phải
+                <strong>xoá toàn bộ snapshot</strong>
+                cùng lúc với việc deploy. Quên bước này thì hệ thống sẽ trộn lẫn trạng thái tính bằng luật cũ (từ
+                snapshot) với sự kiện gấp bằng luật mới (phần đuôi) — một loại sai rất khó phát hiện vì nó chỉ xuất hiện
+                ở những aggregate đã có snapshot.
+              </div>
+            </div>
+
+            <p>
+              Vấn đề vận hành thứ hai là <strong>schema của sự kiện đổi theo thời gian</strong>. Sự kiện năm ngoái có
+              trường <code>amount</code> tính bằng đồng; năm nay bạn thêm <code>currency</code>. Log là bất biến nên
+              không thể sửa các sự kiện cũ — thay vào đó, mã đọc phải hiểu được cả hai định dạng, thường bằng một lớp
+              <strong>upcasting</strong>: đọc sự kiện phiên bản cũ và nâng nó lên dạng mới ngay lúc nạp. Lớp đó
+              <em>chỉ lớn dần</em> theo năm tháng và không bao giờ xoá được — đó là một khoản nợ có thật, cần tính vào
+              chi phí ngay từ lúc quyết định.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: mất khả năng truy vấn tuỳ ý</div>
+              <div class="callout__content">
+                Với bảng trạng thái, câu hỏi "tài khoản nào có số dư âm" là một câu
+                <code>WHERE balance &lt; 0</code>. Với event log thuần, câu hỏi đó không có câu trả lời trực tiếp — số
+                dư không tồn tại ở đâu cả cho tới khi có ai gấp log lại. Bạn chỉ trả lời được những câu hỏi mà bạn
+                <strong>đã dựng sẵn projection</strong> cho chúng.<br /><br />
+                Với người vận hành, điều này rất khó chịu: mỗi câu hỏi phát sinh lúc đang xử lý sự cố đều trở thành
+                "phải viết một projection mới rồi chờ replay". Cách giảm đau thông dụng là luôn duy trì một read model
+                dạng bảng "trạng thái hiện tại" phẳng, đủ giống mô hình quan hệ để truy vấn tuỳ ý được — nhưng lúc đó
+                bạn đang trả chi phí của cả hai mô hình cùng lúc, và đó là sự đánh đổi cần nói ra trước khi bắt đầu chứ
+                không phải sau.
+              </div>
+            </div>
+
+            <h3>Tự làm lại các phép đo</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tu_do_lai.sh</span>
+                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
+
+# --- Ghi 200.000 su kien vao log append-only ---
+./tools/eventstore-test.sh seed 200000     # 1802ms · 111.003 su kien/s
+
+# --- Projection chay LAI: idempotent hay khong quyet dinh tat ca ---
+./tools/eventstore-test.sh replay2x 0      # ngay tho:    lan2 -> 9.132.892 (GAP DOI)
+./tools/eventstore-test.sh replay2x 1      # idempotent:  lan2 -> 0 su kien, 1ms
+
+# --- Replay bang code ung dung: con so trung thuc hon mot cau GROUP BY ---
+./tools/eventstore-test.sh projectApp      # 200k su kien / 235ms (174ms la keo du lieu)
+
+# --- Snapshot chi dang gia voi aggregate DAI ---
+./tools/eventstore-test.sh snapshot        # 100k su kien: 7,398ms -> 1,120ms  (6,6x)
+./tools/eventstore-test.sh snapshot acc-0  # 200 su kien:  0,377ms -> 0,981ms  (CHAM hon)
+
+# --- Hai nguoi cung ghi version 2: UNIQUE(aggregate, version) chan lost update ---
+./tools/eventstore-test.sh concurrent      # A thang · B nhan loi duplicate key</code></pre>
+            </div>
+
+            <h3>Tóm lại</h3>
+
+            <p>
+              Event sourcing đổi câu hỏi "trạng thái hiện tại là gì" thành "những gì đã xảy ra". Phép biến đổi đó một
+              chiều: từ log luôn tính ra được trạng thái, từ trạng thái không dựng lại được log. Toàn bộ giá trị — audit
+              trail, tua lại để debug, trả lời câu hỏi chưa nghĩ tới lúc thiết kế — nằm ở chiều bị mất đó.
+            </p>
+
+            <p>
+              Cái giá cũng thật và phải nói cho đủ: mọi lập trình viên chạm vào phần đó phải hiểu thêm một mô hình; lớp
+              upcasting chỉ lớn dần theo năm tháng; và truy vấn tuỳ ý — thứ rẻ nhất với bảng quan hệ — trở thành "viết
+              projection mới rồi chờ replay". Đó là lý do event sourcing thường chỉ đáng cho vài aggregate cốt lõi chứ
+              không phải cho cả hệ thống.
+            </p>
+
+            <p>
+              Về vận hành, hai con số đáng mang theo. Replay 200.000 sự kiện bằng code ứng dụng mất
+              <strong>235 ms</strong> — đủ nhanh để "sửa bug rồi dựng lại read model" là việc làm trong giờ hành chính,
+              và đó chính là siêu năng lực của mô hình này. Nhưng nó chỉ đúng khi projection idempotent: bản ngây thơ
+              chạy lại lần hai cho ra số dư <strong>gấp đúng 2,00 lần</strong>, thành công, nhanh hơn cả lần đầu, không
+              một cảnh báo nào.
+            </p>
+
+            <p>
+              Và snapshot không phải bước bắt buộc mà là tối ưu có điều kiện: nhanh hơn 6,6 lần với aggregate 100.000 sự
+              kiện, nhưng <em>chậm hơn</em> 2,6 lần với aggregate 200 sự kiện. Nó là một cache, nên mọi luật của cache ở
+              Bài 5 áp dụng nguyên vẹn — kể cả luật khó chịu nhất: đổi logic thì phải xoá sạch snapshot cùng lúc deploy.
+            </p>
+
+            <p>
+              <strong>Bài 15</strong> lùi lại một bước để nhìn toàn cảnh: sau khi đã tự trả giá cho network hop, lock
+              phân tán, idempotency và nhất quán cuối, ta mới đủ dữ kiện để đánh giá câu hỏi mà mọi đội đều gặp — nên
+              tách hệ thống thành microservices hay không, và tách thì mất gì. Lần này cái giá sẽ được <em>đo</em>,
+              không phải phỏng đoán.
+            </p>
+
+            <div style="margin: 32px 0; text-align: center">
+              <a
+                href="sysdesign-lab/worker/eventstore.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Tải về eventstore.js (event log, projection, snapshot — 0 dependency)
+              </a>
+            </div>
+            <!-- Related Links Block -->
+            <div class="article-related">
+              <h2>Bài viết liên quan trong series</h2>
+              <div class="article-related__links">
+                <a href="sysdesign-rate-limiting" class="article-related__link article-related__link--prev">
+                  Bài 13: Rate Limiting &amp; Backpressure
+                </a>
+                <a href="sysdesign-monolith-microservices" class="article-related__link article-related__link--next">
+                  Bài 15: Monolith vs Microservices
+                </a>
+                <a href="sysdesign-programming-series" class="article-related__link">
+                  Quay lại Lộ trình Thiết Kế Hệ Thống
+                </a>
+              </div>
+            </div>
+
+            <!-- Comments Section -->
+            <div
+              class="article-comments"
+              style="margin-top: 48px; border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 8px"
+            >
+              <h2>Bình luận</h2>
+              <div class="giscus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p data-i18n="footer.copy">© <span id="year"></span> js-tools — Built with ❤️ and open web standards.</p>
+        <nav class="footer-groups" aria-label="Footer navigation">
+          <div class="footer-group">
+            <h4 data-i18n="footer.tools">Tools &amp; services</h4>
+            <a href="https://image-optimizer.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(255,85,119,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#ff5577" opacity="0.4" />
+                    <rect x="120" y="6" width="58" height="22" rx="11" fill="#ff4d4f" opacity="0.9" />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(64,169,255,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <path d="M0 110 L50 70 L90 95 L130 60 L180 100 L180 140 L0 140 Z" fill="#40a9ff" opacity="0.45" />
+                    <rect x="124" y="6" width="54" height="22" rx="11" fill="#52c41a" opacity="0.95" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.imageOptimizer">Image Optimizer</span>
+            </a>
+            <a href="https://snapcast.js-tools.org" target="_blank" class="footer-link">
+              <img
+                src="../../assets/snapcast.svg"
+                alt=""
+                width="124"
+                height="24"
+                aria-hidden="true"
+                style="flex-shrink: 0; background: white; border-radius: 2px; padding: 1px 3px; opacity: 0.85"
+              />
+            </a>
+            <a href="https://qr.js-tools.org" class="footer-link" target="_blank">
+              <svg
+                viewBox="0 0 320 320"
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0"
+              >
+                <g transform="translate(0 20)">
+                  <g transform="translate(20 30) rotate(-6)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(5,150,105,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <g transform="translate(120 110) rotate(4)">
+                    <rect
+                      width="180"
+                      height="140"
+                      rx="14"
+                      fill="rgba(6,182,212,0.18)"
+                      stroke="rgba(255,255,255,0.2)"
+                      stroke-width="2"
+                    />
+                    <rect x="25" y="25" width="28" height="28" fill="#06b6d4" opacity="0.8" />
+                    <rect x="31" y="31" width="16" height="16" fill="#0a0f1e" />
+                    <rect x="35" y="35" width="8" height="8" fill="#06b6d4" />
+                  </g>
+                </g>
+              </svg>
+              <span data-i18n="nav.qr">QR Generator</span>
+            </a>
+            <a href="https://rmbg.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rmbg.svg"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rmbg">Remove BG</span>
+            </a>
+            <a href="https://colorquarium.js-tools.org" class="footer-link" target="_blank">
+              <img
+                src="../../assets/coloraquarium.png"
+                alt=""
+                width="18"
+                height="18"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.cq">ColorQuarium</span>
+            </a>
+            <a href="https://rubik.js-tools.org" class="footer-link" target="_blank" rel="noopener">
+              <img
+                src="../../assets/rubik.svg"
+                alt=""
+                width="16"
+                height="16"
+                aria-hidden="true"
+                style="flex-shrink: 0; border-radius: 3px"
+              />
+              <span data-i18n="nav.rubik">Rubik &amp; Pyraminx</span>
+            </a>
+            <a href="https://vay.js-tools.org" target="_blank" class="footer-link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="12" fill="#3f51b5" />
+                <rect x="14" y="10" width="36" height="44" rx="4" fill="#ffffff" />
+                <rect x="19" y="16" width="26" height="8" rx="2" fill="#3f51b5" />
+                <g fill="#3f51b5">
+                  <circle cx="22" cy="32" r="2.5" />
+                  <circle cx="32" cy="32" r="2.5" />
+                  <circle cx="42" cy="32" r="2.5" />
+                  <circle cx="22" cy="40" r="2.5" />
+                  <circle cx="32" cy="40" r="2.5" />
+                  <circle cx="42" cy="40" r="2.5" />
+                  <circle cx="22" cy="48" r="2.5" />
+                  <circle cx="32" cy="48" r="2.5" />
+                  <circle cx="42" cy="48" r="2.5" />
+                </g>
+              </svg>
+
+              <span data-i18n="nav.loan">Loan Calculation Tool</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.explore">Explore</h4>
+            <a href="/blog/" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <span data-i18n="nav.blog">Blog</span>
+            </a>
+            <a href="/resume" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">💼</span>
+              <span data-i18n="nav.portfolio">Resume</span>
+            </a>
+            <a href="/about" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">ℹ️</span>
+              <span data-i18n="nav.about">About</span>
+            </a>
+            <a href="/contact" class="footer-link">
+              <span aria-hidden="true" style="opacity: 0.6">✉️</span>
+              <span data-i18n="nav.contact">Contact</span>
+            </a>
+            <a href="/donate" class="footer-link">
+              ☕
+              <span data-i18n="nav.donate">Donate</span>
+            </a>
+          </div>
+          <div class="footer-group">
+            <h4 data-i18n="footer.legal">Legal</h4>
+            <a href="/privacy" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span data-i18n="nav.privacy">Privacy Policy</span>
+            </a>
+            <a href="/terms" class="footer-link">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style="flex-shrink: 0; opacity: 0.6"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <span data-i18n="nav.terms">Terms of Service</span>
+            </a>
+          </div>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="../../i18n.js"></script>
+    <script src="../blog.js"></script>
+    <script src="../ide.js"></script>
+  </body>
+</html>
