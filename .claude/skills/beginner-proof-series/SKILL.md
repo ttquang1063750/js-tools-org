@@ -84,6 +84,13 @@ English file is any good (it only checks existence), and whether the Vietnamese
 lesson has already had its beginner-proof pass. If a lesson was translated before
 this skill existed, check it by hand before treating it as done.
 
+**Trust the script over the conversation.** In a long session the conversation's
+picture of progress goes stale — after a context handover it can be several
+lessons behind, and acting on it means redoing work that is already committed.
+Run the script and read `git log` first, every time. It has already caught this
+once: the conversation said lesson 4 was next when lessons 4 and 5 were both
+committed and lesson 6 was the real next one.
+
 ## The seven things that block a beginner
 
 Work through a lesson looking for these specifically. They are ordered by how
@@ -300,7 +307,14 @@ Paths, for a lesson at `blog/<series>/<slug>.html` whose English twin lives at
 - **Cross-lesson links resolve inside the same locale.** The `next` link must be a
   `--locked` span until that lesson's English twin exists — a live href to a
   missing page is worse than an honest "coming soon".
-- **Register the new page** in `sitemap.xml` and `blog/search-index.json`.
+- **Register the new page** in `sitemap.xml` and `blog/search-index.json`. Check
+  whether the series hub itself has an entry in the search index — the AIE hub was
+  missing one while nine other series hubs had theirs.
+- **Rebuild the translated hub.** Its lesson cards encode which lessons have an
+  English version, so every lesson that lands makes the hub stale: it keeps
+  advertising the new lesson as untranslated. This was missed for two consecutive
+  lessons before anyone noticed. Rebuilding also re-runs the guard that the hub's
+  card title matches the page's actual `<h1>` — they had already drifted once.
 
 The series hub is not a lesson and is translated separately. Until it is, English
 lessons link back to the Vietnamese hub; say so rather than leaving it silent.
