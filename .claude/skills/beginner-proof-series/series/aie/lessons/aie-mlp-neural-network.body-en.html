@@ -1,0 +1,422 @@
+            <p class="article-lead">
+              Now that Lesson 4 has shown how PyTorch manages tensors and computes derivatives automatically, we are
+              ready to assemble our first real deep-learning model: a
+              <strong>Multi-Layer Perceptron (MLP)</strong>.
+            </p>
+
+            <p>
+              This lesson covers the mathematics of a single artificial neuron, how those neurons stack into a
+              multi-layer network, why non-linear activation functions are not optional, and how to initialise weights
+              so the network can actually start learning.
+            </p>
+
+            <h2>5.1 The artificial neuron: from linear to non-linear</h2>
+            <p>
+              An artificial neuron takes a vector of inputs $X = [x_1, x_2, ..., x_n]$, multiplies them by matching
+              weights $W = [w_1, w_2, ..., w_n]$, adds a bias $b$, and pushes the total through a
+              <strong>non-linear activation function</strong> $f$:
+            </p>
+            $$a = f\left( \sum_{i=1}^n w_i x_i + b \right) = f(W \cdot X + b)$$
+
+            <p>
+              If that formula looks familiar, it should: drop $f$ and it is exactly linear regression. A single neuron
+              like this has its own name — the <strong>Perceptron</strong>, proposed by Frank Rosenblatt in 1958 — and
+              for years it was expected to be the foundation of artificial intelligence.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">
+                🧠 One Perceptron can only draw one straight line — and why that froze the field
+              </div>
+              <div class="callout__content">
+                A Perceptron classifies by asking one question: is $W \cdot X + b$ positive or negative? The boundary
+                between those two answers is the set of points where $W \cdot X + b = 0$ — in two dimensions a
+                <strong>straight line</strong>, and in $n$ dimensions a hyperplane. In other words, a single Perceptron
+                can only separate data you could split with <em>one straight cut</em>. <br /><br />
+                In 1969, Marvin Minsky and Seymour Papert pointed out that even the XOR function — just four data points
+                — has no straight cut that separates it. That blow contributed to a long stall in neural network
+                research, usually called the first "AI winter".
+                <br /><br />
+                The fix turned out to have exactly two parts, and both are in this lesson:
+                <strong>stack multiple layers of perceptrons</strong> (the MLP of section 5.2), and
+                <strong>insert a non-linearity between the layers</strong> — because, as the next part proves, without
+                the second part the first is completely pointless.
+              </div>
+            </div>
+
+            <p>Why do we need the non-linear activation $f$ at all?</p>
+            <p>
+              Real datasets have complicated decision boundaries — the classic XOR problem, or two concentric circles.
+              Without a non-linear $f$, no matter how many linear layers you stack, the whole thing is mathematically
+              equivalent to a single linear multiplication:
+            </p>
+            $$y = W_2 \cdot (W_1 \cdot X + b_1) + b_2 = (W_2 \cdot W_1) \cdot X + (W_2 \cdot b_1 + b_2) = W_{\text{new}}
+            \cdot X + b_{\text{new}}$$
+            <p>Without a non-linearity, a neural network loses all ability to approximate non-linear functions.</p>
+
+            <p>
+              Here are the three activation functions you will meet most often. Note the red bands at both ends of
+              Sigmoid and Tanh — those are the <em>saturation regions</em>, where the curve goes flat, and a flat curve
+              means a derivative of zero:
+            </p>
+
+            {{SVG:1}}
+
+            <p>
+              The trade-off is visible in the picture. Sigmoid and Tanh are smooth in the middle but dead flat at both
+              ends — and flat means zero gradient, which means no more learning. ReLU is just two straight segments, far
+              cruder, but its right half has a slope of exactly 1 everywhere: a gradient can pass through any number of
+              layers without shrinking. The price is the left half, completely flat — the source of the "Dying ReLU"
+              problem below.
+            </p>
+
+            <p>In detail:</p>
+            <ul>
+              <li>
+                <strong>Sigmoid:</strong> $f(x) = \frac{1}{1 + e^{-x}}$. Squashes every output into $(0, 1)$, which
+                suits binary classification. Its big weakness is vanishing gradients: when the input is very large or
+                very small, the derivative approaches zero.
+              </li>
+              <li>
+                <strong>Tanh (hyperbolic tangent):</strong> $f(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}}$. Squashes into
+                $(-1, 1)$. It usually behaves better than Sigmoid in hidden layers because its output is centred on
+                zero, which speeds up optimisation in the following layer.
+              </li>
+              <li>
+                <strong>ReLU (Rectified Linear Unit):</strong> $f(x) = \max(0, x)$. Extremely simple — zero for
+                negatives, unchanged for positives — and the default for every hidden layer in modern networks. It
+                avoids vanishing gradients because the derivative is always 1 for positive inputs.
+                <br />
+                <em>Weakness: Dying ReLU.</em> If a neuron's input stays negative, it always outputs 0 and its gradient
+                is permanently 0, so the neuron is effectively "dead". The usual alternative is
+                <strong>Leaky ReLU</strong>: $f(x) = \max(\alpha x, x)$ with a small slope $\alpha \approx 0.01$.
+              </li>
+            </ul>
+
+            <p>
+              Some concrete numbers show how badly Sigmoid "vanishes" gradients. Its derivative is $f'(x) = f(x)(1 -
+              f(x))$, which peaks at exactly $0.25$ at $x=0$ and shrinks fast as $|x|$ grows:
+            </p>
+            {{CODE:vanishing_gradient_check.py}}
+            <p>
+              The last two lines are the alarming part. Note that
+              <strong>0.25 is the largest value the Sigmoid derivative can ever reach</strong> — it happens only at
+              exactly $x = 0$. So even in the <em>best possible case</em>, every Sigmoid layer cuts the gradient to a
+              quarter. Across 10 layers, the gradient reaching the first layer is $0.25^{10} \approx 9.5 \times 10^{-7}$
+              — roughly <strong>a million times</strong> smaller than it started. And that is the optimistic scenario;
+              shift the inputs slightly away from zero, say to $x = 2$, and the number falls to $1.6 \times 10^{-10}$.
+            </p>
+            <p>
+              With a learning rate around $10^{-3}$, a gradient that small changes the first layer's weights in the
+              tenth decimal place — which is to say <em>not at all</em> within 32-bit float precision. The first layer
+              sits frozen while the last layers train normally. This is the <strong>vanishing gradient</strong>
+              problem, and it is why ReLU — derivative exactly 1 for positive inputs, no shrinkage with depth — became
+              the default for every hidden layer in modern deep networks.
+            </p>
+
+            <h2>5.2 Assembling an MLP with PyTorch</h2>
+            <p>
+              A <strong>Multi-Layer Perceptron (MLP)</strong> stacks fully connected (linear) layers, where every neuron
+              in one layer connects to every neuron in the next. The forward computation at each layer is a matrix
+              multiplication: $$Z^{[l]} = W^{[l]} A^{[l-1]} + b^{[l]}$$ $$A^{[l]} = f(Z^{[l]})$$
+            </p>
+            <p>
+              In Lesson 4 we declared every weight by hand with <code>torch.randn((), requires_grad=True)</code> — fine
+              for four parameters. The network below has <strong>105</strong>, and a real one has millions. This is
+              where <code>torch.nn</code> comes in.
+            </p>
+
+            <p>
+              <code>torch.nn</code> (short for <em>neural networks</em>) is PyTorch's package of ready-made building
+              blocks. Three of them matter right now:
+            </p>
+
+            <ul>
+              <li>
+                <strong><code>nn.Linear(in, out)</code></strong> — a fully connected layer. Writing
+                <code>nn.Linear(2, 8)</code> means "take 2 numbers in, produce 8 out", and PyTorch
+                <em>creates for you</em> an $8 \times 2$ weight matrix and an 8-element bias vector, already flagged
+                with <code>requires_grad=True</code>. You declare no weights at all.
+              </li>
+              <li>
+                <strong><code>nn.ReLU()</code>, <code>nn.Sigmoid()</code></strong> — the activations from section 5.1,
+                wrapped as layers so they are easy to stack. They hold no learnable parameters.
+              </li>
+              <li>
+                <strong><code>nn.Sequential(...)</code></strong> — a container that runs layers back to back, each one's
+                output feeding the next. If you know Express, it is exactly a middleware chain.
+              </li>
+            </ul>
+
+            <p>
+              <strong><code>nn.Module</code></strong> is the base class every PyTorch model inherits from. Why a class
+              rather than a function? Because a model is not only a computation — it also <em>carries state</em>: all of
+              its weights. Inheriting from <code>nn.Module</code> gives you that for free:
+              <code>model.parameters()</code> lists every learnable weight (Lesson 6 hands that list straight to an
+              optimizer), <code>model.to(device)</code> moves the whole network to a GPU in one line, and
+              <code>model.state_dict()</code> saves and loads it.
+            </p>
+
+            <p>
+              That leaves you two jobs: declare the layers in <code>__init__</code>, and describe the order data flows
+              through them in <code>forward()</code>:
+            </p>
+
+            {{CODE:mlp_structure.py}}
+
+            <p>
+              That 105 breaks down like this: layer 1 has $8 \times 2 = 16$ weights and 8 biases; layer 2 has $8 \times
+              8 = 64$ weights and 8 biases; the output layer has $1 \times 8 = 8$ weights and 1 bias. Total $16 + 8 + 64
+              + 8 + 8 + 1 = 105$ numbers, and <em>every one of them</em> is created by PyTorch, already tracking
+              gradients, ready for the training loop in Lesson 6. Compare that with Lesson 4, where you wrote
+              <code>requires_grad=True</code> by hand for exactly four parameters.
+            </p>
+
+            <p>
+              One detail that trips people up: you define <code>forward()</code> but
+              <strong>never call <code>model.forward(x)</code></strong> — you write <code>model(x)</code>.
+              <code>nn.Module</code> implements <code>__call__</code> to invoke <code>forward()</code> for you, along
+              with internal hooks. Calling <code>forward()</code> directly still returns the right answer but skips
+              those hooks, so the convention across the whole PyTorch ecosystem is <code>model(x)</code>.
+            </p>
+
+            <p>Here is the shape of the network we just declared, with the data dimensions at each stage:</p>
+
+            {{SVG:2}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Pitfall: two <code>nn.Linear</code> layers in a row with no activation
+              </div>
+              <div class="callout__content">
+                This is the most common mistake when writing your first network, and it
+                <strong>raises no error at all</strong> — the code runs, the network trains, the results just never get
+                good. <br /><br />
+                <code>nn.Sequential(nn.Linear(2, 8), nn.Linear(8, 8), nn.Linear(8, 1))</code> looks like a three-layer
+                network, but by the matrix algebra at the start of section 5.1, three consecutive linear transformations
+                collapse into <em>one</em>. You pay the compute cost of three layers and get the expressive power of one
+                — which is to say you can still only draw a straight line, exactly like a 1958 Perceptron. <br /><br />
+                Quick check: read <code>print(model)</code> and count. Between any two <code>Linear</code> layers there
+                <em>must</em> be an activation. If you see two <code>Linear</code> layers adjacent, you have just found
+                out why your network refuses to learn.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: forgetting super().__init__()</div>
+              <div class="callout__content">
+                If you define a class inheriting from <code>nn.Module</code> and forget to call
+                <code>super().__init__()</code> on the first line of the constructor, PyTorch raises
+                <code>AttributeError: cannot assign module before Module.__init__ is called</code>. The parent class has
+                to set up its internal weight-tracking structures before you can register any
+                <code>nn.Linear</code> layer.
+              </div>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 How many layers, and how many neurons each?</div>
+              <div class="callout__content">
+                There is no formula for this, and anyone handing you an exact one is making it up. But a few practical
+                markers are worth knowing.
+                <br /><br />
+                <strong>The input and output sizes are decided by the problem</strong>, not by you: here that is 2 (the
+                x, y coordinate) and 1 (the probability of one class). Only the <em>hidden</em> layers in between are
+                free. <br /><br />
+                <strong>Start small and grow.</strong> One or two hidden layers handle most tabular problems; add a
+                layer only when the current network has learned all it can and still is not good enough. A bigger
+                network is not just slower — it also finds it easier to memorise the training data instead of learning
+                the pattern (overfitting, which Lesson 6 covers). <br /><br />
+                The 8 neurons per layer here were chosen deliberately small: simple enough to read, still enough to
+                separate two circles. The only way to know the right number for your problem is to try it and measure —
+                the same "measure before you conclude" habit this series uses throughout.
+              </div>
+            </div>
+
+            <h2>5.3 Weight initialisation</h2>
+            <p>
+              The network has a shape now, but its 105 numbers have to start somewhere. "What value should the weights
+              begin at" sounds like a trivial detail — in fact getting it wrong means the network <em>never</em>
+              learns, and this section proves that with code rather than assertion.
+            </p>
+            <p>
+              If we initialise every weight to zero (or to any single constant), then during the forward pass every
+              neuron in a hidden layer produces an identical output. During backpropagation their gradients are
+              therefore identical too, and they receive identical updates. The multi-layer network degenerates into a
+              single neuron — it has failed to achieve <strong>symmetry breaking</strong>.
+            </p>
+
+            <p>Let us PROVE that with code, rather than take the theory on trust:</p>
+            {{CODE:symmetry_breaking_proof.py}}
+
+            <p>
+              The printed output says it all: the first line is <code>tensor([[1.5, 1.5, 1.5, 1.5]])</code> — four
+              neurons producing <em>four identical values</em>. Because they match on the forward pass, their gradients
+              match on the backward pass, so their updates match, and they will go on matching forever. A 4-neuron layer
+              initialised this way really is <strong>one</strong> neuron copied four times — you pay for 4 and receive
+              the power of 1.
+            </p>
+            <p>
+              The second line, with Kaiming initialisation, gives
+              <code>[1.6014, -0.2386, 0.0344, -3.3811]</code>: four genuinely different values. From the very first
+              training step each neuron heads in its own direction and can learn its own feature. That is all "symmetry
+              breaking" means.
+            </p>
+            <p>
+              But "random" alone is not enough — random <em>at what scale</em> is the real question. Initial weights
+              that are too large make the signal grow layer by layer (exploding gradients); too small and the signal
+              shrinks away to nothing (the same vanishing gradient as in section 5.1, this time caused by initialisation
+              rather than by the activation). The two formulas below exist to pick that scale:
+            </p>
+            <ul>
+              <li>
+                <strong>Xavier (Glorot) initialisation:</strong> weights drawn from a distribution whose variance is
+                inversely proportional to the number of input and output neurons: $$\text{Var}(W) =
+                \frac{2}{n_{\text{in}} + n_{\text{out}}}$$ This works very well alongside linear or S-shaped activations
+                such as Tanh and Sigmoid, keeping the variance of both the data and the gradients stable as they pass
+                through layers.
+              </li>
+              <li>
+                <strong>He (Kaiming) initialisation:</strong> variance tuned specifically for ReLU: $$\text{Var}(W) =
+                \frac{2}{n_{\text{in}}}$$ Why a factor of 2 rather than 1? Because ReLU zeroes out the entire negative
+                half, halving the variance of whatever passes through. Multiplying by 2 compensates for exactly that
+                loss.
+              </li>
+            </ul>
+
+            <h2>5.4 Hands-on project: classifying non-linear data (two concentric circles)</h2>
+            <p>
+              Now we combine all three sections into a program that runs. The project generates a
+              <strong>two concentric circles</strong> dataset — outer ring labelled $0$, inner ring labelled $1$ —
+              builds a three-layer MLP in PyTorch, initialises it with Kaiming, then runs one forward pass to see what
+              the network predicts <em>before</em> any training.
+            </p>
+            <p>
+              Why two concentric circles? Because this is precisely the kind of data the single Perceptron of section
+              5.1 cannot handle: no straight line separates the inner ring from the outer one. If an MLP can do it, that
+              is direct evidence for everything this lesson has argued. In this lesson we only build the network —
+              training it to actually classify correctly is Lesson 6.
+            </p>
+
+            <p>Here is the full Python source for the project:</p>
+
+            {{CODE:classify_circles.py}}
+
+            <div class="callout callout--note">
+              <div class="callout__title">💡 What is the model.eval() call for?</div>
+              <div class="callout__content">
+                <code>model.eval()</code> switches the model into evaluation mode. That disables the layers whose
+                behaviour <em>differs</em> between training and prediction — specifically Dropout and Batch
+                Normalization.<br /><br />
+                You have not met either yet, and this network contains neither, so calling
+                <code>model.eval()</code> here <strong>changes nothing at all</strong>. It is still worth making a habit
+                of, because once your network does contain Dropout (from Lesson 7 onwards) and you forget the call, the
+                model will randomly switch off part of its neurons during prediction — the same input producing
+                different answers, which is a miserable bug to track down.<br /><br />
+                Note that <code>model.eval()</code> and <code>torch.no_grad()</code> do <em>two different things</em>:
+                <code>eval()</code> changes layer behaviour, while <code>no_grad()</code> stops the computation graph
+                being built (Lesson 4). Running predictions usually calls for both.
+              </div>
+            </div>
+
+            <h3>Running it and reading the output</h3>
+
+            <p>Run <code>python classify_circles.py</code> and the tail of the output looks like this:</p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              Two things are worth reading here. First, <code>print(model)</code> prints back exactly the structure you
+              declared, with the real dimensions of each layer: <code>2 → 8</code>, <code>8 → 8</code>,
+              <code>8 → 1</code>. This is the fastest way to check the network has the shape you think it has — and with
+              more complex models it usually catches a dimension mistake before you can even complete one training
+              round.
+            </p>
+
+            <p>
+              Second, <strong>every predicted probability sits close to 0.5</strong> (lowest 0.4318, highest 0.5977),
+              and none of them correlate with the true label: points labelled 0 and points labelled 1 produce the same
+              sort of numbers. That is exactly what <em>should</em> happen. The weights are random Kaiming values that
+              have never seen the data, so the model knows nothing beyond a coin flip. If you ever see an untrained
+              network predicting correctly, you almost certainly have data leaking in somewhere.
+            </p>
+
+            <p>
+              Put differently: this lesson has built the <em>skeleton</em> and confirmed that it runs, but has taught it
+              nothing. Turning those numbers around 0.5 into correct predictions needs two more pieces, both of which
+              Lesson 6 supplies — a function that measures the error, and a loop that updates the weights along the
+              gradient.
+            </p>
+
+            <h2>Summary and what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> understanding what a Perceptron is, why on its own it can only draw a
+                    straight line, and why that limit once froze the whole field until the MLP arrived.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> understanding why a non-linear activation is essential — without one, any
+                    number of stacked layers equals a single layer — plus the trade-offs between Sigmoid, Tanh and ReLU,
+                    and the number showing that 10 Sigmoid layers shrink a gradient a million-fold
+                    <em>in the best case</em>.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> assembling an MLP with <code>torch.nn</code> — knowing what
+                    <code>nn.Linear</code>, <code>nn.Sequential</code> and <code>nn.Module</code> each handle, why you
+                    call <code>model(x)</code> rather than <code>model.forward(x)</code>, and where the network's 105
+                    parameters come from.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> knowing why weights must not be initialised to a constant (4 neurons
+                    collapsing into 1), and how to choose between Xavier and Kaiming based on the activation in use.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> the MLP is designed but cannot learn yet. In Lesson 6 we write
+              the training loop, using backpropagation to update the network's weights.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the hands-on code for this lesson</h3>
+              <p>
+                The Python file <code>classify_circles.py</code> — building a three-layer MLP in PyTorch and running a
+                forward pass to extract the initial predicted probabilities on the concentric-circles dataset (run
+                <code>python classify_circles.py</code>, needs <code>pip install numpy torch</code>):
+              </p>
+              <a
+                href="../classify_circles.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download classify_circles.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a href="https://pytorch.org/docs/stable/nn.html" target="_blank" rel="noopener noreferrer"
+                    >PyTorch nn module — model classes, linear layers and activation functions (official docs)</a
+                  >
+                </li>
+                <li>
+                  <a href="https://cs231n.github.io/neural-networks-1/" target="_blank" rel="noopener noreferrer"
+                    >CS231n: Neural Networks Part 1 — the artificial neuron and activation functions (Stanford
+                    University)</a
+                  >
+                </li>
+                <li>
+                  <a href="https://machinelearningcoban.com/2017/02/24/mlp/" target="_blank" rel="noopener noreferrer"
+                    >Multi-layer Perceptron — foundational theory (Machine Learning cơ bản, in Vietnamese)</a
+                  >
+                </li>
+              </ul>
+            </section>
+
+            

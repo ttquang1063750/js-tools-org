@@ -127,10 +127,15 @@ template and rebuild; editing the built HTML directly means the next rebuild
 silently reverts your fix. This has already happened once — a stray `$20` was
 corrected in the built page only, and the next rebuild brought it back.
 
-**Rebuilding is idempotent and was verified against the shipped pages**: all three
-translated lessons rebuild to byte-identical output twice in a row. If a rebuild
-produces a diff you did not intend, the template and the shipped page have drifted
-— reconcile before continuing.
+**Rebuilding is idempotent**: every translated lesson rebuilds to identical output
+twice in a row. If a rebuild produces a diff you did not intend, the template and
+the shipped page have drifted — reconcile before continuing.
+
+**Never suppress the builder's output when verifying.** The builders fail loudly
+and write nothing on failure, so `build ... >/dev/null 2>&1` followed by a diff
+compares the old file against itself and reports success. That happened once: a
+lesson was declared byte-identical when its build had actually errored out on a
+missing diagram label. Check the exit status, or read the output.
 
 Two things the builders refuse to do rather than guess, both learned the hard way:
 they stop if a translated string count differs from the source (an unescaped

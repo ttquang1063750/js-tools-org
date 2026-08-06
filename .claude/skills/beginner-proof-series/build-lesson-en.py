@@ -75,11 +75,15 @@ print(f'  nguon: {len(code_windows)} khoi code, {len(svgs)} so do')
 
 def translate_svg(block):
     missing = []
+    # Tra cuu theo dang DA CHUAN HOA khoang trang: nhan <text> dai bi prettier
+    # ngat thanh nhieu dong, nen so sanh nguyen van se truot dung nhung nhan dai
+    # nhat. (Loi nay tung lam bo dung im lang bao thieu ban dich.)
+    norm_labels = {' '.join(k.split()): v for k, v in LABELS.items()}
 
     def sub_text(m):
-        inner = m.group(2).strip()
-        if inner in LABELS:
-            return m.group(1) + LABELS[inner] + m.group(3)
+        inner = ' '.join(m.group(2).split())
+        if inner in norm_labels:
+            return m.group(1) + norm_labels[inner] + m.group(3)
         if inner:
             missing.append(inner)
         return m.group(0)

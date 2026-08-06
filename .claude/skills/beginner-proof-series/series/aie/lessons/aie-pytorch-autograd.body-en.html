@@ -1,0 +1,467 @@
+            <p class="article-lead">
+              In Lesson 3 we got comfortable with vectorisation and broadcasting in NumPy. But NumPy only runs on the
+              CPU, and it cannot compute derivatives for you. To train the large deep-learning architectures ahead —
+              Transformers, deep CNNs — we need a more capable tool: <strong>PyTorch</strong>.
+            </p>
+
+            <p>
+              This lesson introduces PyTorch through its core data structure, the <strong>Tensor</strong>; shows how to
+              control the shape of your data with reshaping; and then digs into <strong>Autograd</strong>, the automatic
+              differentiation engine that makes backpropagation possible.
+            </p>
+
+            <h2>4.1 What is a Tensor, and how does it differ from a NumPy array?</h2>
+            <p>
+              Mathematically and in terms of memory layout, a PyTorch <strong>Tensor</strong> is 99% the same thing as a
+              NumPy <code>ndarray</code>. It is a multi-dimensional array holding elements of one type, laid out
+              contiguously in RAM. What PyTorch adds are two capabilities built specifically for deep learning:
+            </p>
+            <ol>
+              <li>
+                <strong>Hardware acceleration:</strong> a PyTorch tensor can move its computation from the CPU to a
+                high-performance GPU — NVIDIA cards through CUDA, or Apple Silicon through MPS — so that millions of
+                matrix operations run in parallel.
+              </li>
+              <li>
+                <strong>Automatic differentiation (Autograd):</strong> every tensor can record its own computation
+                history and produce the gradient at any point in that history on demand.
+              </li>
+            </ol>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 CPU vs GPU — what parallel hardware actually means</div>
+              <div class="callout__content">
+                Why do deep-learning models essentially have to be trained on a GPU?
+                <br /><br />
+                A CPU is designed to run complex tasks sequentially. It has few cores (typically 4 to 64), but each one
+                is very fast and backed by a large cache. A GPU is the opposite: it is built to push enormous volumes of
+                simple geometric data through thousands of small arithmetic units (ALUs) at once.
+                <br /><br />
+                The core operation of a neural network is a large matrix multiplication, which decomposes into millions
+                of independent multiply-and-add operations. A GPU can hand those millions of operations to thousands of
+                ALUs running in the same clock cycle, which is why training goes tens to hundreds of times faster than
+                on a CPU.
+              </div>
+            </div>
+
+            <p>
+              Before computing anything, you have to tell PyTorch where the tensor lives: in ordinary RAM (CPU) or in
+              the graphics card's memory. The snippet below does two things — detect what acceleration your machine has,
+              then move the tensor there using the <code>device</code> attribute:
+            </p>
+
+            {{CODE:tensor_device.py}}
+
+            <p>
+              That chained <code>if...else</code> is Python's equivalent of nested ternaries in JavaScript, and the
+              order matters: <code>cuda</code> is a discrete NVIDIA card (fastest), <code>mps</code> is Apple Silicon on
+              a Mac, and <code>cpu</code> is the fallback that always works. On an M-series MacBook you will see
+              <code>Using device: mps</code>; on a machine with no GPU you get <code>cpu</code> — and the lesson still
+              runs fine, just slower.
+            </p>
+
+            <p>
+              One detail is easy to misread, on the last line: <code>x.to(device)</code> does <strong>not</strong> move
+              <code>x</code>. It returns a <em>new copy</em> on the target device, and the original <code>x</code> stays
+              on the CPU. Forgetting to assign the result — writing <code>x.to(device)</code> and then carrying on with
+              <code>x</code> — is the fastest route into the pitfall immediately below.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: mixing devices in one operation</div>
+              <div class="callout__content">
+                PyTorch refuses to operate on tensors that live on different devices. Add a CPU tensor to a GPU tensor
+                and the program crashes immediately with
+                <code>RuntimeError: Expected all tensors to be on the same device...</code>. Always call
+                <code>.to(device)</code> on every input and every weight before you compute.
+              </div>
+            </div>
+
+            <p>
+              Because both store their data contiguously in the same way, PyTorch lets you convert between a CPU tensor
+              and a NumPy array almost for free, via <code>.numpy()</code> and <code>torch.from_numpy()</code> — but
+              "almost for free" hides an important trap:
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a CPU tensor and its NumPy array SHARE memory</div>
+              <div class="callout__content">
+                <code>tensor.numpy()</code> and <code>torch.from_numpy(array)</code> do NOT copy the data — they create
+                another "window" onto the SAME block of RAM (this applies to CPU tensors only). Modify the NumPy array
+                and the original tensor changes immediately, with no warning. This is the source of a lot of "the data
+                mysteriously went wrong" bugs that are very hard to track down in a preprocessing pipeline.
+              </div>
+            </div>
+            {{CODE:tensor_numpy_shared_memory.py}}
+
+            <p>
+              If you come from JavaScript, this behaves exactly like assigning an object:
+              <code>const b = a</code> creates no new object, so changing <code>b.x</code> also changes
+              <code>a.x</code>. What makes it dangerous here is that the two variables belong to
+              <em>two different libraries</em> and look entirely unrelated — so when the data goes wrong at the end of a
+              pipeline, almost nobody suspects this.
+            </p>
+
+            <h2>4.2 Reshaping tensors (view vs reshape)</h2>
+            <p>
+              We have seen what a tensor <em>holds</em> and where it <em>lives</em>. This section is about changing its
+              <em>shape</em> — something you will do at almost every layer of a neural network from Lesson 5 onwards.
+            </p>
+            <p>
+              "Shape" is the size of each dimension: a 28×28 greyscale image has shape <code>(28, 28)</code>, and a
+              batch of 64 such images has shape <code>(64, 28, 28)</code>. Every layer expects its input in a particular
+              shape, so folding data to fit happens constantly. PyTorch offers two methods for it,
+              <code>.view()</code> and <code>.reshape()</code> — they look interchangeable, but differ in one way that
+              trips up newcomers with a runtime error.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 Memory contiguity</div>
+              <div class="callout__content">
+                A tensor is <strong>contiguous</strong> when its elements sit in RAM in the same row-by-row order you
+                would read them. <br /><br />
+                When you call <code>transpose()</code>, <code>t()</code> or <code>permute()</code>, PyTorch does not
+                rearrange anything in RAM — that would be slow. It only changes how coordinates are translated into
+                offsets (metadata). The result is a tensor that is no longer contiguous.
+                <ul>
+                  <li>
+                    <strong><code>.view()</code>:</strong> creates a new "view" onto the same original RAM. Because it
+                    never copies, it <em>requires</em> the source tensor to be contiguous. If it is not, you get
+                    <code>RuntimeError: view size is not compatible with input tensor's size and stride</code>.
+                  </li>
+                  <li>
+                    <strong><code>.reshape()</code>:</strong> the safer option. If the source is contiguous it returns a
+                    view (no copy). If it is not, it silently calls <code>.clone().contiguous()</code> to build a fresh
+                    contiguous block first, and reshapes that.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <p>
+              The theory only really lands when you watch it crash. The code below does one thing: reshape the same
+              tensor to <code>(6, 1)</code> twice — once while it is still contiguous, once after a transpose has made
+              it non-contiguous:
+            </p>
+
+            {{CODE:tensor_reshape.py}}
+
+            <p>
+              The two <code>print</code> lines are the whole lesson: same data, yet
+              <code>a.is_contiguous()</code> returns <code>True</code> while <code>a_t.is_contiguous()</code> returns
+              <code>False</code>. The transpose never touched RAM — it only changed how PyTorch <em>interprets</em> that
+              RAM — and since <code>.view()</code> needs the data laid out contiguously, it refuses to run.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 So which one should you use?</div>
+              <div class="callout__content">
+                In everyday code, reach for <code>.reshape()</code> by default. It always works, and when the tensor is
+                already contiguous it copies nothing, so it is no slower than <code>.view()</code>.<br /><br />
+                Use <code>.view()</code> when you <em>want</em> the error: if your code depends on no copy being made
+                (say you are tuning GPU memory), a loud runtime error is far better than a silent copy quietly eating
+                another few gigabytes.
+              </div>
+            </div>
+
+            <p>Two more helpers let you add and remove size-1 dimensions:</p>
+            <ul>
+              <li>
+                <strong><code>.squeeze()</code>:</strong> removes every dimension of size 1. A tensor of shape
+                <code>(1, 5, 1)</code> becomes <code>(5,)</code>.
+              </li>
+              <li>
+                <strong><code>.unsqueeze(dim)</code>:</strong> inserts a size-1 dimension at position <code>dim</code>.
+                A tensor of shape <code>(5,)</code> with <code>.unsqueeze(1)</code> becomes <code>(5, 1)</code>.
+              </li>
+            </ul>
+
+            <p>
+              These sound like trivia, but you will use them constantly, because nearly every PyTorch layer is written
+              to process <strong>a batch of samples at once</strong> rather than a single sample. When you want a
+              prediction for exactly <em>one</em> image of shape <code>(28, 28)</code>, the model rejects it because it
+              expects <code>(batch, 28, 28)</code> — and <code>.unsqueeze(0)</code> is how you add that "batch of one"
+              dimension. Going the other way, <code>.squeeze()</code> strips the leftover wrapper off a result before
+              you show it to a user.
+            </p>
+
+            <h2>4.3 Automatic differentiation (Autograd and the computation graph)</h2>
+            <p>
+              Everything we have done with tensors so far, NumPy could also do. This section is the reason PyTorch
+              exists — and the reason you will never hand-derive gradients for your own network.
+            </p>
+            <p>
+              A reminder from <a href="aie-math-code">Lesson 2</a>: to train a model we need to know
+              <strong>which direction to nudge each weight so the error goes down</strong>, and that answer is the
+              <em>partial derivative</em> of the error with respect to that weight. In Lesson 2 we differentiated a
+              one-variable function by hand. A real neural network has millions of weights and hundreds of nested
+              operations, which makes hand-differentiation impossible. PyTorch solves this with the
+              <strong>Autograd</strong> engine.
+            </p>
+            <p>
+              When you create a tensor with <code>requires_grad=True</code>, PyTorch starts recording every operation
+              applied to it. During the forward pass it builds a <strong>dynamic computation graph</strong> — a directed
+              acyclic graph (DAG) of those operations.
+            </p>
+            <p>
+              Every value produced by an operation carries a <code>grad_fn</code> attribute pointing back at the
+              operation that created it (for example <code>&lt;PowBackward0&gt;</code> or
+              <code>&lt;AddBackward0&gt;</code>). <strong>Leaf nodes</strong> — the tensors you created yourself, which
+              are not the result of any operation — have <code>grad_fn = None</code>.
+            </p>
+
+            <p>Consider this simple computation graph:</p>
+            $$y = x^2 \quad \implies \quad z = 2y + 3$$
+
+            <p>
+              The diagram below is that same graph, drawn the way PyTorch builds it in memory. The top row is the
+              forward pass that happens when you write those two lines of code; the bottom row is the backward pass that
+              <code>z.backward()</code> runs for you:
+            </p>
+
+            {{SVG:1}}
+
+            <p>
+              When you call <code>z.backward()</code>, PyTorch walks the graph backwards from $z$ to $x$, applying the
+              chain rule from calculus:
+            </p>
+            $$\frac{dz}{dx} = \frac{dz}{dy} \cdot \frac{dy}{dx} = 2 \cdot 2x = 4x$$
+
+            <p>
+              The most important part of the diagram is the <code>grad_fn</code> labels on the top row. You never wrote
+              a line to create them — PyTorch attaches to each intermediate result a pointer back to the operation that
+              produced it. That chain of pointers <em>is</em> the graph, and it is what lets the backward pass know
+              which route to take. <code>x</code> alone has <code>grad_fn = None</code>, because you created it rather
+              than computing it — which is the definition of a <strong>leaf node</strong>.
+            </p>
+
+            {{CODE:autograd_demo.py}}
+
+            <p>
+              The three <code>print</code> lines confirm exactly what the diagram describes: <code>y</code> carries a
+              <code>PowBackward0</code> pointer back to the squaring that produced it, <code>x</code> carries nothing
+              because it is a leaf, and after <code>.backward()</code> the value 12 sits in <code>x.grad</code>. You
+              wrote no derivative formula at all — only the forward computation, and PyTorch worked out the rest.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 Turning the graph off with torch.no_grad()</div>
+              <div class="callout__content">
+                During inference (making predictions) or when updating weights by hand, you do not need gradients, and
+                letting PyTorch keep building the dynamic graph wastes a great deal of RAM/VRAM.
+                <br /><br />
+                To switch it off, use the <code>with torch.no_grad():</code> block, or call
+                <code>tensor.detach()</code> to cut a tensor loose from the current graph. Both free memory and speed
+                things up.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: gradients accumulate by default</div>
+              <div class="callout__content">
+                By default PyTorch <strong>adds</strong> each new gradient into <code>.grad</code> every time you call
+                <code>.backward()</code>. That is useful when training very large models in pieces, but in an ordinary
+                optimisation loop it corrupts the direction of gradient descent completely. You must call
+                <code>.grad.zero_()</code> or <code>optimizer.zero_grad()</code> to reset gradients to zero after each
+                update.
+              </div>
+            </div>
+
+            <p>
+              Another runtime error beginners hit constantly: calling <code>.backward()</code> on a tensor that is not a
+              scalar:
+            </p>
+            {{CODE:backward_scalar_only.py}}
+            <p>
+              This is why every real loss function (MSE, cross-entropy, and the rest) returns exactly one scalar
+              representing the whole batch. It is not an arbitrary convention: <code>.backward()</code> only knows how
+              to propagate backwards from a single starting point.
+            </p>
+
+            <h2>4.4 Hands-on project: fitting a polynomial with Autograd</h2>
+            <p>
+              To put Autograd to work, we will build a small optimiser of our own:
+              <strong>fitting a cubic polynomial to a sine curve</strong>.
+            </p>
+            <p>The polynomial we want to learn is:</p>
+            $$\hat{y} = w_1 \cdot x + w_2 \cdot x^2 + w_3 \cdot x^3 + b$$
+            <p>
+              where $w_1, w_2, w_3, b$ are the parameters that get nudged against the gradient, over and over, to reduce
+              the error.
+            </p>
+
+            <p>
+              Why this problem? Because it is small enough to check by eye, yet it contains every part of a real
+              training loop: noisy data, learnable parameters, a loss function, gradients, and an update step. In Lesson
+              5 you will swap those four numbers for the thousands of weights in a neural network — but the loop will
+              still be the same five steps you see below.
+            </p>
+
+            <p>Before reading the code, three terms in it are worth pinning down:</p>
+
+            <ul>
+              <li>
+                <strong>Epoch</strong> — one full pass over the training data. We run 2,000 epochs, so the dataset goes
+                through the model 2,000 times, adjusting the weights a little each time.
+              </li>
+              <li>
+                <strong>Learning rate</strong> — how far each update travels in the direction the gradient points. You
+                met it in <a href="aie-math-code">Lesson 2</a>: too large and you overshoot the minimum and the error
+                diverges to infinity; too small and you head the right way but far too slowly to converge.
+              </li>
+              <li>
+                <strong>Batch</strong> — how many samples go through the model at once. Here we use all 2,000 in one go,
+                so the batch is the entire dataset; later lessons split it up once the data no longer fits in memory.
+              </li>
+            </ul>
+
+            <div class="callout callout--note">
+              <div class="callout__title">💡 Why is the learning rate as small as 0.000001?</div>
+              <div class="callout__content">
+                <code>1e-6</code> looks absurd until you look at the loss line: <code>(y_pred - y).pow(2).sum()</code> —
+                a <strong>sum</strong>, not a mean. Adding up the error of 2,000 samples makes the gradients roughly
+                2,000 times larger than the per-sample equivalent, so the learning rate has to shrink to match.<br /><br />
+                Measured on this exact code, keeping 2,000 epochs and changing only those two parameters:
+                <br /><br />
+                <code>sum</code> + <code>1e-6</code> → final error <strong>0.0153</strong> (as in the lesson).<br />
+                <code>mean</code> + <code>1e-6</code> → final error <strong>103.26</strong> — steps so small that after
+                2,000 rounds the model has barely learned anything.<br />
+                <code>mean</code> + <code>1e-3</code> → final error <strong>0.0171</strong>, on par with the
+                original.<br />
+                <code>mean</code> + <code>1e-2</code> or <code>sum</code> + <code>1e-3</code> → the error becomes
+                <strong><code>nan</code></strong
+                >: steps so long the weights fly off to infinity and overflow.<br /><br />
+                These two parameters have to be tuned together, and this is one of the most common reasons training code
+                copied from elsewhere "doesn't work" — the reduction was changed without changing the learning rate.
+              </div>
+            </div>
+
+            <p>You can download the complete Python file from the box below:</p>
+
+            {{CODE:autograd_estimation.py}}
+
+            <div class="callout callout--note">
+              <div class="callout__title">💡 What is the with torch.no_grad() block for?</div>
+              <div class="callout__content">
+                The weight update <code>w1 -= learning_rate * w1.grad</code> above is ordinary arithmetic, not a layer
+                of the model. Without the <code>with torch.no_grad():</code> wrapper, PyTorch would keep tracking those
+                operations and graft meaningless extra branches onto the computation graph, filling up GPU memory and
+                corrupting the gradient logic.
+              </div>
+            </div>
+
+            <h3>Running it and reading the output</h3>
+
+            <p>
+              Run <code>python autograd_estimation.py</code> and you will see roughly this (the numbers vary a little
+              between runs, because the weights start at random values and the data is noisy):
+            </p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              Three things in this output are worth reading closely, and each says something about how models learn.
+            </p>
+
+            <p>
+              <strong>First, the error falls fast and then slows down.</strong> Between epoch 200 and 400 the loss more
+              than halves (1,255 → 586). Between epoch 1,800 and 2,000 it only drops from 30.1 to 28.8. That is the
+              characteristic shape of gradient descent: far from the minimum the slope is steep, so each step covers a
+              lot of ground; close to it the slope flattens and the steps get shorter. The loss is still falling at
+              epoch 2,000 — the model has not fully converged, and more epochs would improve it a little further.
+            </p>
+
+            <p>
+              <strong>Second, $w_2$ and $b$ both land near zero while $w_1$ and $w_3$ do not.</strong> That is not
+              chance; the model is discovering a mathematical property of the target function. $\sin$ is an
+              <em>odd</em> function: $\sin(-x) = -\sin(x)$, so its graph is symmetric about the origin. The odd-power
+              terms ($x$ and $x^3$) share that property; the even-power term ($x^2$) and the constant do not. The only
+              way to fit an odd function is to suppress both even components — which is exactly what Autograd works out
+              over 2,000 rounds, without anyone telling it that $\sin$ is odd. Run it repeatedly and you will see $w_2$
+              always sitting around $\pm 0.01$ while $w_3$ stays around $-0.09$.
+            </p>
+
+            <p>
+              <strong>Third, is a final error of 0.0144 good or bad?</strong> Compare it against the noise we added to
+              the data ourselves: <code>0.1 * torch.randn(...)</code>, a standard deviation of 0.1, so a variance of
+              $0.1^2 = 0.01$. In other words, even a perfect model that knew $\sin(x)$ exactly could not score below
+              about 0.01 on this dataset, because the noise is unpredictable by construction. We reached 0.0144 — only
+              slightly above that theoretical floor. The cubic has learned nearly everything there is to learn.
+            </p>
+
+            <h2>Summary and what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> understanding PyTorch's Tensor data structure, choosing a compute device
+                    with <code>.to(device)</code>, and why a CPU tensor shares memory with its NumPy array.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> reshaping data with <code>.view()</code> / <code>.reshape()</code>,
+                    understanding memory contiguity, and knowing why a transpose makes <code>.view()</code> fail.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> a working grasp of the computation graph and of Autograd for propagating
+                    error backwards — including its three companion pitfalls: accumulating gradients,
+                    <code>.backward()</code> requiring a scalar, and weight updates having to sit inside
+                    <code>torch.no_grad()</code>.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> writing a full training loop by hand and reading its output — knowing why
+                    $w_2$ converges to zero, and why an error of 0.0144 is already near the best achievable on data
+                    carrying noise of 0.1.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> from these individual tensor building blocks, Lesson 5
+              assembles them into a complete multi-layer neural network (MLP).
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the hands-on code for this lesson</h3>
+              <p>
+                The Python file <code>autograd_estimation.py</code> — fitting a cubic polynomial to a sine curve using
+                PyTorch's Autograd engine (run <code>python autograd_estimation.py</code>, needs
+                <code>pip install torch</code>):
+              </p>
+              <a
+                href="../autograd_estimation.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download autograd_estimation.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://pytorch.org/tutorials/beginner/blitz/tensor_tutorial.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >PyTorch — the Tensor data structure explained (official tutorials)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://pytorch.org/tutorials/beginner/blitz/autograd_tutorial.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >PyTorch — a gentle introduction to Autograd and the dynamic computation graph</a
+                  >
+                </li>
+                <li>
+                  <a href="https://pytorch.org/docs/stable/autograd.html" target="_blank" rel="noopener noreferrer"
+                    >Reference documentation for the torch.autograd package</a
+                  >
+                </li>
+              </ul>
+            </section>
+
+            
