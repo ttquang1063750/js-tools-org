@@ -2,49 +2,13 @@ var _initLang =
   localStorage.getItem('lang') || (navigator.language && navigator.language.startsWith('vi') ? 'vi' : 'en');
 var currentLang = _initLang;
 
-function setupViOnlyArticles() {
-  var articleWrap = document.querySelector('.article-wrap');
-  if (articleWrap) {
-    var enDisclaimer = articleWrap.querySelector('[data-lang-content="en"]');
-    if (enDisclaimer && enDisclaimer.textContent.indexOf('only available in Vietnamese') !== -1) {
-      // 1. Hide/remove the English disclaimer block
-      enDisclaimer.removeAttribute('data-lang-content');
-      enDisclaimer.style.display = 'none';
-
-      // 2. Make the Vietnamese content always visible
-      var viContent = articleWrap.querySelector('[data-lang-content="vi"]');
-      if (viContent) {
-        viContent.removeAttribute('data-lang-content');
-        viContent.style.display = 'block';
-
-        // Remove data-lang-content from any nested elements inside the Vietnamese content to prevent them from being hidden in English mode.
-        // Nested "en" elements (e.g. bilingual related-article link labels) must be explicitly hidden here too —
-        // once their attribute is stripped, step 3 below can no longer find them to hide, so both language
-        // versions would otherwise render side by side (bug: related-links showing EN + VI text at once).
-        viContent.querySelectorAll('[data-lang-content]').forEach(function (nestedEl) {
-          if (nestedEl.dataset.langContent === 'en') {
-            nestedEl.style.display = 'none';
-          }
-          nestedEl.removeAttribute('data-lang-content');
-        });
-      }
-
-      // 3. For any other bilingual blocks inside <main> (like hero, related, comments), default them to Vietnamese
-      var mainEl = document.querySelector('main');
-      if (mainEl) {
-        mainEl.querySelectorAll('[data-lang-content="en"]').forEach(function (el) {
-          el.removeAttribute('data-lang-content');
-          el.style.display = 'none';
-        });
-        mainEl.querySelectorAll('[data-lang-content="vi"]').forEach(function (el) {
-          el.removeAttribute('data-lang-content');
-        });
-      }
-    }
-  }
-}
-
-setupViOnlyArticles();
+// GHI CHU: truoc day o day co `setupViOnlyArticles()` — mot ham xu ly truong hop dac biet
+// cho cac bai chi co tieng Viet nhung van mang khoi `data-lang-content="en"` chua dong
+// disclaimer "only available in Vietnamese". Cac khoi vo do da duoc bo khoi 122 trang bai
+// hoc, nen ham do khong con gi de xu ly va da duoc xoa.
+//
+// `data-lang-content` gio CHI con o 11 trang thuc su song ngu (blog/index.html va cac bai
+// cong cu/marketing), va chung duoc `applyLangContent()` ben duoi lo.
 
 function applyLangContent(lang) {
   currentLang = lang;
