@@ -160,8 +160,24 @@ have wasted a round-trip — so avoid them while writing:
 - `<PLACEHOLDER>` in a code block must be escaped as `&lt;PLACEHOLDER&gt;`.
 - Never `\"` inside `onclick="..."` — use `&quot;`, or prettier breaks.
 - KaTeX `\text{}` must stay ASCII; Vietnamese diacritics corrupt the glyphs.
+- **No bare `$` in prose** on a KaTeX page — write "20 dollars", not "$20". The
+  validator does not catch it, and a second stray `$`later in the page lets
+KaTeX swallow everything between the two. Check with`innerText.match(/\$/g)`
+  in the browser: after rendering, the count must be **0**.
+- **Keep code lines ≤ 91 characters.** That is the established width across this
+  series, and long lines force horizontal scrolling inside the code block. Check
+  every block, not just the ones you wrote.
 - Only callout variants that exist in `blog.css`: `--note`, `--tip`, `--warning`,
   `--pitfall`, `--deep`.
+
+Two measurements the headless preview pane reports **wrong**, so do not trust
+them: `document.documentElement.clientWidth` and `window.innerWidth` both come
+back as `0`, which makes every element look like it overflows the page. To judge
+horizontal overflow, read the computed styles instead — in this repo `pre` is
+`overflow-x: auto` and `.code-window` is `overflow-x: hidden`, so wide code
+cannot push the page. Scrolling with `window.scrollTo` also appears to fail
+because `scroll-behavior: smooth` is set globally; pass `behavior: 'instant'` or
+read `scrollY` on a later call.
 
 ## Locale layout for this repo
 
@@ -299,3 +315,22 @@ lessons link back to the Vietnamese hub; say so rather than leaving it silent.
 - Do not touch measured numbers, benchmark tables or lab output. If a number
   looks wrong, report it — do not silently adjust it.
 - Do not batch lessons. One lesson, one commit, one report.
+
+## When the lesson promises something it never delivers
+
+Check the summary's "what you achieved" bullets against what the lesson actually
+teaches, and check the title against the body. A lesson that tells the reader they
+learned something it never covered is worse than a lesson that simply omits it —
+the reader concludes they failed to understand.
+
+When you find a gap, the title and the series' cross-references are the spec, not
+the body. Search the whole series for the missing topic before deciding: if the
+hub, the roadmap diagram and neighbouring lessons all point at this lesson for it,
+then the content is missing and should be written. Only if nothing else references
+it should you consider trimming the promise instead. Say which way you went and
+why.
+
+Verify code you add by running it, and pin the library version in the text when
+behaviour depends on it — install the old version and check rather than asserting
+from memory. Two versions of the same library can differ in whether they warn at
+all, which changes the advice you should give.

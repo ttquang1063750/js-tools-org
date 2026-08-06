@@ -1,61 +1,105 @@
+# image_normalize.py
+# Lesson 3: Working with large data — NumPy & Pandas in depth
+# Practical AI Engineer series
+#
+# Run it with:  python image_normalize.py
+# Requires:     pip install numpy pandas
+#
+# A small but complete preprocessing pipeline, the shape you meet in real
+# projects: Pandas inspects and cleans the batch metadata, then NumPy does the
+# heavy per-pixel arithmetic. Not one `for` loop over pixels anywhere.
+
 import numpy as np
+import pandas as pd
 
-def generate_dummy_images(num_images=100, height=28, width=28):
-    # Tạo dữ liệu ảnh giả lập ngẫu nhiên với phân phối nguyên (0-255)
-    # Giả lập ảnh có độ sáng và nhiễu khác nhau
-    np.random.seed(42)
-    raw_data = np.random.randint(0, 256, size=(num_images, height, width), dtype=np.uint8)
-    return raw_data
+BATCH, HEIGHT, WIDTH = 12, 28, 28
 
-def preprocess_images(images):
-    # Kiểm tra kiểu dữ liệu đầu vào
+
+def generate_dummy_images(num_images=BATCH, height=HEIGHT, width=WIDTH):
+    """Fake a batch of grayscale images that genuinely differ from each other.
+
+    Each image gets its own brightness level and its own amount of noise, so the
+    per-image statistics below actually vary. (Drawing every image from the same
+    uniform 0-255 distribution would make them statistically identical, and the
+    normalisation step would have nothing to show.)
+
+    Two images are deliberately broken, to give the cleaning step real work:
+    one is entirely black, one is entirely white.
+    """
+    rng = np.random.default_rng(42)
+    images = np.empty((num_images, height, width), dtype=np.uint8)
+
+    for i in range(num_images):  # per IMAGE, not per pixel — 12 iterations, not 9408
+        brightness = 40 + i * 15  # 40, 55, 70, ... a different level each time
+        noise = rng.normal(0.0, 18.0, size=(height, width))
+        images[i] = np.clip(brightness + noise, 0, 255).astype(np.uint8)
+
+    images[3] = 0  # a dead sensor: completely black
+    images[8] = 255  # an overexposed frame: completely white
+    return images
+
+
+def describe_batch(images):
+    """Build a Pandas table of per-image statistics — one row per image.
+
+    This is what Pandas is for: a small table with named, mixed-type columns that
+    you want to inspect, filter and group. The pixels themselves stay in NumPy.
+    """
+    flat = images.reshape(len(images), -1)  # (batch, height*width), still no loop
+    df = pd.DataFrame(
+        {
+            "image_id": np.arange(len(images)),
+            "camera": ["cam-a", "cam-b"] * (len(images) // 2),
+            "mean": flat.mean(axis=1),  # axis=1 -> collapse pixels, keep images
+            "std": flat.std(axis=1),
+            "min": flat.min(axis=1),
+            "max": flat.max(axis=1),
+        }
+    )
+    # A flat image has zero variation in it, so std == 0 marks a broken frame.
+    # Storing the verdict as a column keeps the rule in one readable place.
+    df["is_flat"] = df["std"] == 0
+    return df
+
+
+def normalise(images):
+    """Min-max scale to [0, 1] and z-score standardise, both fully vectorised."""
     if not isinstance(images, np.ndarray):
-        raise TypeError("Dữ liệu đầu vào phải là một mảng NumPy ndarray!")
-        
-    # Chuyển đổi kiểu dữ liệu sang float32 để tính toán độ chính xác cao
-    images_float = images.astype(np.float32)
-    
-    # 1. Tính toán thống kê toàn cục sử dụng vectorization (không dùng vòng lặp for)
-    global_mean = np.mean(images_float)
-    
-    # Đối với Min-Max Scaling chuẩn hóa về [0, 1]:
-    # X_normalized = (X - X_min) / (X_max - X_min)
-    img_min = np.min(images_float)
-    img_max = np.max(images_float)
-    
-    range_val = img_max - img_min
-    if range_val == 0:
-        range_val = 1.0
-        
-    normalized_images = (images_float - img_min) / range_val
-    
-    # 2. Tính toán Z-score Normalization để minh họa:
-    # X_zscore = (X - mean) / std
-    std_val = np.std(images_float)
-    if std_val == 0:
-        std_val = 1.0
-    zscore_images = (images_float - global_mean) / std_val
-    
-    return normalized_images, zscore_images, global_mean, std_val
+        raise TypeError("expected a NumPy ndarray")
+
+    x = images.astype(np.float32)
+
+    lo, hi = x.min(), x.max()
+    span = hi - lo or 1.0  # guard against a batch where every pixel is identical
+    minmax = (x - lo) / span
+
+    mean, std = x.mean(), x.std()
+    zscore = (x - mean) / (std or 1.0)
+    return minmax, zscore, float(mean), float(std)
+
 
 if __name__ == "__main__":
-    print("=== Khởi tạo dữ liệu ảnh giả lập ===")
-    raw_images = generate_dummy_images(num_images=10, height=28, width=28)
-    print(f"Kích thước tập dữ liệu: {raw_images.shape} (Batch x Height x Width)")
-    print(f"Giá trị pixel lớn nhất ban đầu: {np.max(raw_images)}")
-    print(f"Giá trị pixel nhỏ nhất ban đầu: {np.min(raw_images)}")
-    
-    print("\n=== Đang tiến hành tiền xử lý và chuẩn hóa Vectorized (NumPy) ===")
-    norm_imgs, z_imgs, mean, std = preprocess_images(raw_images)
-    
-    print(f"Giá trị trung bình toàn cục (Mean): {mean:.4f}")
-    print(f"Độ lệch chuẩn toàn cục (Std): {std:.4f}")
-    
-    print("\n=== Kết quả sau chuẩn hóa Min-Max [0, 1] ===")
-    print(f"Kích thước mảng kết quả: {norm_imgs.shape}")
-    print(f"Giá trị nhỏ nhất sau Min-Max: {np.min(norm_imgs):.4f}")
-    print(f"Giá trị lớn nhất sau Min-Max: {np.max(norm_imgs):.4f}")
-    
-    print("\n=== Kết quả sau chuẩn hóa Z-score (Mean=0, Std=1) ===")
-    print(f"Giá trị trung bình mới: {np.mean(z_imgs):.4f} (Mong đợi: ~0.0)")
-    print(f"Độ lệch chuẩn mới: {np.std(z_imgs):.4f} (Mong đợi: ~1.0)")
+    raw = generate_dummy_images()
+    print(f"raw batch: {raw.shape}  (batch x height x width), dtype={raw.dtype}")
+
+    print("\n=== Pandas: per-image statistics ===")
+    stats = describe_batch(raw)
+    print(stats.round(2).to_string(index=False))
+
+    print("\n=== Pandas: average brightness per camera ===")
+    print(stats.groupby("camera")["mean"].mean().round(2).to_string())
+
+    bad = stats.loc[stats["is_flat"], "image_id"].to_numpy()
+    print(f"\nflat (broken) images found: {bad.tolist()}")
+
+    keep = stats.loc[~stats["is_flat"], "image_id"].to_numpy()
+    clean = raw[keep]  # NumPy fancy indexing: select rows by an array of positions
+    print(f"kept {len(clean)} of {len(raw)} images -> {clean.shape}")
+
+    print("\n=== NumPy: vectorised normalisation ===")
+    minmax, zscore, mean, std = normalise(clean)
+    print(f"batch mean = {mean:.4f} | batch std = {std:.4f}")
+    print(f"after min-max: min = {minmax.min():.4f}, max = {minmax.max():.4f}")
+    print("  (expected exactly 0 and 1)")
+    print(f"after z-score: mean = {zscore.mean():.4f}, std = {zscore.std():.4f}")
+    print("  (expected ~0 and ~1)")
