@@ -596,14 +596,36 @@ const TRANSLATIONS = {
 };
 
 (function () {
+  // Mot trang co PHIEN BAN NGON NGU RIENG tu khai bao locale cua noi dung qua
+  // <link rel="alternate" hreflang="..."> trong <head>. Vi du bai hoc o
+  // /blog/aie/en/... khai bao ban tieng Anh va ban tieng Viet cua chinh no.
+  //
+  // Voi nhung trang do:
+  //   - KHONG duoc ghi de <html lang>: thuoc tinh do mo ta ngon ngu cua NOI DUNG,
+  //     va noi dung khong doi khi nguoi dung bam nut. Ghi de se noi sai voi trinh
+  //     doc man hinh va voi cong cu tim kiem.
+  //   - Nut doi ngon ngu phai DIEU HUONG sang URL cua locale kia, thay vi chi doi
+  //     chu cua nav/footer — neu khong nguoi doc nhan duoc trang co chrome tieng
+  //     Anh nhung than bai tieng Viet.
+  const contentLang = document.documentElement.getAttribute('lang');
+  const altLinks = {};
+  document.querySelectorAll('link[rel="alternate"][hreflang]').forEach((l) => {
+    const code = l.getAttribute('hreflang');
+    if (code && code !== 'x-default') altLinks[code] = l.getAttribute('href');
+  });
+  // Chi coi la "trang co ban dich" khi co du ca hai locale de nhay qua lai.
+  const hasTranslations = Boolean(altLinks.vi && altLinks.en);
+
   const saved = localStorage.getItem('lang');
   const browser = navigator.language?.startsWith('vi') ? 'vi' : 'en';
-  let lang = saved || browser;
+  // Tren trang co ban dich, ngon ngu hien tai la ngon ngu cua CHINH trang do,
+  // khong phai lua chon con luu trong localStorage.
+  let lang = hasTranslations ? contentLang : saved || browser;
 
   function applyLang(l) {
     lang = l;
     localStorage.setItem('lang', l);
-    document.documentElement.lang = l;
+    if (!hasTranslations) document.documentElement.lang = l;
 
     const t = TRANSLATIONS[l];
     document.querySelectorAll('[data-i18n]').forEach((el) => {
@@ -632,7 +654,16 @@ const TRANSLATIONS = {
   document.addEventListener('DOMContentLoaded', () => {
     const btn = document.getElementById('langToggle');
     if (btn) {
-      btn.addEventListener('click', () => applyLang(lang === 'vi' ? 'en' : 'vi'));
+      btn.addEventListener('click', () => {
+        const other = lang === 'vi' ? 'en' : 'vi';
+        if (hasTranslations && altLinks[other]) {
+          // Ghi lua chon lai truoc khi roi trang, de trang dich mo ra dung ngon ngu.
+          localStorage.setItem('lang', other);
+          window.location.href = altLinks[other];
+          return;
+        }
+        applyLang(other);
+      });
     }
     applyLang(lang);
   });
