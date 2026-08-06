@@ -12,7 +12,9 @@ description: >-
   asks to read a series "as a complete
   beginner", says a series is hard to follow / thiếu dẫn đề / khó hiểu / đột ngột
   đưa code, asks to explain terminology better, or asks to restructure a series
-  for locales. Works lesson by lesson with one commit per lesson.
+  for locales. Works lesson by lesson with one commit per lesson, and writes the
+  remaining work into a generated `task.md` checklist so anyone can pick the job up
+  cold without re-auditing what is already finished.
 ---
 
 # Beginner-proof an existing series
@@ -50,6 +52,42 @@ makes the existing material land.
    "which lesson is next" is a question you will be asked repeatedly.
 
 ## The handover rule — read this first
+
+**If `task.md` at the repo root has content, read it and work from it.** It lists
+what is left, lesson by lesson, with a checklist for each. That is the whole
+entry point for someone picking this up cold — no need to read conversation
+history or re-audit finished lessons.
+
+When the user asks to beginner-proof **and** translate a series, generate it
+first, before touching any lesson:
+
+```bash
+D=.claude/skills/beginner-proof-series
+python3 $D/make-task.py $D/series/aie
+```
+
+Regenerate it after every lesson. It is **derived from the repo**, not maintained
+by hand, so re-running it resyncs — which is what stops it from going stale and
+lying. It separates two kinds of item and you must respect the split:
+
+- **"May kiem duoc"** (machine-checkable) — ticked automatically from the repo.
+  Never tick these by hand; the next regeneration will overwrite you, and a
+  hand-ticked box that the checker disagrees with is exactly the false confidence
+  this design avoids.
+- **"Chi con nguoi biet"** (only a human knows) — did someone actually read the
+  lesson start to finish as a beginner? did they write findings down before
+  editing? A script cannot know. Tick these by hand, honestly.
+
+When every lesson is translated and the checker is green, clear it:
+
+```bash
+python3 $D/make-task.py $D/series/aie --finish
+```
+
+That empties `task.md` down to a stub explaining how to regenerate it, keeping
+the file for the next series. It **refuses to run** while any lesson is
+untranslated or the checker is red — so a cleared `task.md` is itself evidence the
+work finished, not just that someone got tired.
 
 Two commands tell you everything you need to pick up someone else's work. Run
 both **before** you start and **after** you finish. Do not audit by hand; that is
@@ -134,6 +172,7 @@ Everything needed to continue lives in this directory — nothing important is i
 scratch directory, because those are per-session and vanish.
 
 ```
+make-task.py                      generate / refresh / clear task.md
 next-lesson.py                    which lesson is next, derived from the repo
 verify-series.py                  check all thirteen invariants, one command
 derive-lesson-meta.py             make a meta file from an existing VI/EN pair
@@ -228,7 +267,9 @@ result between lessons, so a big batch defeats the point.
    deliberately left alone. Then wait or continue per their instruction.
 6. **Rebuild the hub and leave the tree green** — `build-hub-en.py`, then
    `verify-series.py`. A lesson is not finished while the checker is red.
-7. **Commit** with the lesson name in the subject and the findings in the body.
+7. **Refresh `task.md`** — `make-task.py`. Its tick marks come from the repo, so a
+   stale `task.md` sends the next person to redo work that is already done.
+8. **Commit** with the lesson name in the subject and the findings in the body.
    Write down anything you deliberately left undone; the next person should learn
    it from the commit, not by rediscovering it.
 
