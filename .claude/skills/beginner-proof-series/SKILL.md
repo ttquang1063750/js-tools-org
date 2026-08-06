@@ -49,6 +49,43 @@ makes the existing material land.
 5. **Find where to resume** — see below. A series takes many sessions, so
    "which lesson is next" is a question you will be asked repeatedly.
 
+## The handover rule — read this first
+
+Two commands tell you everything you need to pick up someone else's work. Run
+both **before** you start and **after** you finish. Do not audit by hand; that is
+what these encode.
+
+```bash
+D=.claude/skills/beginner-proof-series
+python3 $D/next-lesson.py blog/aie/aie-programming-series.html   # what is next
+python3 $D/verify-series.py $D/series/aie                        # is what exists sound
+```
+
+`verify-series.py` checks thirteen invariants on every translated lesson and exits
+non-zero if any fails. **Green means trust the state and continue** — you do not
+need to re-read the finished lessons. Red prints the lesson, the check name and
+the detail, so you start from the defect instead of from scratch.
+
+Every check exists because that exact failure happened here, not because it
+sounded plausible: code blocks drifting between locales, Vietnamese comments left
+in the Vietnamese lesson, a diagram whose geometry diverged, `hreflang` pointing
+at the wrong locale, a dead relative link, a next-link locked when its target
+existed, a lesson missing from the search index, a hub card still advertising a
+translated lesson as untranslated, a hub title that did not match the page's own
+`<h1>`, a page with no template so it could not be rebuilt, chrome that drifted
+between lessons, and a stray `$` that makes KaTeX swallow a sentence.
+
+The checker is negative-tested: injecting a stray `$`, an altered code block, a
+removed `hreflang`, or a Vietnamese comment each makes it fail with the right
+check named. If you add a check, inject the fault and confirm it catches it — a
+checker that only ever passes is worse than none, because it buys false
+confidence.
+
+**When you finish a lesson, leave the tree green.** That is the whole contract: the
+next person runs two commands, sees green, and starts writing. Anything you cannot
+make green, write into the commit message _and_ say plainly in your report, so it
+is not discovered later as a surprise.
+
 ## Where to resume
 
 Do not ask the user which lesson is next, and do not guess from the conversation.
@@ -98,7 +135,9 @@ scratch directory, because those are per-session and vanish.
 
 ```
 next-lesson.py                    which lesson is next, derived from the repo
+verify-series.py                  check all thirteen invariants, one command
 derive-lesson-meta.py             make a meta file from an existing VI/EN pair
+extract-body-template.py          recover a template from an already-shipped page
 build-lesson-en.py                build one lesson's English page
 build-hub-en.py                   build the series hub's English page
 series/<series>/
@@ -187,7 +226,11 @@ result between lessons, so a big batch defeats the point.
 4. **Verify** — see the checks below.
 5. **Report to the user**: what you found, what you changed, and anything you
    deliberately left alone. Then wait or continue per their instruction.
-6. **Commit** with the lesson name in the subject and the findings in the body.
+6. **Rebuild the hub and leave the tree green** — `build-hub-en.py`, then
+   `verify-series.py`. A lesson is not finished while the checker is red.
+7. **Commit** with the lesson name in the subject and the findings in the body.
+   Write down anything you deliberately left undone; the next person should learn
+   it from the commit, not by rediscovering it.
 
 ## Verification (every lesson, before commit)
 

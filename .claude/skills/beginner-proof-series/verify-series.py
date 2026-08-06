@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""
+Kiem TOAN BO cac bat bien cua mot series song ngu, trong mot lenh.
+
+    python3 verify-series.py <thu-muc-series>            # kiem
+    python3 verify-series.py <thu-muc-series> --quiet    # chi in dong khong dat
+
+Muc dich: nguoi/phien tiep theo KHONG phai kiem lai tung thu bang tay. Chay
+lenh nay, thay xanh thi tin trang thai va lam bai tiep; thay do thi da co san
+dia chi cua cai sai.
+
+Moi kiem tra o day tuong ung voi mot loi DA TUNG xay ra that trong series nay,
+chu khong phai gia dinh:
+
+  validator      check-lesson.js dat o ca hai ban
+  code-same      khoi code giong het giua hai locale (code trung lap ngon ngu)
+  code-en        khong con tieng Viet trong code, tru cac file duoc mien tru
+  svg-geom       hinh hoc so do giong het (bo <text> va aria-label)
+  svg-en         nhan so do ban EN khong con tieng Viet
+  hreflang       ca hai trang co du bo ba, tro dung phia
+  urls           canonical/og:url dung locale cua minh
+  links          moi link tuong doi giai duoc; link "next" khoa DUNG khi thieu
+  registered     co trong sitemap.xml va blog/search-index.json
+  hub            the tren hub tro sang EN khi co EN, va tieu de khop <h1>
+  rebuildable    co template + meta de dung lai duoc
+  chrome         tag/ngay/tac gia thong nhat giua cac bai EN
+  dollar         so dau $ trong van xuoi EN phai chan (le = co $ lac, KaTeX se an chu)
+
+Ma thoat khac 0 neu co bat ky kiem tra nao khong dat.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+VN = r'[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵĐđ]'
+SVG_RE = r'<div style="margin: 20px 0; text-align: center">\s*<svg.*?</svg>\s*</div>'
+CODE_RE = r'<span class="code-filename">([^<]*)</span>.*?<pre><code[^>]*>(.*?)</code></pre>'
+
+if not 2 <= len(sys.argv) <= 3:
+    raise SystemExit('dung: verify-series.py <thu-muc-series> [--quiet]')
+SERIES = sys.argv[1].rstrip('/')
+QUIET = '--quiet' in sys.argv
+cfg = json.load(open(f'{SERIES}/config.json', encoding='utf-8'))
+LDIR, VDIR, EDIR = f'{SERIES}/lessons', cfg['lessonDirVi'], cfg['lessonDirEn']
+EXEMPT = set(cfg.get('codeDataExemptions', {}))
+STD = cfg.get('chromeStandardEn', {})
+base_url = cfg['urlVi'].rsplit('/', 1)[0]
+
+sitemap = open('sitemap.xml', encoding='utf-8').read()
+index = {x['url'] for x in json.load(open('blog/search-index.json', encoding='utf-8'))}
+hub_en = open(cfg['hubEn'], encoding='utf-8').read() if os.path.exists(cfg['hubEn']) else ''
+hub_vi = open(cfg['hubVi'], encoding='utf-8').read()
+
+# Thu tu bai lay tu hub, giong next-lesson.py
+order = []
+for m in re.finditer(r'<(?:a|span)\s+[^>]*?(?:href="\.?/?([a-z0-9-]+)")?[^>]*?class="[^"]*lesson-item', hub_vi):
+    slug = m.group(1)
+    win = hub_vi[m.end() : m.end() + 400]
+    num = re.search(r'class="lesson-number"[^>]*>\s*(\d+)', win) or re.search(r'Bài\s+(\d+)\s*:', win)
+    if slug and num:
+        order.append((int(num.group(1)), slug))
+order.sort()
+
+failures = []
+
+
+def fail(slug, check, detail):
+    failures.append((slug, check, detail))
+
+
+def strip(s, drop_text=True):
+    s = re.sub(r'<text[^>]*>.*?</text>', '', s, flags=re.S) if drop_text else s
+    return ' '.join(re.sub(r'aria-label="[^"]*"', '', s).split())
+
+
+def prose(path):
+    """Van xuoi, da bo code block, so do VA ca <code> inline.
+
+    Bo <code> la co y: trong do dau $ la van ban that (vi du `${name}` cua
+    template literal), khong phai dau phan cach KaTeX. Phan con lai chi nen
+    chua $ theo CAP cua KaTeX, nen so luong le nghia la co mot dau $ lac —
+    va mot dau $ lac se lam KaTeX an mat doan van giua no va dau $ ke tiep.
+    """
+    t = open(path, encoding='utf-8').read()
+    if 'class="article-body"' not in t:
+        return ''
+    b = t[t.index('class="article-body"') : t.index('</main>')]
+    for pat in (r'<pre>.*?</pre>', r'<svg.*?</svg>', r'<code[^>]*>.*?</code>'):
+        b = re.sub(pat, '', b, flags=re.S)
+    return re.sub(r'<[^>]+>', ' ', b)
+
+
+chrome_seen = {}
+
+for num, slug in order:
+    vi_p, en_p = f'{VDIR}/{slug}.html', f'{EDIR}/{slug}.html'
+    if not os.path.exists(en_p):
+        continue  # chua dich — khong phai loi, next-lesson.py se bao
+    vi, en = open(vi_p, encoding='utf-8').read(), open(en_p, encoding='utf-8').read()
+    checks = []
+
+    # --- validator
+    bad = [
+        p
+        for p in (vi_p, en_p)
+        if subprocess.run(['node', 'check-lesson.js', p], capture_output=True).returncode != 0
+    ]
+    checks.append(('validator', not bad, ', '.join(bad)))
+
+    # --- code giong het + khong con tieng Viet
+    cv, ce = re.findall(CODE_RE, vi, re.S), re.findall(CODE_RE, en, re.S)
+    diff_idx = [i for i, (a, b) in enumerate(zip(cv, ce)) if a[1] != b[1]]
+    checks.append(
+        ('code-same', len(cv) == len(ce) and not diff_idx, f'{len(cv)}/{len(ce)} khoi, lech tai {diff_idx}')
+    )
+    leaked = sorted({n for n, c in cv + ce if re.search(VN, c, re.I) and n not in EXEMPT})
+    checks.append(('code-en', not leaked, ', '.join(leaked)))
+
+    # --- so do
+    gv = [strip(b) for b in re.findall(SVG_RE, vi, re.S)]
+    ge = [strip(b) for b in re.findall(SVG_RE, en, re.S)]
+    checks.append(('svg-geom', gv == ge, f'{len(gv)} vs {len(ge)} so do'))
+    svg_vn = [
+        ' '.join(t.split())
+        for b in re.findall(SVG_RE, en, re.S)
+        for t in re.findall(r'<text[^>]*>(.*?)</text>', b, re.S)
+        if re.search(VN, t, re.I)
+    ]
+    checks.append(('svg-en', not svg_vn, '; '.join(svg_vn)[:70]))
+
+    # --- hreflang / urls
+    want = {('vi', f'{base_url}/{slug}'), ('en', f'{base_url}/en/{slug}'), ('x-default', f'{base_url}/{slug}')}
+    ok_hl = all(set(re.findall(r'hreflang="([^"]+)" href="([^"]+)"', s)) == want for s in (vi, en))
+    checks.append(('hreflang', ok_hl, 'bo ba thieu hoac tro sai'))
+    urls_ok = True
+    for s, expect in ((vi, f'{base_url}/{slug}'), (en, f'{base_url}/en/{slug}')):
+        for pat in (r'<link rel="canonical" href="([^"]+)"', r'<meta property="og:url" content="([^"]+)"'):
+            m = re.search(pat, s)
+            if not m or m.group(1) != expect:
+                urls_ok = False
+    checks.append(('urls', urls_ok, 'canonical/og:url sai locale'))
+
+    # --- links tuong doi + link next khoa dung
+    bad_links = []
+    for m in re.finditer(r'href="(?!https?:|#|/|mailto:)([^"#?]+)"', en):
+        p = os.path.normpath(os.path.join(EDIR, m.group(1)))
+        if not (os.path.exists(p) or os.path.exists(p + '.html')):
+            bad_links.append(m.group(1))
+    nxt = next((s for n, s in order if n == num + 1), None)
+    locked = 'article-related__link--locked' in en
+    should_lock = bool(nxt) and not os.path.exists(f'{EDIR}/{nxt}.html')
+    checks.append(('links', not bad_links and locked == should_lock,
+                   f'chet={sorted(set(bad_links))} khoa={locked} nen_khoa={should_lock}'))
+
+    # --- dang ky
+    reg = f'{base_url.replace("https://js-tools.org", "")}/en/{slug}'.lstrip('/')
+    in_sm = f'/en/{slug}</loc>' in sitemap
+    in_ix = any(u.endswith(f'en/{slug}') for u in index)
+    checks.append(('registered', in_sm and in_ix, f'sitemap={in_sm} index={in_ix}'))
+
+    # --- hub
+    card = re.search(r'<a href="([^"]+)" class="lesson-item">\s*<div class="lesson-number">%02d</div>.*?<h3 class="lesson-title">(.*?)</h3>' % num, hub_en, re.S)
+    if not card:
+        checks.append(('hub', False, 'khong tim thay the bai tren hub EN'))
+    else:
+        href, title = card.group(1), ' '.join(re.sub(r'<em.*?</em>', '', card.group(2), flags=re.S).split())
+        h1 = ' '.join(re.sub(r'<[^>]+>', '', re.search(r'<h1 class="article-hero__title"[^>]*>(.*?)</h1>', en, re.S).group(1)).split())
+        checks.append(('hub', href == slug and title == h1, f'href={href} tieu_de_khop={title == h1}'))
+
+    # --- dung lai duoc
+    have = [os.path.exists(f'{LDIR}/{slug}.{x}') for x in ('body-en.html', 'meta-en.json')]
+    checks.append(('rebuildable', all(have), f'body={have[0]} meta={have[1]}'))
+
+    # --- chrome thong nhat
+    tag = ' '.join(re.search(r'<div class="article-hero__tag"[^>]*>(.*?)</div>', en, re.S).group(1).split())
+    meta_txt = ' '.join(re.search(r'<div class="article-hero__meta"[^>]*>(.*?)</div>', en, re.S).group(1).split())
+    ok_chrome = (
+        re.match(STD.get('tagPattern', '.*'), tag)
+        and STD.get('date', '') in meta_txt
+        and STD.get('byline', '') in meta_txt
+    )
+    chrome_seen[slug] = (tag, meta_txt[:40])
+    checks.append(('chrome', bool(ok_chrome), f'tag="{tag}"'))
+
+    # --- dau $ le trong van xuoi EN
+    n_dollar = prose(en_p).count('$')
+    checks.append(('dollar', n_dollar % 2 == 0, f'{n_dollar} dau $ (le = co $ lac)'))
+
+    line = f'  Bai {num:2} {slug:26}'
+    for name, ok, detail in checks:
+        if not ok:
+            fail(slug, name, detail)
+    if QUIET and all(ok for _, ok, _ in checks):
+        continue
+    print(line + ' '.join(f'{name}:{"OK" if ok else "X"}' for name, ok, _ in checks))
+
+print()
+if failures:
+    print(f'{len(failures)} KIEM TRA KHONG DAT:\n')
+    for slug, check, detail in failures:
+        print(f'  {slug}  [{check}]  {detail}')
+    print('\nSua roi chay lai. Neu la trang EN thi SUA TEMPLATE roi dung lai,')
+    print('dung sua truc tiep HTML — lan dung sau se ghi de len.')
+    sys.exit(1)
+print(f'TAT CA DAT — {len([s for _, s in order if os.path.exists(f"{EDIR}/{s}.html")])} bai da dich, khong co bat bien nao bi vi pham.')
+print('Co the tin trang thai nay va lam bai tiep.')
