@@ -277,7 +277,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
 - [ ] Trang hub `aisys-programming-series.html` (copy từ `webgl-programming-series.html`, `.lessons-list` 13 dòng, glossary EN–VI thuật ngữ series: RLHF, red-team, blackboard, deadlock, ReAct, tool-calling…).
 - [ ] 13 trang bài học — mỗi bài: `.article-body` theo đề cương H2 ở Phần III, `.code-tabs` (Preview | JS), `.article-refs`, `.article-related` (prev/next/hub), `.article-comments` (giscus) — **KHÔNG có mục quiz** (ngoại lệ đã chốt).
 - [ ] File code co-located mỗi bài (`.js`) cho nút "Tải file code thực hành".
-- [ ] Tích hợp toàn cục sau khi xong: `blog/index.html` (`a.blog-card` + `.blog-card__tag--aisys`), ROOT `index.html` (`a.learn-card`, đối chiếu số lượng khớp `blog/index.html`), `sitemap.xml` (hub priority 0.8 + 13 bài + visualizer priority 0.7), `blog/search-index.json` (13 entry, `headingsVi` khớp H2 thật), `README.md`/`AGENTS.md` (cập nhật số series/bài + Last Updated), và cập nhật bảng tiến độ đầu `plan.md` (`X/13`).
+- [ ] Tích hợp toàn cục sau khi xong: `blog/index.html` (`a.blog-card` + `.blog-card__tag--aisys`), ROOT `index.html` (`a.learn-card`, đối chiếu số lượng khớp `blog/index.html`), `sitemap.xml` (hub priority 0.8 + 13 bài + visualizer priority 0.7), `blog/search-index.json` (13 entry, `headingsVi` khớp H2 thật), `README.md`/`CLAUDE.md` (cập nhật số series/bài + Last Updated), và cập nhật bảng tiến độ đầu `plan.md` (`X/13`).
 - [ ] Chạy đủ `check-lesson.md` PHẦN C cho từng bài trước khi báo "xong" — **bỏ qua duy nhất** lệnh đếm `quiz-container`/`quiz-question` (Phần C1 mục 6) vì series này không có quiz; mọi lệnh C1 khác vẫn chạy đầy đủ.
 
 ---
@@ -348,7 +348,7 @@ Tài liệu này cung cấp **định hướng chi tiết, ngăn xếp công ngh
   - Đăng ký sitemap.xml (9 bài + 1 hub + 1 visualizer).
   - Đăng ký search-index.json (9 entry mới, headingsVi khớp H2 thực tế).
   - Cập nhật tiến độ `plan.md` (`X/9` ở bảng trạng thái đầu file).
-  - Cập nhật README.md và AGENTS.md.
+  - Cập nhật README.md và CLAUDE.md.
 - [ ] **Kiểm thử QA tự động:** Chạy `node check-lesson.js` và `npx prettier --check` trên từng file bài viết trước khi báo cáo hoàn thành.
 
 ## 🏗️ Series 20: Thiết Kế Hệ Thống (Từ Một Server Đến Triệu Người Dùng)
@@ -457,7 +457,7 @@ Cột **Cần trước** ghi số bài tiên quyết, dùng để kiểm chuỗi
 > `sysdesign-hashring.js`, `sysdesign-engine-selftest.mjs` (42 mục kiểm chứng),
 > `sysdesign-sandbox.html` (Traffic Lab), `sysdesign-lab/` (lab Docker đã chạy thật và đo
 > thật), trang hub, và tích hợp toàn cục (blog/index.html, ROOT index.html, i18n.js,
-> sitemap.xml, search-index.json, AGENTS.md). Còn lại: **18 trang bài học**.
+> sitemap.xml, search-index.json, CLAUDE.md). Còn lại: **18 trang bài học**.
 
 - [x] **Hạ tầng dùng chung (làm trước, 1 lần):**
   - [x] Tạo thư mục `blog/sysdesign/`.
@@ -478,10 +478,10 @@ Cột **Cần trước** ghi số bài tiên quyết, dùng để kiểm chuỗi
   - [x] Thêm key i18n `learn.sysdesign.title` / `learn.sysdesign.desc` (EN + VI) vào `i18n.js`.
   - [x] `sitemap.xml`: 18 bài + 1 hub + 1 sandbox — đã đủ.
   - [x] `blog/search-index.json`: 18 entry — đã đủ, `headingsVi` khớp H2 thực tế.
-  - [x] Cập nhật bảng tiến độ đầu `plan.md` (`X/18`), `README.md`, `AGENTS.md`.
+  - [x] Cập nhật bảng tiến độ đầu `plan.md` (`X/18`), `README.md`, `CLAUDE.md`.
 - [ ] **QA từng bài:** `node check-lesson.js <file>` và `npx prettier --check` phải sạch trước khi tick "xong".
 
-> Tài liệu bàn giao cho người/agent thực thi. Phần I ở trên là **thiết kế nội dung**; phần II này là **danh sách công việc kỹ thuật** bám đúng khung (template) thật của dự án. Đọc kèm `AGENTS.md`.
+> Tài liệu bàn giao cho người/agent thực thi. Phần I ở trên là **thiết kế nội dung**; phần II này là **danh sách công việc kỹ thuật** bám đúng khung (template) thật của dự án. Đọc kèm `CLAUDE.md`.
 >
 > **Nguyên tắc bất di bất dịch:** Pure HTML + CSS + vanilla JS, **không framework, không build step**. Song ngữ EN/VI. Header + Footer phải **giống hệt** mọi trang blog hiện có (copy từ một file `webgl/*.html` làm chuẩn). Mọi link nội bộ dùng URL **không có đuôi `.html`** (Cloudflare Pages tự rewrite).
 
@@ -589,7 +589,7 @@ Mỗi cái là 1 file HTML độc lập trong thư mục series, nhúng vào bà
   ```
   (Hub để `priority` 0.8.)
 - [ ] **`blog/search-index.json`**: thêm 1 object/bài: `url` (không `.html`), `parentSeries`, `titleEn`, `titleVi`, `desc`, `headingsEn`, `headingsVi` (ghép các heading H2 theo thứ tự, cả 2 ngôn ngữ — search đã diacritics-insensitive).
-- [ ] **`README.md` + `AGENTS.md`**: cập nhật bảng/cây thư mục + số lượng series/bài + dòng "Last Updated".
+- [ ] **`README.md` + `CLAUDE.md`**: cập nhật bảng/cây thư mục + số lượng series/bài + dòng "Last Updated".
 
 ## 6. QA trước khi bàn giao mỗi series
 

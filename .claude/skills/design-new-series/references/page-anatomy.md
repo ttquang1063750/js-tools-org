@@ -107,7 +107,7 @@ constraints: feature-detect new APIs (`navigator.gpu`), honor autoplay policy
 - [ ] **`blog/search-index.json`** — one object per lesson: `url` (no `.html`),
       `parentSeries`, `titleEn`, `titleVi`, `desc`, `headingsEn`, `headingsVi`
       (concatenated H2 titles in order, both languages).
-- [ ] **`README.md` + `AGENTS.md`** — update the directory tree, series/lesson
+- [ ] **`README.md` + `CLAUDE.md`** — update the directory tree, series/lesson
       counts, and "Last Updated".
 
 ## QA before handoff

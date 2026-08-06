@@ -199,7 +199,7 @@ integration every new series needs: a card in `blog/index.html`, **a matching
 `a.learn-card` in the repo-root `index.html`** (a separate file from
 `blog/index.html` — missed twice before, always double-check both), `<url>`
 entries in `sitemap.xml`, entries in `blog/search-index.json`, and updates to
-`README.md` / `AGENTS.md`.
+`README.md` / `CLAUDE.md`.
 
 ## Output
 
