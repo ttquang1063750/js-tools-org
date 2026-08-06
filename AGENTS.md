@@ -2,6 +2,15 @@
 
 Landing page for [js-tools.org](https://js-tools.org) — experience, speed, convenience. Everything happens in your browser. No installation — just run. Unlock the power of JavaScript and your browser.
 
+## ⚠️ Check for open work first
+
+**If [`task.md`](task.md) has content, there is a job in progress — read it before
+doing anything else.** It lists exactly what is left, with a per-lesson checklist,
+and it names the skill that explains how to do it. Do not re-audit finished work
+and do not reconstruct state from conversation history; both are already encoded.
+
+If `task.md` is just a stub saying there is nothing open, ignore it and carry on.
+
 ---
 
 ## Project Overview
