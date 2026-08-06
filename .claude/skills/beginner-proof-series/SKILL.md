@@ -7,7 +7,9 @@ description: >-
   knowledge the series has not taught yet. Also knows this repo's locale layout —
   Vietnamese at the root, English added under `/en/` — and how to measure whether
   a `data-lang-content` block is a real translation or an empty shell before
-  touching it. Use this whenever the user asks to read a series "as a complete
+  touching it. Keeps every lesson complete in both locales: fix the Vietnamese,
+  then ship the English translation in the same commit. Use this whenever the user
+  asks to read a series "as a complete
   beginner", says a series is hard to follow / thiếu dẫn đề / khó hiểu / đột ngột
   đưa code, asks to explain terminology better, or asks to restructure a series
   for locales. Works lesson by lesson with one commit per lesson.
@@ -188,6 +190,67 @@ after will show dozens of false regressions. Strip the `[Dòng N]` part and
 compare failure _types and counts_ per file instead. Also capture the baseline
 first: in this repo 41 of the 122 pages already failed before the edit, so
 "does it pass" is the wrong question — "did I make it worse" is the right one.
+
+## Code is locale-neutral — comments are always English
+
+**A code block is identical in every locale.** Do not translate code, and do not
+keep two versions of it. Only the prose around it changes language.
+
+**Every comment inside code is written in English**, including in the Vietnamese
+lesson. Reasons, in order of weight:
+
+1. One code block serves both locales, so there is exactly one thing to maintain.
+   Two copies drift, and the drift is invisible until a reader hits it.
+2. Code the reader will paste into a real project should look like the code they
+   will meet in real projects, in issues, and in library sources.
+3. Vietnamese comments force a choice between diacritics — which corrupt in some
+   terminals and in KaTeX — and diacritic-less Vietnamese, which is harder to read
+   than plain English.
+
+This applies to co-located sample files too (`*.py`, `*.js` next to the lesson):
+their comments are English, and they are shared by both locales rather than
+duplicated per language.
+
+Identifiers stay English as well — `def clean_text(text)`, not
+`def lam_sach(van_ban)`.
+
+**Status and log strings the program prints are English too.** This follows from
+the block being shared: a Vietnamese `print("Bat dau xu ly...")` would appear
+verbatim in the English lesson. The one exception is **sample data** — if the
+example cleans Vietnamese user feedback, that feedback stays Vietnamese, because
+the data _is_ the subject of the example and it demonstrates the encoding point.
+Distinguish the two: `print("--- Starting pipeline ---")` is a status message and
+becomes English; `{"comment": "  San pham rat TOT  "}` is data and stays.
+
+## Shipping the English version of a lesson
+
+Each cycle ends with the lesson complete in **both** locales, in one commit:
+fix the Vietnamese, then translate. Never leave a fixed lesson untranslated and
+move on — that is how a half-translated series accumulates.
+
+Paths, for a lesson at `blog/<series>/<slug>.html` whose English twin lives at
+`blog/<series>/en/<slug>.html`:
+
+- **Relative depth goes one level deeper.** `../../assets/` → `../../../assets/`,
+  `../blog.css` → `../../blog.css`, `../prism.js` → `../../prism.js`. Missing this
+  strips the page of all styling — check it in the browser, not by eye.
+- **Co-located code samples are not duplicated.** A download link becomes
+  `../data_cleaner.py`, pointing back at the single shared file.
+- **`canonical`, `og:url` and JSON-LD `url`** all point at the `/en/` path and must
+  agree with each other; `check-lesson.js` only verifies the URL _ends with_ the
+  file's slug, so a wrong directory passes the validator — verify it yourself.
+- **`hreflang` on both pages**, each naming itself and its twin, plus
+  `x-default` on the Vietnamese one.
+- **A visible locale link in the hero** ("Read in Vietnamese" / "Đọc bản tiếng
+  Việt"). This works with JavaScript disabled, unlike the runtime chrome toggle,
+  and it is what a reader who landed on the wrong language actually needs.
+- **Cross-lesson links resolve inside the same locale.** The `next` link must be a
+  `--locked` span until that lesson's English twin exists — a live href to a
+  missing page is worse than an honest "coming soon".
+- **Register the new page** in `sitemap.xml` and `blog/search-index.json`.
+
+The series hub is not a lesson and is translated separately. Until it is, English
+lessons link back to the Vietnamese hub; say so rather than leaving it silent.
 
 ## What not to do
 
