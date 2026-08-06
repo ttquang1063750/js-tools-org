@@ -46,6 +46,43 @@ makes the existing material land.
    - _report only_ — list findings with locations, change nothing.
 4. **Never assume the locale layout.** See "Locale layout for this repo" below.
    Getting this wrong breaks links that are already shared and indexed.
+5. **Find where to resume** — see below. A series takes many sessions, so
+   "which lesson is next" is a question you will be asked repeatedly.
+
+## Where to resume
+
+Do not ask the user which lesson is next, and do not guess from the conversation.
+Derive it from the repo:
+
+```bash
+python3 .claude/skills/beginner-proof-series/next-lesson.py blog/aie/aie-programming-series.html
+```
+
+It prints the syllabus with per-lesson status and names the next lesson, its
+Vietnamese path, and the English path to create.
+
+**The completion signal is the English twin existing.** A cycle only ends with the
+lesson done in both locales (see "Shipping the English version"), so
+`blog/<series>/en/<slug>.html` is present exactly when the lesson is finished.
+Derive from files on disk rather than keeping a progress file — a progress file
+goes stale the moment anyone edits outside the skill, and then it lies with
+confidence.
+
+**Lesson order comes from the hub, never from filenames.** Slugs sort
+alphabetically, which has nothing to do with syllabus order. The script reads
+whichever of the two numbering styles the hub uses — `<div class="lesson-number">01`
+(sysdesign) or a `Bài 1:` title prefix (aie) — and it counts locked, unwritten
+lessons so the total matches the syllabus.
+
+If it cannot parse the hub it says so and stops rather than reporting zero
+lessons; take the order from `plan.md` by hand in that case. If the hub links to a
+Vietnamese file that does not exist it refuses to conclude and exits non-zero —
+that is a dead link a reader can click, so report it instead of continuing past it.
+
+Two things the script deliberately does **not** decide: whether an existing
+English file is any good (it only checks existence), and whether the Vietnamese
+lesson has already had its beginner-proof pass. If a lesson was translated before
+this skill existed, check it by hand before treating it as done.
 
 ## The seven things that block a beginner
 
