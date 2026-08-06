@@ -1,0 +1,435 @@
+            <p class="article-lead">
+              In Lesson 5 we assembled a complete multi-layer MLP by hand and ran a forward pass to produce raw
+              predictions. Untrained, though, those predictions are meaningless. For the model to actually learn the
+              pattern, we have to give it a measure of its error and a mechanism for correcting itself.
+            </p>
+
+            <p>
+              This lesson walks you through setting up the <strong>loss function</strong>, understanding the
+              <strong>backpropagation</strong> algorithm properly — it rests on the chain rule — and the adaptive
+              <strong>Adam</strong> optimiser, to complete a professional training loop.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Libraries:</strong> <code>pip install torch numpy</code> inside the virtual environment from
+                Lesson 1. <code>matplotlib</code> is optional — without it the project still runs and still draws its
+                chart, just with characters in the terminal instead of an image file.
+                <br /><br />
+                <strong>Knowledge you need, and where it lives:</strong>
+                <ul>
+                  <li>
+                    <strong>Lesson 2</strong> — a derivative is a slope, and a <em>loss function</em> is the single number
+                    measuring wrongness. This lesson reuses both ideas exactly, only swapping a one-variable function for
+                    one with millions of variables.
+                  </li>
+                  <li>
+                    <strong>Lesson 4</strong> — <code>autograd</code> and the computation graph. Here we call
+                    <code>loss.backward()</code> and trust it to compute the right derivatives; <em>why</em> it can is what
+                    Lesson 4 explained.
+                  </li>
+                  <li>
+                    <strong>Lesson 5</strong> — MLP structure and activation functions. The network used here is Lesson 5's
+                    network, now actually being trained.
+                  </li>
+                </ul>
+                Put another way: the previous four lessons built every piece. This is the lesson that bolts them together
+                into a loop that runs.
+              </div>
+            </div>
+
+            <h2>6.1 The loss function — measuring how wrong we are</h2>
+            <p>
+              A short reminder from Lesson 2: a <strong>loss function</strong> takes the model's prediction ($\hat{y}$,
+              read "y-hat") together with the true label ($y$), and returns <em>one number</em> — how wrong the model is.
+              Lower is better.
+            </p>
+            <p>
+              What is new in this lesson is <strong>which function to choose</strong>. Lesson 2 used a simple squared
+              function because it only needed to illustrate the principle. On a real problem, choosing the wrong loss makes
+              the model learn very slowly or not at all, and this section shows why — with numbers, not advice.
+            </p>
+            <p>Two functions cover almost every real case:</p>
+            <ul>
+              <li>
+                <strong>MSE loss (mean squared error):</strong> for regression problems. It measures the mean squared
+                distance: $$L = \frac{1}{N} \sum_{i=1}^N (y_i - \hat{y}_i)^2$$ Seen probabilistically, minimising MSE is
+                equivalent to maximum likelihood estimation (MLE) under the assumption that the model's errors follow a
+                Gaussian distribution with mean zero.
+              </li>
+              <li>
+                <strong>Cross-entropy loss (BCE &amp; categorical cross-entropy):</strong> for classification problems.
+                This measures the distance between two probability distributions (the true distribution $y$ and the
+                predicted $\hat{y}$): $$L = -\frac{1}{N} \sum_{i=1}^N \left( y_i \log(\hat{y}_i) + (1 - y_i) \log(1 -
+                \hat{y}_i) \right)$$ The idea comes from Claude Shannon's information theory. By minimising cross-entropy
+                we are in effect minimising the Kullback-Leibler divergence between the model's predicted distribution and
+                the real data distribution.
+              </li>
+            </ul>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🔢 What "logits" means — a word about to appear constantly</div>
+              <div class="callout__content">
+                <strong>Logits are the raw numbers the final layer of a network outputs, BEFORE they get squashed into a
+                probability range.</strong> They can be any value at all: $-8.2$, $0$, $15.7$.
+                <br /><br />
+                An everyday way to picture it: a logit is <em>raw confidence</em>, and a probability is that same
+                confidence rescaled onto 0–100%. Three contestants scored $5$, $2$ and $-1$ — those are logits; turning
+                them into "70%, 25%, 5% chance of winning" gives probabilities.
+                <br /><br />
+                The function that converts logits to probabilities is <code>Sigmoid</code> (two classes) or
+                <code>Softmax</code> (many classes). The symbol $z$ in the formulas below is always a logit, and $\hat{y}$
+                is the probability after squashing.
+                <br /><br />
+                Why the distinction matters: PyTorch has two kinds of loss function — the kind that takes
+                <strong>logits</strong> (<code>nn.CrossEntropyLoss</code>, <code>nn.BCEWithLogitsLoss</code>) and the kind
+                that takes <strong>probabilities</strong> (<code>nn.BCELoss</code>). Feeding in the wrong kind is the
+                source of the pitfall at the end of this section.
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 The mathematics: why not use MSE for classification?</div>
+              <div class="callout__content">
+                If we use MSE for classification with a Sigmoid activation on the last layer, the derivative of the loss
+                with respect to the weights contains the derivative of the Sigmoid as a factor: $f'(z) = f(z)(1 - f(z))$.
+                When the model is badly wrong (say the true label is 1 but the prediction is near 0), $f(z)$ approaches 0,
+                which drives $f'(z)$ towards 0 as well. The gradient is abruptly wiped out (gradient saturation), and the
+                network cannot learn anything at precisely the moment its error is largest.
+                <br /><br />
+                Cross-entropy, by contrast, is designed to cancel that $f'(z)$ factor. Its derivative with respect to the
+                output logits $z$ is simply a linear difference: $$\frac{\partial L}{\partial z} = \hat{y} - y$$ The larger
+                the error, the larger the gradient — so the model corrects itself very fast in the early steps.
+              </div>
+            </div>
+
+            <p>Let's prove that with concrete numbers rather than trusting the algebra above:</p>
+            {{CODE:mse_vs_ce_gradient.py}}
+            <p>
+              For the same near-total misprediction, MSE's gradient is about <strong>0.03%</strong> of cross-entropy's —
+              that is the concrete figure behind the "gradient saturation" described above, and the reason essentially no
+              real classification problem still uses MSE as its main loss.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: applying Softmax twice in PyTorch, and numerical instability</div>
+              <div class="callout__content">
+                PyTorch's <code>nn.CrossEntropyLoss</code> merges two steps into one: <code>LogSoftmax</code> and
+                <code>NLLLoss</code> (negative log-likelihood loss). That design exists to avoid floating-point
+                overflow/underflow, via the <strong>log-sum-exp trick</strong>: $$\log \sum_i e^{z_i} = c + \log \sum_i
+                e^{z_i - c} \quad \text{with } c = \max_i(z_i)$$ If you add your own <code>nn.Softmax</code> layer at the
+                model's output before passing it to <code>nn.CrossEntropyLoss</code>, the program computes Softmax twice,
+                losing numerical accuracy and slowing convergence badly. The last layer of a multi-class classifier in
+                PyTorch must always emit <strong>raw logits</strong>, with no activation.
+              </div>
+            </div>
+
+            <h2>6.2 Backpropagation &amp; gradient descent optimisation</h2>
+            <p>
+              Once we have the loss at the final layer, how do we carry that error information backwards to the deeper
+              hidden layers so their weights can be updated?
+            </p>
+            <p>
+              The <strong>backpropagation</strong> algorithm solves this by applying the <strong>chain rule</strong> of
+              differentiation.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">⚙️ The dynamic computation graph</div>
+              <div class="callout__content">
+                PyTorch builds a dynamic computation graph (a directed acyclic graph) during the forward pass. Each node in
+                the graph is an operation, and the edges are tensors. Parameters that need optimising are flagged with
+                <code>requires_grad=True</code>. When you call <code>loss.backward()</code>, PyTorch's
+                <strong>autograd</strong> engine walks that graph backwards, computing derivatives automatically through
+                gradient accumulation.
+              </div>
+            </div>
+
+            <p>
+              Before the formulas, look at the <em>shape</em> of what is happening. The forward pass runs left to right to
+              produce a prediction; the backward pass runs right to left carrying the error information home:
+            </p>
+
+            {{SVG:1}}
+
+            <p>
+              Read the diagram in both directions. Green: $x$ goes through a matrix multiply and then an activation, twice,
+              producing $\hat{y}$, which is compared with the true label to give $L$. Red: starting from $L$ and going
+              back, each layer receives <strong>the share of the error that belongs to it</strong> — that is the entire
+              meaning of "backward propagation". The two yellow arrows show which weight matrix each share of the error is
+              used to fix.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">✏️ Three symbols to know before reading the formulas</div>
+              <div class="callout__content">
+                The formulas below use three symbols that will stop you on the first line if nobody explains them:
+                <ul>
+                  <li>
+                    <strong>$\delta$ (read "delta")</strong> — <em>the share of the error belonging to a layer</em>, which
+                    is exactly the red boxes in the diagram. $\delta^{[2]}$ is the error at the final layer,
+                    $\delta^{[1]}$ is that error after being carried back to the hidden layer. It is not a new concept —
+                    it is just shorthand for $\frac{\partial L}{\partial z}$, to keep the formulas short.
+                  </li>
+                  <li>
+                    <strong>$\odot$</strong> — multiply <em>element by element</em>, exactly NumPy's <code>A * B</code>
+                    from Lesson 3. Not matrix multiplication. It appears here because we need to "block" the error at
+                    precisely those neurons that ReLU switched off.
+                  </li>
+                  <li>
+                    <strong>$m$</strong> — the number of samples in the current batch. The $\frac{1}{m}$ is just an
+                    average, so the size of the gradient does not depend on whether you fed in 10 samples or 10,000.
+                  </li>
+                </ul>
+                The bracketed superscripts $^{[1]}$, $^{[2]}$ are <em>layer numbers</em>, not exponents.
+              </div>
+            </div>
+
+            <p>
+              Now the same content written as formulas, for a 2-layer MLP (input $X$, hidden layer $Z^{[1]}$ with ReLU,
+              output layer $Z^{[2]}$ with Sigmoid). You <strong>do not need to derive</strong> any of this yourself —
+              PyTorch does it for you. Read it to convince yourself there is no magic underneath
+              <code>loss.backward()</code>:
+            </p>
+            <ol>
+              <li>
+                <strong>Forward:</strong>
+                $$Z^{[1]} = W^{[1]} X + b^{[1]}$$ $$A^{[1]} = \text{ReLU}(Z^{[1]})$$ $$Z^{[2]} = W^{[2]} A^{[1]} +
+                b^{[2]}$$ $$A^{[2]} = \sigma(Z^{[2]}) = \hat{Y}$$
+              </li>
+              <li>
+                <strong>Backward:</strong>
+                Error at the final layer: $$\delta^{[2]} = A^{[2]} - Y$$ Derivatives for layer 2's weights and bias:
+                $$\frac{\partial L}{\partial W^{[2]}} = \frac{1}{m} \delta^{[2]} (A^{[1]})^T$$ $$\frac{\partial L}{\partial
+                b^{[2]}} = \frac{1}{m} \sum_{\text{samples}} \delta^{[2]}$$ Carry the error back to the hidden layer:
+                $$\delta^{[1]} = \left( (W^{[2]})^T \delta^{[2]} \right) \odot \sigma_{\text{ReLU}}'(Z^{[1]})$$ Derivatives
+                for layer 1's weights and bias: $$\frac{\partial L}{\partial W^{[1]}} = \frac{1}{m} \delta^{[1]} X^T$$
+                $$\frac{\partial L}{\partial b^{[1]}} = \frac{1}{m} \sum_{\text{samples}} \delta^{[1]}$$
+              </li>
+            </ol>
+
+            <p>
+              With the gradients computed ($\nabla_W L$), the optimiser updates the weights in the direction opposite the
+              gradient, reducing the error step by step:
+            </p>
+            $$W \leftarrow W - \alpha \cdot \frac{\partial L}{\partial W}$$
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Why calling optimizer.zero_grad() is mandatory</div>
+              <div class="callout__content">
+                In PyTorch, when you call <code>loss.backward()</code>, the newly computed gradients are
+                <strong>accumulated</strong> into the tensors' existing <code>.grad</code> attribute rather than
+                overwriting it. That design supports training large models (Transformers, RNNs) when GPU memory cannot hold
+                a big batch: you split the batch into sub-batches, run backward to accumulate gradients across several
+                steps, and only then update the weights once (gradient accumulation). <br /><br />
+                For an ordinary training loop, though, forgetting <code>optimizer.zero_grad()</code> before each backward
+                step means gradients from previous steps pile into the current one, the update direction goes completely
+                wrong, and the loss explodes.
+              </div>
+            </div>
+
+            <h2>6.3 Better optimisers: Adam &amp; the learning rate</h2>
+            <p>
+              Plain stochastic gradient descent (SGD) updates every weight with the same fixed learning rate $\alpha$. That
+              makes it easy for the model to get stuck in local minima or at saddle points — places where the gradient is
+              zero without being a minimum or maximum.
+            </p>
+
+            <h3>From SGD to Adam:</h3>
+            <ul>
+              <li>
+                <strong>Momentum:</strong> models a physical ball rolling downhill. It adds a fraction of the previous
+                steps' gradients into the current step, letting the model cross flat regions or narrow valleys quickly.
+              </li>
+              <li>
+                <strong>RMSprop:</strong> adjusts the learning rate automatically by dividing the gradient by the square
+                root of a running average of squared gradients. A weight that swings violently gets slowed down; one moving
+                sluggishly gets sped up.
+              </li>
+              <li>
+                <strong>Adam (adaptive moment estimation):</strong> the combination of momentum and RMSprop, tracking both
+                the first moment (momentum) and the second moment (adaptive variance) of the gradient:
+              </li>
+            </ul>
+
+            <div class="callout callout--deep" style="margin-top: 24px">
+              <div class="callout__title">🧮 The Adam optimiser's algorithm</div>
+              <div class="callout__content">
+                At each iteration $t$, with gradient $g_t$:
+                <br />
+                1. Update the first moment (momentum): $$m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$$ 2. Update the second
+                moment (RMSprop): $$v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2$$ 3. Bias correction, to stop the values
+                being dragged towards zero in the first few steps: $$\hat{m}_t = \frac{m_t}{1 - \beta_1^t}, \quad \hat{v}_t
+                = \frac{v_t}{1 - \beta_2^t}$$ 4. Update the weights: $$\theta_t = \theta_{t-1} -
+                \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \hat{m}_t$$ The default hyperparameter values, shown empirically
+                to work well across nearly every architecture: $\beta_1 = 0.9$, $\beta_2 = 0.999$, $\epsilon = 10^{-8}$.
+              </div>
+            </div>
+
+            <p>
+              To see exactly what those four steps do, here is Adam written in pure Python (purely to ILLUSTRATE the
+              mechanism — <code>torch.optim.Adam</code> does this far more efficiently):
+            </p>
+            {{CODE:adam_from_scratch.py}}
+            {{CODE:Terminal}}
+            <p>
+              The real numbers above show something worth pausing on: dropping bias correction does not make the first
+              update timid, as simple intuition suggests. With $\beta_1=0.9$ and $\beta_2=0.999$ (the actual defaults) it
+              makes the step MUCH larger than designed right from step 1 — about three times — and it keeps swelling with
+              every step instead of settling. That is why bias correction is always on by default in every real Adam
+              implementation, <code>torch.optim.Adam</code> included, rather than being an optional detail you can skip.
+            </p>
+
+            <h2>6.4 The training loop in full</h2>
+            <p>
+              Below is the complete Python source that trains an MLP on the non-linear two-concentric-circles dataset. It
+              runs 500 epochs straight through using <code>nn.BCELoss</code> and the <code>Adam</code> optimiser, and draws
+              an ASCII loss chart in the terminal so you can watch the convergence.
+            </p>
+
+            {{CODE:train_circles.py}}
+
+            <p>Running it produces exactly this (middle trimmed):</p>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              Four things worth reading out of this. <strong>One:</strong> at epoch 1 the accuracy is
+              <strong>49.75%</strong> — exactly the coin-flip rate between two classes. The network knows nothing at that
+              point, and that is the correct starting position. <strong>Two:</strong> by epoch 100 it is at 100%. So what
+              are the remaining 400 epochs doing? Not raising accuracy — raising <em>confidence</em>: the loss keeps falling
+              from 0.0194 down to 0.0004. Telling those two apart is one of the easiest things to muddle — accuracy counts
+              correct answers, loss measures certainty. <strong>Three:</strong> the test loss (0.0008) is close to the
+              training loss, meaning the model has not memorised the 800 points but genuinely captured the pattern.
+              <strong>Four:</strong> the chart uses a <strong>logarithmic scale</strong>, so equal spacing means equal
+              tenfold reductions. On a linear scale every bar from epoch 100 onwards would be zero characters long, and the
+              chart would be blank exactly where it gets interesting.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ This problem is EASY, and knowing that matters</div>
+              <div class="callout__content">
+                Hitting 100% on both train and test sounds wonderful, but don't draw the wrong conclusion. The two circles
+                here are well separated (radii 0.5 and 1.0, noise only 0.05), so they barely <em>overlap at all</em>. Any
+                network with a single non-linearity can separate them.
+                <br /><br />
+                The problem was chosen to be easy on purpose: this lesson's goal is <strong>whether the training loop runs
+                correctly</strong>, and an easy problem gives a clear answer — if the loss does not fall, the code is
+                definitely wrong, not "the data is hard".
+                <br /><br />
+                To watch it get harder, change <code>noise=0.05</code> to <code>0.2</code> and run again: the two circles
+                start bleeding into each other and the accuracy stops being 100%. That is the shape of every real problem,
+                and the reason later lessons have to talk about overfitting.
+              </div>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">💡 Telling model.train() and model.eval() apart</div>
+              <div class="callout__content">
+                Inside the training loop, calling <code>model.train()</code> puts the model into learning mode (allowing
+                batch-norm statistics and dropout to update). When training finishes we call <code>model.eval()</code> and
+                wrap the computation in <code>with torch.no_grad():</code> to measure the error on the test set without
+                affecting the weights that were learned.
+              </div>
+            </div>
+
+            <h3>How to run this project on your own machine</h3>
+            <ol>
+              <li>Install the libraries: <code>pip install torch numpy</code> (add <code>matplotlib</code> if you want the
+              image file).</li>
+              <li>Download <code>train_circles.py</code> at the end of the lesson, or retype the code above.</li>
+              <li>Run it: <code>python3 train_circles.py</code>. The first <code>import torch</code> is slow; don't worry.</li>
+              <li>
+                You will get <em>exactly</em> the numbers above, because the script fixes both random generators —
+                <code>np.random.seed(42)</code> for the data and <code>torch.manual_seed(42)</code> for the initial weights.
+              </li>
+              <li>
+                Then break it, which is where most of the learning is: <strong>delete the
+                <code>optimizer.zero_grad()</code> line</strong> and run again. Gradients from previous rounds will pile
+                into the next, and you will see the loss behave completely differently. Meeting this bug once on purpose
+                means recognising it instantly the next time it appears in a real model.
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; bridge to what's next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you now have:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> choosing a loss function on evidence rather than instinct — and knowing by
+                    the numbers why MSE nearly stops a classifier learning at the exact moment it is most wrong.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> reading the three symbols $\delta$, $\odot$ and $m$, so the backpropagation
+                    formulas stop being a block of unfamiliar notation.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> picturing backpropagation as a two-way flow — forward for the prediction,
+                    backward carrying each layer its share of the error.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> the four lines that make up every training loop, and why
+                    <code>zero_grad()</code> is mandatory.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> telling accuracy and loss apart — why a model already 100% correct still has
+                    50× of loss reduction left in it.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> Adam, including one counter-intuitive detail: dropping bias correction makes
+                    the first step <em>three times larger</em>, not more timid.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> an MLP handles flat data very well, but for spatial data such as
+              images we need a better-suited architecture — the convolutional network, in Lesson 7.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the hands-on code for this lesson</h3>
+              <p>
+                The Python file <code>train_circles.py</code> — the training loop for an MLP on the non-linear
+                two-concentric-circles data, showing the loss decay as an ASCII chart (run
+                <code>python train_circles.py</code>, needs <code>numpy</code> and <code>torch</code>):
+              </p>
+              <a
+                href="../train_circles.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download train_circles.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://pytorch.org/docs/stable/optim.html" target="_blank" rel="noopener noreferrer"
+                    >PyTorch optim module — using the Adam and SGD optimisers (official docs)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://pytorch.org/tutorials/beginner/pytorch_with_examples.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Learning PyTorch through worked examples</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://www.deeplearningbook.org/contents/mlp.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Deep Learning (Goodfellow, Bengio, Courville) — the chapter on feedforward networks and
+                    backpropagation</a
+                  >
+                </li>
+              </ul>
+            </section>
