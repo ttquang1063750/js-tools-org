@@ -1,0 +1,616 @@
+            <p class="article-lead">
+              In Lesson 2 we understood the mathematics of linear algebra and how to optimise along a slope. But when
+              training real AI models, the input is not a handful of numbers — it is millions of pixels, billions of words,
+              or enormous database tables.
+            </p>
+
+            <p>
+              Keep using Python's default <code>for</code> loops and lists on data at that scale and your program will run
+              unacceptably slowly. This lesson explains the root cause at the hardware level, and how to fix it properly by
+              making use of AI's two foundational libraries: <strong>NumPy</strong> and <strong>Pandas</strong>.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                Unlike Lesson 2, which ran in pure Python, this lesson <strong>requires</strong> two libraries. Activate the
+                virtual environment you created in Lesson 1 and run:
+                <br /><br />
+                <code>pip install numpy pandas</code>
+                <br /><br />
+                A reminder of one pitfall from Lesson 1: if you open a new terminal you have to
+                <code>source venv/bin/activate</code> again, otherwise you'll hit
+                <code>ModuleNotFoundError: No module named 'numpy'</code> even though you clearly installed it.
+                <br /><br />
+                <strong>Knowledge needed:</strong> Lesson 2 — specifically matrices, matrix multiplication and the "left
+                columns = right rows" shape condition. Section 3.3 builds directly on it.
+              </div>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🧭 Two libraries, two different jobs — don't mix them up from the start</div>
+              <div class="callout__content">
+                This lesson teaches two libraries and beginners very often can't tell which one to reach for. The division
+                is short:
+                <ul>
+                  <li>
+                    <strong>NumPy</strong> handles <em>uniform blocks of numbers</em> — every cell the same type, no column
+                    names. A batch of images, a weight matrix, a tensor. This is what the model actually computes on.
+                  </li>
+                  <li>
+                    <strong>Pandas</strong> handles <em>tables with named columns and mixed types</em> — this column is
+                    text, that one is a number, the next is a date, and some cells are empty. A CSV file, a table exported
+                    from a database.
+                  </li>
+                </ul>
+                Real pipelines almost always run in this order: <strong>Pandas cleans first, NumPy computes after</strong>.
+                You read the raw file with Pandas, deal with empty cells and filter out junk rows, then hand the numeric
+                part to NumPy to feed the model. The project in section 3.5 walks that exact chain end to end.
+              </div>
+            </div>
+
+            <h2>3.1 Why are Python for loops so slow?</h2>
+            <p>
+              As Lesson 1 said, Python is an <strong>interpreted</strong>, <strong>dynamically typed</strong> language — it
+              runs directly with no compile step, and a variable can hold a number on one line and a string on the next.
+              Both traits are convenient to write, but they cost something, and this section shows where that cost sits.
+            </p>
+            <p>
+              When you create an ordinary list <code>my_list = [1, 2, 3]</code>, Python does
+              <strong>not</strong> store those three numbers next to each other in RAM. It creates an array of
+              <strong>pointers</strong> — each pointer being an address, pointing at a full Python object (called a
+              <code>PyObject</code>) scattered somewhere in memory.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">📚 Picture it: a shelf of books vs a box of library request slips</div>
+              <div class="callout__content">
+                <strong>A NumPy array</strong> is like books lined up on one shelf: to get the next 10, you reach over once
+                and gather all 10.
+                <br /><br />
+                <strong>A Python list</strong> is like a box of request slips: each slip only records
+                <em>which room</em> holds that book. To read 10 books you have to walk to 10 different rooms. Reading the
+                books isn't slower — the walking back and forth is what costs the time.
+                <br /><br />
+                And each "book" in Python comes wrapped in several layers of packaging: the integer <code>1</code> in Python
+                isn't 8 bytes, it is a full object carrying its type information, its reference count and more — about 28
+                bytes. In NumPy it is exactly 8 bytes, or 4 if you choose <code>float32</code>.
+              </div>
+            </div>
+
+            <p>
+              Every time you run a loop <code>for x in my_list</code>, on <em>each</em> iteration the Python interpreter is
+              forced to do a series of things you never wrote — the term for which is
+              <strong>overhead</strong>:
+            </p>
+            <ul>
+              <li>
+                <strong>Type checking:</strong> check whether <code>x</code> on this iteration is an integer, a float or a
+                string, to decide which operation applies.
+              </li>
+              <li>
+                <strong>Boxing/unboxing:</strong> extract the raw numeric value from deep inside the complex
+                <code>PyObject</code> structure.
+              </li>
+              <li><strong>Memory management:</strong> update the reference count so garbage collection works.</li>
+            </ul>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 The hardware reality: contiguous memory vs cache locality</div>
+              <div class="callout__content">
+                <strong>NumPy</strong> stores data as contiguous arrays (a
+                <strong>contiguous memory layout</strong>). An <code>np.ndarray</code> is really one block of RAM holding
+                raw numeric values of a uniform type (float32, say) sitting immediately next to each other. <br /><br />
+                In hardware terms, that contiguous structure makes the most of
+                <strong>cache locality</strong>. When the CPU needs to compute on one element, the hardware automatically
+                pulls the whole surrounding block of adjacent data from RAM into the CPU's high-speed L1/L2/L3 cache.
+                Subsequent operations on the array then happen immediately, in CPU registers. A Python list of scattered
+                pointers, by contrast, forces the CPU to keep going out to RAM to find each object's real address (causing
+                constant <strong>cache misses</strong>), cutting performance by tens of times.
+              </div>
+            </div>
+
+            <h2>3.2 The principle of vectorization</h2>
+            <p>
+              <strong>Vectorization</strong> is the technique of replacing explicit loops with operations applied directly
+              to a whole array. Instead of writing a loop that handles one element at a time in the slow Python layer, we
+              push the entire looping job down into NumPy's high-performance machine-code layer.
+            </p>
+
+            <p>
+              On top of that, every modern CPU supports a hardware-level parallel instruction set called
+              <strong>SIMD (Single Instruction, Multiple Data)</strong>. This lets the CPU apply one operation — a
+              multiplication, say — to several memory slots at once, within a single clock cycle.
+            </p>
+
+            <p>Let's compare the performance of a pure Python loop against a vectorised NumPy operation:</p>
+
+            {{CODE:vectorization_demo.py}}
+
+            <p>Results on the machine this was written on (Apple M1 Max, 32 GB RAM, Python 3.11, NumPy 2.4):</p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              Roughly <strong>20 to 56 times</strong> faster — I ran it repeatedly and the ratio moved around inside that
+              range, with the first run always the worst because the CPU cache is still cold. Don't attach yourself to any
+              one figure: the ratio depends on the machine, on the data type, and on the operation itself. What is worth
+              remembering is the <em>order of magnitude</em> — tens of times, not a few percent.
+            </p>
+            <p>
+              One thing that is easy to misread also needs saying plainly: <strong>the loop does not disappear</strong>. A
+              million multiplications still have to happen. They simply move from the Python layer down into compiled C,
+              where there is no type check and no unboxing on each step. "Vectorising" means
+              <em>moving the loop somewhere else</em>, not deleting it.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a for loop over a NumPy array</div>
+              <div class="callout__content">
+                A very common beginner mistake is writing a loop over a NumPy array:
+                <code>for x in my_numpy_array: ...</code>. This is actually <strong>slower</strong> than using a plain
+                Python list, because on each iteration NumPy has to take the raw number out of RAM and
+                <em>wrap</em> it into a <code>PyObject</code> for Python to use — so you pay both prices at once.
+                <br /><br />
+                Measured on the same machine, summing a million elements: the loop over an
+                <code>ndarray</code> took <strong>106 ms</strong>, while over a <code>list</code> it took only
+                <strong>50 ms</strong> — <strong>2.1 times</strong> slower. Put another way, using NumPy wrongly is worse
+                than not using NumPy at all.
+                <br /><br />
+                The rule: always use NumPy's built-in functions (<code>np.sum()</code>, <code>np.mean()</code>,
+                <code>arr * 2</code>) rather than writing your own loop. If you catch yourself typing
+                <code>for</code> over a NumPy array, there is almost certainly a vectorised way to do it.
+              </div>
+            </div>
+
+            <h2>3.3 Broadcasting in NumPy</h2>
+            <p>
+              In standard linear algebra you can only add two matrices of exactly the same size. In machine learning,
+              though, we constantly need operations across mismatched shapes — adding a bias vector to every row of a data
+              matrix, for example.
+            </p>
+
+            <p>
+              NumPy supports an extremely powerful mechanism for this called <strong>broadcasting</strong>. It automatically
+              aligns and <em>virtually</em> stretches the smaller array's dimensions to match the larger one during the
+              computation, without copying any real data in RAM.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">📢 What broadcasting is, briefly</div>
+              <div class="callout__content">
+                The name fits: one value is <em>broadcast</em> out to many listeners, rather than being printed in many
+                copies.
+                <br /><br />
+                <strong>Broadcasting is: when two arrays have mismatched shapes, NumPy repeats the smaller one enough times
+                to match the larger — but only on paper, never in memory.</strong>
+                <br /><br />
+                An everyday way to picture it: you have a payroll of 1,000 people and want to give everyone a 20-dollar rise. You
+                don't need to create a column of 1,000 cells each containing 20 before adding — you just say "add 20 to all
+                of them". Broadcasting is that, generalised to multi-dimensional arrays.
+                <br /><br />
+                <strong>An example that works:</strong> a score matrix <code>(100, 5)</code> — 100 students, 5 subjects —
+                added to a vector <code>(5,)</code> holding a bonus for each subject. The last dimensions match (5 = 5), so
+                every student gets the bonus for the right subject. This is exactly the shape of the
+                <strong>bias</strong> addition in every neural network layer.
+                <br /><br />
+                <strong>An example that does NOT work:</strong> a matrix <code>(100, 5)</code> added to a vector
+                <code>(4,)</code>. The last dimensions are 5 and 4 — not equal, and neither is 1 — so NumPy has no way to
+                guess what you meant, and it raises an error instead of guessing. That is good news: if NumPy stretched
+                things arbitrarily, you would get a wrong answer without ever knowing.
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 Stride tricks — absolute memory efficiency</div>
+              <div class="callout__content">
+                When broadcasting, NumPy does not copy the smaller array's data to build a genuinely larger array in RAM
+                (which keeps memory from ballooning pointlessly).
+                <br /><br />
+                Instead, NumPy adjusts the array's <strong>strides</strong>. A stride says how many bytes to move through
+                RAM to reach the next element along that dimension. By setting the stride of the broadcast dimension to
+                <code>0</code>, NumPy makes the iterating pointer read the same value over and over along that dimension,
+                making the computation extremely memory-efficient.
+              </div>
+            </div>
+
+            <p>
+              Two arrays can be broadcast together if the sizes of their dimensions satisfy one of these rules (working
+              from right to left):
+            </p>
+            <ol>
+              <li>The dimension is the same size in both arrays.</li>
+              <li>One of the arrays has size 1 in that dimension (which then gets virtually stretched to match).</li>
+              <li>
+                The dimension <em>does not exist</em> in the array with fewer dimensions. When two arrays differ in number
+                of dimensions, NumPy prepends dimensions of size 1 to the <strong>front</strong> of the shorter one until
+                they match, and only then applies the two rules above. This is why a vector <code>(3,)</code> is read as
+                <code>(1, 3)</code> and not <code>(3, 1)</code> — and it is exactly where the pitfall at the end of this
+                section comes from.
+              </li>
+            </ol>
+            <p>
+              The phrase "from right to left" is the most important part of those three rules. NumPy aligns two shapes on
+              their <em>right</em> edge, the way you align two decimal numbers on the decimal point rather than on their
+              first digit.
+            </p>
+
+            <p>An illustration of broadcasting:</p>
+            $$A = \begin{bmatrix} 1 &amp; 2 &amp; 3 \\ 4 &amp; 5 &amp; 6 \end{bmatrix} \quad (\text{shape } 2 \times 3)$$
+            $$B = \begin{bmatrix} 10 &amp; 20 &amp; 30 \end{bmatrix} \quad (\text{shape } 1 \times 3)$$
+
+            <p>
+              When we compute $A + B$, NumPy sees that the last dimensions are equal ($3 = 3$) and that $B$'s first
+              dimension is $1$. It automatically "virtually duplicates" the vector $B$ down the row dimension to form a
+              $2 \times 3$ matrix, and adds directly:
+            </p>
+
+            $$A + B = \begin{bmatrix} 1 &amp; 2 &amp; 3 \\ 4 &amp; 5 &amp; 6 \end{bmatrix} + \begin{bmatrix} 10 &amp; 20
+            &amp; 30 \\ 10 &amp; 20 &amp; 30 \end{bmatrix} = \begin{bmatrix} 11 &amp; 22 &amp; 33 \\ 14 &amp; 25 &amp; 36
+            \end{bmatrix}$$
+
+            {{CODE:broadcasting_demo.py}}
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚠️ Broadcasting down COLUMNS (the easiest thing to get wrong): an (N,) vector does not match rows
+              </div>
+              <div class="callout__content">
+                The example above works because the vector <code>B</code> is added across COLUMNS — B's last dimension (3)
+                matches A's last dimension (3). But if you want to add a SEPARATE value to each ROW (say each row is one
+                data sample, and each sample has its own adjustment), a flat vector <code>(4,)</code> will NOT match a
+                <code>(4, 3)</code> matrix — because NumPy compares the LAST dimension first (4 ≠ 3), not the first.
+              </div>
+            </div>
+
+            {{CODE:broadcasting_row_vs_col.py}}
+            <p>
+              The rule to remember: <strong>a flat <code>(N,)</code> vector broadcasts across COLUMNS by default</strong>
+              (each element belonging to one column, repeated down every row). To broadcast down ROWS you must deliberately
+              turn it into a column vector <code>(N, 1)</code> first, using <code>reshape</code> or
+              <code>np.newaxis</code>.
+            </p>
+            <h2>3.4 Pandas: tables with named columns</h2>
+            <p>
+              The three sections above were all about NumPy, and NumPy has a precondition we haven't mentioned: every cell
+              in an array must be <strong>the same type</strong>. That's fine for images and weight matrices. But real data
+              is rarely that tidy — a CSV exported from some system typically has a name column (text), a date column, a
+              numeric column, and empty cells scattered through it. Push that table straight into NumPy and everything gets
+              coerced to strings, and you lose the ability to compute at all.
+            </p>
+            <p>That is where Pandas comes in.</p>
+
+            <h3>DataFrame and Series — the only two types you need to know</h3>
+
+            <p>
+              <strong>A DataFrame is a two-dimensional table with named columns, each column having its own data
+              type.</strong> An everyday way to picture it: it is <em>an Excel sheet you drive with code</em>. It has column
+              headers, a number of rows, each column holds one kind of information, and empty cells are normal.
+            </p>
+            <p>
+              <strong>A Series is a single column</strong> taken out of that table. This distinction matters more than it
+              looks, because how you write your brackets decides which one you get back — and that is the first pitfall
+              below.
+            </p>
+
+            <p><strong>Two examples to show the boundary between Pandas and NumPy.</strong></p>
+            <ul>
+              <li>
+                <strong>Pandas' job:</strong> a 50,000-row table of orders with an order ID, customer name, order date and
+                amount, where 3% of rows are missing the date. You need to filter by month, group by customer, fill the
+                gaps. Named columns, mixed types, empty cells — Pandas.
+              </li>
+              <li>
+                <strong>NumPy's job:</strong> a batch of 50,000 images, each 224×224×3 pixels, all numbers. There is no
+                meaningful "column name" here, and you need operations that run fast over 7.5 billion numbers — NumPy.
+                Stuffing this block into a DataFrame only makes it slower and harder to use.
+              </li>
+            </ul>
+
+            <h3>Build a table and look at it before doing anything else</h3>
+
+            <p>
+              We'll use one small score table as the running example for this section. It deliberately contains
+              <strong>two empty cells</strong>, because real data always has empty cells and handling them is most of the
+              actual work:
+            </p>
+
+            {{CODE:pandas_basics.py}}
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              <code>df.isna().sum()</code> deserves to become your first reflex on opening any new dataset. It tells you how
+              many cells each column is missing — here 1 in <code>math</code> and 1 in <code>literature</code>. Skip this
+              step and those empty cells will quietly turn every average you compute later into
+              <code>NaN</code>.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">🕳️ Why a column with an empty cell is always a float, never an integer</div>
+              <div class="callout__content">
+                The <code>math</code> column contains <code>8.5</code> so being a float is unsurprising. But try creating a
+                column of pure integers and then emptying one cell: its type
+                <strong>also jumps to <code>float64</code></strong>.
+                <br /><br />
+                The reason: <code>NaN</code> (Not a Number) is a special value belonging to the
+                <em>floating-point standard</em>, and integers have nowhere to represent it. So a single empty cell forces
+                the whole column to become floating point.
+                <br /><br />
+                A consequence you will genuinely meet: a "quantity" column read from a CSV suddenly prints
+                <code>3.0</code> instead of <code>3</code>. You haven't done anything wrong — it is a sign that column has
+                an empty cell somewhere. Exactly the clue <code>isna().sum()</code> just pointed at.
+              </div>
+            </div>
+
+            <h3>Selecting data: <code>[]</code> vs <code>.loc</code> vs <code>.iloc</code></h3>
+
+            <p>
+              This is the single most confusing thing for people new to Pandas, so it gets its own section. There are three
+              ways to select and they are not interchangeable:
+            </p>
+            <ul>
+              <li>
+                <code>df["math"]</code> — selects <strong>one column by name</strong> and returns a
+                <strong>Series</strong>. Whereas <code>df[["math"]]</code>, with two sets of brackets, returns a
+                <strong>DataFrame</strong> containing one column. Same data, different type — and this is the cause of a
+                great many baffling <code>AttributeError</code>s later on.
+              </li>
+              <li>
+                <code>df.loc[...]</code> — selects by <strong>label</strong>: column names, and
+                <em>filter conditions</em>. This is what you'll use 90% of the time.
+              </li>
+              <li>
+                <code>df.iloc[...]</code> — selects by <strong>numeric position</strong>, exactly like slicing a Python
+                list. The "i" is for <em>integer</em>. Use it when you want "the first 3 rows" regardless of what they're
+                called.
+              </li>
+            </ul>
+
+            {{CODE:pandas_select.py}}
+
+            {{CODE:Terminal#3}}
+
+            <p>
+              Notice the result of <code>.loc</code>: the surviving row numbers are <strong>0, 2, 4</strong> — with gaps.
+              Those are row <em>labels</em>, carried over from the original table rather than renumbered from 0. This detail
+              causes surprise constantly: after filtering, <code>df.iloc[1]</code> and <code>df.loc[1]</code> return
+              <em>different</em> rows. Internalising the label-versus-position distinction here means you have got past the
+              hardest part of Pandas.
+            </p>
+
+            <h3>Handling empty cells</h3>
+
+            <p>There are two options, and choosing the wrong one damages your data:</p>
+            <ul>
+              <li>
+                <code>dropna()</code> — <strong>discard</strong> rows containing an empty cell. Tidy, but if 3% of rows have
+                a gap you lose 3% of your data, and what you lose is usually not lost at random.
+              </li>
+              <li>
+                <code>fillna(value)</code> — <strong>fill</strong> the gap. For numeric columns, filling with that column's
+                own mean or median is the most common approach.
+              </li>
+            </ul>
+
+            {{CODE:pandas_missing.py}}
+
+            {{CODE:Terminal#4}}
+
+            <p>
+              Dung's row receives <code>7.3</code> in the <code>math</code> column: the mean of the 5 values that do exist,
+              $(8.5 + 6.0 + 9.0 + 7.5 + 5.5) / 5 = 7.3$. Worth noticing that <code>mean()</code>
+              <strong>skips empty cells automatically</strong> — it divided by 5, not 6. That default is convenient but it
+              can also stop you noticing your table has gaps, which is one more reason to run
+              <code>isna().sum()</code> first.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: assigning in two steps does <em>not</em> write to the original table</div>
+              <div class="callout__content">
+                This is the most classic Pandas pitfall of all. You filter out part of a table and then assign to that part,
+                expecting the original to change:
+                <br /><br />
+                <code>sub = df[df["math"] &gt; 8]</code> &nbsp;then&nbsp; <code>sub["math"] = 10.0</code>
+                <br /><br />
+                <strong>The original <code>df</code> does not change.</strong> Because <code>df[...]</code> may return a
+                copy rather than a window onto the original data, you just edited a copy and threw it away.
+                <br /><br />
+                What makes it worse is that how loudly it complains depends on your version. I ran the same code on both:
+                <ul>
+                  <li>
+                    <strong>pandas 2.2:</strong> prints <code>SettingWithCopyWarning</code> along with a hint to use
+                    <code>.loc</code>. At least you get warned.
+                  </li>
+                  <li>
+                    <strong>pandas 3.0:</strong> <em>no warning at all</em>. The assignment silently does nothing. The new
+                    Copy-on-Write mechanism removed that warning entirely.
+                  </li>
+                </ul>
+                Both versions leave the original untouched — they differ only in whether you are told. So don't rely on the
+                warning; write it correctly from the start: <strong>assign once using <code>.loc</code></strong>, choosing
+                rows and column inside a single pair of brackets:
+                <br /><br />
+                <code>df.loc[df["math"] &gt; 8, "math"] = 10.0</code>
+                <br /><br />
+                An easy rule of thumb: if you see <em>two</em> consecutive pairs of square brackets to the left of an
+                <code>=</code>, something is almost certainly wrong.
+              </div>
+            </div>
+
+            <h3><code>groupby</code> — the thing that makes learning Pandas worth it</h3>
+
+            <p>
+              If there were only one reason to use Pandas instead of writing your own code, it would be
+              <code>groupby</code>. It gathers rows by the value of a column and then computes on each group — a job that
+              takes twenty error-prone lines with a loop and a <code>dict</code>.
+            </p>
+
+            {{CODE:pandas_groupby.py}}
+
+            {{CODE:Terminal#5}}
+
+            <p>
+              One line, and you have each class's average in each subject. Notice the <code>class</code> column has become
+              the <em>row label</em> of the result — that is <code>groupby</code>'s default behaviour; add
+              <code>as_index=False</code> if you would rather keep it an ordinary column.
+            </p>
+
+            <h3>Handing over to NumPy — where the two halves of this lesson meet</h3>
+
+            <p>
+              AI models do not accept DataFrames. The final step of every preprocessing pipeline is converting the cleaned
+              table into a pure numeric array — and that is precisely where this lesson's two halves join:
+            </p>
+
+            {{CODE:pandas_to_numpy.py}}
+
+            <p>
+              <code>.to_numpy()</code> is the answer to "so where do these two libraries connect". Pandas takes the real
+              world's messy data and hands out a clean block of numbers; NumPy takes that block and computes. Note
+              <code>axis=0</code> on the last line: it means "collapse along the row dimension", giving the mean of
+              <em>each column</em>. Remembering that <code>axis=0</code> is down columns and <code>axis=1</code> is across
+              rows will save you a great deal of trial and error.
+            </p>
+
+            <h2>3.5 Hands-on project: preprocessing a batch of images with both libraries</h2>
+            <p>
+              This lesson's project joins the exact chain described at the top: <strong>Pandas inspects and cleans, NumPy
+              computes</strong>. The program generates a batch of fake grayscale images (a 3-dimensional
+              <code>Batch × Height × Width</code> array), builds a per-image statistics table with Pandas, uses that table
+              to detect and drop the broken images, then normalises what remains with NumPy —
+              <strong>with no loop running over pixels at all</strong>.
+            </p>
+            <p>
+              Two points about how the fake data is built are worth stating first, because they decide whether the project
+              teaches anything. <strong>One:</strong> each image gets its own brightness level (40, 55, 70…) rather than all
+              coming from the same random distribution — if every image were statistically identical, the Pandas table in
+              the middle would be full of identical numbers and tell you nothing. <strong>Two:</strong> two images are
+              broken on purpose, one pitch black and one pure white, so the cleaning step has real work to do. Real data
+              always contains frames like these — a dead sensor, or an overexposure.
+            </p>
+
+            <p>The full source:</p>
+
+            {{CODE:image_normalize.py}}
+
+            <p>Running it produces:</p>
+
+            {{CODE:Terminal#6}}
+
+            <p>
+              Read this output in four steps, following the order the program runs. <strong>One:</strong> the
+              <code>mean</code> column climbs from 39 to 203 — those are the different brightness levels we deliberately
+              created, proving the Pandas table really does say something about the data. <strong>Two:</strong> images 3 and
+              8 have <code>std = 0</code>. A standard deviation of zero means every pixel is identical, i.e. a flat frame
+              carrying no information — that is how you spot a broken image without looking at it.
+              <strong>Three:</strong> those two rows get dropped, leaving 10 of 12 images. <strong>Four:</strong> after
+              normalisation, min-max gives exactly 0 and 1, and z-score gives mean 0 and standard deviation 1 — which is the
+              definition, so this doubles as both a result and a self-check.
+            </p>
+            <p>
+              The <code>-0.0000</code> on the last line is not an error: it is floating-point negative zero, arising when the
+              accumulated rounding errors lean a vanishing amount negative. It equals zero.
+            </p>
+            <p>
+              One detail worth noticing in <code>generate_dummy_images</code>: there <em>is</em> one <code>for</code> loop,
+              and it breaks no rule. That loop runs <strong>12 times</strong> — once per image — not 9,408 times, once per
+              pixel. This is the practical boundary of the "don't use loops" rule: looping a few dozen times in the Python
+              layer is fine, looping millions of times is the problem. Every pixel-level calculation in this file is
+              vectorised.
+            </p>
+
+            <h3>How to run this project on your own machine</h3>
+            <ol>
+              <li>Install the libraries if you haven't: <code>pip install numpy pandas</code> in your virtual environment.</li>
+              <li>Download <code>image_normalize.py</code> at the end of the lesson, or retype the code above.</li>
+              <li>Run it: <code>python3 image_normalize.py</code>.</li>
+              <li>
+                You will get exactly the numbers above, because <code>rng = np.random.default_rng(42)</code> fixes the
+                random seed. Change 42 to something else and the data changes but the shape of the result doesn't — the two
+                flat images are still detected. Try this too: delete the line <code>images[3] = 0</code>, run again, and
+                watch the list of broken images shrink to one entry.
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; bridge to what's next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you now have:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> knowing why Python loops are slow — scattered pointers, a type check on every
+                    step — and why NumPy's contiguous arrays are fast.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> vectorization, and the understanding that it <em>moves</em> the loop down into
+                    C rather than deleting it; plus the pitfall that using NumPy wrongly is slower than not using it.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> the three broadcasting rules, and why a flat <code>(N,)</code> vector matches
+                    across columns rather than down rows.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> DataFrame and Series, telling <code>[]</code> / <code>.loc</code> /
+                    <code>.iloc</code> apart, handling empty cells, <code>groupby</code>, and the two-step assignment
+                    pitfall.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> knowing which library is for which job, and that the joint between them is
+                    <code>.to_numpy()</code>.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> NumPy is very powerful on the CPU, but to train complex deep neural
+              networks on a GPU we need to move to the specialised PyTorch library and its automatic differentiation
+              mechanism, Autograd, in Lesson 4.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the hands-on code for this lesson</h3>
+              <p>
+                The Python file <code>image_normalize.py</code> — the complete preprocessing pipeline: Pandas builds the
+                per-image statistics table and drops broken frames, NumPy normalises the rest in vectorised form (run
+                <code>python image_normalize.py</code>, needs <code>pip install numpy pandas</code>):
+              </p>
+              <a
+                href="../image_normalize.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download image_normalize.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://numpy.org/doc/stable/user/absolute_beginners.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >NumPy — the absolute beginner's guide (official documentation)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://numpy.org/doc/stable/user/basics.broadcasting.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >NumPy — broadcasting explained in detail</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://pandas.pydata.org/docs/user_guide/index.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Pandas — the user guide for working with tabular data in a DataFrame</a
+                  >
+                </li>
+              </ul>
+            </section>

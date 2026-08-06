@@ -91,6 +91,54 @@ Run the script and read `git log` first, every time. It has already caught this
 once: the conversation said lesson 4 was next when lessons 4 and 5 were both
 committed and lesson 6 was the real next one.
 
+## The tools in this folder
+
+Everything needed to continue lives in this directory — nothing important is in a
+scratch directory, because those are per-session and vanish.
+
+```
+next-lesson.py                    which lesson is next, derived from the repo
+derive-lesson-meta.py             make a meta file from an existing VI/EN pair
+build-lesson-en.py                build one lesson's English page
+build-hub-en.py                   build the series hub's English page
+series/<series>/
+  config.json                     paths and hub metadata for that series
+  hub-body-en.html                the hub's English prose, with placeholders
+  hub-script-map.json             translations for strings inside inline <script>
+  hub-lessons-en.json             English title + description of every lesson
+  lessons/
+    <slug>.body-en.html           that lesson's English prose, with placeholders
+    <slug>.meta-en.json           its title/description and chrome/tail swaps
+    <slug>.svg-labels.json        translations for <text> labels in its diagrams
+```
+
+Build a lesson, then the hub (the hub must follow — see the note under
+"Shipping the English version"):
+
+```bash
+D=.claude/skills/beginner-proof-series
+python3 $D/build-lesson-en.py $D/series/aie <slug>
+python3 $D/build-hub-en.py    $D/series/aie
+npx prettier --write blog/aie/en/*.html
+```
+
+**The English page is generated, not hand-edited.** Fix the `.body-en.html`
+template and rebuild; editing the built HTML directly means the next rebuild
+silently reverts your fix. This has already happened once — a stray `$20` was
+corrected in the built page only, and the next rebuild brought it back.
+
+**Rebuilding is idempotent and was verified against the shipped pages**: all three
+translated lessons rebuild to byte-identical output twice in a row. If a rebuild
+produces a diff you did not intend, the template and the shipped page have drifted
+— reconcile before continuing.
+
+Two things the builders refuse to do rather than guess, both learned the hard way:
+they stop if a translated string count differs from the source (an unescaped
+apostrophe in English possessives like `Meta's` silently truncates a JavaScript
+string), and they stop if any diagram label or code placeholder is unaccounted
+for. `build-hub-en.py` also compares structural block counts against the
+Vietnamese hub, which is how a dropped 298-word section was caught.
+
 ## The seven things that block a beginner
 
 Work through a lesson looking for these specifically. They are ordered by how
