@@ -1,106 +1,183 @@
+# train_mnist_cnn.py
+# Lesson 7: Computer vision basics — convolutional networks
+# Practical AI Engineer series
+#
+# Run it with:  python train_mnist_cnn.py
+# Requires:     pip install torch numpy       (no download, no torchvision)
+#
+# WHY THE DATA IS SYNTHETIC, AND WHAT THAT COSTS
+# Real MNIST needs a ~10 MB download and torchvision, which makes the lesson fail
+# on a bad connection. So this script draws its own dataset: ten distinct shapes
+# standing in for ten digit classes, plus noise and a random offset.
+#
+# The important part: these shapes are GENUINELY LEARNABLE. An earlier version of
+# this script fed the network `np.random.randn` images with `np.random.randint`
+# labels — pure noise with no relationship between image and label. That task is
+# unlearnable by construction, so accuracy sat at chance level while the training
+# loss still fell, because the network was memorising 200 random labels. A falling
+# loss with chance-level accuracy is the signature of exactly that mistake.
+#
+# To train on real MNIST instead, install torchvision and replace
+# make_shape_dataset() with torchvision.datasets.MNIST. Everything else is unchanged.
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
 
-# Bộ giả lập sinh dữ liệu MNIST cục bộ phục vụ chạy thử nghiệm không cần tải mạng
-def generate_mock_mnist_data(num_samples=200):
-    np.random.seed(42)
-    # Sinh 200 mẫu ảnh xám kích thước 1x28x28 ngẫu nhiên
-    mock_images = np.random.randn(num_samples, 1, 28, 28).astype(np.float32)
-    # Sinh nhãn phân loại ngẫu nhiên từ 0 đến 9
-    mock_labels = np.random.randint(0, 10, size=(num_samples,)).astype(np.int64)
-    
-    return torch.tensor(mock_images), torch.tensor(mock_labels)
+CLASS_NAMES = [
+    'ring',
+    'vertical bar',
+    'horizontal bar',
+    'plus',
+    'diagonal \\',
+    'diagonal /',
+    'cross X',
+    'hollow box',
+    'solid box',
+    'double bar',
+]
+
+
+def draw_shape(cls, rng):
+    """One 28x28 shape for the given class, jittered slightly off centre."""
+    img = np.zeros((28, 28), dtype=np.float32)
+    cy, cx = rng.integers(11, 17), rng.integers(11, 17)
+    t = 2  # stroke thickness
+    clip = lambda v: int(np.clip(v, 0, 27))
+
+    if cls == 0:  # ring
+        yy, xx = np.ogrid[:28, :28]
+        r = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
+        img[(r > 6) & (r < 6 + t + 1)] = 1
+    elif cls == 1:  # vertical bar
+        img[cy - 9 : cy + 9, cx - 1 : cx + t] = 1
+    elif cls == 2:  # horizontal bar
+        img[cy - 1 : cy + t, cx - 9 : cx + 9] = 1
+    elif cls == 3:  # plus
+        img[cy - 9 : cy + 9, cx - 1 : cx + t] = 1
+        img[cy - 1 : cy + t, cx - 9 : cx + 9] = 1
+    elif cls == 4:  # diagonal \
+        for k in range(-9, 9):
+            img[clip(cy + k), clip(cx + k)] = 1
+    elif cls == 5:  # diagonal /
+        for k in range(-9, 9):
+            img[clip(cy + k), clip(cx - k)] = 1
+    elif cls == 6:  # cross X
+        for k in range(-9, 9):
+            img[clip(cy + k), clip(cx + k)] = 1
+            img[clip(cy + k), clip(cx - k)] = 1
+    elif cls == 7:  # hollow box
+        img[cy - 8 : cy + 8, cx - 8 : cx - 8 + t] = 1
+        img[cy - 8 : cy + 8, cx + 8 - t : cx + 8] = 1
+        img[cy - 8 : cy - 8 + t, cx - 8 : cx + 8] = 1
+        img[cy + 8 - t : cy + 8, cx - 8 : cx + 8] = 1
+    elif cls == 8:  # solid box
+        img[cy - 6 : cy + 6, cx - 6 : cx + 6] = 1
+    else:  # double bar
+        img[cy - 5 : cy - 5 + t, cx - 8 : cx + 8] = 1
+        img[cy + 5 : cy + 5 + t, cx - 8 : cx + 8] = 1
+    return img
+
+
+def make_shape_dataset(n_samples=2000, seed=42):
+    """Balanced dataset of the ten shapes, with noise, shuffled."""
+    rng = np.random.default_rng(seed)
+    X = np.empty((n_samples, 1, 28, 28), dtype=np.float32)
+    y = np.empty(n_samples, dtype=np.int64)
+    for i in range(n_samples):
+        cls = i % 10
+        X[i, 0] = np.clip(draw_shape(cls, rng) + rng.normal(0, 0.12, (28, 28)), 0, 1)
+        y[i] = cls
+    order = rng.permutation(n_samples)
+    return torch.tensor(X[order]), torch.tensor(y[order])
+
 
 class MNIST_CNN(nn.Module):
     def __init__(self, num_classes=10):
-        super(MNIST_CNN, self).__init__()
-        
+        super().__init__()
         self.features = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2), # Ra: 16 x 14 x 14
-            
+            nn.MaxPool2d(kernel_size=2, stride=2),  # 28x28 -> 14x14
             nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)  # Ra: 32 x 7 x 7
+            nn.MaxPool2d(kernel_size=2, stride=2),  # 14x14 -> 7x7
         )
-        
+        # 32 * 7 * 7 is not a magic number: it is the shape the block above emits.
+        # Get it wrong and you get "mat1 and mat2 shapes cannot be multiplied".
         self.classifier = nn.Sequential(
             nn.Linear(32 * 7 * 7, 64),
             nn.ReLU(),
-            nn.Linear(64, num_classes)
+            nn.Linear(64, num_classes),  # raw logits — CrossEntropyLoss wants logits
         )
-        
+
     def forward(self, x):
         x = self.features(x)
-        # Flatten bắt đầu từ chiều kênh thứ nhất (bỏ qua chiều Batch ở index 0)
-        x = torch.flatten(x, start_dim=1)
-        logits = self.classifier(x)
-        return logits
+        x = torch.flatten(x, 1)  # keep the batch dimension, flatten the rest
+        return self.classifier(x)
 
-if __name__ == "__main__":
-    print("=== Khởi tạo dữ liệu MNIST giả lập ===")
-    images, labels = generate_mock_mnist_data(num_samples=200)
-    print(f"Kích thước tensor ảnh: {images.shape} (Mẫu x Kênh x Cao x Rộng)")
-    print(f"Kích thước nhãn: {labels.shape}\n")
-    
-    # Phân chia tập Train và Validation tỉ lệ 80/20
-    train_images, val_images = images[:160], images[160:]
-    train_labels, val_labels = labels[:160], labels[160:]
-    
-    # Khởi tạo mô hình mạng tích chập
-    model = MNIST_CNN(num_classes=10)
-    
-    # Hàm Loss Cross Entropy thích hợp cho phân loại đa lớp
+
+def print_sample(img, label):
+    """Show one training image as text, so you can see what the network sees."""
+    print(f'\nsample input — class {label} ({CLASS_NAMES[label]}):')
+    for row in range(4, 26):
+        print('  ' + ''.join('#' if v > 0.5 else ('.' if v > 0.25 else ' ') for v in img[row]))
+
+
+def train():
+    torch.manual_seed(42)
+
+    X, y = make_shape_dataset(2000)
+    split = 1600
+    X_train, y_train = X[:split], y[:split]
+    X_val, y_val = X[split:], y[split:]
+    print(f'train {tuple(X_train.shape)} | validation {tuple(X_val.shape)}')
+    print_sample(X_train[0, 0].numpy(), int(y_train[0]))
+
+    model = MNIST_CNN()
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f'\nmodel has {n_params:,} parameters')
+
     criterion = nn.CrossEntropyLoss()
-    # Bộ tối ưu Adam thích nghi
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-    
-    epochs = 15
-    batch_size = 32
-    
-    print("=== Đang tiến hành huấn luyện mạng CNN ===")
-    model.train()
+
+    epochs, batch_size = 30, 64
+    print('\n=== training ===')
     for epoch in range(1, epochs + 1):
-        running_loss = 0.0
-        # Huấn luyện theo từng lô dữ liệu nhỏ (Mini-batch)
-        permutation = torch.randperm(train_images.size(0))
-        
-        for i in range(0, train_images.size(0), batch_size):
-            indices = permutation[i:i+batch_size]
-            batch_x, batch_y = train_images[indices], train_labels[indices]
-            
-            # 1. Reset gradient về 0
+        model.train()
+        running = 0.0
+        # Mini-batches, not one giant batch: more update steps per pass over the
+        # data, which is how real training is always done.
+        for start in range(0, len(X_train), batch_size):
+            xb = X_train[start : start + batch_size]
+            yb = y_train[start : start + batch_size]
             optimizer.zero_grad()
-            
-            # 2. Lan truyền xuôi
-            outputs = model(batch_x)
-            loss = criterion(outputs, batch_y)
-            
-            # 3. Lan truyền ngược
+            loss = criterion(model(xb), yb)
             loss.backward()
-            
-            # 4. Cập nhật trọng số
             optimizer.step()
-            
-            running_loss += loss.item() * batch_x.size(0)
-            
-        epoch_loss = running_loss / train_images.size(0)
-        print(f"Epoch {epoch:02d}/{epochs} | Training Loss: {epoch_loss:.4f}")
-        
-    print("\n=== Đang tiến hành đánh giá trên tập Validation ===")
+            running += loss.item() * len(xb)
+
+        if epoch % 5 == 0 or epoch == 1:
+            model.eval()
+            with torch.no_grad():
+                val_acc = (model(X_val).argmax(1) == y_val).float().mean().item() * 100
+            print(f'epoch {epoch:2d}/{epochs} | train loss {running / len(X_train):.4f} | val accuracy {val_acc:.2f}%')
+
     model.eval()
     with torch.no_grad():
-        val_outputs = model(val_images)
-        # Lấy nhãn có xác suất dự đoán cao nhất
-        _, predicted_classes = torch.max(val_outputs, dim=1)
-        
-        # Tính tỉ lệ chính xác (Accuracy %)
-        correct = (predicted_classes == val_labels).sum().item()
-        total = val_labels.size(0)
-        accuracy = (correct / total) * 100
-        
-    print(f"Độ chính xác đạt được: {accuracy:.2f}% (Nhãn dự đoán: {predicted_classes.tolist()})")
-    print("Mô hình đã học thành công cấu trúc trích xuất đặc trưng ảnh thô.")
+        preds = model(X_val).argmax(1)
+    acc = (preds == y_val).float().mean().item() * 100
+    print(f'\n=== final validation accuracy: {acc:.2f}%  (chance level is 10%) ===')
+
+    # Per-class accuracy: an overall number can hide one class the model never gets.
+    print('\nper-class accuracy:')
+    for cls in range(10):
+        mask = y_val == cls
+        if mask.sum():
+            hit = (preds[mask] == cls).float().mean().item() * 100
+            print(f'  {cls} {CLASS_NAMES[cls]:16} {hit:6.1f}%  ({int(mask.sum())} samples)')
+
+
+if __name__ == '__main__':
+    train()
