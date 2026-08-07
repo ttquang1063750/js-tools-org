@@ -1,0 +1,366 @@
+            <p class="article-lead">
+              An image is data on a fixed, unchanging grid. Natural language and audio signals are completely different:
+              they are <strong>sequential data</strong>, of continuously varying length and with a strict temporal order.
+              Swap two words in a sentence and the meaning can reverse or vanish. To handle sequences we need the
+              <strong>recurrent neural network (RNN)</strong>. This lesson goes into the mathematics of RNNs, why they
+              suffer vanishing gradients, how gated memories like LSTM and GRU fix it, and the single biggest stepping
+              stone towards modern AI: the <strong>attention mechanism</strong>.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Libraries:</strong> <code>pip install torch</code>. No downloads, no network.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 8 — <code>nn.Embedding</code>, token IDs and
+                <code>[UNK]</code>. This lesson's project builds directly on those, and <code>[UNK]</code> turns out to be
+                its biggest trap. Lesson 6 supplies the training loop, and Lesson 2 the dot product — section 9.3 reuses
+                the dot product to compute attention scores.
+              </div>
+            </div>
+
+            <h2>9.1 How a recurrent neural network remembers a sequence</h2>
+            <p>
+              An ordinary MLP or CNN passes data in one direction only, from input through hidden layers to output
+              (feedforward). They have no notion of time or memory: each sample is processed independently, with no
+              relationship to the one before.
+            </p>
+            <p>
+              An <strong>RNN</strong> fixes this by introducing a <strong>recurrent loop</strong> inside the neuron. At
+              each time step $t$ the network takes the current input $x_t$ together with the hidden state from the previous
+              step $h_{t-1}$ (think of it as the network's memory of the past) to compute a new hidden state $h_t$:
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">📐 The vanilla RNN equations</div>
+              <div class="callout__content">
+                The hidden state $h_t$ at time step $t$ is updated through a non-linear activation, $\tanh$ (or
+                $\text{ReLU}$): $$h_t = \tanh(W_{hh} h_{t-1} + W_{xh} x_t + b_h)$$ where:
+                <ul>
+                  <li>$x_t$: the input feature vector at time step $t$.</li>
+                  <li>$h_{t-1}$: the hidden state vector from the previous step $t-1$.</li>
+                  <li>$W_{hh}$: the weight matrix connecting successive hidden states.</li>
+                  <li>$W_{xh}$: the weight matrix from input to hidden state.</li>
+                  <li>$b_h$: the bias vector.</li>
+                </ul>
+                The prediction $y_t$ (where there is one) is then computed from the current hidden state:
+                $$y_t = \text{Softmax}(W_{hy} h_t + b_y)$$
+              </div>
+            </div>
+
+            <p>
+              But training an RNN on long sequences — a paragraph of more than 50 words, say — runs into a serious
+              mathematical problem: the <strong>vanishing gradient</strong>.
+            </p>
+            <p>
+              To compute derivatives for the early time steps and update their weights, the BPTT algorithm
+              (backpropagation through time) has to multiply by the weight matrix $W_{hh}^T$ once per time step. If the
+              eigenvalues of $W_{hh}$ are less than 1, multiplying a number smaller than 1 by itself $N$ times drives the
+              derivative exponentially towards zero: $$\lim_{N \to \infty} (0.9)^N = 0$$ The consequence is that the
+              network loses the ability to learn long-term dependencies, remembering only the words near the end of the
+              sentence.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🔢 The real numbers: how fast $(0.9)^N$ vanishes</div>
+              <div class="callout__content">
+                The limit $\lim_{N \to \infty} (0.9)^N = 0$ sounds abstract, but the speed of collapse is surprising even
+                for an eigenvalue as mild as $0.9$ (very close to 1):
+                <ul>
+                  <li>$N = 5$ steps: $(0.9)^5 \approx 0.5905$ — the derivative still has more than half its strength.</li>
+                  <li>$N = 10$ steps: $(0.9)^{10} \approx 0.3487$.</li>
+                  <li>$N = 20$ steps: $(0.9)^{20} \approx 0.1216$.</li>
+                  <li>$N = 50$ steps: $(0.9)^{50} \approx 0.00515$ — half of one thousandth left.</li>
+                  <li>$N = 100$ steps: $(0.9)^{100} \approx 0.0000266$ — effectively zero.</li>
+                </ul>
+                A 100-word paragraph is entirely ordinary in natural language processing, so even with an eigenvalue of
+                $0.9$ — nothing that looks "dangerous" by intuition — the gradient from the first word has essentially no
+                influence on the weight update. That is why a vanilla RNN is close to useless on long context in practice.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: the exploding gradient</div>
+              <div class="callout__content">
+                The mirror image of vanishing: if the eigenvalues of $W_{hh}$ exceed 1, the derivative grows exponentially
+                and training blows up into <code>NaN</code> (not a number). The standard fix is
+                <strong>gradient clipping</strong> — forcing the gradient below a fixed threshold before applying the
+                update.
+              </div>
+            </div>
+
+            <h2>9.2 A gated filter for information: LSTM &amp; GRU</h2>
+            <p>
+              To solve vanishing gradients properly, Hochreiter and Schmidhuber proposed the
+              <strong>LSTM (long short-term memory)</strong> architecture. Rather than carrying a single plain hidden state
+              $h_t$, an LSTM adds a parallel information channel called the <strong>cell state ($c_t$)</strong> — think of
+              it as an information motorway running the length of the sequence — controlled by gates built from the sigmoid
+              activation $\sigma$:
+            </p>
+            <ul>
+              <li>
+                <strong>Forget gate ($f_t$):</strong> decides how much of the old information to erase from the cell state:
+                $$f_t = \sigma(W_f [h_{t-1}, x_t] + b_f)$$
+              </li>
+              <li>
+                <strong>Input gate ($i_t$):</strong> decides how much new information from the input gets written into the
+                cell state: $$i_t = \sigma(W_i [h_{t-1}, x_t] + b_i)$$ $$\tilde{c}_t = \tanh(W_c [h_{t-1}, x_t] + b_c)$$
+              </li>
+              <li>
+                <strong>Updating the cell state ($c_t$):</strong> multiply the old information by the forget gate, then add
+                the new: $$c_t = f_t \odot c_{t-1} + i_t \odot \tilde{c}_t$$
+              </li>
+              <li>
+                <strong>Output gate ($o_t$):</strong> decides which part of the cell state becomes the next hidden state
+                $h_t$: $$o_t = \sigma(W_o [h_{t-1}, x_t] + b_o)$$ $$h_t = o_t \odot \tanh(c_t)$$
+              </li>
+            </ul>
+            <p>
+              Because the cell state is updated by linear <em>addition</em> ($+$) rather than repeated matrix
+              multiplication, the derivative can flow straight back into the past without vanishing, which is what lets an
+              LSTM learn very long-range context.
+            </p>
+            <p>
+              <strong>GRU (gated recurrent unit)</strong> is a slimmed-down LSTM. It merges the cell state and hidden state
+              into one and uses only two gates: an update gate and a reset gate. A GRU computes faster and uses less memory
+              while matching LSTM performance on many tasks.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: the sequential computation bottleneck</div>
+              <div class="callout__content">
+                Because of how a recurrent layer works mathematically — the next step must wait for the previous step's
+                hidden state ($h_{t-1}$) — we <strong>cannot parallelise</strong> RNN training on modern GPU hardware. This
+                is the fatal bottleneck that left RNNs and LSTMs entirely outpaced by CNN and Transformer architectures in
+                the era of large data.
+              </div>
+            </div>
+
+            <h2>9.3 The idea of attention</h2>
+            <p>
+              In a traditional sequence-to-sequence translation model (an LSTM encoder-decoder), the encoder has to
+              compress the entire long input sentence into a single final hidden state — the context vector — and hand that
+              to the decoder to produce the translation.
+            </p>
+            <p>
+              That is like forcing someone to memorise a whole book and then write the translation without ever being
+              allowed to turn back to an earlier page. When the input sentence is long, the context vector is overloaded
+              and translation quality degrades badly.
+            </p>
+            <p>
+              <strong>Attention</strong> exists to remove that bottleneck. Its philosophy is remarkably simple:
+              <strong>let the decoder look back at all of the encoder's hidden states, at every time step</strong>, and work
+              out for itself which word in the source matters most for the word about to be produced:
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 The original dot-product attention algorithm</div>
+              <div class="callout__content">
+                Suppose the decoder is at hidden state $s_t$, and the encoder's output hidden states are $h_1, h_2, \dots,
+                h_T$:
+                <ul>
+                  <li>
+                    <strong>Attention scores:</strong> measure the directional agreement between the decoder's state and
+                    each encoder word: $$\text{score}(s_t, h_i) = s_t^T h_i$$
+                  </li>
+                  <li>
+                    <strong>Attention weights:</strong> normalise the scores with Softmax to get a probability distribution
+                    summing to 1: $$\alpha_{ti} = \frac{\exp(\text{score}(s_t, h_i))}{\sum_{k=1}^{T} \exp(\text{score}(s_t,
+                    h_k))}$$
+                  </li>
+                  <li>
+                    <strong>Context vector ($c_t$):</strong> weight the encoder's hidden vectors by those attention weights,
+                    producing a dynamic context vector that concentrates the most relevant information: $$c_t =
+                    \sum_{i=1}^{T} \alpha_{ti} h_i$$
+                  </li>
+                </ul>
+                The decoder uses that dynamic context vector to produce the most accurate translation.
+              </div>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🔢 Dot-product attention worked by hand (verified with real numbers)</div>
+              <div class="callout__content">
+                Suppose the source sentence has just 3 words, so the encoder produces 3 two-dimensional hidden states:
+                $h_1 = (1.0, 0.0)$, $h_2 = (0.0, 1.0)$, $h_3 = (0.8, 0.6)$. The decoder is at $s_t = (1.0, 0.5)$.
+                <ul>
+                  <li>
+                    <strong>Scores (dot products):</strong> $\text{score}(s_t, h_1) = 1.0$, $\text{score}(s_t, h_2) = 0.5$,
+                    $\text{score}(s_t, h_3) = 1.1$ — $h_3$ scores highest because its direction is closest to $s_t$.
+                  </li>
+                  <li>
+                    <strong>Softmax weights:</strong> $\alpha = (0.3688,\ 0.2237,\ 0.4076)$ — summing to exactly $1$, with
+                    $h_3$ (the highest score) receiving the largest attention weight, as expected.
+                  </li>
+                  <li>
+                    <strong>Context vector:</strong> $c_t = 0.3688 \cdot h_1 + 0.2237 \cdot h_2 + 0.4076 \cdot h_3 =
+                    (0.6948,\ 0.4682)$ — a blend, leaning most towards $h_3$ but still retaining part of $h_1$ and $h_2$,
+                    instead of the "one or nothing" choice a static context vector forces.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <h2>9.4 Hands-on project: an LSTM sentiment classifier — and its limits</h2>
+            <p>
+              This lesson's project trains an LSTM to classify service reviews as positive or negative. It runs, it gives
+              convincing-looking results — and the most valuable part is where it <em>fails</em>.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Six training sentences: the model memorises WORDS, not sentiment</div>
+              <div class="callout__content">
+                The training set holds exactly <strong>6 sentences</strong>, with a vocabulary of 43 tokens. On that much
+                data the network cannot learn the concept of "sentiment" — all it can do is memorise <em>which word goes
+                with which label</em>. And that is precisely what it does.
+                <br /><br />
+                Why the two test sentences look like a success: they <strong>reuse the training vocabulary</strong>. The
+                sentence "đồ ăn ngon phục vụ nhanh tuyệt vời" contains 4 words (<em>ngon, nhanh, tuyệt, vời</em>) that
+                appear only in positive training sentences, and 0 words exclusive to the negative side. The other test
+                sentence has 5 words exclusive to the negative side. <strong>Not one word is new.</strong> The test was
+                arranged so it could not fail.
+                <br /><br />
+                So the script adds an <strong>honest test</strong>: two sentences with the same sentiments but an
+                <em>entirely new vocabulary</em>. The results below show what actually happens once the model has nothing
+                left to look up.
+                <br /><br />
+                To be clear: LSTMs are <em>not</em> weak. The architecture here is correct and is the real thing. The
+                problem is the <strong>amount of data</strong>, and this lesson deliberately lets you see that boundary in
+                numbers.
+              </div>
+            </div>
+
+            {{CODE:sentiment_lstm.py}}
+
+            <p>Running it produces:</p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              Read the last four numbers side by side, because they are the whole lesson.
+              <strong>On words it has seen:</strong> 78.68% and 17.18% — cleanly separated, looking like a working sentiment
+              classifier. <strong>On words it has never seen:</strong> 36.33% and 31.46% — <em>both classified negative</em>,
+              even though one praises and one complains.
+            </p>
+            <p>
+              The model learned nothing about sentiment. It learned that <em>token 12 goes with label 1</em>. When every
+              token becomes <code>[UNK]</code> it has nothing to look up, so it collapses to one side. The 100% training
+              accuracy is memorisation of 6 sentences — the same signature as Lesson 7, only better hidden here, because the
+              two test sentences reuse the old words.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 What you can actually take away from this</div>
+              <div class="callout__content">
+                <strong>One:</strong> always test on data with a different <em>vocabulary</em>, not just different
+                <em>sentences</em>. Change the sentence but keep the words and you are still testing on the training set.
+                <br /><br />
+                <strong>Two:</strong> count the <code>[UNK]</code> tokens in each input at inference time, and log it. A high
+                <code>[UNK]</code> rate is a signal that the prediction is not trustworthy — which is exactly why subword
+                tokenization (BPE, Lesson 8) was invented.
+                <br /><br />
+                <strong>Three:</strong> nothing is wrong with the LSTM here. The architecture is right, the loop is right,
+                there is simply too little data. The way out is not a bigger network but <em>embeddings pretrained</em> on a
+                large corpus — the route Lesson 14 takes.
+              </div>
+            </div>
+
+            <h3>How to run this project on your own machine</h3>
+            <ol>
+              <li>Install: <code>pip install torch</code>.</li>
+              <li>Download <code>sentiment_lstm.py</code> at the end of the lesson, or retype the code above.</li>
+              <li>
+                Run it: <code>python3 sentiment_lstm.py</code>. You will get <em>exactly</em> the numbers above, thanks to
+                <code>torch.manual_seed(42)</code> and one more detail: the vocabulary is <code>sorted()</code> before IDs
+                are assigned. Without the sort, a Python <code>set</code> iterates in a different order on every run (string
+                hashing is randomised), the word IDs change with it, and the result never matches the previous run.
+              </li>
+              <li>
+                Then try two things:
+                <ul>
+                  <li>
+                    Add 6 more sentences to <code>dataset</code> — write your own, covering both sides. Rerun and see whether
+                    the "entirely new words" test improves. You will get a feel for just how much data it takes before this
+                    starts to mean anything.
+                  </li>
+                  <li>
+                    Change <code>nn.LSTM</code> to <code>nn.RNN</code>, leaving every other parameter alone. On 8-token
+                    sentences there is barely any difference — exactly as sections 9.1 and 9.2 said: vanishing gradients only
+                    become a problem on long sequences.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; bridge to what's next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you now have:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> how an RNN and LSTM remember a sequence, the LSTM's three gates, and why
+                    vanishing gradients only bite on long sequences.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> the idea behind attention — the model chooses which words deserve notice,
+                    instead of squeezing a whole sentence into one vector.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> a testing reflex: test on a different <em>vocabulary</em>, not just different
+                    <em>sentences</em>. Change the sentence but keep the words and you are still testing on the training set.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> measuring the <code>[UNK]</code> rate at inference as a confidence signal —
+                    and understanding why subword tokenization (BPE, Lesson 8) exists.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> telling "wrong architecture" apart from "too little data". This lesson's
+                    project has the right architecture and still fails on new words — the fix is pretrained embeddings, not a
+                    bigger network.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> attention solves the bottleneck, but it is still bolted onto a
+              sequential RNN. Lesson 10 removes the recurrence entirely and keeps only attention — the Transformer
+              architecture.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the hands-on code for this lesson</h3>
+              <p>
+                The Python file <code>sentiment_lstm.py</code> — an LSTM sentiment classifier, including the honest test on
+                unseen vocabulary that shows the limits of six training sentences (run
+                <code>python sentiment_lstm.py</code>, needs <code>torch</code>):
+              </p>
+              <a
+                href="../sentiment_lstm.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download sentiment_lstm.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://colah.github.io/posts/2015-08-Understanding-LSTMs/" target="_blank" rel="noopener noreferrer"
+                    >Understanding LSTM Networks (Christopher Olah) — the clearest visual explanation of the gates</a
+                  >
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/1409.0473" target="_blank" rel="noopener noreferrer"
+                    >Bahdanau et al. — the paper that introduced attention to sequence-to-sequence translation</a
+                  >
+                </li>
+                <li>
+                  <a href="https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html" target="_blank" rel="noopener noreferrer"
+                    >PyTorch nn.LSTM — the official parameter and output-shape reference</a
+                  >
+                </li>
+              </ul>
+            </section>

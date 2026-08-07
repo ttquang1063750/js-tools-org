@@ -115,7 +115,12 @@ for num, slug in order:
     checks.append(
         ('code-same', len(cv) == len(ce) and not diff_idx, f'{len(cv)}/{len(ce)} khoi, lech tai {diff_idx}')
     )
-    leaked = sorted({n for n, c in cv + ce if re.search(VN, c, re.I) and n not in EXEMPT})
+    # Mien tru co the la ten khoi ("data_cleaner.py") hoac dinh danh theo bai
+    # ("aie-rnn-attention:Terminal") — dang thu hai de mien trung MOT khoi cua MOT
+    # bai, thay vi mien trung moi khoi cung ten o moi bai (se che loi that).
+    leaked = sorted(
+        {n for n, c in cv + ce if re.search(VN, c, re.I) and n not in EXEMPT and f'{slug}:{n}' not in EXEMPT}
+    )
     checks.append(('code-en', not leaked, ', '.join(leaked)))
 
     # --- so do

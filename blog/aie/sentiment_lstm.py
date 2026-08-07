@@ -96,18 +96,18 @@ class SentimentLSTM(nn.Module):
         return predictions
 
 if __name__ == "__main__":
-    print("=== Khởi tạo dữ liệu huấn luyện ===")
-    print(f"Kích thước từ điển (Vocabulary Size): {len(vocab)}")
-    print(f"Kích thước Tensor đầu vào: {x_data.shape}\n")
+    print("=== Preparing the training data ===")
+    print(f"vocabulary size: {len(vocab)}")
+    print(f"input tensor shape: {x_data.shape}\n")
     
     # Build the model.
     model = SentimentLSTM(vocab_size=len(vocab), embedding_dim=16, hidden_dim=8)
     
-    criterion = nn.BCELoss() # Binary Cross Entropy Loss cho phân loại nhị phân
+    criterion = nn.BCELoss()  # binary cross-entropy, for a two-class problem
     optimizer = optim.Adam(model.parameters(), lr=0.01)
     
     epochs = 40
-    print("=== Bắt đầu huấn luyện mạng SentimentLSTM ===")
+    print("=== Training the SentimentLSTM ===")
     for epoch in range(1, epochs + 1):
         model.train()
         optimizer.zero_grad()
