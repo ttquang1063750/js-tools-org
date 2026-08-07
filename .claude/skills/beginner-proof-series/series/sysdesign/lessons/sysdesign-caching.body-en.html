@@ -1,0 +1,741 @@
+            <p>
+              <a href="sysdesign-api-gateway">Lesson 4</a> finished building the entry layer. From here on we move to
+              what sits behind it, and the first thing we run into is the layer with the best benefit-to-effort ratio
+              in the whole series: caching. This lesson's lab measures <strong>26.5x</strong> throughput and a
+              <strong>20x</strong> drop in p99 just from turning on caching for one hot key.
+            </p>
+
+            <p>
+              But the part actually worth learning isn't that number — it's too easy to predict. Three things are
+              more surprising: dropping the hit ratio from 99.45% to 95.47% (just <em>four percentage points</em>)
+              makes p99 jump from 4.46 ms to <strong>42.11 ms</strong> while p50 barely moves at all; single-flight —
+              the classic defense against thundering herd — makes p50 and p99 <strong>slightly worse</strong>, not
+              better; and jitter on the TTL <strong>doesn't cut a single database query</strong>, yet still raises
+              throughput by 31%.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The machine every figure in this lesson was measured on</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Containers run native arm64
+                (Node v22.23.2). Three app replicas, each 1 CPU / 256 MB; nginx 1.27-alpine; Redis 7-alpine; the load
+                generator gets 2 CPUs. The lab's "database" is a 40 ms wait <strong>with a cap on concurrent
+                queries</strong> — this detail matters, see section 5.4. The database pool is
+                <strong>10 connections/replica</strong> for sections 5.1–5.3, shrunk to <strong>2</strong> for section
+                5.4; every change is called out explicitly. Every experiment was repeated at least 3 times.
+              </div>
+            </div>
+
+            <!-- ================= 5.1 ================= -->
+            <h2>5.1 Why caching wins, and by how much</h2>
+
+            <p>
+              <a href="sysdesign-latency-queueing">Lesson 1</a> built the latency order-of-magnitude table. What
+              caching exploits is exactly the gap between two rows in that table: reading from RAM costs hundreds of
+              nanoseconds, while a database query over the network costs milliseconds — roughly a
+              <strong>10,000x</strong> gap. Caching doesn't make the database faster; it makes most requests
+              <em>never have to ask it at all</em>.
+            </p>
+
+            <p>The average latency of a layer with a cache:</p>
+
+            <p>$$T = h \cdot T_{cache} + (1-h) \cdot T_{db}$$</p>
+
+            <p>
+              where $h$ is the hit ratio. Plugging in the lab's numbers ($T_{cache} \approx 1.4$ ms,
+              $T_{db} \approx 43$ ms), $h = 0.9$ gives $T \approx 5.6$ ms, and $h = 0.99$ gives $T \approx 1.8$ ms. But
+              this formula hides the part that matters more. The number of database queries the system generates is:
+            </p>
+
+            <p>$$Q = (1-h) \cdot N$$</p>
+
+            <p>
+              Meaning database load depends on $(1-h)$ — the part that <em>doesn't</em> hit. Going from $h = 90\%$ to
+              $h = 99\%$ sounds like "a 9-point improvement", but $(1-h)$ goes from $0.1$ down to $0.01$: database
+              load <strong>drops 10x</strong>. One more 9, up to $99.9\%$, and it drops another 10x.
+              <strong>Every 9 you add to the hit ratio divides database load by 10.</strong>
+            </p>
+
+            <p>
+              This isn't paper reasoning. I swept the working-set size (the number of distinct keys traffic touches)
+              and measured the real hit ratio and real database query count:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Distinct keys</th>
+                  <th>Measured hit ratio</th>
+                  <th>DB queries / request</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>100</td>
+                  <td>99.92%</td>
+                  <td>0.0008</td>
+                  <td>17,711</td>
+                  <td>1.50 ms</td>
+                  <td>4.44 ms</td>
+                </tr>
+                <tr>
+                  <td>1,000</td>
+                  <td>99.45%</td>
+                  <td>0.0055</td>
+                  <td>17,457</td>
+                  <td>1.54 ms</td>
+                  <td>4.46 ms</td>
+                </tr>
+                <tr>
+                  <td>5,000</td>
+                  <td>95.47%</td>
+                  <td>0.0453</td>
+                  <td>11,046</td>
+                  <td>1.48 ms</td>
+                  <td><strong>42.11 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>20,000</td>
+                  <td>23.80%</td>
+                  <td>0.7618</td>
+                  <td>934</td>
+                  <td>41.66 ms</td>
+                  <td>86.08 ms</td>
+                </tr>
+                <tr>
+                  <td>60,000</td>
+                  <td>7.47%</td>
+                  <td>0.9250</td>
+                  <td>737</td>
+                  <td>42.73 ms</td>
+                  <td>88.13 ms</td>
+                </tr>
+                <tr>
+                  <td>200,000</td>
+                  <td>2.40%</td>
+                  <td>0.9757</td>
+                  <td>704</td>
+                  <td>43.28 ms</td>
+                  <td>87.23 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The third column matches the formula digit for digit: $1 - 0.9992 = 0.0008$, $1 - 0.9547 = 0.0453$,
+              $1 - 0.2380 = 0.7620$. The formula $Q = (1-h) \cdot N$ isn't an approximation — it's the definition of
+              hit ratio written a different way.
+            </p>
+
+            <p>
+              But the surprising row is the third one. Going from 99.45% to 95.47% is only four percentage points,
+              and <strong>p50 barely even moves</strong> (1.54 → 1.48 ms). Meanwhile p99 jumps from 4.46 ms to
+              42.11 ms — <strong>a 9.4x jump</strong>. Exactly Lesson 1's lesson: the average hides the tail, and the
+              tail is what the user feels.
+            </p>
+
+            {{SVG:1}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: judging a cache by "does it feel faster"</div>
+              <div class="callout__content">
+                Turn caching on, click around a few times, notice it feels faster, conclude "the cache works" — that's
+                the easiest way to miss the real problem. The two numbers to actually watch are the
+                <strong>hit ratio</strong> and the <strong>database queries per request</strong>. A cache with a 60%
+                hit ratio is still "faster than no cache", but it's letting 40% of the load through to the database —
+                and when traffic doubles, database load doubles right along with it, exactly when you thought the
+                cache had you covered.<br /><br />
+                In the lab, those two numbers live at <code>/stats</code> and get combined across all three replicas
+                by the <code>tools/cache-stats.sh</code> script — since each replica counts on its own, reading just
+                one replica only gives you a third of the truth.
+              </div>
+            </div>
+
+            <!-- ================= 5.2 ================= -->
+            <h2>5.2 Cache patterns: who writes where, in what order</h2>
+
+            <p>
+              Every cache pattern answers two questions: <em>whose job is it to load the cache on a miss</em>, and
+              <em>on a write, does the cache or the database get written first</em>. That's the entire difference
+              between the patterns.
+            </p>
+
+            {{SVG:2}}
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Pattern</th>
+                  <th>Who loads the cache</th>
+                  <th>Data-loss risk</th>
+                  <th>Use when</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Cache-aside</strong></td>
+                  <td>The app, on a miss</td>
+                  <td>No</td>
+                  <td>The default. Read-heavy traffic, a short window of stale data is acceptable</td>
+                </tr>
+                <tr>
+                  <td><strong>Read-through</strong></td>
+                  <td>The cache layer itself</td>
+                  <td>No</td>
+                  <td>App code should know nothing about the cache; in exchange the cache becomes a hard dependency</td>
+                </tr>
+                <tr>
+                  <td><strong>Write-through</strong></td>
+                  <td>Written to both, synchronously</td>
+                  <td>No</td>
+                  <td>A read right after a write must always see the new value; accept slower writes</td>
+                </tr>
+                <tr>
+                  <td><strong>Write-behind</strong></td>
+                  <td>Cache written first, flushed later</td>
+                  <td><strong>Yes</strong></td>
+                  <td>Counters, stats, logs — losing a little data is fine</td>
+                </tr>
+                <tr>
+                  <td><strong>Refresh-ahead</strong></td>
+                  <td>In the background, refreshed before it expires</td>
+                  <td>No</td>
+                  <td>The hot key is known in advance; in exchange it also refreshes keys nobody uses anymore</td>
+                </tr>
+              </tbody>
+            </table>
+
+            {{SVG:3}}
+
+            <p>Cache-aside in the lab, exactly as the code that's actually running:</p>
+
+            {{CODE:cache_aside.js}}
+
+            <!-- ================= 5.3 ================= -->
+            <h2>5.3 Cache invalidation — the hardest part</h2>
+
+            <p>
+              Loading the cache is easy. The hard question is: when the source data changes, how does the cached
+              copy know to go away? Three ways, from simplest to cleanest:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Approach</th>
+                  <th>Mechanism</th>
+                  <th>Weakness</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>TTL</strong></td>
+                  <td>Set an expiry, it disappears on its own once it's reached</td>
+                  <td>
+                    There's always a staleness window as long as the TTL. Choosing a TTL means choosing how stale you
+                    can tolerate, not tuning for performance
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Explicit delete</strong></td>
+                  <td>On a DB write, <code>DEL</code> the matching key</td>
+                  <td>
+                    You have to know <em>every</em> affected key — a single list query can be embedded in dozens of
+                    keys. Miss one and stale data lives forever
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Versioned key</strong></td>
+                  <td>Delete nothing; change the key when the data changes</td>
+                  <td>
+                    Old keys keep occupying memory until they expire or get evicted — in exchange, nobody ever reads
+                    them again
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              A versioned key is usually the cleanest solution, because it turns a <em>synchronization</em> problem
+              (delete at exactly the right time, in exactly the right place) into a <em>naming</em> problem:
+            </p>
+
+            {{CODE:versioned_key.js}}
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 The staleness window under concurrent writes</div>
+              <div class="callout__content">
+                Even with explicit delete, there's still a gap. This sequence can absolutely happen: request A reads a
+                miss and fetches the old value from the database; request B writes the new value and deletes the
+                cache; <em>after that</em>, A finally gets around to <code>SET</code>-ting the old value it had
+                already read. Result: the cache holds a stale value, and no TTL can save you because the key was just
+                written.<br /><br />
+                This is the deeper reason to use a versioned key: with versioning, the stale value A writes lands in a
+                <em>different key</em> (<code>...:v3</code>) than the one everyone reads afterward
+                (<code>...:v4</code>). The race still happens, but it no longer causes damage — this is the best way
+                to handle a race condition: make it harmless instead of trying to prevent it.
+              </div>
+            </div>
+
+            <h3>Synchronized TTLs, and what jitter does about it</h3>
+
+            <p>
+              If many keys get loaded at nearly the same time — this happens on every deploy, every time the cache
+              gets flushed, every time you scale up a replica — and they all share the same TTL, they'll expire
+              <strong>in one batch</strong>. The fix is to add a random amount to the TTL:
+            </p>
+
+            {{CODE:ttl_jitter.js}}
+
+            <p>
+              Real measurement: 300 keys, base TTL 5 seconds, 32 connections, 30 seconds, database pool 2
+              connections/replica, single-flight on in both configurations, three repeats each:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Fixed 5s TTL</th>
+                  <th>60% jitter TTL</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Throughput</td>
+                  <td>10,393 / 10,182 / 11,287</td>
+                  <td><strong>13,550 / 13,387 / 15,216</strong></td>
+                </tr>
+                <tr>
+                  <td>p50</td>
+                  <td>1.15 / 1.09 / 1.03 ms</td>
+                  <td>0.89 / 0.82 / 0.56 ms</td>
+                </tr>
+                <tr>
+                  <td>p99</td>
+                  <td>72.25 / 77.17 / 69.13 ms</td>
+                  <td>59.61 / 65.80 / 66.69 ms</td>
+                </tr>
+                <tr>
+                  <td>Max latency</td>
+                  <td>322.7 / 415.3 / 424.9 ms</td>
+                  <td>270.1 / 276.6 / 317.0 ms</td>
+                </tr>
+                <tr>
+                  <td>Average DB queue wait</td>
+                  <td>98.6 / 98.0 / 103.1 ms</td>
+                  <td><strong>56.9 / 59.3 / 61.6 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>DB queries / request</td>
+                  <td>0.0105 / 0.0109 / 0.0095</td>
+                  <td>0.0102 / 0.0104 / 0.0094</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Throughput went up <strong>31%</strong> and the average database queue wait nearly halved. But look at
+              the last row: <strong>database queries per request stayed almost exactly the same</strong> (0.0105 vs.
+              0.0102). Jitter doesn't reduce the amount of work at all — it just <em>spreads that work out over
+              time</em>. The queue got shorter not because there was less work, but because the work stopped arriving
+              all at once.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ My first jitter experiment was a failure</div>
+              <div class="callout__content">
+                My first pass at this measurement used 2,000 keys and a 3-second TTL. Result: jitter
+                <em>made no difference at all</em> — every metric matched within the run-to-run noise.<br /><br />
+                The cause wasn't that jitter is useless — it was that <strong>the experiment was designed wrong</strong>:
+                with 2,000 keys and a database pool of only 2 connections, the system was bottlenecked at the database
+                for the entire measurement (hit ratio topped out at 19%). It never reached a state of "idle between
+                expiry batches" — and that idle state is exactly what jitter improves. Dropping to 300 keys so the
+                cache could fill in under a second, and raising the TTL to 5 seconds so the system was genuinely idle
+                between batches, made the effect show up immediately and repeat reliably across all three runs.<br /><br />
+                The lesson: a measurement that "shows no difference" usually says more about the experiment than about
+                the thing being measured. Before concluding "this mechanism does nothing", check whether the system is
+                even in the state where that mechanism has anything to act on.
+              </div>
+            </div>
+
+            <!-- ================= 5.4 ================= -->
+            <h2>5.4 Thundering herd — and a counter-intuitive measurement</h2>
+
+            <p>
+              A hot key expires. At that exact moment, $N$ requests are asking for it. All $N$ see a miss, all $N$
+              call the database. The database receives $N$ identical queries at once for exactly one piece of data —
+              that's <strong>thundering herd</strong> (also called cache stampede).
+            </p>
+
+            <p>
+              The worst case is a self-closing loop: the herd overloads the database, the overload slows down
+              requests, the slowdown means nobody gets around to writing the cache back, the empty cache means the
+              next batch of requests becomes another herd. The system can't recover on its own even though the
+              original trigger was just one key expiring.
+            </p>
+
+            <h3>The first measurement showed nothing at all</h3>
+
+            <p>
+              I set up an experiment: one hot key, TTL 1 second, 100 connections, 15 seconds. Without single-flight
+              there were <strong>1,600</strong> database queries; turning it on brought that down to
+              <strong>54</strong> — 30x fewer. But latency <em>didn't change at all</em>: the p50, p95, and p99 of
+              both configurations matched within run-to-run noise.
+            </p>
+
+            <p>
+              The reason: the lab's "database" at that point had a pool of 10 connections per replica, i.e. 30
+              concurrent queries, each taking 40 ms — a capacity of roughly 750 queries/second. The herd generated
+              about 89 queries per expiry. It <em>never even</em> touched that limit. The herd was real, measurable
+              in query count, but it never caused any damage.
+            </p>
+
+            <p>
+              So I shrank the pool down to <strong>2 connections per replica</strong> — a database under real
+              pressure, which is exactly the normal state during an incident. Same experiment, three repeats:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>No single-flight</th>
+                  <th>With single-flight</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Database queries</td>
+                  <td>1,100</td>
+                  <td><strong>54</strong></td>
+                </tr>
+                <tr>
+                  <td>Deepest DB queue</td>
+                  <td>33 / 35 / 33</td>
+                  <td><strong>0</strong></td>
+                </tr>
+                <tr>
+                  <td>Average queue wait</td>
+                  <td>312.6 / 312.3 / 312.4 ms</td>
+                  <td><strong>0 ms</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Max latency</strong></td>
+                  <td><strong>727.6 / 765.3 / 729.0 ms</strong></td>
+                  <td><strong>67.7 / 64.0 / 67.4 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>p50</td>
+                  <td>4.98 / 5.01 / 5.00 ms</td>
+                  <td>5.54 / 5.46 / 5.70 ms</td>
+                </tr>
+                <tr>
+                  <td>p99</td>
+                  <td>13.18 / 13.05 / 13.29 ms</td>
+                  <td>14.68 / 13.75 / 13.62 ms</td>
+                </tr>
+                <tr>
+                  <td>Throughput</td>
+                  <td>15,928 / 15,987 / 15,894</td>
+                  <td>15,938 / 16,202 / 16,062</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              One thing worth explaining before you read on: the "No single-flight" database-query count here (1,100)
+              is lower than the 1,600 measured in the pool=10 experiment above, despite being the same herd scenario.
+              That's not because the herd got smaller — the load generator runs in
+              <strong>closed-loop</strong> mode (covered in <a href="sysdesign-single-server-limits">Lesson 2</a>):
+              each connection only sends its next request after receiving a response, so when a narrower pool makes
+              every request wait longer, fewer requests complete within that same 15 seconds, which means fewer
+              misses and fewer database queries. The 1,600 and 1,100 come from two experiments with different pools,
+              not one single measurement.
+            </p>
+
+            <p>
+              Read this table carefully. Single-flight cuts database queries by <strong>20x</strong>, wipes out the
+              queue entirely (depth 33 down to 0, wait 312 ms down to 0), and cuts the max latency from ~730 ms down
+              to ~66 ms — <strong>11x</strong>.
+            </p>
+
+            <p>
+              But <strong>p50 and p99 got slightly worse</strong>: p50 from 5.00 up to 5.57 ms, p99 from 13.17 up to
+              14.02 ms. If I'd only measured p50 and p99 — the exact two metrics most dashboards show — the
+              conclusion would have been "single-flight doesn't help, it's even slightly harmful", and I would have
+              thrown it away.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Why p99 can't see the thundering herd</div>
+              <div class="callout__content">
+                In that measurement, 1,100 requests got stuck in the database queue, out of roughly 280,000 total
+                requests — that's <strong>0.39%</strong>. The 99th percentile cuts off at 1%, so the entire affected
+                group sits <em>above</em> p99: p99 never contains them, only the max latency reveals them.<br /><br />
+                And why does single-flight make p50 <em>worse</em>? Because it changes the shape of the damage.
+                Without it, 1,100 requests each absorb the full 312 ms queue wait. With it, 1,746 requests "join the
+                club" and wait together on a single load — each one only waits about 40 ms, but the number of
+                requests affected is <em>larger</em>. The total damage shrinks a lot, but it gets spread thin, which
+                is enough to nudge p50.<br /><br />
+                The practical takeaway: judge an anti-herd mechanism by
+                <strong>database queries, queue depth, and max latency</strong>. Looking only at p50/p99 can make the
+                correct mechanism look useless. And on a real database, that queue is
+                <em>shared with every other query</em> — so those 312 ms don't just slow down the hot key, they slow
+                down parts of the system that have nothing to do with it. That's damage this lab can't measure.
+              </div>
+            </div>
+
+            <p>The single-flight implementation, exactly the code running in the lab:</p>
+
+            {{CODE:single_flight.js}}
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ The number 54 reveals single-flight's limit</div>
+              <div class="callout__content">
+                With a 1-second TTL and 18 seconds running (including warm-up), the key expires about 18 times. There
+                are 3 replicas. 18 × 3 = <strong>54</strong> — exactly the database query count measured, all three
+                runs.<br /><br />
+                That exact match isn't a coincidence: it proves that
+                <strong>single-flight only coalesces requests within ONE process</strong>. The <code>inFlightLoads</code>
+                map lives in the memory of a single replica, so every replica still ends up loading once on its own.
+                Getting down to exactly 18 queries requires a shared lock in Redis
+                (<code>SET key val NX EX 5</code>) — but that brings a whole new layer of problems: if the process
+                holding the lock dies before writing the cache, every other request waits out the lock's expiry, and
+                you have to choose between "wait for the lock" and "return stale data".<br /><br />
+                With 3 replicas, the gap between 54 and 18 isn't worth the added complexity. With 300 replicas, the
+                answer is different. This is the kind of decision that depends on scale and has no universally
+                correct advice — but <em>knowing where you sit on that axis</em> is not optional.
+              </div>
+            </div>
+
+            <p>Three anti-herd mechanisms, and when to use each:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Mechanism</th>
+                  <th>What it defends against</th>
+                  <th>The cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Single-flight</strong></td>
+                  <td>Many requests missing on ONE key at once</td>
+                  <td>Only coalesces within one process; p50 nudges up because many requests wait on one load</td>
+                </tr>
+                <tr>
+                  <td><strong>TTL jitter</strong></td>
+                  <td>MANY keys expiring at the same time</td>
+                  <td>Doesn't reduce total work, only spreads it out; a given key's real TTL is no longer predictable</td>
+                </tr>
+                <tr>
+                  <td><strong>Serve stale while refreshing</strong></td>
+                  <td>Both — and nobody has to wait</td>
+                  <td>Users get data older than the TTL; you have to keep an extra "expired but still usable" copy</td>
+                </tr>
+                <tr>
+                  <td><strong>Warm the cache before opening traffic</strong></td>
+                  <td>An empty cache right after a deploy or a flush</td>
+                  <td>You have to know which keys are hot in advance; adds a step to the deploy process</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The first two mechanisms defend against <em>different</em> problems and don't substitute for each
+              other — that's why the lab turns both on at once in the jitter measurement in section 5.3.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: client retries make the herd worse</div>
+              <div class="callout__content">
+                When the herd makes requests slow, clients often retry on their own. Every retry is a new request
+                asking about the exact same missing key — the herd multiplies itself. The system goes from "slow" to
+                "never recovers", and the ultimate cause turns out to be a mechanism that was added to increase
+                reliability.<br /><br />
+                This is the same amplification effect seen in <a href="sysdesign-api-gateway">Lesson 4</a> section
+                4.5, viewed from the cache's side. Lesson 17 goes deeper; what to remember for now: retry at exactly
+                <strong>one tier</strong>, with increasing backoff and random jitter.
+              </div>
+            </div>
+
+            <!-- ================= 5.5 ================= -->
+            <h2>5.5 Eviction and cache key design</h2>
+
+            <p>
+              A cache is always smaller than the source data, so something eventually has to go. Redis decides what
+              to drop using <code>maxmemory-policy</code>, and this choice changes system behavior far more than its
+              size suggests:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Policy</th>
+                  <th>Which key gets dropped</th>
+                  <th>Good fit when</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>allkeys-lru</code></td>
+                  <td>The key unused for longest</td>
+                  <td>A good default for a pure cache. Assumption: recently used means likely to be used again</td>
+                </tr>
+                <tr>
+                  <td><code>allkeys-lfu</code></td>
+                  <td>The least frequently used key</td>
+                  <td>There's a stable set of hot keys long-term; handles cold scans better than LRU</td>
+                </tr>
+                <tr>
+                  <td><code>volatile-lru</code></td>
+                  <td>Only drops keys WITH a TTL</td>
+                  <td>Redis is doubling as both a cache and storage for data that must not be lost</td>
+                </tr>
+                <tr>
+                  <td><code>noeviction</code></td>
+                  <td>Drops nothing — writes fail instead</td>
+                  <td>
+                    When losing data is unacceptable. <strong>Very dangerous for a cache</strong>: running out of
+                    memory means writes stop, the hit ratio freezes and then drifts down
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The lab's Redis deliberately sets <code>maxmemory 64mb</code> with <code>allkeys-lru</code> so you can
+              trigger eviction yourself and watch it happen. Once memory runs out, <code>INFO stats</code> tells you
+              how many keys got dropped:
+            </p>
+
+            {{CODE:watch_eviction.sh}}
+
+            <h3>A badly designed key makes the cache useless</h3>
+
+            <p>
+              The most expensive pitfall in this lesson isn't picking the wrong eviction policy — it's
+              <strong>getting the key wrong</strong>. If the key contains something that changes on every request,
+              every request creates a new key: the cache writes constantly, never reads anything back, hit ratio sits
+              near 0 — and it still "works", with no error at all.
+            </p>
+
+            {{CODE:cache_key_good_bad.js}}
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Use an allowlist, not a blocklist</div>
+              <div class="callout__content">
+                List the parameters <em>allowed</em> into the key (like <code>CACHE_PARAMS</code> above) instead of
+                listing the ones to strip out. Reason: a blocklist has to be updated every time marketing adds a new
+                tracking parameter, and when someone forgets, the hit ratio quietly drifts down with no error to catch
+                it. An allowlist defaults to safe — unknown parameters get ignored.
+              </div>
+            </div>
+
+            <p>
+              Two more problems worth knowing by name. <strong>Hot key</strong>: one key gets hit so hard it skews
+              load onto a single Redis shard — every other shard sits idle while one is overloaded; the fix is to
+              replicate that key into several copies (<code>hot:v1#0</code>…<code>hot:v1#7</code>) and pick one at
+              random on each read. <strong>Cache pollution</strong>: a cold-data scan (a report job, a backup, a bot)
+              pushes all the hot data out of the cache — LFU tolerates this better than LRU, or you route the scan
+              down a path that skips the cache entirely.
+            </p>
+
+            <h3>Reproducing the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>Summary</h3>
+
+            <p>
+              Database load is proportional to $(1-h)$, so every 9 you add to the hit ratio divides that load by 10 —
+              and all the value sits in those last few 9's, not in going from 0% to 90%. Cache-aside is the default
+              because it's the only pattern where a dead cache just makes the system slower, not broken. Cache
+              invalidation is the hardest part, and a versioned key is usually the cleanest solution because it makes
+              the write race harmless instead of trying to prevent it.
+            </p>
+
+            <p>
+              But the biggest lesson in this one is about <em>how you measure</em>. Three times while writing this,
+              the numbers said the opposite of what I expected, and all three times the cause was the measurement, not
+              the mechanism: jitter "did nothing" because the system was bottlenecked the whole time so there was no
+              batch to smooth out; thundering herd "caused no harm" because the database pool was far wider than the
+              herd; single-flight "made things slower" because p50 and p99 don't contain the 0.39% group that got
+              hurt. In all three, the data was correct — the question was wrong.
+            </p>
+
+            <p>
+              <strong>Lesson 6</strong> takes this exact idea further out — to the edge layer, right next to the user
+              — where the limit is no longer CPU or memory but the speed of light, and where one cache-key
+              misconfiguration makes origin load jump 251x while not a single client-side metric changes.
+            </p>
+
+            <!-- References Block -->
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://redis.io/docs/latest/commands/expire/" target="_blank" rel="noopener noreferrer">
+                    Redis — the EXPIRE command (TTL semantics, and what happens once the TTL fires)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://redis.io/docs/latest/commands/set/" target="_blank" rel="noopener noreferrer">
+                    Redis — the SET command (the <code>EX</code>/<code>NX</code> options used for cache-aside and a
+                    shared single-flight lock)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://redis.io/docs/latest/develop/reference/eviction/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Redis — Eviction Policies (what each <code>maxmemory-policy</code> means: LRU, LFU, volatile,
+                    noeviction)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://redis.io/docs/latest/commands/info/" target="_blank" rel="noopener noreferrer">
+                    Redis — the INFO command (the <code>evicted_keys</code> and <code>used_memory_human</code> fields
+                    used in section 5.5)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Microsoft Azure Architecture Center — the Cache-Aside pattern
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Cache_stampede" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Cache stampede (the general form of thundering herd, used in section 5.4)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <!-- Download Block -->
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The app server running in the lab, containing all three mechanisms measured in this lesson:
+                cache-aside through Redis, single-flight against thundering herd, and jittered TTLs:
+              </p>
+              <a
+                href="../sysdesign-lab/app/app.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download app.js
+              </a>
+            </div>
