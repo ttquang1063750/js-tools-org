@@ -9,6 +9,9 @@
       content="Bài học thứ mười của lộ trình Kỹ Sư AI Thực Chiến. Khám phá toán học đằng sau phép toán Scaled Dot-Product Self-Attention (Q, K, V), cơ chế Multi-Head Attention, Positional Encoding, và xây dựng khối Transformer Block hoàn chỉnh."
     />
     <link rel="canonical" href="https://js-tools.org/blog/aie/aie-transformer-mechanism" />
+    <link rel="alternate" hreflang="vi" href="https://js-tools.org/blog/aie/aie-transformer-mechanism" />
+    <link rel="alternate" hreflang="en" href="https://js-tools.org/blog/aie/en/aie-transformer-mechanism" />
+    <link rel="alternate" hreflang="x-default" href="https://js-tools.org/blog/aie/aie-transformer-mechanism" />
     <meta property="og:type" content="article" />
     <meta property="og:url" content="https://js-tools.org/blog/aie/aie-transformer-mechanism" />
     <meta property="og:title" content="Bài 10: Cơ chế Self-Attention &amp; Kỷ nguyên Transformer — js-tools" />
@@ -153,7 +156,10 @@
           <h1 class="article-hero__title" style="color: #ffffff">
             Bài 10: Cơ chế Self-Attention &amp; Kỷ nguyên Transformer
           </h1>
-          <div class="article-hero__meta" style="color: #94a3b8">14 tháng 7, 2026 · Tác giả: js-tools team</div>
+          <div class="article-hero__meta" style="color: #94a3b8">
+            14 tháng 7, 2026 · Tác giả: js-tools team ·
+            <a href="en/aie-transformer-mechanism" style="color: #eab308">Read in English</a>
+          </div>
         </div>
       </section>
 
@@ -174,6 +180,17 @@
               cơ chế Multi-Head Attention, mã hóa vị trí (Positional Encoding), và tự tay lắp ráp một khối Transformer
               Block hoàn chỉnh bằng PyTorch.
             </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ Bạn cần gì trước khi bắt đầu</div>
+              <div class="callout__content">
+                <strong>Thư viện:</strong> <code>pip install torch</code>. Không tải dữ liệu, không cần mạng.
+                <br /><br />
+                <strong>Kiến thức cần có:</strong> Bài 9 — ý tưởng Attention và <em>vì sao</em> nó ra đời (điểm nghẽn
+                của Context Vector tĩnh). Bài này lấy đúng ý tưởng đó rồi <strong>bỏ hẳn phần tuần hoàn</strong>. Bài 2
+                cho tích vô hướng, Bài 3 cho phép nhân ma trận và ghép chiều — mục 10.1 dùng cả hai liên tục.
+              </div>
+            </div>
 
             <h2>10.1 Cuộc cách mạng song song hóa: Cơ chế Self-Attention</h2>
             <p>
@@ -360,55 +377,56 @@
               <pre><code class="language-python">import torch
 import torch.nn as nn
 import torch.nn.functional as F
- 
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, num_heads):
         super(MultiHeadAttention, self).__init__()
-        assert d_model % num_heads == 0, "d_model phải chia hết cho num_heads"
+        assert d_model % num_heads == 0, "d_model must divide evenly by num_heads"
         
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_k = d_model // num_heads
         
-        # Tạo các ma trận chiếu tuyến tính cho Query, Key, Value
+        # Linear projections producing Query, Key and Value.
         self.W_q = nn.Linear(d_model, d_model)
         self.W_k = nn.Linear(d_model, d_model)
         self.W_v = nn.Linear(d_model, d_model)
         
-        # Lớp tuyến tính cuối sau khi ghép các luồng Attention
+        # Final projection, applied after the heads are concatenated.
         self.W_o = nn.Linear(d_model, d_model)
         
     def forward(self, q, k, v, mask=None):
         batch_size, seq_len, _ = q.size()
         
-        # 1. Chiếu tuyến tính đầu vào và phân tách thành các Heads
-        # Kích thước chuyển đổi: (Batch, Seq, d_model) -> (Batch, Seq, heads, d_k) -> (Batch, heads, Seq, d_k)
+        # 1. Project the input, then split it across the heads.
+        #    Shapes: (batch, seq, d_model) -&gt; (batch, seq, heads, d_k) -&gt; (batch, heads, seq, d_k)
         Q = self.W_q(q).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
         K = self.W_k(k).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
         V = self.W_v(v).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
         
-        # 2. Tính điểm tương đồng Scaled Dot-Product
-        # Q K^T: (Batch, heads, Seq, d_k) x (Batch, heads, d_k, Seq) -> (Batch, heads, Seq, Seq)
+        # 2. Scaled dot-product scores. Dividing by sqrt(d_k) keeps the values in a
+        #    range where Softmax does not saturate.
+        # Q K^T: (Batch, heads, Seq, d_k) x (Batch, heads, d_k, Seq) -&gt; (Batch, heads, Seq, Seq)
         scores = torch.matmul(Q, K.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.d_k, dtype=torch.float32))
         
-        # Áp dụng mặt nạ (nếu có)
+        # Apply the mask. -1e9 before Softmax becomes effectively 0 after it.
         if mask is not None:
             scores = scores.masked_fill(mask == 0, -1e9)
             
-        # 3. Softmax để tạo phân phối trọng số chú ý
+        # 3. Softmax turns the scores into attention weights summing to 1.
         attention_weights = F.softmax(scores, dim=-1)
         
-        # 4. Nhân với Value và chuyển đổi lại số chiều gốc
-        # (Batch, heads, Seq, Seq) x (Batch, heads, Seq, d_k) -> (Batch, heads, Seq, d_k)
+        # 4. Weight the Values, then restore the original dimensions.
+        # (Batch, heads, Seq, Seq) x (Batch, heads, Seq, d_k) -&gt; (Batch, heads, Seq, d_k)
         context = torch.matmul(attention_weights, V)
         
-        # Ghép (Concatenate) các heads lại với nhau: (Batch, Seq, d_model)
+        #    Concatenate the heads back together: (batch, seq, d_model)
         context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
         
-        # Lớp chiếu tuyến tính đầu ra
+        # Output projection.
         output = self.W_o(context)
         return output
- 
+
 class FeedForwardNetwork(nn.Module):
     def __init__(self, d_model, d_ff):
         super(FeedForwardNetwork, self).__init__()
@@ -418,19 +436,20 @@ class FeedForwardNetwork(nn.Module):
         
     def forward(self, x):
         return self.linear2(self.relu(self.linear1(x)))
- 
+
 class TransformerBlock(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
         super(TransformerBlock, self).__init__()
         
-        # Khối chú ý đa luồng
+        # Multi-head attention.
         self.attention = MultiHeadAttention(d_model, num_heads)
         
-        # Lớp chuẩn hóa Layer Normalization
+        # LayerNorm, applied around each sub-block (the residual connections below
+        # are what let gradients reach the early layers of a deep stack).
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         
-        # Mạng truyền thẳng FFN
+        # The position-wise feed-forward network.
         self.feed_forward = FeedForwardNetwork(d_model, d_ff)
         
         self.dropout = nn.Dropout(dropout)
@@ -445,33 +464,66 @@ class TransformerBlock(nn.Module):
         x = self.norm2(x + self.dropout(ff_out))
         
         return x
- 
+
 if __name__ == "__main__":
-    print("=== Khởi tạo khối Transformer Block ===")
-    d_model = 64
-    num_heads = 8
-    d_ff = 256
-    seq_len = 10
-    batch_size = 2
-    
-    # Khởi tạo mô hình
+    # Seed, so the numbers below are the same on every run.
+    torch.manual_seed(42)
+
+    d_model, num_heads, d_ff = 64, 8, 256
+    seq_len, batch_size = 10, 2
+
     block = TransformerBlock(d_model=d_model, num_heads=num_heads, d_ff=d_ff)
-    print(f"Tham số: d_model={d_model}, heads={num_heads}, d_ff={d_ff}")
-    
-    # Giả lập dữ liệu đầu vào (Batch, Seq Length, d_model)
-    dummy_input = torch.randn(batch_size, seq_len, d_model)
-    print(f"Kích thước tensor đầu vào: {dummy_input.shape}")
-    
-    # Khởi tạo mặt nạ Causal Mask giả lập cho bộ giải mã Decoder
-    # Mặt nạ tam giác dưới (Lower Triangular Mask) chứa số 1, góc trên chứa số 0
-    causal_mask = torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0).unsqueeze(1) # (1, 1, Seq, Seq)
-    print(f"Kích thước mặt nạ Causal Mask: {causal_mask.shape}\n")
-    
-    # Lan truyền xuôi qua khối Transformer Block
-    output = block(dummy_input, mask=causal_mask)
-    print("=== Chạy Lan truyền xuôi qua mô hình thành công ===")
-    print(f"Kích thước tensor đầu ra: {output.shape} (Bằng chính xác kích thước đầu vào)")
-    print(f"Kiến trúc khối Transformer Block đã hoạt động đồng bộ.")</code></pre>
+    block.eval()  # no dropout, so the causal test below is deterministic
+    print(f"=== Transformer block: d_model={d_model}, heads={num_heads}, d_ff={d_ff} ===")
+
+    x = torch.randn(batch_size, seq_len, d_model)
+    print(f"input shape:  {tuple(x.shape)}")
+
+    # Lower-triangular mask: position i may attend to 0..i, never to i+1 onwards.
+    causal_mask = torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0).unsqueeze(1)
+    print(f"causal mask shape: {tuple(causal_mask.shape)}")
+
+    with torch.no_grad():
+        output = block(x, mask=causal_mask)
+    print(f"output shape: {tuple(output.shape)}  (identical to the input, as it must be)")
+
+    # ---------------------------------------------------------------- the real test
+    # Matching shapes prove almost nothing: an attention that ignored the mask
+    # entirely would still return the right shape. The property that actually
+    # matters for a decoder (GPT) is CAUSALITY — position i must not see i+1.
+    #
+    # So: change ONLY the last token and re-run. If the mask works, every earlier
+    # position must come out bit-for-bit identical, because none of them was
+    # allowed to look at the token we changed.
+    print("\n=== Does the causal mask actually work? ===")
+    x_perturbed = x.clone()
+    x_perturbed[:, -1, :] = torch.randn(batch_size, d_model)  # rewrite the LAST token
+
+    with torch.no_grad():
+        output_perturbed = block(x_perturbed, mask=causal_mask)
+
+    earlier_drift = (output[:, :-1, :] - output_perturbed[:, :-1, :]).abs().max().item()
+    last_drift = (output[:, -1, :] - output_perturbed[:, -1, :]).abs().max().item()
+
+    print(f"  changed the last token only")
+    print(f"  largest change in positions 0..{seq_len - 2}: {earlier_drift:.2e}")
+    print(f"  largest change in the last position:  {last_drift:.4f}")
+
+    if earlier_drift &lt; 1e-6 &lt; last_drift:
+        print("  PASS — earlier positions did not move, the last one did.")
+        print("  That is causality: the past cannot see the future.")
+    else:
+        print("  FAIL — the mask is leaking information backwards in time.")
+
+    # And the counter-test: without a mask, changing the last token must disturb
+    # everything, because every position now attends to every other.
+    with torch.no_grad():
+        free = block(x, mask=None)
+        free_perturbed = block(x_perturbed, mask=None)
+    free_drift = (free[:, :-1, :] - free_perturbed[:, :-1, :]).abs().max().item()
+    print(f"\n  same experiment with NO mask: earlier positions moved by {free_drift:.4f}")
+    print("  Non-zero, as expected — which confirms the test above measures the mask")
+    print("  and not some accident of the architecture.")</code></pre>
             </div>
 
             <div class="callout callout--note">
@@ -483,6 +535,79 @@ if __name__ == "__main__":
                 lý dữ liệu chuỗi có độ dài thay đổi liên tục, giúp ổn định hóa trị số kích hoạt của mạng cực kỳ tốt.
               </div>
             </div>
+
+            <p>Chạy nó ra như sau:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-dots"></span>
+                <span class="code-filename">Terminal</span>
+              </div>
+              <pre><code class="language-bash">=== Transformer block: d_model=64, heads=8, d_ff=256 ===
+input shape:  (2, 10, 64)
+causal mask shape: (1, 1, 10, 10)
+output shape: (2, 10, 64)  (identical to the input, as it must be)
+
+=== Does the causal mask actually work? ===
+  changed the last token only
+  largest change in positions 0..8: 0.00e+00
+  largest change in the last position:  3.9485
+  PASS — earlier positions did not move, the last one did.
+  That is causality: the past cannot see the future.
+
+  same experiment with NO mask: earlier positions moved by 0.2319
+  Non-zero, as expected — which confirms the test above measures the mask
+  and not some accident of the architecture.</code></pre>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🔬 Vì sao phép kiểm này quan trọng hơn việc khớp kích thước</div>
+              <div class="callout__content">
+                Kích thước đầu ra bằng đầu vào là điều kiện cần, nhưng nó <strong>gần như không chứng minh gì</strong>.
+                Một cơ chế attention bỏ qua hoàn toàn mặt nạ — hoặc thậm chí chỉ lấy trung bình mọi token — vẫn trả về
+                đúng kích thước đó. Nếu bạn tự cài attention và chỉ kiểm shape, bạn có thể để lọt một lỗi phá huỷ toàn
+                bộ mô hình. <br /><br />
+                Tính chất <em>thật sự</em> cần đúng ở một Decoder (tức GPT) là <strong>nhân quả</strong>: vị trí $i$
+                không được nhìn thấy vị trí $i+1$. Nếu nó nhìn được, mô hình sẽ "gian lận" trong lúc huấn luyện — nó
+                thấy trước từ cần dự đoán — rồi sụp hoàn toàn khi sinh văn bản thật, vì lúc đó tương lai chưa tồn tại.
+                <br /><br />
+                Cách kiểm trong script rất đơn giản và dứt khoát: <strong>đổi duy nhất token cuối</strong> rồi chạy lại.
+                Nếu mặt nạ đúng, mọi vị trí trước đó phải ra <em>giống hệt từng bit</em> — vì không vị trí nào được phép
+                nhìn token vừa đổi. Kết quả đo được là <code>0.00e+00</code>: không phải "rất nhỏ", mà là
+                <em>đúng bằng không</em>. <br /><br />
+                Và phép thử đối chứng mới làm phép kiểm có giá trị: chạy lại <strong>không có mặt nạ</strong>, các vị
+                trí trước đổi 0,2319 — khác 0 rõ rệt. Nếu thiếu bước này, con số 0 ở trên có thể chỉ là do kiến trúc
+                tình cờ không truyền thông tin, chứ không phải do mặt nạ làm việc. Đây là thói quen nên mang theo: một
+                phép kiểm cho kết quả "đúng như mong đợi" chỉ đáng tin khi bạn cũng chứng minh được nó
+                <em>biết báo sai</em>.
+              </div>
+            </div>
+
+            <h3>Cách chạy dự án này trên máy bạn</h3>
+            <ol>
+              <li>Cài: <code>pip install torch</code>.</li>
+              <li>Tải <code>transformer_block.py</code> ở cuối bài, hoặc gõ lại đoạn code trên.</li>
+              <li>
+                Chạy: <code>python3 transformer_block.py</code>. Bạn sẽ ra đúng những con số trên nhờ
+                <code>torch.manual_seed(42)</code> và <code>block.eval()</code> — <code>eval()</code> tắt dropout, nếu
+                không thì hai lần chạy khác nhau và phép kiểm nhân quả sẽ báo sai.
+              </li>
+              <li>
+                Rồi thử phá nó theo hai cách:
+                <ul>
+                  <li>
+                    Xoá dòng áp dụng mặt nạ trong <code>MultiHeadAttention</code> (chỗ điền <code>-1e9</code>). Phép
+                    kiểm sẽ chuyển từ PASS sang FAIL, và bạn thấy chính xác lỗi đó biểu hiện thế nào — thay vì phải tin
+                    lời mô tả.
+                  </li>
+                  <li>
+                    Đổi <code>torch.tril</code> thành <code>torch.triu</code> (mặt nạ tam giác <em>trên</em>). Mô hình
+                    vẫn chạy, kích thước vẫn đúng, nhưng giờ nó chỉ nhìn được tương lai — đúng kiểu lỗi mà phép kiểm
+                    shape không bao giờ phát hiện.
+                  </li>
+                </ul>
+              </li>
+            </ol>
 
             <h2>Tóm tắt bài học &amp; Cầu nối kiến thức</h2>
             <div class="callout callout--note">
