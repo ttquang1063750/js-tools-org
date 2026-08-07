@@ -1,0 +1,287 @@
+            <p class="article-lead">
+              Up to now we have optimised LLM applications by shaping prompts, building RAG pipelines to supply outside
+              knowledge, and constructing tool-using agents. But what if you need the model to follow one very specific
+              output structure absolutely, to speak in your company's house voice, or to teach a small 7B model the
+              deep domain reasoning of a much larger one?
+            </p>
+
+            <p>
+              That is when you have to change the neural network's weights directly, through
+              <strong>fine-tuning</strong>. This lesson dissects the practical difference between RAG and fine-tuning,
+              decodes the mathematics behind the extremely common <strong>LoRA (Low-Rank Adaptation)</strong>
+              technique, covers the standard instruction-tuning data format, and implements a LoRA training loop from
+              scratch in NumPy.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Libraries:</strong> <code>pip install numpy</code>. No GPU and no model download — the project
+                implements LoRA on a single 8×8 linear layer so you can see every matrix multiplication.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 6 for loss and backpropagation — the training loop here is
+                exactly that loop, differing only in that just two matrices get updated. Lesson 3 for matrix
+                multiplication and what the dimensions mean.
+              </div>
+            </div>
+
+            <h2>19.1 When should you fine-tune? Telling it apart from RAG</h2>
+            <p>
+              There is a classic line in the field: <em>"RAG is like letting the model sit an open-book exam;
+              fine-tuning is like sending it to university for several years to change how it thinks."</em>
+            </p>
+            <ul>
+              <li>
+                <strong>Purpose:</strong> RAG supplies outside knowledge and continuously changing data. Fine-tuning
+                teaches new skills, shapes voice and output structure.
+              </li>
+              <li>
+                <strong>Mechanism:</strong> RAG retrieves relevant passages into the prompt context. Fine-tuning runs
+                backpropagation to update the model's weights.
+              </li>
+              <li>
+                <strong>Hallucination:</strong> RAG is excellent (the evidence is right there in the prompt).
+                Fine-tuning is moderate — the model only remembers as a probability distribution over weights.
+              </li>
+              <li>
+                <strong>Prompt token cost:</strong> RAG is high (large raw context attached every time). Fine-tuning is
+                low (the skill is baked in, so the prompt stays short).
+              </li>
+              <li>
+                <strong>Data freshness:</strong> RAG is excellent (just update the vector database). Fine-tuning is
+                poor — every knowledge update means training again.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: fine-tuning a model just to load static facts into it</div>
+              <div class="callout__content">
+                The most common mistake newcomers make is trying to fine-tune a model purely so it memorises the
+                company's new product list or internal policy documents. That burns enormous GPU time, takes a long
+                while, and easily causes <strong>catastrophic forgetting</strong>, where the model loses general
+                capabilities it previously had. Static facts belong in RAG; fine-tuning is for behaviour.
+              </div>
+            </div>
+
+            <h2>19.2 PEFT &amp; LoRA (Low-Rank Adaptation)</h2>
+            <p>
+              Tuning every parameter of a large language model (full fine-tuning) demands enormous compute. To train a
+              Llama-3 8B you must store weights, gradients and optimiser states, which needs hundreds of gigabytes of
+              enterprise GPU memory.
+            </p>
+            <p>
+              <strong>LoRA</strong> solves this by completely freezing the original weight matrix
+              $W_0 \in \mathbb{R}^{d \times k}$ and instead adding a parallel branch holding a weight-correction matrix
+              $\Delta W$, decomposed into the product of two low-rank matrices $A \in \mathbb{R}^{r \times k}$ and
+              $B \in \mathbb{R}^{d \times r}$ with rank $r \ll \min(d, k)$:
+            </p>
+            <p>\[\Delta W = B \cdot A\]</p>
+            <p>
+              For example, with a hidden dimension of $d = 4096$ and $k = 4096$, the original matrix holds
+              $4096 \times 4096 \approx 16.7$ million parameters. At rank $r = 8$, matrix $A$ holds
+              $8 \times 4096 \approx 32{,}768$ parameters and $B$ holds another $32{,}768$. LoRA therefore trains
+              $65{,}536$ parameters — over 250 times fewer.
+            </p>
+            <p>
+              During the forward pass, for an input vector $x$, the linear layer's output $h$ becomes:
+            </p>
+            <p>\[h = x \cdot W_0 + \frac{\alpha}{r} (x \cdot B \cdot A)\]</p>
+            <p>
+              where $\alpha$ is a scaling constant (LoRA alpha) controlling how strongly the newly trained LoRA weights
+              affect the output. Note the order carefully: since $\Delta W = B \cdot A$, the adapter path must be
+              $x \cdot B \cdot A$. Writing $x \cdot A \cdot B$ does not even typecheck — $x$ is $(1, d)$ while $A$ is
+              $(r, k)$.
+            </p>
+
+            <h2>19.3 Training data format: instruction tuning</h2>
+            <p>
+              To teach an LLM to follow instructions, the data has to be prepared as tightly structured example pairs.
+              The most common format is JSON Lines (JSONL):
+            </p>
+
+            {{CODE:dataset.jsonl}}
+
+            <h2>19.4 Lesson 19 project: LoRA from scratch in NumPy, with all four claims checked</h2>
+            <p>
+              Section 19.2 makes four claims about LoRA. This project <em>tests</em> all four rather than asking you to
+              take them on faith: the base weights do not change, the adapter contributes exactly zero at
+              initialisation, the trainable parameter count drops by two orders of magnitude, and the adapter can be
+              folded back into the base weights after training.
+            </p>
+
+            {{CODE:lora_simulation.py}}
+
+            <h3>Claim 1: why matrix B is initialised to zeros</h3>
+            <p>
+              The detail most easily skipped in LoRA: $A$ is initialised randomly but $B$ is initialised to
+              <strong>all zeros</strong>. The consequence is that $\Delta W = B \cdot A$ is exactly the zero matrix, so
+              at the start a model with an adapter attached is <em>identical</em> to the base model:
+            </p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              That <code>0.0e+00</code> is not "very small" but <em>exactly zero</em>, and <code>True</code> is an
+              exact equality comparison, not an approximate one. This property is what makes LoRA safe to deploy:
+              attaching an untrained adapter to a production model cannot break anything, because it starts as an
+              exact no-op and only then learns away from there.
+            </p>
+
+            <h3>Claim 2: the trainable parameter count</h3>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              The $d = 4096$, $r = 8$ row is the real size of one attention projection in a 7B-class model: from 16.7
+              million parameters down to 65,536 — <strong>256 times fewer</strong>. But look at the last row: raising
+              $r$ to 64 cuts the ratio to just 32 times. LoRA's benefit is inversely proportional to the rank you pick,
+              so "set $r$ high to be safe" is the fastest way to lose the reason you chose LoRA.
+            </p>
+
+            <h3>Claim 3: the base weights really are frozen</h3>
+
+            {{CODE:Terminal#3}}
+
+            <p>
+              The line <code>W0 bit-identical after training: True</code> is a real <code>assert</code> in the code,
+              comparing the base matrix bit for bit before and after 100 epochs. If the training loop accidentally
+              touched $W_0$, the program would stop. Matrix $B$, meanwhile, goes from exactly 0 to $0.3704$ — it is the
+              entirety of what was learned.
+            </p>
+
+            <h3>Claim 4: merging the adapter into the base weights is free</h3>
+
+            {{CODE:Terminal#4}}
+
+            <p>
+              A discrepancy of $2.22 \times 10^{-16}$ is exactly 64-bit floating point rounding error, meaning the two
+              paths compute <em>the same result</em>. This matters operationally: once training is done you add
+              $\frac{\alpha}{r} B A$ straight into $W_0$ and serve it as an ordinary model — LoRA adds not one
+              millisecond of inference latency. And because an adapter is only tens of thousands of parameters, you can
+              keep dozens of them for different tasks on one shared base model and swap them on demand.
+            </p>
+
+            <h3>What rank $r$ buys you — and the trap in measuring it</h3>
+            <p>
+              The natural question: does raising $r$ make the model learn better? The obvious experiment is to hold
+              everything else constant and vary $r$. The result is surprising:
+            </p>
+
+            {{CODE:Terminal#5}}
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ This is why you must distrust your own experiment</div>
+              <div class="callout__content">
+                Sweep A shows higher rank giving worse loss — the exact opposite of intuition, and the opposite of what
+                every reference says. Stopping there and writing "higher rank does not help" would be a wrong
+                conclusion drawn from a broken measurement.
+                <br /><br />
+                The cause is right there in the formula: the adapter is multiplied by $\frac{\alpha}{r}$. Holding
+                $\alpha = 4$ fixed while raising $r$ from 1 to 8 <em>silently</em> shrinks that coefficient from
+                $4.00$ to $0.50$. Sweep A did not measure the adapter's capacity, it measured the scaling. Sweep B
+                holds $\frac{\alpha}{r} = 2.0$ constant, and only then does rank play its real role: loss falls
+                steadily to $r = 4$ and then flattens — because an $8 \times 8$ layer with a single training example
+                has nothing left to improve.
+                <br /><br />
+                The operational lesson: <strong>$\alpha$ is not an independent dial</strong>. The common convention of
+                setting $\alpha = 2r$ exists precisely for this reason — so that changing $r$ does not silently change
+                how strongly the adapter acts.
+              </div>
+            </div>
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>
+                <code>pip install numpy</code> then <code>python3 lora_simulation.py</code>. Thanks to
+                <code>np.random.seed(42)</code>, every number in this lesson reproduces exactly on your machine.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    In <code>init_lora</code>, change <code>np.zeros((d_in, rank))</code> to
+                    <code>np.random.randn(d_in, rank) * 0.1</code>. The first <code>assert</code> fails immediately:
+                    the adapter is no longer a no-op, meaning attaching it to a production model would change the
+                    output before it had learned anything.
+                  </li>
+                  <li>
+                    Add <code>w0 -= lr * 0.001</code> inside the <code>train</code> loop. The frozen-$W_0$
+                    <code>assert</code> catches it at once — exactly the kind of leak a hastily written LoRA
+                    implementation produces.
+                  </li>
+                  <li>
+                    Change <code>EPOCHS</code> from 100 to 500 and rerun sweep A. The gaps between ranks narrow,
+                    confirming that the difference in sweep A was about <em>convergence speed</em> rather than
+                    capacity.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> telling apart when to use RAG and when fine-tuning is required, and
+                    knowing the instruction-tuning data format.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> implementing LoRA in NumPy and verifying its four claims with
+                    <code>assert</code>: the adapter starts at exactly 0, $W_0$ does not move one bit, parameters drop
+                    256-fold, and merging the adapter reproduces the same output to within $10^{-16}$.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> understanding why $\alpha$ and $r$ have to move together — and watching
+                    a reasonable-looking experiment produce a completely inverted conclusion when
+                    $\frac{\alpha}{r}$ is left uncontrolled.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> you now have a fine-tuned model, a RAG system and agents. The
+              final question for an AI engineer is the hardest one: how do you know the system is actually good, and
+              how do you find out the moment it starts getting worse? Lesson 20 closes the roadmap with model serving,
+              tracing and automated evaluation.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>lora_simulation.py</code> — LoRA implemented in NumPy with all four of its
+                claims checked by assertion, plus the alpha/rank experiment (run
+                <code>python3 lora_simulation.py</code>, needs <code>numpy</code>):
+              </p>
+              <a
+                href="../lora_simulation.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download lora_simulation.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://arxiv.org/abs/2106.09685" target="_blank" rel="noopener noreferrer"
+                    >LoRA: Low-Rank Adaptation of Large Language Models — the original paper from Microsoft (Hu et
+                    al., 2021)</a
+                  >
+                </li>
+                <li>
+                  <a href="https://huggingface.co/docs/peft" target="_blank" rel="noopener noreferrer"
+                    >Hugging Face PEFT — the industry-standard library implementing LoRA, QLoRA and prefix tuning</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/microsoft/LoRA" target="_blank" rel="noopener noreferrer"
+                    >Microsoft LoRA repository — the authors' own PyTorch implementation</a
+                  >
+                </li>
+              </ul>
+            </section>
