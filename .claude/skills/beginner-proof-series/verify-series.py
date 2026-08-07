@@ -35,7 +35,11 @@ import subprocess
 import sys
 
 VN = r'[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵĐđ]'
-SVG_RE = r'<div style="margin: 20px 0; text-align: center">\s*<svg.*?</svg>\s*</div>'
+# So do co hai kieu boc trong repo: <div style=...> (AIE) va <figure> (sysdesign).
+# Bo sot kieu thu hai nghia la bat bien svg-geom KHONG che chung — hinh hoc lech
+# giua hai locale ma khong ai bao.
+SVG_RE = (r'<div style="margin: 20px 0; text-align: center">\s*<svg.*?</svg>\s*</div>'
+          r'|<figure[^>]*>\s*<svg.*?</svg>\s*(?:<figcaption[^>]*>.*?</figcaption>\s*)?</figure>')
 CODE_RE = r'<span class="code-filename">([^<]*)</span>.*?<pre><code[^>]*>(.*?)</code></pre>'
 
 if not 2 <= len(sys.argv) <= 3:
@@ -71,7 +75,13 @@ def fail(slug, check, detail):
 
 
 def strip(s, drop_text=True):
+    """Bo moi thu LA VAN BAN, giu lai hinh hoc — de svg-geom so dung cai can so.
+
+    <figcaption> cung phai bo: no la van xuoi that va DUOC dich, nen giu lai se
+    lam moi so do co figcaption bi bao lech hinh hoc sai su that.
+    """
     s = re.sub(r'<text[^>]*>.*?</text>', '', s, flags=re.S) if drop_text else s
+    s = re.sub(r'<figcaption[^>]*>.*?</figcaption>', '', s, flags=re.S)
     return ' '.join(re.sub(r'aria-label="[^"]*"', '', s).split())
 
 
@@ -172,14 +182,22 @@ for num, slug in order:
     else:
         href, title = card.group(1), ' '.join(re.sub(r'<em.*?</em>', '', card.group(2), flags=re.S).split())
         h1 = ' '.join(re.sub(r'<[^>]+>', '', re.search(r'<h1 class="article-hero__title"[^>]*>(.*?)</h1>', en, re.S).group(1)).split())
-        checks.append(('hub', href == slug and title == h1, f'href={href} tieu_de_khop={title == h1}'))
+        # Series dat so bai o badge lesson-number thi the hub khong lap "Lesson N:"
+        # trong khi <h1> cua trang van co. Chap nhan dung tien to do, khong hon.
+        title_ok = title == h1 or title == re.sub(r'^Lesson \d+:\s*', '', h1)
+        checks.append(('hub', href == slug and title_ok, f'href={href} tieu_de_khop={title_ok}'))
 
     # --- dung lai duoc
     have = [os.path.exists(f'{LDIR}/{slug}.{x}') for x in ('body-en.html', 'meta-en.json')]
     checks.append(('rebuildable', all(have), f'body={have[0]} meta={have[1]}'))
 
     # --- chrome thong nhat
-    tag = ' '.join(re.search(r'<div class="article-hero__tag"[^>]*>(.*?)</div>', en, re.S).group(1).split())
+    # Mot so series them lop rieng: class="article-hero__tag article-hero__tag--sysdesign".
+    m_tag = re.search(r'<div class="article-hero__tag[^"]*"[^>]*>(.*?)</div>', en, re.S)
+    if not m_tag:
+        fail(slug, 'chrome', 'khong tim thay article-hero__tag tren trang EN')
+        continue
+    tag = ' '.join(m_tag.group(1).split())
     meta_txt = ' '.join(re.search(r'<div class="article-hero__meta"[^>]*>(.*?)</div>', en, re.S).group(1).split())
     ok_chrome = (
         re.match(STD.get('tagPattern', '.*'), tag)

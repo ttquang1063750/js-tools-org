@@ -104,8 +104,19 @@ if script_vi:
     print(f'  script: {n_en} chuoi, logic giong het nguon, khong sot tieng Viet')
 
 # ---------------------------------------------------------------- 4. the bai hoc
+# Mot so hub chia lo trinh thanh "chang" bang <div class="lessons-stage">. Neu
+# bo qua, ban EN mat het cac dai do — va shape() khong bat duoc vi chung la <div>
+# chu khong phai h2/h3/callout. Cho phep hub-lessons-en.json xen cac muc dang
+# {"stage": "...", "styleVi": "..."} giua cac bai; chung khong duoc danh so.
 cards = []
-for n, L in enumerate(lessons, 1):
+n = 0
+for L in lessons:
+    if 'stage' in L:
+        style = L.get('style', '')
+        attr = f' style="{style}"' if style else ''
+        cards.append(f'              <div class="lessons-stage"{attr}>{L["stage"]}</div>')
+        continue
+    n += 1
     en_path = f'{LESSON_DIR}/{L["slug"]}.html'
     if os.path.exists(en_path):
         href, note = L['slug'], ''
@@ -123,11 +134,13 @@ for n, L in enumerate(lessons, 1):
                 <div class="lesson-arrow">➔</div>
               </a>'''
     )
-n_en = sum(1 for L in lessons if os.path.exists(f'{LESSON_DIR}/{L["slug"]}.html'))
+n_en = sum(1 for L in lessons if 'slug' in L and os.path.exists(f'{LESSON_DIR}/{L["slug"]}.html'))
 
 # Tieu de tren hub phai khop tieu de THUC cua trang EN. Trang la nguon dung;
 # hub lech la doc gia bam vao mot cai ten roi den mot trang ten khac.
 for L in lessons:
+    if 'slug' not in L:
+        continue
     fp = f'{LESSON_DIR}/{L["slug"]}.html'
     if not os.path.exists(fp):
         continue
@@ -135,7 +148,10 @@ for L in lessons:
     h1 = ' '.join(
         re.sub(r'<[^>]+>', '', re.search(r'<h1 class="article-hero__title"[^>]*>(.*?)</h1>', page, re.S).group(1)).split()
     )
-    if h1 != L['title']:
+    # Mot so series dat so bai o badge <div class="lesson-number"> nen the hub
+    # KHONG lap lai "Lesson N:" trong khi <h1> cua trang van co. Cho phep dung
+    # tien to do — nhung chi tien to, phan con lai van phai trung khop tuyet doi.
+    if h1 != L['title'] and re.sub(r'^Lesson \d+:\s*', '', h1) != L['title']:
         raise SystemExit(f'TIEU DE LECH cho {L["slug"]}:\n  hub  : {L["title"]}\n  trang: {h1}')
 lesson_list = '<div class="lessons-list">\n' + '\n\n'.join(cards) + '\n            </div>'
 
@@ -237,5 +253,6 @@ open(EN, 'w', encoding='utf-8').write(out)
 
 leftover = sorted(set(' '.join(x.split()) for x in re.findall(r'[^\s<>]*' + VN + r'[^\s<>]*', out, re.I)))
 print(f'  da ghi {EN} — {len(out.splitlines())} dong')
-print(f'  the bai: {len(cards)} | co ban EN: {n_en} | tro ve ban VI: {len(cards) - n_en}')
+n_cards = sum(1 for L in lessons if 'slug' in L)
+print(f'  the bai: {n_cards} | co ban EN: {n_en} | tro ve ban VI: {n_cards - n_en}')
 print(f'  tu tieng Viet con lai (mong doi chi co link locale): {leftover}')

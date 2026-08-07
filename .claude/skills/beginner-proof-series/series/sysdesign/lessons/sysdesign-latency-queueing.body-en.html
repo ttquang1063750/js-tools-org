@@ -1,0 +1,543 @@
+            <p>
+              Every discussion about system design eventually reduces to two numbers: <strong>latency</strong> and
+              <strong>throughput</strong>. That sounds simple, but it is where the misunderstanding starts — because
+              most of us were trained to think linearly, while any system with a queue behaves
+              <em>non-linearly</em>, and unforgivingly so.
+            </p>
+
+            <p>
+              This lesson establishes four foundations reused across the following 17: telling latency apart from
+              throughput, memorising the orders of magnitude of different delays, understanding why the mean is a
+              deceitful number, and finally the formula that explains why a server "with 30% of its CPU idle" can
+              nonetheless be dying.
+            </p>
+
+            <!-- ================= 1.1 ================= -->
+            <h2>1.1 Latency and throughput: two quantities, not one</h2>
+
+            <p>
+              <strong>Latency</strong> is the time to serve <em>one</em> request, measured in units of time.
+              <strong>Throughput</strong> is the number of requests served per <em>unit of time</em>, measured in
+              req/s. They are related but neither follows from the other, and more importantly:
+              <strong>optimising one usually harms the other</strong>.
+            </p>
+
+            <p>
+              The clearest example is <em>batching</em>. Collecting 100 writes and pushing them to the database at
+              once raises throughput sharply, because the fixed cost per write is shared out. But the first request to
+              arrive has to <em>wait</em> for the other 99 before it is processed — its latency goes up. Compression is
+              the same: it saves bandwidth (more throughput on the same link) but adds compress/decompress time to
+              every request.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Technique</th>
+                  <th>Effect on throughput</th>
+                  <th>Effect on latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Batching</strong></td>
+                  <td>Large increase (fixed cost shared out)</td>
+                  <td>Worse (must wait for the batch to fill)</td>
+                </tr>
+                <tr>
+                  <td><strong>Compression</strong></td>
+                  <td>Increase (fewer bytes on the same link)</td>
+                  <td>Worse (compress/decompress time added)</td>
+                </tr>
+                <tr>
+                  <td><strong>Cache</strong></td>
+                  <td>Increase (less work for the tiers behind)</td>
+                  <td>Better (shorter path)</td>
+                </tr>
+                <tr>
+                  <td><strong>Adding replicas</strong></td>
+                  <td>Increase, close to linear</td>
+                  <td>Better <em>indirectly</em> (less queueing, no single request runs faster)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The last row holds a subtle point that is very often misread: adding servers does <strong>not</strong>
+              make a single request finish sooner. If a handler needs 20 ms of CPU it still needs 20 ms whether you
+              have 1 server or 100. Extra servers only reduce <em>queueing time</em>. On an idle system, adding
+              servers barely improves latency at all.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: deriving latency from throughput</div>
+              <div class="callout__content">
+                "The server handles 1000 req/s, so each request takes 1 ms" — <strong>wrong</strong>. That conclusion
+                only holds if the server processes exactly one request at a time, sequentially. In reality, if the
+                server runs 50 requests in parallel, each may take 50 ms while throughput is still 1000 req/s. The
+                correct relationship between these three quantities is Little's Law in section 1.4 — and it needs
+                <em>three</em> numbers, not two.
+              </div>
+            </div>
+
+            <!-- ================= 1.2 ================= -->
+            <h2>1.2 Latency orders of magnitude: the table that shapes every architecture</h2>
+
+            <p>
+              This is probably the most important table a system designer needs by heart. Not to recall each figure
+              exactly, but to recall <strong>the distances between them</strong> — because those distances are what
+              decide the architecture.
+            </p>
+
+            {{SVG:1}}
+
+            <p>
+              Read this table with application in mind. RAM is roughly <strong>1.5 million times</strong> faster than
+              an intercontinental round trip. That single fact explains three classic architectural decisions:
+            </p>
+
+            <ul>
+              <li>
+                <strong>Why caching wins almost always:</strong> turning a network query (~1 ms) into a RAM read
+                (~100 ns) saves a factor of 10,000. No algorithmic optimisation offers a ratio like that.
+              </li>
+              <li>
+                <strong>Why CDNs exist:</strong> when the user is half a world away from the server, 150 ms is a
+                <em>physical limit</em> — covered properly in Lesson 6. The only remedy is to move the data closer to
+                them.
+              </li>
+              <li>
+                <strong>Why the "N+1 query" is a sin:</strong> 100 sequential queries × 1 ms = 100 ms, while merging
+                them into one query might take 3 ms. The problem is not the database but the <em>number of network
+                round trips</em>.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: optimising the wrong tier</div>
+              <div class="callout__content">
+                Spending two days taking a function from 50 µs down to 5 µs, while that request is waiting on a 150 ms
+                network round trip. You have just improved <strong>0.03%</strong> of the total time. Before optimising
+                anything, work out which <em>order of magnitude</em> the delay lives in — which is also why Lesson 16
+                (observability) exists.
+              </div>
+            </div>
+
+            <!-- ================= 1.3 ================= -->
+            <h2>1.3 Tail latency: why the mean is a deceitful number</h2>
+
+            <p>
+              The latency distribution of a real system is almost always <strong>right-skewed</strong>: most requests
+              are fast, a small share are markedly slow, and that long tail drags the mean along. The result is that
+              <strong>the mean represents nobody</strong> — neither the typical experience nor the worst one.
+            </p>
+
+            {{SVG:2}}
+
+            <p>
+              So we use <strong>percentiles</strong> instead. Saying "p99 = 420 ms" means 99% of requests are faster
+              than 420 ms and 1% are slower. For a service taking 10 million requests a day, that "1%" is
+              <strong>100,000 occasions</strong> of a user having a bad experience — every day.
+            </p>
+
+            <h3>Why a service's p99 becomes the user's p90</h3>
+
+            <p>
+              This is what makes tail latency far more dangerous than it first appears. A modern web page usually has
+              to call several services to render one screen. If each call is independent and the probability of one
+              call being slow is $p$, then the probability that the user hits <strong>at least one</strong> slow call
+              when the page makes $n$ calls is:
+            </p>
+
+            <p style="text-align: center">$$P(\text{slow}) = 1 - (1 - p)^n$$</p>
+
+            <p>
+              Here $p$ is the probability of a single call exceeding the slow threshold (for example $p = 0.01$ at the
+              p99 threshold), and $n$ is the number of services the page must call. Substituting:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Services called ($n$)</th>
+                  <th>Probability of at least one slow call</th>
+                  <th>Which means</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>1.0%</td>
+                  <td>the service's p99 = the user's p99</td>
+                </tr>
+                <tr>
+                  <td>10</td>
+                  <td>9.6%</td>
+                  <td>the service's p99 ≈ the user's <strong>p90</strong></td>
+                </tr>
+                <tr>
+                  <td>50</td>
+                  <td>39.5%</td>
+                  <td>nearly 4 in 10 page loads are affected</td>
+                </tr>
+                <tr>
+                  <td>100</td>
+                  <td>63.4%</td>
+                  <td>slow becomes the <em>normal</em> state</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              This is exactly why large systems track out to p99.9, and why splitting into many services makes the
+              tail latency problem markedly harder — a point we will put concrete numbers on in Lesson 15.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Percentiles do not add up</div>
+              <div class="callout__content">
+                If a request passes through three tiers whose p99s are 10 ms, 20 ms and 30 ms, the overall p99 is
+                <strong>not</strong> 60 ms. The reason: the tiers rarely hit their own worst case at the same moment.
+                To know the overall p99 you have to measure across the <em>whole path</em> rather than summing the
+                individual hops. For the same reason, any chart showing "the sum of the tiers' p99" deserves
+                suspicion.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: coordinated omission</div>
+              <div class="callout__content">
+                Most load-testing tools work in a <em>closed loop</em>: each connection only sends its next request
+                after receiving a response. Which means that when the server slows down, the tool
+                <strong>automatically sends less</strong> — precisely the requests that should have landed in the
+                worst period are never sent at all. The result: a flatteringly good p99. Lesson 2 reproduces this with
+                the lab's own load generator so you can see how far the number is off.
+              </div>
+            </div>
+
+            <!-- ================= 1.4 ================= -->
+            <h2>1.4 Little's Law and queueing theory</h2>
+
+            <p>
+              Now for the part that explains most of what feels "strange" when operating systems. It starts with an
+              equality that is surprisingly simple — <strong>Little's Law</strong>:
+            </p>
+
+            <p style="text-align: center">$$L = \lambda W$$</p>
+
+            <p>
+              Here $L$ is the average number of requests inside the system, $\lambda$ (lambda) is the arrival rate
+              (req/s), and $W$ is the average time each request spends inside the system (seconds). This holds for
+              <em>every</em> stable system, with no assumptions at all about distributions.
+            </p>
+
+            <p>
+              A direct application: if your service takes 500 req/s and each request averages 40 ms, then the number
+              being processed concurrently is $L = 500 \times 0.04 = 20$. That is precisely the number you need to
+              size a connection pool or a worker count — not a guess.
+            </p>
+
+            <h3>Utilisation and the non-linear wall</h3>
+
+            <p>Let $\mu$ (mu) be the server's maximum service rate (req/s). <strong>Utilisation</strong> is:</p>
+
+            <p style="text-align: center">$$\rho = \frac{\lambda}{\mu}$$</p>
+
+            <p>
+              To go further we need a concrete queueing model. The simplest is <strong>M/M/1</strong>, and those three
+              symbols read left to right as: requests <em>arrive</em> randomly, <em>service</em> time is random, and
+              there is <em>one</em> server.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Reading the M/M/1 notation</div>
+              <div class="callout__content">
+                <strong>The first M — how requests arrive.</strong> A "Poisson process" sounds academic but the idea
+                is everyday: requests arrive <em>independently and at random</em>, not on a schedule. An average of 10
+                requests per second does not mean one every 100 ms — some seconds bring 6, others 15. That is a good
+                approximation of real traffic from many unrelated users.
+                <br /><br />
+                <strong>The second M — service time.</strong> An "exponential distribution" means most requests are
+                handled quickly, a few take markedly longer, and there is <em>no</em> upper bound. This is exactly the
+                right-skewed shape from section 1.3.
+                <br /><br />
+                <strong>The 1 — one server.</strong> Exactly one service channel. Add servers and it becomes M/M/c,
+                and Lesson 3 measures how far adding them actually helps.
+                <br /><br />
+                Real systems rarely satisfy all three assumptions perfectly. But M/M/1 is still worth learning because
+                it produces <em>the right shape</em> of curve — the wall that goes vertical as ρ approaches 1 — and
+                that shape is what our linear intuition keeps missing.
+              </div>
+            </div>
+
+            <p>With that model, the average time a request spends in the system is:</p>
+
+            <p style="text-align: center">$$W = \frac{1}{\mu - \lambda}$$</p>
+
+            <p>
+              Look at the denominator. As $\lambda$ approaches $\mu$, the denominator approaches 0 and $W$ approaches
+              <strong>infinity</strong>. This is not a malfunction — it is the <em>normal</em> behaviour of every
+              queue.
+            </p>
+
+            {{SVG:3}}
+
+            <p>Concrete figures for the time spent <em>waiting in the queue</em> (excluding service time):</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Utilisation ρ</th>
+                  <th>Waiting time versus idle</th>
+                  <th>How it feels in operation</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0.50</td>
+                  <td>×1</td>
+                  <td>Comfortable</td>
+                </tr>
+                <tr>
+                  <td>0.70</td>
+                  <td>×2.3</td>
+                  <td>"CPU is only at 70%, plenty spare" — but p99 is already visibly bad</td>
+                </tr>
+                <tr>
+                  <td>0.90</td>
+                  <td>×9</td>
+                  <td>Shaky; small incidents become large ones</td>
+                </tr>
+                <tr>
+                  <td>0.95</td>
+                  <td>×19</td>
+                  <td>One modest burst and it falls over</td>
+                </tr>
+                <tr>
+                  <td>0.99</td>
+                  <td>×99</td>
+                  <td>Practically speaking, already dead</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: "CPU is only at 70%, we're fine"</div>
+              <div class="callout__content">
+                This sentence is said daily in operations meetings, and it ignores the table above. At ρ = 0.7 the
+                waiting time is already <strong>2.3 times</strong> that of an idle system; at 0.9 it is 9 times.
+                Worse: these are <em>mean</em> figures, and p99 degrades faster still. A system sitting steadily at 70%
+                is not "30% spare" — it is <strong>already at the edge of the non-linear region</strong>.
+                <br /><br />
+                And please do not "solve" this by lengthening the queue. A longer queue does not raise $\mu$ — it only
+                changes the failure mode from <em>fast rejection</em> to <em>wait then time out</em>, which is usually
+                worse for the user. Lesson 13 explains why returning a 429 immediately is the kinder answer.
+              </div>
+            </div>
+
+            <h3>Watch it happen: the single-node Traffic Lab</h3>
+
+            <p>
+              Reading a table is one thing; watching the curve go vertical under your own hand is another. The demo
+              below runs a real discrete-event simulation (not a pre-rendered animation): drag the load slider and
+              watch p99 alongside the queue length. The blue line is the <em>theory</em>,
+              $W = 1/(\mu-\lambda)$, and the amber points are the <em>simulated measurements</em> — the two must agree,
+              and that agreement is also how the series' engine is validated.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🧪 Try it now</div>
+              <div class="callout__content">
+                Pick the <strong>"1. A single server"</strong> topology, then drag the <strong>incoming load</strong>
+                slider up from 10. Watch three marks: at 25 rps (ρ = 0.5) p99 barely moves; at 40 rps (ρ = 0.8) p99
+                starts separating from p50; at 50 rps (ρ = 1.0) the queue grows without bound and p99 stops converging
+                on any value at all. <br /><br />
+                <a href="../sysdesign-sandbox" target="_blank" rel="noopener"
+                  ><strong>Open the Traffic Lab in its own tab →</strong></a
+                >
+              </div>
+            </div>
+
+            <div
+              style="
+                margin: 24px 0;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                overflow: hidden;
+                background: #0b0f19;
+              "
+            >
+              <iframe
+                src="../sysdesign-sandbox"
+                title="Traffic Lab"
+                style="width: 100%; height: 680px; border: none"
+                loading="lazy"
+              ></iframe>
+            </div>
+
+            <h3>The source: computing percentiles and simulating M/M/1</h3>
+
+            <p>
+              The two functions below are the real code running in the series' engine. The percentile function uses
+              the "nearest-rank" method — the same one common load-testing tools report — so your numbers are
+              comparable with theirs.
+            </p>
+
+            {{CODE:percentile_va_mm1.js}}
+
+            <p>
+              Those four result lines are the whole lesson of this section in miniature: raising load from 45 to 49
+              req/s — only <strong>9%</strong> — takes time-in-system from 200 ms to 1000 ms, a factor of
+              <strong>5</strong>.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ On how much to trust the numbers in this series</div>
+              <div class="callout__content">
+                The simulator behind every demo has been checked against the M/M/1 formulas at ρ from 0.20 to 0.95,
+                with an error under <strong>4%</strong>; Little's Law agrees too (theoretical L of 4.000 against 3.884
+                measured). You can verify this yourself by downloading the source at the end of the lesson and running
+                <code>node sysdesign-engine-selftest.mjs</code> — 42 assertions, nothing extra to install.
+                <br /><br />
+                Every performance figure in this series comes from a real measuring machine or from the validated
+                simulator. <strong>No number is invented</strong>, and lessons with a lab state the measuring
+                machine's configuration explicitly.
+              </div>
+            </div>
+
+            <!-- ================= 1.5 ================= -->
+            <h2>1.5 Back-of-envelope estimation</h2>
+
+            <p>
+              The final skill of this lesson: turning a requirement stated in words into the numbers you need to start
+              designing. This step comes <em>before</em> drawing any diagram, because without it every later choice is
+              guesswork.
+            </p>
+
+            <p>Worked through on a concrete problem: <strong>10 million daily active users (DAU)</strong>.</p>
+
+            {{CODE:uoc_luong.txt}}
+
+            <p>
+              Those five steps take under two minutes and have already eliminated a great many wrong options. Most
+              notably: at 70 writes per second, <strong>sharding is unnecessary</strong> — a decision that saves months
+              of effort and a permanent tax in complexity. Skip the estimation step and it is very easy to start with
+              a distributed architecture for a problem one server solves.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: designing for the average</div>
+              <div class="callout__content">
+                The two most common mistakes at this step, both of which lead to falling over at exactly the busiest
+                moment:
+                <br /><br />
+                <strong>1. Forgetting the peak factor.</strong> Designing for 2,315 req/s and then taking 7,000 req/s
+                at peak — the system runs at ρ ≈ 3, which has no stable state at all.
+                <br />
+                <strong>2. Forgetting the read/write skew.</strong> Seeing the 7,000 req/s total and concluding
+                "we must shard immediately", when there are only 70 writes per second. Optimising the wrong tier,
+                paying in complexity for no benefit.
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Going deeper: why a rough estimate is good enough</div>
+              <div class="callout__content">
+                The purpose of a back-of-envelope calculation is not an exact figure but the
+                <strong>right order of magnitude</strong>. Being off by 2× is fine — the architecture for 3,500 and
+                for 7,000 req/s is fundamentally the same. Being off by 100× is another matter entirely: 70 req/s and
+                7,000 req/s are two completely different systems. So round aggressively, work in powers of ten, and
+                concentrate on <em>not getting the magnitude wrong</em>.
+              </div>
+            </div>
+
+            <!-- ================= chuyen tiep ================= -->
+            <h2>One question still unanswered</h2>
+
+            <p>
+              This entire lesson revolves around $\mu$ — the maximum service rate. The tables, the curve and every
+              estimate depend on it. But we have not said what $\mu$ actually is for <em>your</em> server.
+            </p>
+
+            <p>
+              That number cannot be read from documentation and cannot be guessed from the machine's specification. It
+              has to be <strong>measured</strong>. Lesson 2 stands up a real Node app in Docker, runs increasing load,
+              and finds the point where throughput stops rising while latency explodes — the wall you have just seen
+              in theory, this time in numbers from your own machine. Along the way we will also see a handler written
+              the wrong way collapse throughput by a factor of <strong>195</strong>.
+            </p>
+
+            <!-- References Block -->
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://www.usenix.org/system/files/conference/hotcloud13/hotcloud13-hunt.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Dean &amp; Barroso — "The Tail at Scale" (the original paper on tail latency in distributed
+                    systems)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.brendangregg.com/usemethod.html" target="_blank" rel="noopener noreferrer">
+                    Brendan Gregg — The USE Method (analysing utilisation, saturation and errors)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://colin-scott.github.io/personal_website/research/interactive_latency.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Interactive Latency Numbers — the orders-of-magnitude table as it changes year by year
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.infoq.com/presentations/latency-response-time/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Gil Tene — "How NOT to Measure Latency" (where the term coordinated omission comes from)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <!-- Download Block -->
+            <div class="article-cta">
+              <h3>Download the practice source</h3>
+              <p>
+                The simulation core behind every demo in the series, plus its 42-assertion self-test runnable with
+                Node (nothing extra to install). The self-test <code>import</code>s the other two files, so download
+                <strong>all three</strong> into the same directory and run
+                <code>node sysdesign-engine-selftest.mjs</code>:
+              </p>
+              <a
+                href="../sysdesign-sim-engine.js"
+                download
+                class="btn-facebook"
+                style="background: #38bdf8; text-decoration: none; color: #04263a"
+              >
+                Download sysdesign-sim-engine.js
+              </a>
+              <a
+                href="../sysdesign-hashring.js"
+                download
+                class="btn-facebook"
+                style="background: #38bdf8; text-decoration: none; color: #04263a; margin-left: 8px"
+              >
+                Download sysdesign-hashring.js
+              </a>
+              <a
+                href="../sysdesign-engine-selftest.mjs"
+                download
+                class="btn-facebook"
+                style="background: #38bdf8; text-decoration: none; color: #04263a; margin-left: 8px"
+              >
+                Download sysdesign-engine-selftest.mjs
+              </a>
+            </div>

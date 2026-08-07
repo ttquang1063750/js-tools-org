@@ -35,7 +35,11 @@ CODE_RE = (
     r'<span class="code-filename">([^<]*)</span>.*?</div>\s*'
     r'<pre><code[^>]*>.*?</code></pre>\s*</div>'
 )
-SVG_RE = r'<div style="margin: 20px 0; text-align: center">\s*<svg.*?</svg>\s*</div>'
+# So do co hai kieu boc trong repo: <div style=...> (AIE) va <figure> (sysdesign).
+# Bo sot kieu thu hai nghia la bat bien svg-geom KHONG che chung — hinh hoc lech
+# giua hai locale ma khong ai bao.
+SVG_RE = (r'<div style="margin: 20px 0; text-align: center">\s*<svg.*?</svg>\s*</div>'
+          r'|<figure[^>]*>\s*<svg.*?</svg>\s*(?:<figcaption[^>]*>.*?</figcaption>\s*)?</figure>')
 
 body = en[en.index('<div class="article-body">') + len('<div class="article-body">') : en.index('<div class="article-related">')]
 

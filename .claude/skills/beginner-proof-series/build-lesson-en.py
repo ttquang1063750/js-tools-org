@@ -69,7 +69,10 @@ def collect_code(src):
 
 
 code_windows = collect_code(vi)
-svgs = re.findall(r'<div style="margin: 20px 0; text-align: center">\s*<svg.*?</svg>\s*</div>', vi, re.S)
+# Hai kieu boc so do: <div style=...> (AIE) va <figure> (sysdesign).
+SVG_RE = (r'<div style="margin: 20px 0; text-align: center">\s*<svg.*?</svg>\s*</div>'
+          r'|<figure[^>]*>\s*<svg.*?</svg>\s*(?:<figcaption[^>]*>.*?</figcaption>\s*)?</figure>')
+svgs = re.findall(SVG_RE, vi, re.S)
 print(f'  nguon: {len(code_windows)} khoi code, {len(svgs)} so do')
 
 
@@ -89,11 +92,21 @@ def translate_svg(block):
         return m.group(0)
 
     out = re.sub(r'(<text\b[^>]*>)(.*?)(</text>)', sub_text, block, flags=re.S)
-    out = re.sub(
-        r'aria-label="([^"]*)"',
-        lambda m: f'aria-label="{LABELS[m.group(1)]}"' if m.group(1) in LABELS else m.group(0),
-        out,
-    )
+    # <figcaption> nam trong <figure> cung so do: la van xuoi that, phai dich.
+    # Truoc day khong xu ly nen no o lai tieng Viet trong trang EN.
+    out = re.sub(r'(<figcaption\b[^>]*>)(.*?)(</figcaption>)', sub_text, out, flags=re.S)
+
+    def sub_aria(m):
+        inner = ' '.join(m.group(1).split())
+        if inner in norm_labels:
+            return f'aria-label="{norm_labels[inner]}"'
+        if re.search(VN, inner, re.I):
+            # Truoc day aria-label khong co ban dich thi IM LANG di qua — nguoi
+            # dung trinh doc man hinh nhan mo ta tieng Viet tren trang tieng Anh.
+            missing.append(inner)
+        return m.group(0)
+
+    out = re.sub(r'aria-label="([^"]*)"', sub_aria, out)
     if missing:
         raise SystemExit(f'thieu ban dich nhan svg (them vao {labels_path}):\n  - ' + '\n  - '.join(missing))
     return out
