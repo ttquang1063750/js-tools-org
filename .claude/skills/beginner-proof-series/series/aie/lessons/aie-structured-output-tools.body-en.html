@@ -1,0 +1,398 @@
+            <p class="article-lead">
+              When you wire AI into a backend, you cannot feed an LLM's free-form prose into the next block of software
+              logic. If the model returns a long explanatory preamble, the system breaks immediately at the parsing
+              step.
+            </p>
+
+            <p>
+              This lesson fits two guarantees onto that link in the chain. <strong>Structured Outputs</strong> forces
+              the model to return JSON matching a predefined JSON Schema — and we will see <em>why</em> it cannot fail,
+              by implementing the blocking mechanism at the logits layer ourselves. <strong>Function Calling</strong>
+              lets the model request that a function inside your system be run, through a four-step cycle you write by
+              hand. The project at the end is a runnable email processor, with a test that proves it really reads the
+              email instead of inventing the result.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Libraries:</strong> nothing to install — the project only uses <code>json</code>,
+                <code>re</code>, <code>math</code> and <code>random</code> from the Python standard library. No
+                network, no API key.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 11 — the role-tagged <code>messages</code> array, and more
+                importantly the <code>softmax()</code> function that turns logits into probabilities. Section 12.2
+                reuses exactly that function. Lesson 10 supplies the idea of a <em>mask</em>: assigning
+                <code>-1e9</code> to a position before running Softmax makes its probability exactly 0 — Structured
+                Outputs is that same technique, applied to the vocabulary instead of to positions.
+              </div>
+            </div>
+
+            <h2>12.1 Forcing structured data out of an LLM: JSON Mode &amp; Structured Outputs</h2>
+            <p>
+              In conventional programming we rely on static types and explicit object structures (classes, structs) to
+              move information between services. By default an LLM generates free text and prefers to communicate in
+              natural language. API vendors offer two options to close that gap:
+            </p>
+            <ul>
+              <li>
+                <strong>JSON Mode:</strong> a system setting that requires the model to return a syntactically valid
+                JSON string (matching braces <code>{</code> and <code>}</code>, and so on). It does not, however,
+                guarantee that the fields (keys) inside will be the ones you wanted.
+              </li>
+              <li>
+                <strong>Structured Outputs:</strong> the stronger mechanism. The developer sends along a detailed
+                <strong>JSON Schema</strong>, and the model is guaranteed to only pick tokens that keep the output
+                matching that schema exactly. Section 12.2 dissects the machinery behind that guarantee.
+              </li>
+            </ul>
+
+            <div class="callout callout--note">
+              <div class="callout__title">💡 What is a JSON Schema?</div>
+              <div class="callout__content">
+                JSON Schema is a declarative standard for describing the shape of a JSON document and the rules for
+                validating it. It states explicitly which fields an object has, the data type of each one (string,
+                number, boolean), which fields are required, which values are permitted (enum), and any special string
+                formats (an email address, for example). In the project at the end of this lesson,
+                <code>EMAIL_SCHEMA</code> is exactly such a schema, and the hand-written <code>validate()</code>
+                function checks data against it.
+              </div>
+            </div>
+
+            <p>
+              The crucial point that many people skip: <strong>parsing and shape-checking are two different
+              jobs.</strong> <code>json.loads()</code> only answers the question "is this string JSON?". It has no
+              opinion whatsoever on whether the resulting object contains the fields you need. The project runs four
+              typical model replies through both steps and prints the real result:
+            </p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              The three middle lines are the whole problem with JSON Mode. The second and third cases sail
+              <em>through</em> <code>json.loads()</code> — no exception, no warning — and only fail at the schema
+              check. If your code has no such check, what continues into the database is a record missing its
+              <code>urgency</code> field, and the error will surface somewhere else entirely, much later.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: demanding JSON in the prompt without enabling the API setting</div>
+              <div class="callout__content">
+                The fourth case above is the crudest failure, and it happens when you only write
+                <em>"return the result as JSON..."</em> in the prompt without configuring the system parameter (such as
+                OpenAI's <code>response_format</code>). The model still politely leads in with a sentence and wraps the
+                JSON in a <code>```json</code> markdown fence. That string is not JSON, so
+                <code>json.loads()</code> throws at the very first character — exactly the
+                <code>CRASHED - Expecting value</code> line above. A prompt is a request;
+                <code>response_format</code> is a constraint.
+              </div>
+            </div>
+
+            <h2>12.2 Why Structured Outputs cannot fail: blocking at the logits layer</h2>
+            <p>
+              "The model is guaranteed to return the right schema" sounds like a marketing promise. It is in fact a
+              very specific engineering claim, and you already have the tools to understand it from the last two
+              lessons.
+            </p>
+            <p>
+              Recall Lesson 11: at every generation step the model computes a raw score (a logit) for <em>every</em>
+              token in the vocabulary, then runs Softmax to get probabilities. And recall Lesson 10: to eliminate a
+              choice entirely, you set its logit to $-10^9$ <em>before</em> Softmax — the exponential turns that into
+              an absolute 0, not a "very small" number.
+            </p>
+            <p>
+              <strong>Grammar-constrained decoding</strong> joins those two ideas: at each step a state machine
+              determines which tokens still keep the output on a valid path, and every other token is assigned
+              $-10^9$. The model is not "trying to comply" — it has <strong>nowhere else to go</strong>.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">📐 The grammar mask, written as a formula</div>
+              <div class="callout__content">
+                Let $z_i$ be the logit of token $i$, and $L_t$ the set of legal tokens at step $t$. We replace the
+                logit with: $$z'_i = \begin{cases} z_i & \text{if token } i \in L_t \\ -10^9 & \text{otherwise}
+                \end{cases}$$ and only then run Softmax as usual: $P(w_i) = \exp(z'_i) / \sum_j \exp(z'_j)$. For a
+                blocked token, $\exp(-10^9)$ underflows to 0 in floating-point arithmetic, so $P(w_i) = 0$ exactly.
+                That is the difference between <em>unlikely</em> and <em>impossible</em>: a clever prompt only lowers
+                the probability of a bad token, while the mask removes it from the space of choices.
+              </div>
+            </div>
+
+            <p>
+              The project implements exactly this on a toy vocabulary of 11 tokens, with a grammar that only accepts
+              objects of the form <code>{"urgency": "low"}</code>. It generates 500 strings at high temperature in each
+              mode and counts how many both parse and match the schema:
+            </p>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              These two numbers are the entire claim of section 12.1, measured rather than asserted. Without the mask:
+              <strong>0 out of 500</strong> — the first broken string looked like
+              <code>"summary":"low"}"summary"</code>, precisely the kind of garbage <code>json.loads()</code> throws
+              on. With the mask: <strong>500 out of 500</strong>, and that rate is not luck — it is 100% on every run,
+              because the wrong tokens were removed from the distribution. The only thing the model still decides is
+              <code>"low"</code> versus <code>"high"</code>: exactly the semantic part we want it thinking about, not
+              the syntax.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Still validate, even with Structured Outputs enabled</div>
+              <div class="callout__content">
+                The mask runs on the vendor's server, not on yours. You cannot see it, you do not control its version,
+                and you can still hit a network failure that truncates the reply mid-string (remember
+                <code>finish_reason: "length"</code> from Lesson 11 — a cut-off string is no longer valid JSON). A
+                <code>validate()</code> call on your side costs a few milliseconds and turns a silent failure into a
+                loud one. Keep it.
+              </div>
+            </div>
+
+            <h2>12.3 Reaching the outside world: function calling</h2>
+            <p>
+              At this point we can force the model to answer in the <em>right shape</em>. But it still only knows what
+              was in its training data: a bare language model is like an isolated brain — it cannot reach the live
+              internet, cannot read your internal database, cannot send an email.
+            </p>
+            <p>
+              <strong>Function calling</strong> is the mechanism that lets us describe local software functions (name,
+              purpose, parameter list) to the LLM. When a user asks something that requires an action or live
+              information, the model recognises it and, instead of answering in prose, returns a request to call a
+              function — a <strong>tool call</strong>.
+            </p>
+            <p>The model's output at that point is a JSON structure specifying:</p>
+            <ul>
+              <li><strong>The name of the function to call</strong> (for example <code>send_alert_email</code>).</li>
+              <li>
+                <strong>The argument values</strong>, extracted directly from the user's message (for example
+                <code>{"recipient_email": "admin_ops@company.com"}</code>).
+              </li>
+            </ul>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ An important boundary: the LLM does not run your code!</div>
+              <div class="callout__content">
+                Many developers assume that enabling function calling lets the LLM connect to the server and execute
+                that Python or JS function itself. It does not: <strong>the LLM cannot execute your code</strong>. It
+                only reads the context and emits a JSON string specifying the call. Receiving that string, running the
+                real function on your server, collecting the result and sending it back is entirely the developer's
+                job. That boundary is also a security boundary: the model only <em>proposes</em>, your code
+                <em>decides</em> whether to run anything.
+              </div>
+            </div>
+
+            <p>
+              For the LLM to "know" that <code>send_alert_email</code> exists, the developer has to describe it as a
+              JSON Schema and pass it in the request's <code>tools</code> parameter — not send the actual Python
+              source:
+            </p>
+
+            {{CODE:tools (request body)}}
+
+            <p>
+              Notice this is JSON Schema again — the same standard as section 12.1, now describing a function's
+              parameters instead of a return value. The LLM reads only the <code>description</code> and the
+              <code>parameters</code> structure to decide whether to call the function and what to put in each field —
+              it never sees, and does not need to know, what <code>send_alert_email</code> actually does inside. Which
+              is why <code>description</code> is not a decorative comment: it is all the information the model has for
+              choosing the right tool.
+            </p>
+
+            <h2>12.4 The complete tool call cycle</h2>
+            <p>
+              To complete a function-calling task, your system runs a closed four-step loop:
+            </p>
+
+            <div
+              style="margin: 24px 0; padding: 20px; background: #0f172a; border-radius: 8px; border: 1px solid #1e293b"
+            >
+              <h4 style="color: #eab308; margin-top: 0">🔄 The four-step function calling cycle:</h4>
+              <ol style="color: #94a3b8; line-height: 1.6; padding-left: 20px">
+                <li>
+                  <strong style="color: #fff">Step 1 (User → LLM):</strong> the user's request goes up together with
+                  the list of tool descriptions the application provides.
+                </li>
+                <li>
+                  <strong style="color: #fff">Step 2 (LLM → App):</strong> the LLM decides a tool is needed and returns
+                  a <code>tool_calls</code> structure (function name plus JSON arguments). Inference pauses there.
+                </li>
+                <li>
+                  <strong style="color: #fff">Step 3 (App → local DB/API):</strong> your code parses
+                  <code>tool_calls</code>, runs the real function in a safe environment, and collects the raw result
+                  (the observation).
+                </li>
+                <li>
+                  <strong style="color: #fff">Step 4 (App → LLM):</strong> send that raw result back to the LLM tagged
+                  with the <code>tool</code> role, so the model can read it and produce the final natural-language
+                  answer for the user.
+                </li>
+              </ol>
+            </div>
+
+            <p>
+              Those four steps end with a <code>messages</code> array holding <strong>four roles</strong>, not the
+              three from Lesson 11. The new one is <code>tool</code>, and it must carry a <code>tool_call_id</code>
+              matching the <code>id</code> the model produced in step 2 — otherwise the server cannot tell which call
+              this result answers. This is the array shape the project prints at the end:
+            </p>
+
+            {{CODE:Terminal#3}}
+
+            <p>
+              Look at the <code>assistant</code> turn: its <code>content</code> is empty. The model said nothing to the
+              user on that turn — it only issued a call request. This is a commonly mis-built part of a hand-rolled
+              loop: people skip that empty assistant turn and splice the function result straight in, leaving a history
+              with no trace of what the model asked for.
+            </p>
+
+            <h2>12.5 Lesson 12 project: an email classifier with a full tool call cycle</h2>
+            <p>
+              The project takes a raw customer email, extracts structured information (sender, summary, urgency)
+              according to <code>EMAIL_SCHEMA</code>, and if the urgency comes out <strong>high</strong> it triggers
+              the function-calling cycle to alert the administrator.
+            </p>
+            <p>
+              The file has four parts matching the four sections above: <code>validate()</code> and the example set
+              from 12.1; <code>generate()</code> with the logit mask from 12.2; the <code>TOOL_SPECS</code>
+              declaration from 12.3; and <code>EmailProcessingPipeline</code> running the four-step loop from 12.4.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ The model here is mocked — and that has consequences</div>
+              <div class="callout__content">
+                <code>MockStructuredLLM</code> is not a real LLM; it extracts using regular expressions and keywords.
+                What it demonstrates faithfully is the <em>shape</em> of the data flow: the schema, the tool spec, the
+                four-step loop, the <code>tool</code> role. What it does <em>not</em> demonstrate is language
+                understanding — a real model would summarise far better and would need no keyword list. The only place
+                that changes when you move to a real API is the body of <code>process_request</code>.
+              </div>
+            </div>
+
+            {{CODE:email_processor.py}}
+
+            <p>
+              The most notable thing in the file is what <code>MockStructuredLLM</code> does <strong>not</strong> do:
+              it contains no pre-written return values. The sender address comes from a regular expression run against
+              the actual email body; the urgency comes from which keywords were found in the text (and the program
+              prints the <em>evidence</em> — precisely which words matched); the summary is the email's first sentence.
+              Before returning, it runs <code>validate()</code> on its own output and raises if it violated the schema.
+            </p>
+
+            <p>Running the program, the loop section prints this:</p>
+
+            {{CODE:Terminal#4}}
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🔬 Why that final check matters so much</div>
+              <div class="callout__content">
+                The two <code>appears in its own email: True</code> lines look trivial, but they are what separates a
+                real demo from a performance. A program that returns the constant
+                <code>"sender": "dev_alerts@company.com"</code> for <em>every</em> email would still print an
+                identical-looking record, still fire the tool call, still finish with "success" — without having read
+                a single email. The assertion <code>assert data["sender"] in body</code> makes that kind of demo fail
+                instantly. The question to ask of any AI pipeline is not "does it run", but "if it ignored the input
+                completely, would I notice?".
+              </div>
+            </div>
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>Nothing to install: <code>python3 email_processor.py</code>. Standard library only.</li>
+              <li>
+                Download <code>email_processor.py</code> at the end of the lesson, or retype the code above. Thanks to
+                <code>random.Random(42)</code>, two runs produce identical output.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    In <code>generate()</code>, change <code>-1e9</code> to <code>-5</code>. The mask becomes a
+                    suggestion rather than a constraint, and the valid rate drops off 500/500 — showing why the number
+                    has to be negative infinity rather than "a fairly large negative number".
+                  </li>
+                  <li>
+                    In <code>EMAIL_SCHEMA</code>, add <code>"critical"</code> to the <code>enum</code> for
+                    <code>urgency</code>. The third case in section 12.1 stops reporting an error — the schema is what
+                    defines "correct", so loosening the schema loosens the check with it.
+                  </li>
+                  <li>
+                    Change <code>MockStructuredLLM.process_request</code> to return the constant
+                    <code>"sender": "dev_alerts@company.com"</code> instead of the regex result. The printed record
+                    still looks as good as before, but the <code>assert</code> at the end fails — this is exactly the
+                    bug the first version of this lesson shipped with.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> telling JSON Mode and Structured Outputs apart, and writing a
+                    <code>validate()</code> function that catches exactly what <code>json.loads()</code> lets through.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> understanding and implementing grammar-constrained decoding — a logit
+                    mask that makes a wrong token impossible rather than unlikely, measured at 0/500 against 500/500.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> describing a local function to the model as a JSON Schema, and knowing
+                    the boundary exactly: the model proposes, your code decides to execute.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> running the full four-step tool call cycle, including the empty
+                    <code>assistant</code> turn and the <code>tool</code> role with its <code>tool_call_id</code>.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> everything in this lesson sends data to a third party's
+              server — which costs money, and with customer email is also a privacy question. Lesson 13 pulls the model
+              down onto your own machine with Ollama, and measures what that costs you.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>email_processor.py</code> — schema validation, the constrained-decoding mask and
+                the full four-step tool call cycle (run <code>python3 email_processor.py</code>):
+              </p>
+              <a
+                href="../email_processor.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download email_processor.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://platform.openai.com/docs/guides/structured-outputs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Structured Outputs — how to configure JSON Schema-constrained output (OpenAI Docs)</a
+                  >
+                </li>
+                <li>
+                  <a href="https://json-schema.org/" target="_blank" rel="noopener noreferrer"
+                    >JSON Schema Specification — the official home of the JSON Schema standard</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://platform.openai.com/docs/guides/function-calling"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Function Calling via API — declaring the tool list and running the tool loop (OpenAI Docs)</a
+                  >
+                </li>
+              </ul>
+            </section>
