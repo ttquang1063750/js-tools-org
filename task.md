@@ -1,88 +1,14 @@
-# task.md — Kỹ Sư AI Thực Chiến / Practical AI Engineer
+# task.md
 
-> File nay do `make-task.py` sinh ra tu hien trang repo. **Dung tich tay cac o
-> trong muc "May kiem duoc"** — chay lai script la chung tu dong dong bo:
->
-> ```bash
-> D=.claude/skills/beginner-proof-series
-> python3 $D/make-task.py .claude/skills/beginner-proof-series/series/aie
-> ```
+Chua co viec nao dang mo.
 
-## Bat dau tu day
-
-Doc `.claude/skills/beginner-proof-series/SKILL.md` truoc — no giai thich
-_cach_ lam. File nay chi noi _con lai nhung gi_.
-
-Hai lenh cho biet trang thai bat ky luc nao:
+File nay la noi liet ke cong viec chi tiet cho mot series dang duoc sua va dich.
+Khi bat dau mot series moi, sinh lai bang:
 
 ```bash
 D=.claude/skills/beginner-proof-series
-python3 $D/next-lesson.py blog/aie/aie-programming-series.html
-python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/aie
+python3 $D/make-task.py $D/series/<series>
 ```
 
-**Tien do: 19/20 bai da co ban EN.** Checker dang **xanh**.
-
-## Cac bai con lai
-
-### Bai 20: MLOps: Serving vLLM, Tracing và Đánh giá tự động
-
-- VI: `blog/aie/aie-mlops-eval.html`
-- EN can tao: `blog/aie/en/aie-mlops-eval.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [ ] ban EN ton tai (`blog/aie/en/aie-mlops-eval.html`)
-- [ ] co template de dung lai (`aie-mlops-eval.body-en.html` + `.meta-en.json`)
-- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
-- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
-
-## Cac bai da xong
-
-Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
-
-- [x] Bai 1: Chuyển dịch tư duy lập trình: Từ JS sang Python cho AI
-- [x] Bai 2: Đại số Tuyến tính & Đạo hàm qua dòng lệnh
-- [x] Bai 3: Làm việc với Dữ liệu lớn: NumPy & Pandas chuyên sâu
-- [x] Bai 4: PyTorch Cơ Bản: Tensor & Autograd chuyên sâu
-- [x] Bai 5: Mạng Nơ-ron Đơn Giản (Perceptron & MLP)
-- [x] Bai 6: Huấn luyện mạng: Loss & Backpropagation
-- [x] Bai 7: Thị giác Máy tính cơ bản: Khám phá mạng tích chập CNN
-- [x] Bai 8: Xử lý Văn bản & Word Embeddings
-- [x] Bai 9: Mạng tuần hoàn (RNN) và Sự trỗi dậy của Attention
-- [x] Bai 10: Kiến trúc Transformer Dưới Kính Hiển Vi
-- [x] Bai 11: Lập trình Prompt & Làm chủ API LLM
-- [x] Bai 12: Structured Outputs & Function Calling
-- [x] Bai 13: Cục bộ hóa AI: Chạy LLM offline với Ollama
-- [x] Bai 14: Hệ thống RAG Cơ Bản: Hỏi đáp tài liệu
-- [x] Bai 15: Chiến thuật Chunking tối ưu & Vector Databases chuyên sâu
-- [x] Bai 16: RAG Nâng Cao: Query Translation & Cross-Encoder Reranking
-- [x] Bai 17: AI Agents & Vòng lặp ReAct
-- [x] Bai 18: Đại lý có trạng thái phức tạp với LangGraph
-- [x] Bai 19: Tinh chỉnh mô hình (Fine-tuning LLM) bằng QLoRA
-
-## Viec o cap series (lam mot lan)
-
-- [x] Hub co ban tieng Anh (`blog/aie/en/aie-programming-series.html`)
-- [x] Hub tieng Viet co `hreflang` va link locale hien thi
-- [ ] Chrome thong nhat giua cac bai EN (checker ep theo `config.json`)
-
-## Khi xong het
-
-```bash
-python3 .claude/skills/beginner-proof-series/make-task.py .claude/skills/beginner-proof-series/series/aie --finish
-```
-
-Lenh nay chi chay khi moi bai da co ban EN **va** checker xanh. No don noi
-dung file, giu lai file cho lan lam viec sau.
+Sinh xong, nguoi lam chi can doc file nay tu tren xuong. Xong het thi chay lai
+voi `--finish` de don ve trang thai nay.

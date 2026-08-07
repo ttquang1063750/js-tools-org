@@ -1,0 +1,277 @@
+            <p class="article-lead">
+              A model that runs in a notebook and a model that serves real traffic are two different engineering
+              problems. This closing lesson covers the three things that stand between a working prototype and a
+              system you can operate: serving it fast enough, tracing what it did, and knowing automatically whether
+              it is still any good.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Software:</strong> the keyword metrics run on plain Python and need nothing. The semantic
+                metrics need Ollama with <code>bge-m3</code> and a chat model — the same setup as Lesson 16.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lessons 14 through 16 for the RAG pipeline this lesson grades.
+                Lesson 16 for the idea of an LLM scoring relevance (the cross-encoder) — faithfulness here uses exactly
+                that technique.
+              </div>
+            </div>
+
+            <h2>20.1 High-performance serving with vLLM</h2>
+            <p>
+              Deploying an LLM behind raw Hugging Face Transformers code makes the system extremely slow and prone to
+              VRAM out-of-memory crashes. The cause is that the Key-Value cache holding each request's intermediate
+              tokens grows continuously, and its memory allocation fragments.
+            </p>
+            <p>
+              <strong>vLLM</strong> solves this with <strong>PagedAttention</strong>, inspired by an operating
+              system's paged virtual memory:
+            </p>
+            <ul>
+              <li>
+                <strong>Paging the KV cache:</strong> PagedAttention splits each request's KV cache into fixed-size
+                blocks that need not be contiguous in physical VRAM.
+              </li>
+              <li>
+                <strong>Page table:</strong> the system maintains a mapping from a request's logical tokens to physical
+                blocks, which lets parallel requests share common KV cache blocks (a shared system prompt, for
+                example).
+              </li>
+              <li>
+                <strong>The payoff:</strong> by eliminating fragmentation, vLLM packs physical VRAM tightly, raising
+                throughput by roughly 10 to 20 times.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: vLLM's default VRAM setting</div>
+              <div class="callout__content">
+                By default vLLM claims 90% of physical GPU memory for PagedAttention storage, via
+                <code>gpu_memory_utilization = 0.90</code>. If you deploy vLLM on a server already running other work
+                (an embedding service, a FastAPI app), the system will immediately crash with OOM. The fix is to set
+                this lower — 0.70 or 0.80 — leaving headroom for the supporting applications.
+              </div>
+            </div>
+
+            <h2>20.2 Automated RAG evaluation with Ragas</h2>
+            <p>
+              For a RAG application, paying humans to read tens of thousands of model answers and grade them is
+              prohibitively expensive. The <strong>Ragas</strong> framework instead uses an LLM as judge, across three
+              core metrics:
+            </p>
+            <ul>
+              <li>
+                <strong>Faithfulness:</strong> how truthful the answer is with respect to the retrieved context — the
+                share of claims in the answer that can be derived directly from it.
+                \[Faithfulness = \frac{\text{supported claims}}{\text{total claims in the answer}}\]
+              </li>
+              <li>
+                <strong>Answer relevance:</strong> how directly the answer addresses the user's question. Measured as
+                the mean cosine similarity between the embedding of the original question and embeddings of questions
+                the LLM generates backwards from the answer.
+              </li>
+              <li>
+                <strong>Context recall:</strong> how completely the retriever found the information present in the
+                ground truth.
+              </li>
+            </ul>
+
+            <h2>20.3 Tracing &amp; observability with Phoenix</h2>
+            <p>
+              When an agent misbehaves or answers off-topic, it is very hard to tell which step went wrong (did RAG
+              retrieve the wrong document, did the LLM misread the question, did the agent call the wrong tool?). You
+              need <strong>tracing</strong> — a flight recorder for every action.
+            </p>
+            <p>Integrating Arize Phoenix or LangSmith records automatically:</p>
+            <ul>
+              <li>Latency of each node.</li>
+              <li>Token consumption at every step, for cost control.</li>
+              <li>The raw prompt and raw response at each LLM call, for debugging.</li>
+            </ul>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Data safety boundary: redact sensitive information</div>
+              <div class="callout__content">
+                A tracing system stores the entire content of user prompts. If a user types a password, a bank card
+                number or other personal data, that sensitive information ends up visible on the monitoring dashboard.
+                To stay safe and compliant (GDPR and equivalents), you must implement a redaction filter that replaces
+                such information before anything reaches the log server.
+              </div>
+            </div>
+
+            <h2>20.4 Lesson 20 project: a RAG evaluator, and an evaluation of the evaluator</h2>
+            <p>
+              This is the final lesson of the roadmap, so the project closes on the hardest question an AI engineer
+              has to answer: <strong>how do you know your system is actually good?</strong> And immediately after it,
+              the harder one: <em>how do you know your measuring instrument measures anything?</em>
+            </p>
+            <p>
+              The test set has exactly two samples, deliberately: one <strong>correct</strong> answer and one that is
+              <strong>plainly wrong</strong> (asked to define LoRA, it answers that LoRA raises the temperature
+              setting). A metric you have never seen <em>fail</em> is a metric you have no reason to trust.
+            </p>
+
+            {{CODE:rag_evaluator.py}}
+
+            <h3>Three metrics computed from word overlap</h3>
+
+            {{CODE:Terminal}}
+
+            <p>
+              Looking at that table alone, everything seems fine: there are numbers, there are percentages, a report
+              could be exported. But the right question is: <em>which metric separates the correct answer from the
+              wrong one?</em>
+            </p>
+
+            {{CODE:Terminal#2}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Answer relevance scores the WRONG answer twice as high as the correct one</div>
+              <div class="callout__content">
+                $8.00\%$ for the correct answer, $15.79\%$ for the wrong one. Not a small discrepancy but a
+                <strong>complete inversion</strong>. The cause is mundane: this metric is Jaccard overlap between the
+                question's words and the answer's. The question "Định nghĩa kỹ thuật LoRA?" is short, and the wrong
+                answer is short and contains the word "LoRA" — so the intersection-over-union is high. The correct
+                answer in sample 1 is long and uses technical terms absent from the question, so it is penalised.
+                <br /><br />
+                Deploy this evaluator to CI with a threshold of "answer relevance must exceed 10%" and you have built
+                a gate that <em>blocks correct answers and admits wrong ones</em>. And it will run silently that way
+                for months.
+              </div>
+            </div>
+
+            <p>
+              <strong>Context recall</strong>, meanwhile, is not inverted — it simply <em>does not answer this
+              question</em>. It measures whether the retrieved context covered the information in the ground truth, so
+              it grades the <strong>retriever</strong>, not the answer. Putting it in the same table as the other two
+              and then averaging all three, as the first version of this project did, mixes measurements of two
+              different components into one number.
+            </p>
+
+            <h3>The same two metrics, computed the way Ragas actually does</h3>
+            <p>
+              Section 20.2 defines answer relevance via <em>cosine similarity between embeddings</em>, and faithfulness
+              as the share of claims derivable from the context — which requires a model that reads, not a word count.
+              The project implements exactly that: <code>bge-m3</code> embeddings for relevance, and an LLM judge for
+              faithfulness (the cross-encoder technique from Lesson 16):
+            </p>
+
+            {{CODE:Terminal#3}}
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔢 Read those two relevance numbers carefully: $0.7254$ and $0.6965$</div>
+              <div class="callout__content">
+                The semantic metric restores the correct ordering — but the gap is only $0.029$. At first glance that
+                looks like a weakness. It is in fact <strong>correct behaviour</strong>: the wrong answer genuinely
+                <em>is</em> relevant to the question — it is talking about LoRA, it is just false. Answer relevance
+                asks "does this address the question", never "is this true".
+                <br /><br />
+                Detecting falsity is <strong>faithfulness's</strong> job, and there the gap is wide: $0.80$ against
+                $0.00$. The operational lesson: do not pick a metric because it sounds impressive, pick the one that
+                can <em>fail</em> on the defect you actually fear.
+              </div>
+            </div>
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>
+                <code>python3 rag_evaluator.py</code>. The keyword metrics run immediately. For the semantic
+                comparison, start Ollama with <code>ollama pull bge-m3</code> and a chat model.
+              </li>
+              <li>
+                The keyword numbers match this lesson exactly (the algorithm is deterministic). The LLM-judged
+                faithfulness score depends on the model — what must match is the wide gap between correct and wrong.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    Add a third sample to <code>TEST_DATASET</code>: an answer that is <em>factually true but off
+                    topic</em> (answering about PagedAttention to a question about LoRA). Watch faithfulness and
+                    relevance separate — this is the case relevance should catch and faithfulness should not.
+                  </li>
+                  <li>
+                    Remove the <code>STOPWORDS</code> list. Every keyword metric shifts immediately, because
+                    connectives start counting. A metric whose result depends on a stopword list you typed by hand
+                    should not be compared against a fixed threshold.
+                  </li>
+                  <li>
+                    Change sample 2's answer to a <em>correct</em> one. Both metrics must move accordingly. If you
+                    change the data and the scores do not change, your metric is not reading the data at all —
+                    exactly the lesson of Lesson 12.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; the end of the roadmap</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> understanding vLLM's PagedAttention mechanism and why the default
+                    <code>gpu_memory_utilization</code> setting causes OOM on a shared server.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> implementing the three Ragas metrics both ways — keyword counting and
+                    genuine semantics — and comparing them on a test set with a wrong answer planted in it.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> discovering that the Jaccard-style answer relevance metric scores the
+                    wrong answer ($15.79\%$) at twice the correct one ($8.00\%$) — and understanding why an untested
+                    evaluator is more dangerous than no evaluator at all.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> distinguishing relevance ("is this on topic") from faithfulness ("is
+                    this true"), and choosing metrics by the failure mode you fear.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>The end of the roadmap:</strong> you have worked through all 20 lessons, from your first line of
+              Python to an AI system with RAG, agents, a fine-tuned model and automated evaluation. If there is one
+              thing worth carrying away from the whole roadmap, it is what this final lesson just demonstrated:
+              <strong>every number deserves to be questioned, including the ones you wrote yourself</strong>. An AI
+              system without a test that knows how to fail is not a working system — it is a system nobody has caught
+              being broken yet.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>rag_evaluator.py</code> — the three Ragas metrics implemented both by keyword
+                overlap and semantically, plus the check that grades the metrics themselves (run
+                <code>python3 rag_evaluator.py</code>):
+              </p>
+              <a
+                href="../rag_evaluator.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download rag_evaluator.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://github.com/vllm-project/vllm" target="_blank" rel="noopener noreferrer"
+                    >vLLM — the high-throughput serving engine built on PagedAttention</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/explodinggradients/ragas" target="_blank" rel="noopener noreferrer"
+                    >Ragas — the open-source evaluation framework for RAG pipelines</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noopener noreferrer"
+                    >Arize Phoenix — open-source tracing and observability for prompts, tokens and latency</a
+                  >
+                </li>
+              </ul>
+            </section>
