@@ -1,0 +1,647 @@
+            <p>
+              <a href="sysdesign-caching">Lesson 5</a> put the cache next to the app. This lesson puts it
+              <em>next to the user</em> — and the reason isn't an architecture decision, it's a physical limit no
+              amount of code can get around.
+            </p>
+
+            <p>
+              This lesson's lab builds a real edge layer with nginx and measures <strong>25x</strong> throughput,
+              with the origin only having to handle <strong>4 requests out of 208,173</strong>. But the more valuable
+              finding is the second measurement: a very common cache-key misconfiguration makes origin load jump
+              <strong>251x</strong> while <strong>every client-side metric stays unchanged</strong> — same
+              throughput, same p50, same p99. It's completely invisible from the outside.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The measurement machine, and one important distinction</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Native arm64 containers
+                (Node v22.23.2), nginx 1.27-alpine, three app replicas at 1 CPU / 256 MB each, the load generator
+                gets 2 CPUs. The edge layer's cache lives on <code>tmpfs</code> — deliberately, so the measurement
+                doesn't pick up Docker Desktop's bind-mount overhead, the exact trap hit in
+                <a href="sysdesign-api-gateway">Lesson 4</a> section 4.3.<br /><br />
+                <strong>A distinction worth making:</strong> section 6.1 is about geographic distance, and a lab on
+                one computer <em>cannot</em> measure that. Every number in section 6.1 is
+                <strong>computed from the speed of light in fiber</strong>, with the calculation shown, not
+                measured. From section 6.2 onward, every number is a real lab measurement.
+              </div>
+            </div>
+
+            <!-- ================= 6.1 ================= -->
+            <h2>6.1 The limit no code can beat</h2>
+
+            <p>
+              In optical fiber, a signal travels at roughly $200,000$ km/s — slower than the speed of light in a
+              vacuum because of the glass's refractive index. Converted into a more useful unit:
+              <strong>200 km per millisecond</strong>. A request has to go there and back, so the minimum round-trip
+              time for a distance of $d$ (km) is:
+            </p>
+
+            <p>$$RTT_{min} = \frac{2d}{200} = \frac{d}{100} \text{ ms}$$</p>
+
+            <p>
+              That's <strong>1 ms for every 100 km round trip</strong>, and that's the number for a straight line of
+              fiber, no intermediate equipment, no queueing. Reality is always 2–3x worse, because cables don't run
+              in straight lines, because every router on the path adds a bit, and because the link carries load.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Route</th>
+                  <th>Approx. distance</th>
+                  <th>Minimum RTT (computed)</th>
+                  <th>RTT typically observed</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Hanoi → domestic edge</td>
+                  <td>~20 km</td>
+                  <td>0.2 ms</td>
+                  <td>5–15 ms</td>
+                </tr>
+                <tr>
+                  <td>Hanoi → Singapore</td>
+                  <td>~2,500 km</td>
+                  <td>25 ms</td>
+                  <td>40–60 ms</td>
+                </tr>
+                <tr>
+                  <td>Hanoi → Frankfurt</td>
+                  <td>~9,000 km</td>
+                  <td>90 ms</td>
+                  <td>180–250 ms</td>
+                </tr>
+                <tr>
+                  <td>Hanoi → Virginia (US)</td>
+                  <td>~13,500 km</td>
+                  <td>135 ms</td>
+                  <td>220–280 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Now combine this with what <a href="sysdesign-api-gateway">Lesson 4</a> section 4.2 measured: a new
+              HTTPS connection needs 1 RTT for the TCP handshake, plus 1 more RTT for the TLS 1.3 handshake. With the
+              origin in Virginia and a 250 ms RTT, a user in Hanoi spends
+              <strong>roughly 500 ms before the first request is even sent</strong>. Your backend hasn't received
+              anything yet.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: optimizing the wrong end of the problem</div>
+              <div class="callout__content">
+                Optimizing the backend from 50 ms down to 20 ms is a real win — but it improves
+                <strong>30 ms out of the 780 ms total</strong> a user on the other side of the planet is paying
+                (500 ms handshake + 250 ms for the request + 30 ms processing). Under 4%.<br /><br />
+                For the same effort, moving content to an edge 20 km from the user turns 250 ms into 10 ms for
+                <em>every</em> round trip. That's why this section opens the lesson: the right question isn't "how
+                do I make the server faster" but "how do I get the data closer". Before optimizing, know
+                <strong>where your users are</strong> — that number changes the priority of everything else.
+              </div>
+            </div>
+
+            {{SVG:1}}
+
+            <!-- ================= 6.2 ================= -->
+            <h2>6.2 CDN architecture, and how much the edge layer actually measures</h2>
+
+            <p>
+              A CDN is a network of many <strong>PoPs</strong> (points of presence) spread out geographically, each
+              PoP a cache layer sitting in front of your <strong>origin</strong>. Users always talk to the nearest
+              PoP, and "nearest" is decided by <strong>anycast</strong>: the same IP address is advertised from many
+              locations, and <strong>BGP</strong> (Border Gateway Protocol — the protocol large networks on the
+              internet use to exchange which routes reach where) routing automatically sends packets to the nearest
+              one on the network, with no extra configuration from you.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Component</th>
+                  <th>Role</th>
+                  <th>Why it's needed</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>PoP / edge</strong></td>
+                  <td>The cache layer closest to the user</td>
+                  <td>Removes most of the geographic distance — turns 250 ms into 10 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>Mid-tier cache</strong></td>
+                  <td>A cache layer between the PoPs and the origin</td>
+                  <td>
+                    With 200 PoPs, every time content expires that's 200 requests to the origin. The mid tier
+                    collapses those down to a handful
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Origin shield</strong></td>
+                  <td>One designated PoP acts as the sole door to the origin</td>
+                  <td>The origin only sees traffic from one place — easy to rate limit, easy to monitor, and it
+                  sharply reduces traffic spikes</td>
+                </tr>
+                <tr>
+                  <td><strong>Origin</strong></td>
+                  <td>Your actual system</td>
+                  <td>The only place with the source data; the goal is for it to receive as few requests as
+                  possible</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The lab builds exactly the first tier: a second nginx, but very different from <code>lb.conf</code>
+              and <code>gw.conf</code> — it <em>stores</em> responses instead of just forwarding them. Compared at
+              32 connections, 10 seconds, origin processing latency 30 ms:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                  <th>Origin had to process</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Calling the app directly</td>
+                  <td>826 rps</td>
+                  <td>38.55 ms</td>
+                  <td>48.89 ms</td>
+                  <td>10,756 / 8,257 requests</td>
+                </tr>
+                <tr>
+                  <td><strong>Through the cached edge layer</strong></td>
+                  <td><strong>20,815 rps</strong></td>
+                  <td><strong>1.44 ms</strong></td>
+                  <td><strong>3.10 ms</strong></td>
+                  <td><strong>4 / 208,173 requests</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Throughput is <strong>25x</strong> higher, p50 drops <strong>27x</strong>. But the last column is the
+              one worth staring at: the origin processed <strong>4 requests out of 208,173</strong> —
+              <strong>0.002%</strong>. Everything else was returned straight from nginx's own cache, and the app has
+              no idea any of this is happening.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 A CDN isn't just for serving images</div>
+              <div class="callout__content">
+                "CDNs are for static files" is a ten-year-old idea. Read-heavy API responses, pre-rendered HTML,
+                popular search results, even partially personalized pages — all of it can be cached at the edge, as
+                long as the headers are right (section 6.3) and the cache key is right (section 6.4).<br /><br />
+                A useful way to think about it: <strong>any response that's identical for many users is a
+                candidate</strong>. The question isn't "is this a static file" — it's "what does this response
+                actually depend on".
+              </div>
+            </div>
+
+            <!-- ================= 6.3 ================= -->
+            <h2>6.3 Getting the caching headers right</h2>
+
+            <p>
+              The edge layer can't guess on its own how long content should be cached — it follows the headers the
+              origin sends. This is the entire API surface between your app and the CDN, and it's smaller than most
+              people think.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Directive</th>
+                  <th>What it actually means</th>
+                  <th>Easy to misread as</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>max-age=N</code></td>
+                  <td>Fresh for N seconds, for <em>every</em> cache tier including the browser</td>
+                  <td>The browser obeys it too — set it too long and there's no way to pull it back</td>
+                </tr>
+                <tr>
+                  <td><code>s-maxage=N</code></td>
+                  <td>Only for <em>shared</em> caches (CDN, proxies), overrides <code>max-age</code></td>
+                  <td>This is how you set a long TTL at the CDN but a short one in the browser — very useful</td>
+                </tr>
+                <tr>
+                  <td><code>public</code></td>
+                  <td>Shared caches are allowed to store it</td>
+                  <td>Needed when there's an <code>Authorization</code> header, since the default there is no
+                  caching</td>
+                </tr>
+                <tr>
+                  <td><code>private</code></td>
+                  <td>Only the browser may store it; the CDN <strong>may not</strong></td>
+                  <td>Correct for personalized content — and the lab confirmed it: always a MISS at the edge</td>
+                </tr>
+                <tr>
+                  <td><code>no-cache</code></td>
+                  <td><strong>Still stored</strong>, but must be revalidated before every use</td>
+                  <td>The most misleading name in HTTP. It does not mean "don't cache"</td>
+                </tr>
+                <tr>
+                  <td><code>no-store</code></td>
+                  <td>May not be stored anywhere</td>
+                  <td>This is the actual "don't cache". Use it for genuinely sensitive data</td>
+                </tr>
+                <tr>
+                  <td><code>immutable</code></td>
+                  <td>Content will never change, don't revalidate</td>
+                  <td>Only safe when the URL has the content hash in its name (section 6.5)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: <code>no-cache</code> does not mean "don't cache"</div>
+              <div class="callout__content">
+                <code>no-cache</code> means "store it, but ask the origin whether it's still valid before every
+                use". The content still lives in the CDN's cache and the browser's cache.<br /><br />
+                If you put <code>no-cache</code> on a response with sensitive data and think you're safe, that copy
+                is still sitting on the disk of some proxy somewhere. What you need is <code>no-store</code>. This is
+                exactly the kind of bug that never shows up in a test, because the system keeps behaving correctly.
+              </div>
+            </div>
+
+            <h3>Revalidation: ETag and 304</h3>
+
+            <p>
+              When the TTL expires, the cache layer doesn't necessarily have to re-download everything.
+              <strong>ETag</strong> is an identifier string for one specific version of the content — in the lab
+              it's a hash of the body itself, so unchanged content means an unchanged ETag. When the TTL expires,
+              the cache layer resends <code>If-None-Match</code> with the ETag it already has; if that ETag still
+              matches (meaning the content hasn't changed), the origin returns
+              <code>304 Not Modified</code> <strong>with no body</strong>. Measured for real in the lab:
+            </p>
+
+            {{CODE:revalidation.sh}}
+
+            <p>
+              For a 62-byte payload this saving is meaningless. For an 800 KB JavaScript file, every revalidation
+              saves exactly 800 KB. That's why <code>proxy_cache_revalidate on</code> is in the lab's edge config: it
+              turns "expired" from "have to re-download" into "just have to ask one question".
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ An ETag must be stable by content, not by moment in time</div>
+              <div class="callout__content">
+                If an ETag is generated from the response timestamp (or a random number, or the hostname of the
+                replica serving it), it changes on every single response — and <code>304</code> will
+                <strong>never</strong> happen. The system still behaves correctly, it's just that the entire
+                revalidation mechanism silently stops doing anything.<br /><br />
+                The lab's <code>/cacheable</code> endpoint computes the ETag as a hash of the body itself, so three
+                different replicas still generate the same ETag for the same content. That's a hard requirement once
+                you have multiple replicas — and it's an easy thing to get wrong if the ETag comes from a file's
+                on-disk modification time, since three machines have three different clocks.
+              </div>
+            </div>
+
+            {{SVG:2}}
+
+            <h3>Serving stale content when the origin is down — and its limit</h3>
+
+            <p>
+              The STALE branch deserves its own measurement, because it's what keeps the site alive. Experiment:
+              warm the cache with a 2-second TTL, then <strong>stop all three apps</strong>, wait for the TTL to
+              expire, and call again:
+            </p>
+
+            {{CODE:origin_down_edge_survives.sh}}
+
+            <p>
+              The three lines at step 3 are the best possible outcome: the origin is completely dead and the user
+              still gets a <code>200 OK</code> in 2.4 ms. <code>UPDATING</code> means nginx is trying to refresh in
+              the background while still serving the old copy to the user — exactly the point of
+              <code>proxy_cache_background_update</code>.
+            </p>
+
+            <p>
+              But step 4 is the line to remember. A URL <strong>that was never in the cache</strong> gives the edge
+              nothing to return: <code>504</code> after <strong>6.03 seconds</strong>. And that 6-second figure
+              isn't random — it's 3 upstreams × <code>proxy_connect_timeout 2s</code>, the exact mechanism seen back
+              in <a href="sysdesign-load-balancing">Lesson 3</a>. A user waits 6 seconds and then gets an error,
+              much worse than getting the error right away.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Design consequence: cache warmth is part of your incident plan</div>
+              <div class="callout__content">
+                <code>proxy_cache_use_stale</code> only protects the part of the content <em>currently</em> in the
+                cache. That means how well you tolerate an incident depends directly on
+                <strong>how much of the cache was populated at the moment the incident happened</strong> — a
+                variable almost nobody tracks.<br /><br />
+                Two practical consequences. First: <strong>don't flush the cache and then deploy</strong> — if the
+                origin runs into trouble right after a deploy, you've just thrown away your only layer of
+                protection. Second: for the most important URLs — the homepage, the login page, a handful of core
+                APIs — <strong>pre-warm</strong> them into the cache after every deploy, and lower
+                <code>proxy_connect_timeout</code> so that when there's no stale copy to fall back on, it fails
+                <em>fast</em> instead of making the user wait 6 seconds.
+              </div>
+            </div>
+
+            <!-- ================= 6.4 ================= -->
+            <h2>6.4 Cache key and <code>Vary</code> — where hit ratio quietly goes to 0</h2>
+
+            <p>
+              The cache key decides whether two responses count as "the same thing" or not. It's made up of the URL
+              (nginx's default is <code>$scheme$proxy_host$request_uri</code>, meaning
+              <em>the entire query string is included</em>) plus whatever headers the origin declares in
+              <code>Vary</code>.
+            </p>
+
+            <p>
+              These two mechanisms are the two most common ways to destroy hit ratio, and neither one produces any
+              error — the config still looks like "caching is on".
+            </p>
+
+            {{SVG:3}}
+
+            <h3>Measuring the damage: 251x more origin load, and completely invisible</h3>
+
+            <p>
+              Verified with numbers at load scale. Same content, but the load generator attaches a
+              <code>utm_source</code> parameter drawn randomly from 1,000 values — exactly like real traffic from ad
+              campaigns. Comparing two cache-key configs, 32 connections, 10 seconds:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Cache-key config</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                  <th>Origin had to process</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Raw — includes the whole query string</td>
+                  <td>20,866 rps</td>
+                  <td>1.43 ms</td>
+                  <td>3.10 ms</td>
+                  <td><strong>1,003</strong> requests</td>
+                </tr>
+                <tr>
+                  <td>Normalized — only the allowed parameters</td>
+                  <td>20,552 rps</td>
+                  <td>1.46 ms</td>
+                  <td>3.15 ms</td>
+                  <td><strong>4</strong> requests</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Origin load differs by <strong>251x</strong>. And the three prior columns — throughput, p50, p99 —
+              are <strong>indistinguishable from each other</strong>. From the client's side, these two
+              configurations are identical. No latency dashboard, no alert, no error tells you anything.
+            </p>
+
+            <p>
+              The number 1,003 is also worth reading closely: 1,000 distinct <code>utm_source</code> values produce
+              exactly 1,000 distinct cache keys, one MISS per key. The cache is still "working" — it's just storing
+              1,000 copies of the same content, and none of them ever get reused.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ This only shows up in one place</div>
+              <div class="callout__content">
+                Cache fragmentation doesn't show up in client-side latency. It only shows up in
+                <strong>origin load and the HIT/MISS ratio at the edge tier</strong>. Meaning if you don't monitor
+                those two numbers, there's no way to catch it.<br /><br />
+                Specifically you need: a log or metric of <code>$upstream_cache_status</code> at the edge, and the
+                requests-per-second the origin actually receives. When traffic doubles, the origin's number tells
+                you immediately whether the cache is actually shielding it or just pretending to. This is the exact
+                same lesson as "judge a cache by hit ratio, not by whether it feels faster" from
+                <a href="sysdesign-caching">Lesson 5</a> section 5.1 — viewed from the edge tier.
+              </div>
+            </div>
+
+            <p>The config that produces both behaviors above, one line apart:</p>
+
+            {{CODE:nginx/edge.conf}}
+
+            <!-- ================= 6.5 ================= -->
+            <h2>6.5 Purge, versioned URLs, and how to blank the page for every user</h2>
+
+            <p>
+              When content changes, there are two ways for users to see the new version: <strong>delete</strong> the
+              old copy from the cache (purge), or <strong>change the URL</strong> so the new version lives at a
+              different address. The second option is almost always better, for a very practical reason.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Purge</th>
+                  <th>Versioned URL</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Mechanism</td>
+                  <td>Call the CDN's API to delete a URL from every PoP</td>
+                  <td>Put a content hash in the file name: <code>app.a3f9c1.js</code></td>
+                </tr>
+                <tr>
+                  <td>Time to take effect</td>
+                  <td>Seconds to minutes, varies by PoP</td>
+                  <td>Instant — the new URL was never cached anywhere</td>
+                </tr>
+                <tr>
+                  <td>Can you verify it</td>
+                  <td>Hard: you don't know which PoP finished purging</td>
+                  <td>Yes: different URL means different content, nothing to take on faith</td>
+                </tr>
+                <tr>
+                  <td>Rolling back</td>
+                  <td>Have to redeploy and purge again</td>
+                  <td>Just point back at the old URL — the old copy is still intact in the cache</td>
+                </tr>
+                <tr>
+                  <td>TTL you can set</td>
+                  <td>Has to be short, since it still needs to be changeable</td>
+                  <td><code>max-age=31536000, immutable</code> — one year</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>From that comes a very tidy rule for setting headers, broken down by resource type:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Resource type</th>
+                  <th><code>Cache-Control</code></th>
+                  <th>Why</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>JS/CSS with a hash in the name</td>
+                  <td><code>public, max-age=31536000, immutable</code></td>
+                  <td>Content never changes; changing content means changing the file name</td>
+                </tr>
+                <tr>
+                  <td>Images, fonts</td>
+                  <td><code>public, max-age=2592000</code></td>
+                  <td>Changes rarely; a month is a safe margin</td>
+                </tr>
+                <tr>
+                  <td>HTML</td>
+                  <td><code>public, max-age=0, s-maxage=60, must-revalidate</code></td>
+                  <td>
+                    <strong>This is the file that points at other assets</strong> — must always be fresh, but the
+                    CDN is still allowed to hold it for 60 seconds
+                  </td>
+                </tr>
+                <tr>
+                  <td>Read API shared by many users</td>
+                  <td><code>public, s-maxage=30, stale-while-revalidate=60</code></td>
+                  <td>The edge serves the old copy while refreshing; nobody has to wait</td>
+                </tr>
+                <tr>
+                  <td>Personalized API</td>
+                  <td><code>private, no-store</code></td>
+                  <td>Must never leak into a shared cache</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: blanking the page for every single user</div>
+              <div class="callout__content">
+                This scenario happens more often than it should. You deploy: the new asset is
+                <code>app.b7d2e4.js</code>, and the old asset <code>app.a3f9c1.js</code> gets deleted from the
+                origin. But <strong>the HTML is cached at the edge with a long TTL</strong>, so it's still pointing
+                at <code>app.a3f9c1.js</code> — a file that no longer exists.<br /><br />
+                Result: the user gets the old HTML, that HTML requests a file that 404s, the JavaScript never loads,
+                <strong>blank page</strong>. And a purge can't save you in time, because it needs a few minutes to
+                take effect everywhere.<br /><br />
+                Two safeguards, do both: (1) <strong>HTML must always have a short TTL</strong> or be forced to
+                revalidate — it's the routing file, not the content itself; (2) <strong>keep the previous deploy's
+                assets around</strong> for at least a few hours instead of deleting them right away. Option (2) is
+                cheap enough that there's no reason not to do it: a few hundred KB of disk in exchange for never
+                hitting this scenario.
+              </div>
+            </div>
+
+            <h3>Reproducing the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>Summary</h3>
+
+            <p>
+              Geographic distance is a physical constant: 1 ms for every 100 km round trip, and a new HTTPS
+              connection needs 2 RTTs before the request is even sent. There's no way to fix this with code — only
+              to place the data closer. The lab's edge layer delivers 25x throughput and keeps 99.998% of requests
+              away from the origin, using nothing but nginx and <code>proxy_cache</code>.
+            </p>
+
+            <p>
+              The three easiest mistakes all live in the header and cache-key area, and none of them produce an
+              error: <code>no-cache</code> still caches (you need <code>no-store</code> to actually not store it);
+              an ETag generated from a moment in time instead of from content means <code>304</code> never happens;
+              and a cache key containing a tracking parameter makes origin load jump 251x while not a single
+              client-side metric changes at all.
+            </p>
+
+            <p>
+              Finally, <code>proxy_cache_use_stale</code> keeps the site alive when the origin goes down — but only
+              for URLs that were <em>already</em> in the cache. That turns cache coverage into part of your
+              incident plan, and turns "flush the cache and then deploy" into something worth rethinking.
+            </p>
+
+            <p>
+              <strong>Lesson 7</strong> leaves the cache tier and goes down to the data tier: replication. The lab
+              will have a real PostgreSQL primary and replica, measure replication lag with
+              <code>pg_stat_replication</code>, and reproduce by hand the bug every system with a replica runs into
+              — a user changes their profile photo, reloads, and sees the old one.
+            </p>
+
+            <!-- References Block -->
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    MDN — Cache-Control (the full semantics of <code>max-age</code>, <code>s-maxage</code>,
+                    <code>no-cache</code>, <code>no-store</code>, <code>immutable</code>)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Vary"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    MDN — the <code>Vary</code> header (used in section 6.4)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    MDN — the <code>ETag</code> header and revalidation with <code>If-None-Match</code> (section 6.3)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.rfc-editor.org/rfc/rfc9111" target="_blank" rel="noopener noreferrer">
+                    IETF RFC 9111 — HTTP Caching (the official spec, including <code>stale-while-revalidate</code>)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Anycast" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Anycast (the routing mechanism that sends users to the nearest PoP, section 6.2)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_cache_use_stale"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    nginx — official documentation for <code>proxy_cache_use_stale</code> and
+                    <code>proxy_cache_key</code> (sections 6.3, 6.4)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <!-- Download Block -->
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The edge tier's nginx config from the lab, containing both cache-key locations (raw and normalized)
+                measured in section 6.4:
+              </p>
+              <a
+                href="../sysdesign-lab/nginx/edge.conf"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download edge.conf
+              </a>
+            </div>
