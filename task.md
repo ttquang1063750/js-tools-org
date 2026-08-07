@@ -1,14 +1,457 @@
-# task.md
+# task.md — Thiết Kế Hệ Thống / System Design
 
-Chua co viec nao dang mo.
+> File nay do `make-task.py` sinh ra tu hien trang repo. **Dung tich tay cac o
+> trong muc "May kiem duoc"** — chay lai script la chung tu dong dong bo:
+>
+> ```bash
+> D=.claude/skills/beginner-proof-series
+> python3 $D/make-task.py .claude/skills/beginner-proof-series/series/sysdesign
+> ```
 
-File nay la noi liet ke cong viec chi tiet cho mot series dang duoc sua va dich.
-Khi bat dau mot series moi, sinh lai bang:
+## Bat dau tu day
+
+Doc `.claude/skills/beginner-proof-series/SKILL.md` truoc — no giai thich
+_cach_ lam. File nay chi noi _con lai nhung gi_.
+
+Hai lenh cho biet trang thai bat ky luc nao:
 
 ```bash
 D=.claude/skills/beginner-proof-series
-python3 $D/make-task.py $D/series/<series>
+python3 $D/next-lesson.py blog/sysdesign/sysdesign-programming-series.html
+python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/sysdesign
 ```
 
-Sinh xong, nguoi lam chi can doc file nay tu tren xuong. Xong het thi chay lai
-voi `--finish` de don ve trang thai nay.
+**Tien do: 0/18 bai da co ban EN.** Checker dang **xanh**.
+
+## Cac bai con lai
+
+### Bai 1: Latency, Throughput & Lý Thuyết Hàng Đợi
+
+- VI: `blog/sysdesign/sysdesign-latency-queueing.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-latency-queueing.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-latency-queueing.html`)
+- [ ] co template de dung lai (`sysdesign-latency-queueing.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 2: Dựng Lab & Đo Giới Hạn Một Server
+
+- VI: `blog/sysdesign/sysdesign-single-server-limits.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-single-server-limits.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-single-server-limits.html`)
+- [ ] co template de dung lai (`sysdesign-single-server-limits.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 3: Scale Ngang & Load Balancing
+
+- VI: `blog/sysdesign/sysdesign-load-balancing.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-load-balancing.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-load-balancing.html`)
+- [ ] co template de dung lai (`sysdesign-load-balancing.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 4: Reverse Proxy & API Gateway
+
+- VI: `blog/sysdesign/sysdesign-api-gateway.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-api-gateway.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-api-gateway.html`)
+- [ ] co template de dung lai (`sysdesign-api-gateway.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 5: Caching: Cache-Aside, TTL & Vô Hiệu Hoá
+
+- VI: `blog/sysdesign/sysdesign-caching.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-caching.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-caching.html`)
+- [ ] co template de dung lai (`sysdesign-caching.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 6: CDN & Edge Caching
+
+- VI: `blog/sysdesign/sysdesign-cdn-edge.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-cdn-edge.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-cdn-edge.html`)
+- [ ] co template de dung lai (`sysdesign-cdn-edge.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 7: Replication & Scale Tầng Đọc
+
+- VI: `blog/sysdesign/sysdesign-replication.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-replication.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-replication.html`)
+- [ ] co template de dung lai (`sysdesign-replication.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 8: Sharding & Consistent Hashing
+
+- VI: `blog/sysdesign/sysdesign-sharding.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-sharding.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-sharding.html`)
+- [ ] co template de dung lai (`sysdesign-sharding.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 9: CAP & Các Mô Hình Nhất Quán
+
+- VI: `blog/sysdesign/sysdesign-cap-consistency.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-cap-consistency.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-cap-consistency.html`)
+- [ ] co template de dung lai (`sysdesign-cap-consistency.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 10: Distributed Lock
+
+- VI: `blog/sysdesign/sysdesign-distributed-lock.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-distributed-lock.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-distributed-lock.html`)
+- [ ] co template de dung lai (`sysdesign-distributed-lock.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 11: Idempotency & Retry An Toàn
+
+- VI: `blog/sysdesign/sysdesign-idempotency.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-idempotency.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-idempotency.html`)
+- [ ] co template de dung lai (`sysdesign-idempotency.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 12: Message Queue & Xử Lý Bất Đồng Bộ
+
+- VI: `blog/sysdesign/sysdesign-message-queue.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-message-queue.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-message-queue.html`)
+- [ ] co template de dung lai (`sysdesign-message-queue.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 13: Rate Limiting & Backpressure
+
+- VI: `blog/sysdesign/sysdesign-rate-limiting.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-rate-limiting.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-rate-limiting.html`)
+- [ ] co template de dung lai (`sysdesign-rate-limiting.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 14: Event Sourcing & CQRS
+
+- VI: `blog/sysdesign/sysdesign-event-sourcing.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-event-sourcing.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-event-sourcing.html`)
+- [ ] co template de dung lai (`sysdesign-event-sourcing.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 15: Monolith vs Microservices
+
+- VI: `blog/sysdesign/sysdesign-monolith-microservices.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-monolith-microservices.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-monolith-microservices.html`)
+- [ ] co template de dung lai (`sysdesign-monolith-microservices.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 16: Observability: Metrics, Logs & Tracing
+
+- VI: `blog/sysdesign/sysdesign-observability.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-observability.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-observability.html`)
+- [ ] co template de dung lai (`sysdesign-observability.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 17: Chế Độ Lỗi & Khả Năng Chống Chịu
+
+- VI: `blog/sysdesign/sysdesign-resilience.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-resilience.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-resilience.html`)
+- [ ] co template de dung lai (`sysdesign-resilience.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 18: Capstone: Thiết Kế & Chạy Thật Một Hệ Thống
+
+- VI: `blog/sysdesign/sysdesign-capstone.html`
+- EN can tao: `blog/sysdesign/en/sysdesign-capstone.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-capstone.html`)
+- [ ] co template de dung lai (`sysdesign-capstone.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+## Cac bai da xong
+
+## Viec o cap series (lam mot lan)
+
+- [ ] Hub co ban tieng Anh (`blog/sysdesign/en/sysdesign-programming-series.html`)
+- [ ] Hub tieng Viet co `hreflang` va link locale hien thi
+- [ ] Chrome thong nhat giua cac bai EN (checker ep theo `config.json`)
+
+## Khi xong het
+
+```bash
+python3 .claude/skills/beginner-proof-series/make-task.py .claude/skills/beginner-proof-series/series/sysdesign --finish
+```
+
+Lenh nay chi chay khi moi bai da co ban EN **va** checker xanh. No don noi
+dung file, giu lai file cho lan lam viec sau.

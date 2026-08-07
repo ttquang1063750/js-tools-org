@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Dung ban tieng Anh cua trang HUB series AIE.
+Dung ban tieng Anh cua trang HUB mot series.
 
-Hub khac bai hoc: khong co <div class="article-body">, co mot khoi <style>,
-mot so do SVG lon, va mot <script> noi tuyen ~210 dong chua 73 chuoi noi dung.
+Hub khac bai hoc: khong co <div class="article-body">. Tuy series, no CO THE co
+mot khoi <style>, mot so do SVG lon, va mot <script> noi tuyen chua chuoi noi
+dung. Ca ba deu TUY CHON — chi xu ly khi than bai EN co placeholder tuong ung.
 
 Nguyen tac giu nguyen:
   - khoi <style>            : nguyen van
-  - so do SVG              : nguyen van (nhan da la tieng Anh san)
+  - so do SVG              : nguyen van (nhan phai da la tieng Anh san)
   - LOGIC cua <script>     : nguyen van; chi thay cac chuoi noi dung theo
                              bang dich, va BAO LOI DUNG neu con sot chuoi
                              tieng Viet nao trong script.
+
+Cac chuoi chrome (header + hero) khac nhau tung series nen nam trong
+config.json duoi khoa "hubChromeSubs", giong cach lam cua tung bai hoc.
 
 Cac the bai duoc sinh lai: tro toi ban EN neu co, nguoc lai tro ve ban VI
 kem nhan "(in Vietnamese)" — vi noi dung DA TON TAI, chi chua dich, nen khoa
@@ -46,19 +50,30 @@ def deepen(t):
 
 
 # ---------------------------------------------------------------- 1. style
-i = vi.index('<style>')
-style = vi[i : vi.index('</style>', i) + len('</style>')]
+# Tuy chon: chi series nao co khoi <style> rieng tren hub moi dung toi.
+if '<style>' in vi:
+    i = vi.index('<style>')
+    style = vi[i : vi.index('</style>', i) + len('</style>')]
+else:
+    style = ''
 
 # ---------------------------------------------------------------- 2. svg so do
-m = re.search(r'<div class="ai-roadmap-visual">\s*<svg.*?</svg>\s*</div>', vi, re.S)
-assert m, 'khong tim thay so do roadmap'
-svg = m.group(0)
-assert not re.search(VN, svg, re.I), 'so do co chu tieng Viet — can bang dich nhan'
+# Tuy chon. Mau khop lay tu config de moi series dat ten lop rieng duoc.
+SVG_PATTERN = cfg.get('hubSvgPattern', r'<div class="ai-roadmap-visual">\s*<svg.*?</svg>\s*</div>')
+m = re.search(SVG_PATTERN, vi, re.S)
+svg = m.group(0) if m else ''
+if svg:
+    assert not re.search(VN, svg, re.I), 'so do co chu tieng Viet — can bang dich nhan'
 
 # ---------------------------------------------------------------- 3. script
-i = vi.index('<script>\n              document.addEventListener')
-j = vi.index('</script>', i) + len('</script>')
-script_vi = vi[i:j]
+# Tuy chon: nhieu hub khong co <script> noi tuyen chua noi dung nao ca.
+SCRIPT_MARKER = cfg.get('hubScriptMarker', '<script>\n              document.addEventListener')
+if SCRIPT_MARKER in vi:
+    i = vi.index(SCRIPT_MARKER)
+    j = vi.index('</script>', i) + len('</script>')
+    script_vi = vi[i:j]
+else:
+    script_vi = ''
 script = script_vi
 for k, v in sorted(script_map.items(), key=lambda kv: -len(kv[0])):
     script = script.replace(k, v)
@@ -85,7 +100,8 @@ left = [
 ]
 if left:
     raise SystemExit('CON SOT chuoi tieng Viet trong script:\n  - ' + '\n  - '.join(left))
-print(f'  script: {n_en} chuoi, logic giong het nguon, khong sot tieng Viet')
+if script_vi:
+    print(f'  script: {n_en} chuoi, logic giong het nguon, khong sot tieng Viet')
 
 # ---------------------------------------------------------------- 4. the bai hoc
 cards = []
@@ -159,27 +175,11 @@ head = re.sub(r'"description": "[^"]*"', '"description": "' + DESC + '"', head)
 # ---------------------------------------------------------------- 6. chrome (header + hero)
 k = vi.index('<div class="container">\n        <div class="article-wrap">')
 chrome = deepen(vi[vi.index('</head>') + len('</head>') : k])
-for a, b in [
-    (
-        '<a href="/blog/" class="article-hero__back">← Quay lại Trang Chủ Blog</a>',
-        '<a href="/blog/" class="article-hero__back">← Back to the blog</a>',
-    ),
-    ('Kỹ Sư AI Thực Chiến\n          </div>', 'Practical AI Engineer\n          </div>'),
-    (
-        'Kỹ Sư AI Thực Chiến — Lộ Trình Cho Lập Trình Viên Web',
-        'Practical AI Engineer — A Roadmap for Web Developers',
-    ),
-    # Ban VI co link "Read in English" tro toi en/... — tu trong /en/ no se thanh
-    # en/en/... nen phai THAY, khong duoc de thua huong.
-    (
-        '14 tháng 7, 2026 · Lộ trình 20 bài học · Thực hành chuyên sâu ·\n            '
-        '<a href="en/aie-programming-series" style="color: #eab308">Read in English</a>',
-        '14 July 2026 · A 20-lesson roadmap · Hands-on throughout ·\n            '
-        '<a href="../aie-programming-series" style="color: #eab308">Đọc bản tiếng Việt</a>',
-    ),
-]:
+# Cac chuoi chrome khac nhau tung series, nen chung nam trong config.json chu
+# khong gan cung o day. Thieu mot cap la BAO LOI DUNG, giong build-lesson-en.py.
+for a, b in cfg['hubChromeSubs']:
     if a not in chrome:
-        raise SystemExit('CHROME khong tim thay: ' + a[:60])
+        raise SystemExit('CHROME khong tim thay: ' + a[:70])
     chrome = chrome.replace(a, b, 1)
 
 # Khong duoc con link nao tro vao en/ tu ben trong /en/
@@ -191,9 +191,18 @@ tail = deepen(vi[t:]).replace('<h2>Bình luận</h2>', '<h2>Comments</h2>')
 
 # ---------------------------------------------------------------- 8. than bai
 body = open(BODY, encoding='utf-8').read()
-for token, value in [('{{SVG}}', svg), ('{{SCRIPT}}', script), ('{{LESSONS}}', lesson_list)]:
+# {{LESSONS}} luon bat buoc. {{SVG}} va {{SCRIPT}} chi bat buoc khi ban VI THUC SU
+# co phan do — series khong co so do hay script noi tuyen thi bo qua, nhung neu
+# ban VI co ma than bai EN quen cham thi van bao loi (mat noi dung im lang).
+for token, value, required in [
+    ('{{LESSONS}}', lesson_list, True),
+    ('{{SVG}}', svg, bool(svg)),
+    ('{{SCRIPT}}', script, bool(script_vi)),
+]:
     if token not in body:
-        raise SystemExit('than bai thieu placeholder ' + token)
+        if required:
+            raise SystemExit('than bai thieu placeholder ' + token)
+        continue
     body = body.replace(token, value, 1)
 
 out = head + chrome + body + '\n            ' + tail

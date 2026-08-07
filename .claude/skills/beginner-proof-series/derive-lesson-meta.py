@@ -42,7 +42,7 @@ def pair(pattern, label):
 
 
 chrome_pats = [
-    (r'<a href="aie-programming-series" class="article-hero__back">.*?</a>', 'hero back-link'),
+    (r'<a href="[\w-]+-programming-series" class="article-hero__back">.*?</a>', 'hero back-link'),
     (r'<div class="article-hero__tag"[^>]*>\s*.*?\s*</div>', 'hero tag'),
     (r'<h1 class="article-hero__title"[^>]*>\s*.*?\s*</h1>', 'hero title'),
     (r'<div class="article-hero__meta"[^>]*>\s*.*?\s*</div>', 'hero meta'),
@@ -56,7 +56,7 @@ tail_pats = [
         r'<(?:a|span)[^>]*class="article-related__link article-related__link--next[^"]*"[^>]*>\s*.*?\s*</(?:a|span)>',
         'next link',
     ),
-    (r'<a href="aie-programming-series" class="article-related__link">\s*.*?\s*</a>', 'hub link'),
+    (r'<a href="[\w-]+-programming-series" class="article-related__link">\s*.*?\s*</a>', 'hub link'),
     (r'(?<=<div class=\"article-comments\" style=\"margin-top: 60px\">)\s*<h2>.*?</h2>', 'comments heading'),
 ]
 
