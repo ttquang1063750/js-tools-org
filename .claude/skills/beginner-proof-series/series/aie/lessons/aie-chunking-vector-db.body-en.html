@@ -1,0 +1,362 @@
+            <p class="article-lead">
+              For a RAG system to work at scale, crudely cutting text every N characters is nowhere near enough. The
+              quality of what you retrieve depends directly on two things: the chunking strategy, and the indexing
+              capability of the vector database.
+            </p>
+
+            <p>
+              Lesson 14 ended on a finding: how you cut text decides whether the answer is right. This lesson turns
+              that observation into measurements. We compare 3 chunking strategies across <em>two different kinds of
+              text</em> to see which wins where, implement an approximate search graph in the HNSW family and
+              <strong>measure</strong> what it really saves and what it costs, and finally build
+              <strong>hybrid search</strong> with <strong>RRF (Reciprocal Rank Fusion)</strong> over a document set
+              where each retriever alone fails somewhere.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Software:</strong> the approximate-index measurement (section 15.2) runs on plain Python and
+                needs nothing. The other two parts use an embedding model through Ollama as in Lesson 14
+                (<code>ollama pull bge-m3</code>); without it the program still runs and says exactly which parts it
+                skipped.
+                <br /><br />
+                <strong>A note on runtime:</strong> section 15.2 builds graphs over 5,000 and then 20,000 vectors in
+                pure Python, so it takes a minute or two. That is the price of seeing the algorithm instead of calling
+                a library.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 14 for the whole RAG pipeline, cosine similarity and
+                TF-IDF — this lesson upgrades exactly step 2 (chunking) and step 4 (retrieval) of that pipeline.
+              </div>
+            </div>
+
+            <h2>15.1 Chunking strategies</h2>
+            <p>
+              The chunking strategy you pick directly determines your recall rate and how diluted the context becomes.
+              Chunks too large and the LLM drowns in irrelevant text; chunks too small and the supporting context is
+              severed.
+            </p>
+            <p>The three most common strategies today:</p>
+            <ol>
+              <li>
+                <strong>Fixed-size chunking:</strong> cut mechanically every $N$ characters or words. Extremely fast,
+                but it routinely slices sentences in half and cuts through important figures or proper nouns — exactly
+                the failure Lesson 14 measured.
+              </li>
+              <li>
+                <strong>Recursive character chunking:</strong> split using a priority-ordered list of separators:
+                double newline <code>\n\n</code> (paragraph), single newline <code>\n</code> (line), full stop
+                <code>.</code> (sentence), comma <code>,</code>, and finally whitespace. It tries to keep sentences
+                whole within the chunk size limit.
+              </li>
+              <li>
+                <strong>Semantic chunking:</strong> the more advanced option. Scan the text sentence by sentence,
+                compute an embedding vector for each, and measure similarity between consecutive sentences. A new
+                chunk boundary is created wherever that similarity drops sharply below a preset threshold.
+              </li>
+            </ol>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: splitting tables and numeric data</div>
+              <div class="callout__content">
+                When the document contains tables, fixed or recursive chunking slices the rows into disconnected lines
+                and destroys the column headers entirely. In a vector search, an orphaned row of figures has lost its
+                meaning. The fix: use a dedicated Markdown table parser to convert tables into JSON before chunking.
+              </div>
+            </div>
+
+            <h3>Measured: which strategy wins, and on what kind of text?</h3>
+            <p>
+              The project runs all three strategies over <em>two</em> documents with opposite properties. The first is
+              a tidy NDA where every clause is its own fully punctuated paragraph:
+            </p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              The three "smart" strategies produce <strong>identical results</strong> ($0.4529$), and all beat
+              fixed-size ($0.4108$ — its chunk begins with <code>'t vi phạm'</code>, meaning the words "Mức phạt" were
+              sliced in half). This does <em>not</em> mean semantic chunking is useless: in this NDA the sentence
+              boundaries coincide with the semantic boundaries, so splitting on punctuation already is splitting on
+              meaning. The expensive method's advantage does not show up because there is nothing left for it to
+              improve.
+            </p>
+
+            <p>
+              The second document is a meeting transcript — no full stops, no capitals, typed in a hurry. This kind of
+              data is extremely common inside real companies:
+            </p>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              The result inverts completely. On the transcript the punctuation-based splitter finds no full stop at all
+              and so <strong>merges the whole document into exactly 1 chunk</strong>, dropping the match to $0.3553$ —
+              <em>losing</em> to the dumbest strategy in the file, fixed-size at $0.5869$. The lesson is not "which
+              strategy is best" but this: <strong>every clever chunking strategy rests on an assumption about the
+              text's structure</strong>, and when that assumption is wrong they fail worse than the naive approach.
+              Look at your actual data before choosing.
+            </p>
+
+            <h2>15.2 Inside a vector database: HNSW indexing</h2>
+            <p>
+              If the corpus holds 1 million chunks, computing cosine similarity linearly (exact search) between the
+              question and every chunk costs $O(N)$. So vector databases (ChromaDB, Pinecone, Qdrant) use
+              <strong>approximate nearest neighbour (ANN)</strong> search, typically with the layered graph algorithm
+              <strong>HNSW (Hierarchical Navigable Small World)</strong>.
+            </p>
+
+            <p>HNSW is built on a multi-layer graph, much like a skip list:</p>
+            <ul>
+              <li>
+                <strong>The top layer (sparse):</strong> holds very few, widely scattered vector nodes. A search takes
+                large jumps here to locate the general neighbourhood of the query vector quickly.
+              </li>
+              <li>
+                <strong>The lower layers (progressively denser):</strong> node density increases. The algorithm
+                descends to refine its path, taking shorter hops to home in on the true nearest neighbours.
+              </li>
+            </ul>
+            <p>
+              The important word is <strong>approximate</strong>: the algorithm follows the graph and therefore only
+              ever inspects a small part of the corpus, which means it <em>can miss</em> the genuinely nearest vector.
+              The parameter controlling that trade-off is usually called <code>ef</code> (the size of the candidate
+              queue during search): larger <code>ef</code> misses less but computes more.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Do not trust the formula, measure it: what does an approximate index actually save?</div>
+              <div class="callout__content">
+                Plenty of write-ups summarise HNSW with a division along the lines of "$N$ versus $\log_2 N$, so 50,000
+                times faster at a million vectors". That number is a ratio between two <em>complexity notations</em>,
+                not a measurement. In reality the algorithm computes distances to hundreds or thousands of nodes rather
+                than about 20, and it never reaches perfect accuracy. The project implements a real navigable
+                small-world graph and <strong>counts the distance computations</strong>, alongside the rate of finding
+                the true nearest neighbour (recall) compared with a full scan.
+              </div>
+            </div>
+
+            {{CODE:Terminal#3}}
+
+            <p>This table says three things the $O(\log N)$ formula does not:</p>
+            <ul>
+              <li>
+                <strong>There is no free lunch.</strong> At $N = 5000$, reaching $100\%$ recall costs $3037$ distance
+                computations — only $1.6$ times faster than a full scan. All of the "many times faster" comes from
+                accepting misses: $ef = 16$ gives a $10.7$ times speedup but recall falls to $76\%$.
+              </li>
+              <li>
+                <strong>The advantage grows with scale.</strong> This is the part that matters. Four times the data
+                (5,000 → 20,000) leaves the work at $100\%$ recall almost unchanged ($3037 \to 2990$), so the saving
+                jumps from $1.6$ to $6.7$ times. Extrapolate to millions of vectors and that gap becomes the hundreds
+                of times that actually justifies ANN.
+              </li>
+              <li>
+                <strong>The parameters must scale with the data.</strong> At the same $ef = 64$: recall is $99\%$ at
+                $N = 5000$ but falls to $66\%$ at $N = 20000$. A configuration that tested fine against 5,000 documents
+                will silently miss a third of its results once the corpus grows — with no error raised anywhere.
+              </li>
+            </ul>
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔬 The scope of this measurement</div>
+              <div class="callout__content">
+                The graph in the project has a <strong>single layer</strong> and picks neighbours by random sampling,
+                rather than being full HNSW (multiple layers, a much better neighbour-selection heuristic, written in
+                C++). A real library produces a considerably better curve at the same recall. What this measurement
+                establishes is the <em>shape</em> of the trade-off — recall traded for speed, and the advantage growing
+                with $N$ — not the absolute figures. Do not quote $6.7$ times as a performance number for HNSW.
+              </div>
+            </div>
+
+            <h2>15.3 Hybrid search: combining meaning and keywords</h2>
+            <p>
+              Semantic search with dense embeddings is excellent at capturing the gist of a question but routinely
+              fails when the user searches for an exact proper noun, product code or error code. The reason is direct:
+              an embedding model is trained to place things that are <em>close in meaning</em> close together, and two
+              error codes differing by one digit are about as close in meaning as anything can be.
+            </p>
+            <p>The answer is <strong>hybrid search</strong> — running two independent retrievers in parallel:</p>
+            <ol>
+              <li>
+                <strong>Dense retrieval:</strong> use an embedding model and measure the cosine angle.
+              </li>
+              <li>
+                <strong>Sparse retrieval:</strong> use BM25 (an evolution of Lesson 14's TF-IDF that adds frequency
+                saturation and document-length normalisation).
+              </li>
+            </ol>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">📐 RRF (Reciprocal Rank Fusion), the combining algorithm</div>
+              <div class="callout__content">
+                We cannot simply add BM25 and cosine scores together, because their scales are entirely different (BM25
+                has no upper bound, cosine sits between $-1$ and $1$). Instead <strong>RRF</strong> uses only
+                <em>rank</em>, the one thing both sides mean the same way:
+                $$RRF\_Score(d) = \sum_{m \in M} \frac{1}{k + r_m(d)}$$ where:
+                <ul>
+                  <li>$M$ is the set of retrieval methods (dense and sparse).</li>
+                  <li>$r_m(d)$ is the position of document $d$ in method $m$'s result list (1-indexed).</li>
+                  <li>
+                    $k$ is a smoothing constant, conventionally $60$, which limits the influence of very low-ranked
+                    documents.
+                  </li>
+                </ul>
+                A consequence of $k = 60$: rank 1 scores $1/61 \approx 0.0164$ and rank 2 scores
+                $1/62 \approx 0.0161$. RRF scores are always small and tightly clustered — <strong>only the ordering
+                carries meaning, never the magnitude</strong>. Do not compare an RRF score against an absolute
+                threshold the way Lesson 14 did.
+              </div>
+            </div>
+
+            <h3>Measured: where does each retriever fail?</h3>
+            <p>
+              The project builds a small technical-support corpus containing two nearly identical documents differing
+              by exactly one digit in the fault code: <code>E-1042</code> for the NX-200 model and <code>E-1024</code>
+              for the NX-300. Then it runs two queries through all three rankers:
+            </p>
+
+            {{CODE:Terminal#4}}
+
+            <p>
+              For the <strong>exact fault code</strong>, both find it — but the gap to the runner-up is what to look
+              at: BM25 gives $1.777$ against $0.649$, decisively. The embedding gives $0.488$ against $0.421$, a
+              margin of <strong>only $0.067$</strong>. Two documents differing by a single digit are almost
+              indistinguishable in semantic space. Grow the corpus slightly and that ordering will flip.
+            </p>
+            <p>
+              For the <strong>paraphrased query</strong> ("my machine is making a loud noise in the cooling part" —
+              using none of the document's own words like "fan" or "rattling"), BM25 <strong>picks the wrong
+              document</strong>: it grabs the dust-filter cleaning guide purely because they share the word "machine".
+              The embedding understands the intent and picks the fan-fault document.
+            </p>
+            <p>
+              In both cases <strong>RRF picks correctly</strong> — not because it is cleverer, but because it only
+              needs <em>one of the two</em> retrievers to rank the right document first. That is the value of hybrid
+              search: when two blind spots do not overlap, fusing them covers both.
+            </p>
+
+            <h2>15.4 Lesson 15 project: three measurements in one file</h2>
+            <p>
+              The file has exactly three parts matching the three sections above: the chunking comparison over two
+              kinds of document; a hand-written navigable small-world graph with a distance-computation counter; and
+              BM25 + dense + RRF over the support corpus. All standard library, apart from the embedding calls to
+              Ollama.
+            </p>
+
+            {{CODE:chunking_evaluation.py}}
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>
+                Run <code>python3 chunking_evaluation.py</code>. No libraries needed. For the real-embedding semantic
+                chunking and the hybrid search sections, start Ollama with <code>ollama pull bge-m3</code>.
+              </li>
+              <li>
+                Allow a minute or two at the indexing section — it builds graphs over 25,000 vectors in pure Python.
+                The recall and distance-computation figures will match this lesson exactly thanks to
+                <code>random.seed(42)</code>.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    In <code>make_clustered_vectors</code>, change <code>clusters=50</code> to <code>1</code> — the
+                    data no longer forms clusters and becomes uniformly spread. Recall collapses at the same
+                    <code>ef</code>: approximate search is viable because real data has cluster structure, not because
+                    the graph performs magic.
+                  </li>
+                  <li>
+                    In <code>build_graph</code>, drop <code>neighbours=16</code> to <code>4</code>. The graph gets
+                    sparser, distance computations fall but recall falls faster — this is the $M$ parameter every
+                    vector database makes you choose at index-creation time, and which you cannot change afterwards.
+                  </li>
+                  <li>
+                    In <code>reciprocal_rank_fusion</code>, change <code>k=60</code> to <code>1</code>. RRF scores
+                    spread out enormously and rank 1 dominates completely, making the result close to "just take
+                    whichever retriever was most confident" — losing the fusion that a large $k$ provides.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> measuring that a "smart" chunking strategy only wins when the text has
+                    the structure it assumes — on a meeting transcript, punctuation splitting collapsed to 1 chunk and
+                    lost to plain fixed-size cutting.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> implementing an approximate search graph and measuring the real
+                    trade-off curve: $100\%$ recall is only $1.6$ times faster at $N=5000$, but $6.7$ times at
+                    $N=20000$ — the advantage lives in the scaling, not in a fixed number.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> seeing the same <code>ef=64</code> give $99\%$ recall at 5,000 vectors
+                    but only $66\%$ at 20,000 — a silent degradation that raises no error.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> building hybrid search with RRF, and measuring each side's blind spot:
+                    the embedding separates two one-digit-apart fault codes by only $0.067$, while BM25 picks entirely
+                    the wrong document when the question shares none of the document's words.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> this lesson improved <em>how you store and how you search</em>.
+              But when the user's question is vague to begin with, or when the right document sits at rank 5 rather
+              than rank 1, no index can save you. Lesson 16 addresses exactly those two: rewriting the query (query
+              rewriting) and reordering the results with a cross-encoder (reranking).
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>chunking_evaluation.py</code> — the chunking comparison, the navigable
+                small-world graph with its distance counter, and BM25 + dense + RRF hybrid search (run
+                <code>python3 chunking_evaluation.py</code>):
+              </p>
+              <a
+                href="../chunking_evaluation.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download chunking_evaluation.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://arxiv.org/abs/1603.09320" target="_blank" rel="noopener noreferrer"
+                    >Efficient and Robust Approximate Nearest Neighbor Search using Hierarchical Navigable Small World
+                    Graphs — the original HNSW paper (Malkov &amp; Yashunin, 2016)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://plg.uwaterloo.ca/~gvcormac/cormack-sigir09-rrf.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Reciprocal Rank Fusion Outperforms Single Retrieval Methods and Hybrid Search Combination — the
+                    paper introducing RRF (Cormack et al., 2009)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://python.langchain.com/v0.1/docs/modules/data_connection/document_transformers/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >LangChain Document Transformers — a detailed guide to production text-splitting strategies
+                    (LangChain Documentation)</a
+                  >
+                </li>
+              </ul>
+            </section>
