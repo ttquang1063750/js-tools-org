@@ -1,0 +1,754 @@
+            <p>
+              <a href="sysdesign-load-balancing">Lesson 3</a> put nginx in front of three replicas and gave it
+              exactly one job: splitting load. But the component sitting in that spot — where <em>every</em> request
+              must pass through — can do far more: terminate TLS, route by path, serve static files, reject requests
+              missing a token, rate-limit. This lesson keeps the same nginx but hands it those jobs, then measures
+              what each one is actually worth.
+            </p>
+
+            <p>
+              Two measurements in this lesson went against what I predicted while writing the outline. First: the
+              advice "let the gateway serve static files so the app doesn't have to" turned out to make the gateway
+              <strong>2.6x slower</strong> than forwarding the request to the app — until adding exactly one config
+              directive. Second: "TLS costs about 10%" is a number I measured myself, and one that gets quoted a
+              lot, but it only holds under one very specific condition; drop that condition and the cost becomes
+              <strong>nearly 16x</strong>.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The machine every figure in this lesson was measured on</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Containers run native arm64
+                (Node v22.23.2). Each app replica is limited to <strong>1 CPU / 256 MB</strong>, nginx is
+                1.27-alpine, and the load generator gets 2 CPUs. Every experiment was repeated at least 3 times and
+                the lesson reports the range. Absolute numbers depend on your machine — what to take away is the
+                <em>ratio</em> between the two configurations being compared.
+              </div>
+            </div>
+
+            <!-- ================= 4.1 ================= -->
+            <h2>4.1 Three names for the same position</h2>
+
+            <p>
+              "Reverse proxy", "load balancer" and "API gateway" often get talked about as three different products.
+              In reality they are <strong>three levels of responsibility</strong> assigned to the same position in
+              the system: the hop standing between the client and the services. The same nginx process in this
+              series' lab plays all three roles in turn.
+            </p>
+
+            {{SVG:1}}
+
+            <p>
+              One more easily-confused pair worth separating: <strong>forward proxy</strong> and
+              <strong>reverse proxy</strong>. A forward proxy sits next to the <em>client</em> and represents the
+              client (a company's outbound proxy to the Internet, say); a reverse proxy sits next to the
+              <em>server</em> and represents the server. Same technology, opposite direction, and whoever configures
+              it is different too.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Rule of thumb for picking a level</div>
+              <div class="callout__content">
+                Just one server and you want to hide it behind TLS: a reverse proxy is enough. Multiple identical
+                copies: you need a load balancer. Multiple <em>different</em> services that the client shouldn't have
+                to know the boundaries between: that's when an API gateway earns its keep. Standing up a gateway for
+                a single service is adding one more point of failure for nothing in return.
+              </div>
+            </div>
+
+            <h3>This lesson's lab</h3>
+
+            <p>
+              The series' shared lab gets a new <code>gw</code> profile. The important design detail: the HTTP port
+              (8081) and the HTTPS port (8443) <em>include the exact same route file</em>, so any measured
+              difference between the two ports comes purely from TLS, with no configuration drift mixed in:
+            </p>
+
+            {{CODE:setup_lab.sh}}
+
+            <p>
+              If both <code>curl</code> commands in step 3 return <code>gateway ok</code>, the gateway is running
+              correctly and ready for the measurements ahead. Step 4 confirms the single most important fact in this
+              lesson: the gateway and the app speak two different paths — the client calls <code>/api/whoami</code>,
+              the app only ever sees <code>/whoami</code>.
+            </p>
+
+            <!-- ================= 4.2 ================= -->
+            <h2>4.2 TLS termination and the truth about X-Forwarded-For</h2>
+
+            <p>
+              <strong>TLS termination</strong> means the gateway decrypts HTTPS and speaks plain HTTP to the services
+              behind it. The reason is purely practical: the certificate lives in exactly one place (renew it once
+              instead of N times), services don't need to know anything about TLS, and the gateway can read the
+              content, which is what makes path-based routing possible in the first place.
+            </p>
+
+            <h3>How much does TLS cost?</h3>
+
+            <p>
+              Same route <code>/api/fast</code>, 8 concurrent connections, 8 seconds measured, three repeats — the
+              only difference is whether the entry port is HTTP or HTTPS:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Port</th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>8081 — HTTP</strong></td>
+                  <td>22,950 / 22,799 / 21,939</td>
+                  <td>0.33–0.35 ms</td>
+                  <td>0.70–0.76 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>8443 — HTTPS</strong></td>
+                  <td>20,494 / 20,881 / 19,828</td>
+                  <td>0.36 ms</td>
+                  <td>0.88–0.96 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>Difference</strong></td>
+                  <td>~9–10% lower</td>
+                  <td>+0.02 ms</td>
+                  <td>+0.18 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              About 10% throughput, and the extra latency is far smaller than even a trivial database query. The
+              conclusion looks obvious: TLS is cheap, turn it on. But this number is hiding a condition.
+            </p>
+
+            <h3>The 10% figure only holds with keep-alive</h3>
+
+            <p>
+              The lab's load generator defaults to <strong>persistent connections</strong> (keep-alive): open 8
+              connections and push hundreds of thousands of requests through them. What's expensive about TLS is the
+              <em>handshake</em> — asymmetric key exchange, one or two network round trips — while the symmetric
+              encryption that follows is very cheap. With keep-alive, the handshake cost gets divided across tens of
+              thousands of requests and nearly disappears.
+            </p>
+
+            <p>
+              The load generator has a <code>--no-keepalive</code> flag that forces every request to open a new
+              connection. Same route, same connection count:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Configuration</th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>HTTP + keep-alive</td>
+                  <td>~22,600</td>
+                  <td>0.34 ms</td>
+                  <td>0.73 ms</td>
+                </tr>
+                <tr>
+                  <td>HTTPS + keep-alive</td>
+                  <td>~20,400</td>
+                  <td>0.36 ms</td>
+                  <td>0.91 ms</td>
+                </tr>
+                <tr>
+                  <td>HTTP, one connection per request</td>
+                  <td>7,006 / 7,375</td>
+                  <td>1.07–1.11 ms</td>
+                  <td>1.66–1.88 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>HTTPS, one connection per request</strong></td>
+                  <td><strong>1,290 / 1,231</strong></td>
+                  <td><strong>5.96–6.21 ms</strong></td>
+                  <td><strong>12.97–13.39 ms</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Drop keep-alive, and HTTP loses 3x throughput because it has to redo the TCP handshake every time. But
+              HTTPS loses <strong>nearly 16x compared to itself with keep-alive</strong> (20,400 req/s down to about
+              1,260 req/s), and p50 jumps from 0.36 ms to over 6 ms — 17x. That's the real shape of TLS cost: it
+              doesn't live in every <em>request</em>, it lives in every <em>connection</em>.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Why this matters more than the 10% figure</div>
+              <div class="callout__content">
+                If you benchmark with a tool that uses keep-alive and conclude "TLS costs 10%", that number is
+                correct for the <em>benchmark</em> but can be wrong in production. Real clients sometimes don't hold
+                connections open: a cron job calls once and exits, a misconfigured HTTP library never enables
+                pooling, a mobile device keeps dropping its network. For that group of clients, every request is a
+                full handshake.<br /><br />
+                Three things worth doing, in order of impact: (1) enable <code>ssl_session_cache</code> on the
+                gateway so a reconnect can reuse an old session — the lab already has it on, which means the
+                nearly-16x figure above is still an <em>optimistic</em> one; (2) enable HTTP/2 so multiple requests
+                share one connection — the lab already has this on too (<code>http2 on;</code> on port 8443, see
+                <code>nginx/gw.conf</code>), so the cost measured above already accounts for this benefit; (3) check
+                whether your client is actually using a connection pool — this is the most common place to get it
+                wrong, and also the easiest to fix in your own code.
+              </div>
+            </div>
+
+            <h3>What information does the app lose after decryption?</h3>
+
+            <p>
+              The TCP connection the app sees is a connection from the <em>gateway</em>, not from the client. So the
+              app's <code>socket.remoteAddress</code> is always the gateway's IP, and the app no longer knows whether
+              the client came in over HTTP or HTTPS. That information has to be forwarded through headers — and this
+              is exactly where a very common vulnerability comes from.
+            </p>
+
+            {{SVG:2}}
+
+            <p>
+              The lab has a <code>/client-ip</code> endpoint that exists purely to demonstrate this. Run it for real,
+              with a forged header attached:
+            </p>
+
+            {{CODE:spoof_x_forwarded_for.sh}}
+
+            <p>The nginx config that produces those two behaviors differs by exactly one line:</p>
+
+            {{CODE:nginx/gw-routes.conf}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a "trust proxy" switch flipped carelessly</div>
+              <div class="callout__content">
+                Many frameworks have a switch like <code>trust proxy</code>. Setting it to "true" usually means
+                "trust the whole chain", which is exactly the wrong way to read it. The correct value is always a
+                <strong>specific number</strong>: the number of proxy hops you actually operate. If you don't know
+                that number, don't flip the switch yet — let the gateway overwrite the header instead.<br /><br />
+                And this isn't a cosmetic bug: a forged <code>X-Forwarded-Proto</code> can make the app think the
+                request already arrived encrypted and skip the redirect to HTTPS; a forged XFF disables every
+                IP-based rate limit.
+              </div>
+            </div>
+
+            <!-- ================= 4.3 ================= -->
+            <h2>4.3 Path-based routing — and a measurement that goes against prediction</h2>
+
+            <p>
+              The most obvious job of a gateway: look at the path, decide where to send it.
+              <code>/api/orders/*</code> to the orders service, <code>/api/users/*</code> to the users service,
+              <code>/static/*</code> answered by the gateway itself. The client sees a single domain and has no idea
+              how many services sit behind it.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: the trailing slash in proxy_pass</div>
+              <div class="callout__content">
+                <code>proxy_pass http://api_pool<strong>/</strong>;</code> — with a trailing <code>/</code> — strips
+                the <code>/api/</code> prefix before forwarding, so the app receives <code>/fast</code>.<br />
+                <code>proxy_pass http://api_pool;</code> — without the trailing <code>/</code> — keeps it as-is, the
+                app receives <code>/api/fast</code> and returns 404.<br /><br />
+                One character, two different behaviors, and the only error you get back is a 404 from the app. Quick
+                check: call <code>/api/whoami</code>; if it comes back 404, check the trailing slash before
+                suspecting anything else.
+              </div>
+            </div>
+
+            <h3>"Let the gateway serve static files" — measure before you believe it</h3>
+
+            <p>
+              Classic advice: let the gateway serve static files directly, and every file it returns is one request
+              the app doesn't have to handle. nginx reads files far faster than Node, so this sounds like it doesn't
+              even need checking. I measured it anyway: 16 connections, 8 seconds, three repeats, comparing
+              <code>/static/hello.json</code> (nginx serves it directly) against
+              <code>/api/fast</code> (forwarded to the app):
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Route</th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>/static/</code> — served directly by nginx, default config</td>
+                  <td>8,623 / 9,260 / 8,842</td>
+                  <td>1.53–1.63 ms</td>
+                  <td>3.78–4.51 ms</td>
+                </tr>
+                <tr>
+                  <td><code>/api/fast</code> — forwarded to Node</td>
+                  <td>22,768 / 22,680 / 22,720</td>
+                  <td>0.58–0.59 ms</td>
+                  <td>1.38–1.41 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The static file is <strong>2.6x slower</strong> than proxying to a Node process. This is completely
+              backwards from the prediction, so it's one of two things: either the advice is wrong, or I'm measuring
+              something different from what I think I am.
+            </p>
+
+            <p>
+              Hypothesis: the static directory is <strong>bind-mounted</strong> from the host machine into the
+              container. On Docker Desktop (macOS/Windows), a bind-mount crosses the VM boundary, so every syscall
+              against that file is noticeably more expensive. And by default nginx <em>reopens the file on every
+              request</em>: <code>stat()</code>, <code>open()</code>, <code>read()</code>. If the hypothesis is
+              right, caching the metadata and the file descriptor should erase most of the gap. Four lines:
+            </p>
+
+            {{CODE:nginx/gw-routes.conf#2}}
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th><code>/static/</code> configuration</th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Default</td>
+                  <td>8,623 / 9,260 / 8,842</td>
+                  <td>1.53–1.63 ms</td>
+                  <td>3.78–4.51 ms</td>
+                </tr>
+                <tr>
+                  <td>
+                    <strong>With <code>open_file_cache</code></strong>
+                  </td>
+                  <td><strong>21,580 / 21,809 / 21,343</strong></td>
+                  <td><strong>0.67–0.69 ms</strong></td>
+                  <td><strong>1.45–1.50 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>Baseline: proxying to Node</td>
+                  <td>~22,720</td>
+                  <td>0.59 ms</td>
+                  <td>1.40 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              <strong>2.4x faster</strong>, p50 drops from 1.6 ms to 0.68 ms. The hypothesis holds: the bottleneck
+              wasn't nginx, it was the filesystem underneath it. After the fix, the static route is nearly as fast as
+              the proxy route — still a bit behind, and with a file larger than the lab's
+              <code>static/hello.json</code> (94 bytes) the advantage would clearly tip toward nginx: the fixed cost
+              per request (internal TCP handshake, event loop) makes up a bigger share when the file is tiny, while
+              nginx reads a larger file straight from cache without spending any CPU on JavaScript.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 A lesson bigger than the numbers</div>
+              <div class="callout__content">
+                The advice "let the gateway serve static files" isn't wrong — but it implicitly assumes the file sits
+                on fast storage or in cache. Every piece of architectural advice carries an assumption about the
+                environment, and that assumption usually goes unwritten.<br /><br />
+                More notable still: if I had measured once and stopped, this lesson would have concluded "nginx
+                serves static files slowly" — wrong, but convincingly wrong, because there were numbers attached. A
+                measurement that contradicts your prediction is not a conclusion — it's a
+                <em>question</em>. The next step is always to form a specific hypothesis and try to prove it wrong.
+              </div>
+            </div>
+
+            <h3>Versioning the API</h3>
+
+            <p>
+              When an API has to change in a backward-incompatible way, the gateway is the natural place for two
+              versions to coexist. Three common approaches:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Approach</th>
+                  <th>Example</th>
+                  <th>Gains</th>
+                  <th>Costs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>In the path</strong></td>
+                  <td><code>/v1/orders</code>, <code>/v2/orders</code></td>
+                  <td>Visible right in the log and the URL; the gateway routes with the mechanism it already has</td>
+                  <td>Version bleeds into the resource; cache and bookmarks get split in two</td>
+                </tr>
+                <tr>
+                  <td><strong>Via header</strong></td>
+                  <td><code>Accept: application/vnd.api.v2+json</code></td>
+                  <td>URL keeps its meaning as a "resource"; matches the spirit of HTTP</td>
+                  <td>Invisible in the URL, so harder to debug; easy to forget when calling with curl</td>
+                </tr>
+                <tr>
+                  <td><strong>Via query string</strong></td>
+                  <td><code>/orders?version=2</code></td>
+                  <td>Easy to try quickly</td>
+                  <td>Easy to miss; many cache layers ignore the query string when building a key</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              In practice, path-based versioning wins in most systems for a very practical reason: when there's an
+              incident at 2 a.m., you can read the version right off the log line without opening anything else.
+            </p>
+
+            <p>
+              The gateway is also the place to <strong>canary</strong>: push a small slice of traffic to the new
+              version before cutting over completely. nginx does this with <code>split_clients</code>, and the
+              important part is that it hashes on a stable key so one client always sees the same version:
+            </p>
+
+            {{CODE:canary_5_percent.conf}}
+
+            <p>
+              5% here is a cautious starting point, not a fixed number — ramp it up (5% → 25% → 100%) as long as
+              <code>api_v2</code>'s separately measured error rate and latency stay healthy, and keep an immediate
+              rollback to 0% ready in case they don't.
+            </p>
+
+            <!-- ================= 4.4 ================= -->
+            <h2>4.4 Cross-cutting concerns: what belongs on the gateway</h2>
+
+            <p>
+              There's a group of jobs <em>every</em> service needs: authentication, rate limiting, logging,
+              compression, CORS. If every service implements its own, you get N implementations and N chances for
+              one of them to get it wrong. The gateway is the place to do it once. But not everything belongs up
+              there.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Where</th>
+                  <th>Why</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Terminate TLS, compress, log access</td>
+                  <td>Gateway</td>
+                  <td>Purely technical, needs no business knowledge, identical for every service</td>
+                </tr>
+                <tr>
+                  <td>Check that a token is still valid (signature, expiry)</td>
+                  <td>Gateway</td>
+                  <td>Blocks junk requests before they consume service resources</td>
+                </tr>
+                <tr>
+                  <td>Does this person have permission to edit order #42</td>
+                  <td><strong>Service</strong></td>
+                  <td>
+                    Needs business data only the service has. A gateway that knows this has already started to
+                    bloat.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Rate-limit by IP or by API key</td>
+                  <td>Gateway</td>
+                  <td>
+                    Needs one shared counter; counting separately per replica means the real limit is N times the
+                    declared one
+                  </td>
+                </tr>
+                <tr>
+                  <td>Enforce a business quota (plan tier, account balance)</td>
+                  <td><strong>Service</strong></td>
+                  <td>This is a business rule, it changes with the product, not with the infrastructure</td>
+                </tr>
+                <tr>
+                  <td>Validate input</td>
+                  <td>Both</td>
+                  <td>
+                    The gateway does coarse checks (size, content type); the service checks meaning, and must never
+                    assume the gateway already checked
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The boundary comes down to one question: <strong>does this task need to know the business?</strong> If
+              not, gateway. If it does, service. Applying that question to every task is the only method I know of to
+              keep the gateway from slowly turning into a place where logic accumulates.
+            </p>
+
+            <h3>Aggregating multiple services: latency equals the slowest branch</h3>
+
+            <p>
+              A single screen often needs data from several services. If the client calls each one itself, it eats
+              the full network latency of doing so — expensive on a mobile network. Having the gateway (or a BFF
+              service — backend for frontend) make those calls internally and return them once is a common design.
+              The crucial part is calling them <strong>in parallel</strong>:
+            </p>
+
+            {{SVG:3}}
+
+            <p>
+              The lab's <code>/aggregate</code> endpoint really does call three branches over HTTP, so the socket
+              and event-loop cost is real, not a fake <code>setTimeout</code>:
+            </p>
+
+            {{CODE:measure_fan_out.sh}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: aggregation turns the gateway into a monolith</div>
+              <div class="callout__content">
+                To aggregate, the gateway has to know which services to call, what shape the data comes back in, and
+                how to merge it — which means it starts holding business logic. A few months in, changing any one
+                service means changing the gateway too, and the gateway becomes a component every team has to edit
+                but no team owns.<br /><br />
+                The common escape route: <strong>split the BFF out into its own service</strong> that sits behind the
+                gateway. The gateway keeps the purely technical part (TLS, routing, rate limiting, token
+                verification); the BFF keeps the business-aware part and is owned by the frontend team. Two things
+                that change at different rhythms belong in two different places.
+              </div>
+            </div>
+
+            <p>
+              nginx comes with rate limiting built in — but you need to understand exactly how much bursting it
+              allows, because that's where surprises usually happen:
+            </p>
+
+            {{CODE:rate_limit.conf}}
+
+            <!-- ================= 4.5 ================= -->
+            <h2>4.5 The gateway as a single point of failure — and a timeout budget</h2>
+
+            <p>
+              Everything in this lesson funnels into one place, and that place sits on the path of 100% of the
+              traffic. If the gateway dies, the whole system dies, even though every service behind it is perfectly
+              healthy. The paradox: the component added to increase reliability is the most dangerous one.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Risk</th>
+                  <th>Mitigation</th>
+                  <th>What you still have to accept</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>The gateway process dies</td>
+                  <td>Multiple gateway instances behind a floating IP (keepalived) or multiple DNS records</td>
+                  <td>That failover mechanism itself now needs to be trusted; DNS is cached so the switch isn't instant</td>
+                </tr>
+                <tr>
+                  <td>The whole region hosting the gateway goes down</td>
+                  <td>
+                    Gateways in multiple regions, routed with anycast (one IP address that resolves to whichever
+                    physical location is nearest) or region-aware DNS
+                  </td>
+                  <td>Cost and complexity rise significantly; the data also needs to be available in multiple regions</td>
+                </tr>
+                <tr>
+                  <td>A bad config takes down everything</td>
+                  <td><code>nginx -t</code> before reloading; roll out one instance at a time, with something to roll back to</td>
+                  <td>Still needs a human to check; see the pitfall right below</td>
+                </tr>
+                <tr>
+                  <td>The gateway becomes the bottleneck</td>
+                  <td>Measure the gateway's CPU separately; keep its jobs purely technical; scale it out</td>
+                  <td>Rate limiting needs a shared counter, so you need a shared store (Redis) — one more dependency</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ A pitfall that actually happened while building Lesson 3</div>
+              <div class="callout__content">
+                Editing the config file with <code>sed -i</code> on a bind-mounted volume, then calling
+                <code>nginx -s reload</code>, nginx reported
+                <code>pread() returned only 2830 bytes instead of 2832</code>: it read the file while the file was
+                still being written. The reload <em>failed</em> but nginx kept running fine on the old config, so
+                from the outside nothing looked wrong — and a whole batch of measurements afterward turned out
+                meaningless and had to be thrown away.<br /><br />
+                Two rules that follow: (1) write config atomically — write to a temp file, then <code>mv</code> it
+                over, because <code>mv</code> on the same filesystem is a single operation; (2)
+                <strong>always confirm the config actually in effect</strong> after a reload, don't just trust that
+                it succeeded. A reload that fails silently is worse than one that crashes, because it tells you
+                nothing.
+              </div>
+            </div>
+
+            <h3>Timeout budget</h3>
+
+            <p>
+              Every hop along the path has its own timeout, and they must <strong>shrink as you go further in</strong>.
+              If an inner hop waits longer than an outer one, the excess wait is work that's guaranteed to be thrown
+              away: the client is long gone, but the service is still holding a connection and CPU to compute a
+              result nobody will receive.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Hop</th>
+                  <th>Example budget</th>
+                  <th>Why smaller than the outer hop</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Client (mobile app)</td>
+                  <td>10 s</td>
+                  <td>The ceiling: past this the user has already left</td>
+                </tr>
+                <tr>
+                  <td>Gateway → service</td>
+                  <td>8 s</td>
+                  <td>
+                    Leaves 2 s so the gateway can still return a decent error instead of letting the client time out
+                    on its own
+                  </td>
+                </tr>
+                <tr>
+                  <td>Service → database</td>
+                  <td>3 s</td>
+                  <td>Leaves room for a retry and for other branches called within the same request</td>
+                </tr>
+                <tr>
+                  <td>Each branch during aggregation</td>
+                  <td>2 s</td>
+                  <td>One slow branch doesn't get to drag the whole screen down with it</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Retries multiply across tiers</div>
+              <div class="callout__content">
+                Lesson 3 used <code>proxy_next_upstream</code> so the gateway automatically retries another replica —
+                very effective, and exactly why that measurement showed zero 502 errors. But if the client also
+                retries 3 times, and the gateway tries 3 replicas, and the service also retries the database 3
+                times, one small incident produces <strong>27x the work</strong> at exactly the moment the system is
+                weakest. This is how a small incident becomes a total one.<br /><br />
+                The rule: <strong>retry at exactly one tier</strong>, with a total retry cap and increasing backoff
+                plus random jitter. If you're not sure which tier is currently retrying, your system has a
+                multiplier you haven't seen yet.
+              </div>
+            </div>
+
+            <h3>Summary</h3>
+
+            <p>
+              Reverse proxy, load balancer and API gateway are three levels of responsibility at the same position,
+              and each level adds power by adding state that has to be managed. TLS termination is cheap with
+              persistent connections and many times more expensive without them — the cost lives in every
+              connection, not every request. X-Forwarded-For has to be read from the right, or better yet, let the
+              gateway overwrite it. Whatever doesn't need business knowledge belongs on the gateway; whatever does
+              belongs on the service. And everything funneling through the gateway means the timeout budget and
+              retry policy have to be designed on purpose, not left at their defaults.
+            </p>
+
+            <p>
+              The static-file measurement in this lesson leaves a lesson bigger than architecture itself: a number
+              that contradicts your prediction is not a conclusion, it's a question. Had I stopped at the first
+              measurement, this lesson would have stated "nginx serves static files slower than Node" — wrong, but
+              backed by numbers, so it would have sounded thoroughly convincing.
+            </p>
+
+            <p>
+              <strong>Lesson 5</strong> moves into the layer right after the gateway: caching. The lab already has
+              Redis waiting in the <code>cache</code> profile, and the central question is the one every caching
+              layer must answer — how stale can data get before it's unusable, and whose job is it to invalidate it.
+            </p>
+
+            <!-- References Block -->
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://nginx.org/en/docs/http/ngx_http_proxy_module.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    nginx — Module ngx_http_proxy (proxy_pass, proxy_set_header, TLS termination)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    MDN — the X-Forwarded-For header (syntax, and why you can't trust the left side)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://nginx.org/en/docs/http/ngx_http_core_module.html#open_file_cache"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    nginx — Module ngx_http_core, the open_file_cache directive (the directive that closed the 2.6x
+                    gap in this lesson)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://nginx.org/en/docs/http/ngx_http_limit_req_module.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    nginx — Module ngx_http_limit_req (leaky-bucket rate limiting, burst, nodelay)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://nginx.org/en/docs/http/ngx_http_split_clients_module.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    nginx — Module ngx_http_split_clients (percentage-based canary mechanism)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <!-- Download Block -->
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                Two nginx config files for the gateway in the lab: the server block for both the HTTP/HTTPS ports,
+                and the shared <code>location</code> blocks (TLS termination, X-Forwarded-For, static files with
+                <code>open_file_cache</code>):
+              </p>
+              <a
+                href="../sysdesign-lab/nginx/gw.conf"
+                download
+                class="btn-facebook"
+                style="background: #38bdf8; text-decoration: none; color: #04263a; margin-right: 8px"
+              >
+                Download gw.conf
+              </a>
+              <a
+                href="../sysdesign-lab/nginx/gw-routes.conf"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download gw-routes.conf
+              </a>
+            </div>
