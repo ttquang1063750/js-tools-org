@@ -1,0 +1,311 @@
+            <p class="article-lead">
+              So far we have programmed AI systems in a question-in, answer-out style — the LLM receives a static
+              prompt and immediately produces its final answer. But when a question requires solving a multi-part
+              problem that needs both calculation and live data lookup, a bare LLM is stuck.
+            </p>
+
+            <p>
+              The next step in AI applications is the <strong>AI agent</strong>. Instead of answering immediately, an
+              agent uses the LLM as a planning "brain": it breaks a large task into steps, chooses and fires external
+              programmed tools, reads the results back, adjusts, and repeats until the goal is met. This lesson
+              dissects the <strong>ReAct (Reasoning + Acting)</strong> framework, how to design tool use, and building
+              an AI agent that solves arithmetic and looks up information by hand, with no heavyweight framework.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Software:</strong> Ollama with a chat model (<code>ollama pull qwen2.5:7b</code>). No embedding
+                model needed — this lesson retrieves no documents. <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 12 for the four-step tool call cycle — ReAct is that same
+                cycle <em>repeated</em>, with the model deciding when to stop. Lesson 11 for the role-tagged
+                <code>messages</code> array, and particularly its "flatten the history into one string" pitfall:
+                section 17.4 shows that the first version of this very project made exactly that mistake.
+              </div>
+            </div>
+
+            <h2>17.1 What is an AI agent, and how does it differ from a bare LLM?</h2>
+            <p>
+              A pure LLM is like an isolated brain: linguistically very capable, but with no limbs to interact with the
+              world around it, and no way to reflect and correct itself mid-reasoning.
+            </p>
+            <p>
+              An <strong>AI agent</strong> is a software structure wrapped around the LLM, giving it three core
+              components:
+            </p>
+            <ul>
+              <li>
+                <strong>Planning:</strong> the ability to break a complex goal into a sequence of logical action steps.
+              </li>
+              <li>
+                <strong>Memory:</strong> storing short-term reasoning history and long-term information to keep context
+                consistent.
+              </li>
+              <li>
+                <strong>Tools:</strong> Python functions, web APIs or databases that connect the LLM to the real world
+                (a calculator, a search engine, a weather API).
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: reaching for an agent on a static task</div>
+              <div class="callout__content">
+                Agents carry very high cost and latency. One reasoning loop can consume 3 to 10 consecutive LLM API
+                calls. If you only need to classify an email or summarise a short passage, use a bare LLM or a plain
+                structured-output call instead of building an agent. Only use an agent when the flow is genuinely
+                non-deterministic and each step's result depends directly on what the previous step actually returned.
+              </div>
+            </div>
+
+            <h2>17.2 The ReAct loop (Reasoning + Acting)</h2>
+            <p>
+              The <strong>ReAct</strong> framework is a prompting method that drives the LLM through a repeating
+              four-step cycle:
+            </p>
+            <div class="callout callout--note">
+              <div class="callout__title">🔄 The ReAct cycle:</div>
+              <div class="callout__content">
+                <ol style="line-height: 1.6; padding-left: 20px">
+                  <li>
+                    <strong>1. Thought:</strong> the LLM analyses the current state of the task and answers itself:
+                    <em>"What do I need to do next? Do I need to call a tool?"</em>
+                  </li>
+                  <li>
+                    <strong>2. Action:</strong> the LLM emits a tool call in the prescribed format, for example
+                    <code>Action: calculate[2 + 2]</code>.
+                  </li>
+                  <li>
+                    <strong>3. Observation:</strong> the Python system catches that instruction, runs the local
+                    function and returns the raw result for the LLM to read as: <code>Observation: 4</code>.
+                  </li>
+                  <li>
+                    <strong>4. Repeat:</strong> the LLM reads the observation, thinks again, and decides to call
+                    another tool or produce the final answer (<code>Final Answer: ...</code>).
+                  </li>
+                </ol>
+              </div>
+            </div>
+
+            <p>
+              ReAct's greatest strength is <strong>self-correction</strong>. If a tool returns an error (a division by
+              zero, a failed web API), the <code>Observation</code> containing that error goes back into the context.
+              The LLM reads it in the next <code>Thought</code> and changes the argument it passes or switches to a
+              fallback tool.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Pitfall: infinite loops &amp; max iterations</div>
+              <div class="callout__content">
+                When the LLM meets a question that is too hard, or a tool keeps returning unexpected errors, the model
+                can get "stuck thinking" and repeatedly call the same tool with the same wrong argument. That burns API
+                budget and hangs the application. The fix: always install a maximum iteration counter
+                (<strong>max iterations</strong>, typically 5). If the agent has not produced a
+                <code>Final Answer</code> by then, the system must break out and return a warning.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Security pitfall: character filtering is <em>not</em> a substitute for removing <code>eval()</code>
+              </div>
+              <div class="callout__content">
+                The first version of this project used <code>eval()</code> to compute expressions, defended by a single
+                character filter: <code>re.sub(r'[^0-9+\-*/().\s]', '', expression)</code>. Against the classic attack
+                string <code>__import__('os').system('ls')</code> the filter works — it reduces the string to
+                <code>'().()'</code>, a syntax error. But the filter keeps the <code>*</code> character, and
+                <strong>two <code>*</code> in a row is exponentiation</strong>. The string <code>9**9**9</code> passes
+                through the filter <em>untouched</em> — and <code>eval()</code> will sit there computing a number of
+                roughly 370 million digits, hanging the process indefinitely. This is not hypothetical: the program
+                below prints the post-filter string so you can see it. <br /><br />
+                The general lesson: <strong>a character blacklist always loses to a whitelist</strong>. The new version
+                drops <code>eval()</code> entirely, parsing the expression into a syntax tree
+                (<code>ast.parse</code>) and walking only the four permitted operations. Anything not on the allow-list
+                cannot run, including the attacks you never thought of.
+              </div>
+            </div>
+
+            <h2>17.3 Tool use: describing your tools to the LLM</h2>
+            <p>
+              How does the LLM know what tools exist? We describe them in detail in the system prompt. That description
+              must contain:
+            </p>
+            <ul>
+              <li>
+                <strong>Tool name:</strong> a unique identifier the LLM must reproduce exactly (for example
+                <code>calculate</code>).
+              </li>
+              <li>
+                <strong>Description:</strong> what the tool does and when it should be used.
+              </li>
+              <li><strong>Argument schema:</strong> the input types it expects.</li>
+            </ul>
+
+            <h2>17.4 Lesson 17 project: a ReAct agent written from scratch</h2>
+            <p>
+              The project writes a <strong>standalone ReAct agent</strong> with no LangChain and no framework at all —
+              precisely so you can see that the loop is really just a <code>for</code> loop around an API call, plus a
+              regular expression that catches tool calls.
+            </p>
+            <p>
+              The agent has two tools: <code>get_stock_price</code> (fixed data, so reruns produce the same result) and
+              <code>calculate</code>. The test question deliberately needs <em>both</em>, in order: it has to look up
+              the price before it can multiply by the quantity.
+            </p>
+
+            {{CODE:react_agent.py}}
+
+            <h3>An agent's tools must survive hostile input</h3>
+            <p>
+              Before running the loop, the program puts four expressions through both the old character filter and the
+              new evaluator:
+            </p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              The <code>&lt;-- ** SURVIVES</code> line is the whole argument of the pitfall in section 17.2. The filter
+              stops the attack its author <em>thought of</em> (<code>__import__</code>) and lets through the attack its
+              author <em>did not</em>. That is the nature of every blacklist.
+            </p>
+
+            <h3>The loop, running for real</h3>
+            <p>Given a question that needs two tools in sequence, the agent works through all three steps itself:</p>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              Read step 2 carefully: the model does <em>not</em> multiply 185.50 by 12 in its head. It writes
+              <code>Action: calculate[185.50 * 12]</code> and waits. That is the crux of ReAct — language models are
+              unreliable at arithmetic (Lesson 11), so the right move is to let it
+              <em>decide what to compute</em> and hand the computation to Python.
+            </p>
+
+            <h3>Message roles: where the first version of this project went wrong</h3>
+            <p>
+              The first version accumulated the entire reasoning history into <em>one Python string</em> and sent it up
+              as a single <code>user</code> message. Every sentence the model had produced came back to it as though
+              the user had typed it — exactly the pitfall Lesson 11 describes. The new version records the real roles:
+            </p>
+
+            {{CODE:Terminal#3}}
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔬 Being honest about this comparison</div>
+              <div class="callout__content">
+                The program runs <em>both</em> versions on the same question so you can compare them yourself. On the
+                authoring machine, with a 14B model and a task only three steps long, <strong>both produce the correct
+                answer</strong> — I could not construct a failure to show you, and I will not invent one.
+                <br /><br />
+                The reason to get the roles right lies elsewhere: a properly role-tagged <code>messages</code> array is
+                what you can plug straight into the API's native function calling (Lesson 12), what you can trim turn
+                by turn when you exceed the token budget (Lesson 11), and what you can persist as an audit log. A flat
+                string does none of those three. Getting it right costs nothing; get it right from the start.
+              </div>
+            </div>
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>
+                Start Ollama, pull a chat model (<code>ollama pull qwen2.5:7b</code>), then run
+                <code>python3 react_agent.py</code>. The calculator check runs even without Ollama.
+              </li>
+              <li>
+                The reasoning chain on your machine will differ in wording (different models phrase things
+                differently), but the <em>shape</em> must match: look up the price first, calculate second, then Final
+                Answer.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    Remove <code>stop=STOP_SEQUENCES</code> from <code>run_react_agent</code>. With a strong model
+                    nothing changes — but a smaller model may write its own <code>Observation:</code> line and invent
+                    the tool result. A stop sequence makes that <em>impossible</em> rather than merely
+                    <em>unlikely</em>, in the same spirit as the logit mask in Lesson 12.
+                  </li>
+                  <li>
+                    Change <code>max_iterations=5</code> to <code>1</code>. The agent is cut off mid-task and prints
+                    "Gave up" — the safety net from the infinite-loop pitfall in section 17.2, now visibly firing.
+                  </li>
+                  <li>
+                    Ask a question needing a tool the agent does not have, such as "what is the weather in Hanoi
+                    today?". Watch how the model handles it: does it invent a non-existent tool (and get back
+                    <code>Error: no tool named ...</code>), or does it admit it cannot?
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> writing a complete ReAct loop in plain Python — no LangChain — and
+                    watching the agent chain two tools in the right dependency order.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> recording agent history in a properly role-tagged
+                    <code>messages</code> array instead of the flattened string Lesson 11 warns against.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> seeing why character filtering cannot replace a whitelist:
+                    <code>9**9**9</code> passes the filter untouched and hangs <code>eval()</code>. The new version
+                    uses <code>ast.parse</code> and permits exactly four operations.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> knowing an agent's three mandatory safety nets: an iteration limit, a
+                    stop sequence, and tools that do not trust the model's output.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> the <code>for</code> loop above is enough for a linear agent.
+              But once the workflow has branches, loops back on itself, and points where a human must approve before it
+              continues, a <code>for</code> loop stops being enough. Lesson 18 models the agent as a state graph with
+              LangGraph.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>react_agent.py</code> — the complete ReAct loop, the AST-based calculator and the
+                message-role comparison (run <code>python3 react_agent.py</code>, needs Ollama with a chat model):
+              </p>
+              <a
+                href="../react_agent.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download react_agent.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://arxiv.org/abs/2210.03629" target="_blank" rel="noopener noreferrer"
+                    >ReAct: Synergizing Reasoning and Acting in Language Models — the paper that introduced the loop
+                    (Yao et al., 2022)</a
+                  >
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/2308.11432" target="_blank" rel="noopener noreferrer"
+                    >A Survey on Large Language Model based Autonomous Agents — a broad survey of agent architectures
+                    (Wang et al., 2023)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://platform.openai.com/docs/guides/function-calling"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >OpenAI Function Calling — the native tool-calling mechanism this lesson reimplements by hand</a
+                  >
+                </li>
+              </ul>
+            </section>
