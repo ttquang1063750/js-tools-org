@@ -1,8 +1,28 @@
+# sentiment_lstm.py
+# Lesson 9: Recurrent networks (RNN) and the rise of attention
+# Practical AI Engineer series
+#
+# Run it with:  python sentiment_lstm.py
+# Requires:     pip install torch
+#
+# READ THIS BEFORE BELIEVING THE OUTPUT.
+# Six training sentences is far too few to learn sentiment. What the model can do
+# with six sentences is memorise which specific WORDS go with which label — and
+# that is exactly what it does. The script therefore ends with a test on entirely
+# unseen words, where it scores about 50/50: a coin flip. That contrast is the
+# point of the project, not an accident.
+#
+# The Vietnamese review text stays Vietnamese: it is the DATA being classified,
+# and it is what makes the word-memorisation effect visible.
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-# 1. Tạo tập dữ liệu mẫu đánh giá dịch vụ bằng tiếng Việt
+# Seed everything, so the numbers printed in the lesson can actually be compared.
+torch.manual_seed(42)
+
+# 1. A tiny sample dataset of Vietnamese service reviews.
 dataset = [
     ("dịch vụ xuất sắc nhân viên thân thiện", 1), # 1: Tích cực
     ("đồ ăn ngon phục vụ rất nhanh", 1),
@@ -12,17 +32,20 @@ dataset = [
     ("thái độ nhân viên rất lồi lõm không mua lại", 0)
 ]
 
-# 2. Xây dựng Tokenizer thô cấp từ
+# 2. A crude word-level tokenizer.
 words = set()
 for text, _ in dataset:
     words.update(text.split())
 
-vocab = {word: idx + 2 for idx, word in enumerate(words)} # ID 0: Padding, ID 1: OOV
+# sorted() matters: a Python set iterates in an order that changes between runs
+# (string hashing is randomised), which would give the words different IDs every
+# run and make the output impossible to reproduce.
+vocab = {word: idx + 2 for idx, word in enumerate(sorted(words))}  # 0: padding, 1: OOV
 vocab["[PAD]"] = 0
 vocab["[UNK]"] = 1
 inverse_vocab = {v: k for k, v in vocab.items()}
 
-# Hàm chuyển văn bản thành chuỗi số nguyên có độ dài cố định (padding)
+# Turn text into a fixed-length sequence of integers, padding the short ones.
 def text_to_sequence(text, max_len=8):
     tokens = text.split()
     seq = []
@@ -35,23 +58,23 @@ def text_to_sequence(text, max_len=8):
         seq = seq[:max_len]
     return seq
 
-# Chuẩn bị Tensor dữ liệu đầu vào
+# Build the input tensors.
 x_data = torch.tensor([text_to_sequence(text) for text, _ in dataset], dtype=torch.long)
 y_data = torch.tensor([label for _, label in dataset], dtype=torch.float32).unsqueeze(1)
 
-# 3. Định nghĩa kiến trúc mạng SentimentLSTM
+# 3. The SentimentLSTM architecture.
 class SentimentLSTM(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_dim):
         super(SentimentLSTM, self).__init__()
         
-        # Lớp Embedding tra cứu vector nhúng
+        # padding_idx=0 tells the layer to keep the padding vector at zero and never train it.
         self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
         
-        # Lớp LSTM tuần hoàn
-        # batch_first=True giúp dữ liệu có cấu trúc đầu vào: (Batch, Sequence Length, Features)
+        # The recurrent layer.
+        # batch_first=True gives the input shape (batch, sequence length, features).
         self.lstm = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)
         
-        # Lớp phân loại đầu ra sigmoid nhị phân
+        # Binary classifier head; Sigmoid so BCELoss can read it.
         self.classifier = nn.Linear(hidden_dim, 1)
         self.sigmoid = nn.Sigmoid()
         
@@ -59,12 +82,13 @@ class SentimentLSTM(nn.Module):
         # x shape: (Batch, Sequence Length)
         embedded = self.embedding(x) # shape: (Batch, Sequence Length, Embedding Dim)
         
-        # Trích xuất thông tin tuần hoàn qua LSTM
-        # out: chứa các hidden state của mọi bước thời gian
-        # (hn, cn): chứa hidden state và cell state của bước thời gian cuối cùng
+        # Run the sequence through the LSTM.
+        # out: the hidden state at EVERY time step
+        # (hn, cn): the hidden state and cell state at the LAST time step only
         out, (hn, cn) = self.lstm(embedded)
         
-        # Lấy hidden state cuối cùng của LSTM đại diện cho toàn bộ ngữ cảnh câu văn
+        # Take the final hidden state as a summary of the whole sentence. This single
+        # vector is the bottleneck that attention (section 9.3) exists to remove.
         last_hidden = hn[-1] # shape: (Batch, Hidden Dim)
         
         logits = self.classifier(last_hidden)
@@ -76,7 +100,7 @@ if __name__ == "__main__":
     print(f"Kích thước từ điển (Vocabulary Size): {len(vocab)}")
     print(f"Kích thước Tensor đầu vào: {x_data.shape}\n")
     
-    # Khởi tạo mô hình
+    # Build the model.
     model = SentimentLSTM(vocab_size=len(vocab), embedding_dim=16, hidden_dim=8)
     
     criterion = nn.BCELoss() # Binary Cross Entropy Loss cho phân loại nhị phân
@@ -95,26 +119,43 @@ if __name__ == "__main__":
         optimizer.step()
         
         if epoch % 10 == 0:
-            # Tính độ chính xác nhị phân đơn giản
+            # Training accuracy only — there is no held-out set here, by design.
             binary_predictions = (predictions >= 0.5).float()
             accuracy = (binary_predictions == y_data).sum().item() / len(y_data) * 100
             print(f"Epoch {epoch:02d}/{epochs} | Loss: {loss.item():.4f} | Accuracy: {accuracy:.1f}%")
             
-    print("\n=== Đang tiến hành suy luận thực tế ===")
+    print("\n=== Inference on words the model HAS seen ===")
     model.eval()
-    with torch.no_grad():
-        test_comment = "đồ ăn ngon phục vụ nhanh tuyệt vời"
-        seq_test = torch.tensor([text_to_sequence(test_comment)], dtype=torch.long)
-        pred = model(seq_test).item()
-        
-        sentiment = "Tích cực (Positive)" if pred >= 0.5 else "Tiêu cực (Negative)"
-        print(f"Câu đánh giá: '{test_comment}'")
-        print(f"Xác suất tích cực: {pred*100:.2f}% -> Dự đoán cảm xúc: {sentiment}")
-        
-        test_comment_bad = "phục vụ quá tệ chất lượng tồi"
-        seq_test_bad = torch.tensor([text_to_sequence(test_comment_bad)], dtype=torch.long)
-        pred_bad = model(seq_test_bad).item()
-        
-        sentiment_bad = "Tích cực (Positive)" if pred_bad >= 0.5 else "Tiêu cực (Negative)"
-        print(f"Câu đánh giá: '{test_comment_bad}'")
-        print(f"Xác suất tích cực: {pred_bad*100:.2f}% -> Dự đoán cảm xúc: {sentiment_bad}")
+
+    def predict(comment):
+        seq = torch.tensor([text_to_sequence(comment)], dtype=torch.long)
+        with torch.no_grad():
+            p = model(seq).item()
+        unknown = [w for w in comment.split() if w not in vocab]
+        label = "positive" if p >= 0.5 else "negative"
+        print(f"  \"{comment}\"")
+        print(f"    {p * 100:6.2f}% positive -> {label:8} | {len(unknown)}/{len(comment.split())} words unknown")
+        return p
+
+    # Every word in these two sentences already appears in the training data.
+    predict("đồ ăn ngon phục vụ nhanh tuyệt vời")
+    predict("phục vụ quá tệ chất lượng tồi")
+
+    print("\n=== The honest test: words the model has NEVER seen ===")
+    # Same sentiment, completely different vocabulary. Every token becomes [UNK],
+    # so the model has nothing memorised to fall back on.
+    p_good = predict("bánh mì thơm giòn lịch sự")
+    p_bad = predict("nhà hàng bẩn thỉu hôi hám")
+
+    print("\n=== What that means ===")
+    good_label = "positive" if p_good >= 0.5 else "negative"
+    bad_label = "positive" if p_bad >= 0.5 else "negative"
+    if good_label == bad_label:
+        print(f"  Both sentences came out {good_label}, even though one praises and one")
+        print("  complains. Every one of their words is [UNK], so the model has nothing")
+        print("  memorised to go on and simply collapses to one side.")
+    print("  With 6 training sentences the model memorised which WORDS carry which")
+    print("  label — it learned nothing about sentiment itself. Swap the words and the")
+    print("  knowledge is gone. That is the real lesson of this project.")
+    print("  Real sentiment analysis needs thousands of examples, or embeddings")
+    print("  pretrained on a large corpus. Lesson 14 uses the pretrained route.")
