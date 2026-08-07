@@ -1,0 +1,375 @@
+            <p class="article-lead">
+              Depending entirely on cloud APIs (OpenAI, Anthropic) carries real risks for enterprise applications:
+              leaking sensitive internal data, costs that climb with every input token, and an outage whenever the
+              internet connection drops.
+            </p>
+
+            <p>
+              The answer is <strong>local AI</strong> — running open-weight large language models directly on your own
+              machine through <strong>Ollama</strong>. This is also the first lesson in the series where the program
+              talks to a <em>real LLM server</em> rather than the mocks of Lessons 11 and 12. We will stand that server
+              up, measure how much memory the model occupies and how many tokens per second it generates, then write a
+              streaming chat client that works fully offline.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Software:</strong> install Ollama from
+                <a href="https://ollama.com/download">ollama.com/download</a> (macOS, Windows and Linux builds exist).
+                Then pull at least one model — <code>ollama pull qwen2.5:7b</code> for example.
+                <strong>A note on size:</strong> a 7B model quantised to 4 bits is roughly 4-5 GB, so the first
+                download takes a few minutes and needs that much free disk. This is the only lesson in the series that
+                requires a large download.
+                <br /><br />
+                <strong>Python libraries:</strong> none — the project uses only <code>urllib</code> and
+                <code>json</code> from the standard library, deliberately avoiding <code>requests</code> and the
+                <code>ollama</code> package, so that you see the HTTP protocol itself instead of a library hiding it.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 11 for the role-tagged <code>messages</code> array — Ollama
+                uses exactly that format, so everything you learned there transfers unchanged.
+              </div>
+            </div>
+
+            <h2>13.1 Why run an LLM locally?</h2>
+            <p>
+              The explosion of high-quality open-weight models (Meta's Llama, Google's Gemma, Alibaba's Qwen, France's
+              Mistral) changed the game completely. A mid-range personal computer can now host a genuinely useful AI
+              assistant that answers to nobody.
+            </p>
+            <p>The advantages of going local:</p>
+            <ul>
+              <li>
+                <strong>Absolute data privacy:</strong> every conversation, internal document and piece of proprietary
+                source code stays in local memory. Not one byte reaches an outside server. For data like the customer
+                email of Lesson 12, this is not a convenience but a legal requirement.
+              </li>
+              <li>
+                <strong>No per-token bill:</strong> no monthly API invoice to worry about. You can run as much
+                inference as you like at zero marginal cost.
+              </li>
+              <li>
+                <strong>No network dependency:</strong> works in places with no internet, and on isolated internal
+                networks.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: "free" does not mean "unlimited"</div>
+              <div class="callout__content">
+                The marginal cost is zero, but the <em>throughput</em> certainly is not unlimited. Measured on the
+                machine this lesson was written on (a MacBook with Apple Silicon, a 7B model quantised to 4 bits):
+                <strong>36 to 48 tokens per second</strong> depending on answer length. Rounding to 40, generating a
+                million tokens needs about <strong>7 hours of continuous running</strong>, during which the GPU is
+                occupied, the machine runs hot and the battery drains fast. By comparison, a cloud API serves hundreds
+                of requests in parallel. Going local trades money for time and hardware; it is not a free lunch.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: expecting cloud-model reasoning from a local model</div>
+              <div class="callout__content">
+                A common mistake is expecting a small local model of 7 to 8 billion parameters, running on a laptop, to
+                reason as well as cloud models hundreds of times larger. Small local models are strong at information
+                extraction, summarising and classification — exactly the tasks from Lesson 12 — but show clear
+                weaknesses on multi-step logic or programming problems.
+              </div>
+            </div>
+
+            <h2>13.2 Meet Ollama &amp; managing models</h2>
+            <p>
+              Setting up a local AI model used to be genuinely painful: install CUDA graphics drivers, install PyTorch,
+              download tens of gigabytes of weight files and compile C++ code.
+            </p>
+            <p>
+              <strong>Ollama</strong> packages the best inference libraries (with <code>llama.cpp</code> at its core)
+              into a single lightweight background service, and detects your hardware automatically to enable
+              acceleration:
+            </p>
+            <ul>
+              <li>
+                <strong>On macOS:</strong> it uses <strong>Metal</strong>, Apple's low-level graphics API, to drive the
+                integrated GPU of Apple Silicon chips (M1 and later).
+              </li>
+              <li>
+                <strong>On Windows/Linux:</strong> it uses <strong>CUDA</strong> for NVIDIA cards, or ROCm for AMD.
+              </li>
+              <li>
+                <strong>With no suitable GPU:</strong> it still runs on the CPU, just much more slowly — section 13.3
+                shows how much more slowly, and why.
+              </li>
+            </ul>
+
+            <h3>The essential Ollama CLI commands:</h3>
+            {{CODE:Terminal}}
+
+            <p>
+              The two commands most often overlooked are <code>ollama ps</code> and <code>ollama stop</code>, and they
+              are exactly the tools for understanding the next section: where the model lives, how much it takes, and
+              which processor is doing the work.
+            </p>
+
+            <h2>13.3 Memory and speed: the numbers that decide everything</h2>
+            <p>
+              Every local-LLM guide says "you need enough VRAM", but few say how much <em>enough</em> is, or why that
+              number is larger than the file on disk. Let us start from the theory and then check it against a real
+              measurement.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">💡 What is weight quantisation?</div>
+              <div class="callout__content">
+                By default a model's neural weights are stored as 16-bit or 32-bit floating point numbers (FP16/FP32),
+                which demands enormous disk space and VRAM. <strong>Quantisation</strong> compresses the model by
+                squeezing those floats into 4-bit or 8-bit integers (INT4/INT8). This shrinks the model by a factor of
+                4 to 8 while losing only a small amount of quality, which is what makes consumer hardware viable. The
+                <code>Q4_K_M</code> label you see in <code>ollama list</code> is the name of one specific 4-bit
+                quantisation scheme.
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">📐 The size formula, and its error against reality</div>
+              <div class="callout__content">
+                The formula: size in bytes $\approx$ parameter count $\times$ bits per parameter $\div 8$. For the
+                7.6-billion-parameter model used in the project:
+                <ul>
+                  <li><strong>FP32 (32-bit):</strong> $\approx 30.40$ GB.</li>
+                  <li><strong>FP16 (16-bit):</strong> $\approx 15.20$ GB.</li>
+                  <li><strong>INT8 (8-bit):</strong> $\approx 7.60$ GB.</li>
+                  <li><strong>INT4 (4-bit):</strong> $\approx 3.80$ GB.</li>
+                </ul>
+                But the real file Ollama reports is <strong>4.68 GB</strong>, which is <strong>23%</strong> larger than
+                the theoretical figure. The gap comes from <code>Q4_K_M</code> not quantising everything uniformly: the
+                sensitive layers (particularly the embedding layer and parts of the attention layers) are kept at
+                higher precision than 4 bits to avoid degrading quality. The "M" in the name stands for "Medium" — the
+                compromise point between size and quality.
+              </div>
+            </div>
+
+            <p>
+              And here is the part that usually gets missed. The file size is <em>not</em> the amount of memory the
+              model occupies while running. Running <code>ollama ps</code> right after asking the model a question, on
+              the same machine:
+            </p>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              The file on disk is 4.68 GB, but running it takes <strong>6.6 GB</strong>. Almost 2 GB of that gap is the
+              <strong>KV cache</strong>: the buffer holding the Key and Value vectors of every token in the context
+              window — the same K and V you met in Lesson 10. The longer the window, the larger the buffer; here it is
+              configured for 32768 tokens, and that is why the rule of thumb always demands more free memory than the
+              file size.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ The line that decides your speed: the PROCESSOR column</div>
+              <div class="callout__content">
+                That <code>100% GPU</code> reading is the most important number in this lesson. If graphics memory
+                cannot hold the model plus its KV cache, Ollama is forced to run part of it on the CPU, and
+                <code>ollama ps</code> will show something like <code>60% GPU / 40% CPU</code>. When that happens speed
+                does not drop by 40% — it drops by an order of magnitude, because every generated token waits on the
+                CPU portion, whose memory bandwidth is many times lower.
+                <br /><br />
+                <strong>Rule of thumb for free memory:</strong>
+                <ul>
+                  <li>A 7B/8B model at 4-bit (a 4-5 GB file): allow at least <strong>8 GB</strong>.</li>
+                  <li>A 70B model at 4-bit (roughly a 40 GB file): allow at least <strong>48 GB</strong>.</li>
+                </ul>
+                If the machine feels unusually slow, run <code>ollama ps</code> before blaming the model — the
+                PROCESSOR column answers the question immediately.
+              </div>
+            </div>
+
+            <h2>13.4 Calling the Ollama API from your application</h2>
+            <p>
+              On startup, Ollama exposes a local REST API at <code>http://localhost:11434</code>. This is what makes it
+              useful to a developer: everything you wrote in Lessons 11 and 12 carries over almost unchanged — only the
+              URL differs, and the auth header disappears.
+            </p>
+            <p>The main chat endpoint is <code>/api/chat</code>, and the request body will look very familiar:</p>
+
+            {{CODE:request body}}
+
+            <p>
+              That is the same three-role <code>messages</code> array from Lesson 11. The difference is
+              <code>"stream": true</code>: rather than waiting for the model to finish the whole answer and returning
+              one JSON blob, Ollama sends back <strong>a sequence of independent JSON lines</strong>, each carrying a
+              freshly generated fragment. At roughly 40 tokens per second, a 200-token answer takes nearly 5 seconds —
+              streaming turns those 5 silent seconds into text appearing immediately.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 The first three stream lines and the last one, captured live from Ollama</div>
+              <div class="callout__content">
+                The project prints the first three lines of the stream (with the <code>model</code> and
+                <code>created_at</code> fields, which repeat on every line, removed for readability):
+                <pre><code class="language-json">{"message": {"role": "assistant", "content": "The"}, "done": false}
+{"message": {"role": "assistant", "content": " sky"}, "done": false}
+{"message": {"role": "assistant", "content": " appears"}, "done": false}</code></pre>
+                Concatenated in order: <code>"The"</code> → <code>"The sky"</code> → <code>"The sky appears"</code>.
+                The <code>for raw in response</code> loop reads each line, pulls out <code>content</code> and writes it
+                straight to the console with <code>sys.stdout.write</code> — never accumulating a string in memory, so
+                the text appears at exactly the pace the model produces it.
+                <br /><br />
+                The final line (<code>done: true</code>) has empty content but is
+                <strong>far from useless</strong> — it carries all the instrumentation:
+                <pre><code class="language-json">{"total_duration": 2067325583, "load_duration": 1502167333,
+ "prompt_eval_count": 43, "prompt_eval_duration": 203854000,
+ "eval_count": 13, "eval_duration": 358924000}</code></pre>
+                The units are nanoseconds. From these you get the real speed:
+                $13 \div (358924000 \div 10^9) \approx 36.2$ tokens per second. This is how you measure your own
+                machine instead of reading somebody else's benchmark table.
+              </div>
+            </div>
+
+            <h2>13.5 Lesson 13 project: an offline chat client that measures itself</h2>
+            <p>
+              The project is a Python script that talks directly to Ollama on your machine. It does four things: ask
+              the server which models exist, choose one that is actually installed, stream the answer to the screen,
+              and print the speed measured from the last line of the stream.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Why the script discovers the model instead of hardcoding a name</div>
+              <div class="callout__content">
+                The most common way a script like this fails is a hardcoded <code>"model": "llama3"</code>. If you
+                never pulled that exact name, the server returns <strong>HTTP 404</strong> with
+                <code>model 'llama3' not found</code> — Ollama is running perfectly, the model is simply missing. But
+                in Python <code>HTTPError</code> is a subclass of <code>URLError</code>, so an
+                <code>except urllib.error.URLError</code> block placed first swallows the 404 and prints "cannot reach
+                Ollama". The reader goes off to restart Ollama, which of course fixes nothing.
+                <br /><br />
+                So this script calls <code>/api/tags</code> first to get the real list of models, and catches
+                <code>HTTPError</code> <em>before</em> <code>URLError</code> so the two situations produce two
+                different messages.
+              </div>
+            </div>
+
+            {{CODE:local_chat.py}}
+
+            <p>Running it looks like this — a real result on the authoring machine, not a simulation:</p>
+
+            {{CODE:Terminal#3}}
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔢 Real numbers: why the first call is always slower</div>
+              <div class="callout__content">
+                Compare the two <code>loading the model took</code> lines: <strong>1.50 seconds</strong> the first
+                time, <strong>0.14 seconds</strong> the second — more than a tenfold difference. On the first call
+                Ollama has to load 4.68 GB of weights from disk into graphics memory; on the second the model is
+                already sitting there. This is why the first chat of the day feels like it hangs for a few seconds, and
+                why Ollama keeps a model resident for five minutes after last use rather than freeing it immediately.
+                To check it yourself: run <code>ollama stop &lt;model-name&gt;</code> and run the script again — the
+                1.50-second figure comes back.
+                <br /><br />
+                Note that unlike previous lessons, <strong>this lesson's output is not reproducible</strong>. This is a
+                real model doing real sampling, so the wording and the speed on your machine will differ — different
+                hardware, different model. What should match is the <em>shape</em>: three chunk lines, the counters in
+                the final line, and a first call slower than the second.
+              </div>
+            </div>
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>
+                Install Ollama, then pull a model: <code>ollama pull qwen2.5:7b</code> (about 4.7 GB). Confirm with
+                <code>ollama list</code>.
+              </li>
+              <li>
+                Run <code>python3 local_chat.py</code>. The script looks for a model from its <code>PREFERRED</code>
+                list; if none of them match, it takes the first model you have.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    Quit the Ollama application entirely and run it again. You get a "cannot reach Ollama" message —
+                    quite different from the 404 message at the bottom of the output above. Two different failures must
+                    say two different things.
+                  </li>
+                  <li>
+                    In <code>stream_chat</code>, swap the two <code>except</code> blocks so <code>URLError</code> comes
+                    first. The 404 is immediately misreported as a connection failure — precisely the trap described
+                    above, and now you see it rather than take it on trust.
+                  </li>
+                  <li>
+                    If you have a larger model (14B or more), move its name to the top of <code>PREFERRED</code>, run
+                    again and compare tokens/s. Then run <code>ollama ps</code> and look at the PROCESSOR column — if
+                    it is no longer <code>100% GPU</code>, you have just watched the boundary from section 13.3 in
+                    action.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> running a large language model fully offline on your own machine with
+                    Ollama, and calling it from Python using only the standard library.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> reading and handling a line-by-line JSON stream, including the final
+                    line that carries the instrumentation.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> measuring your own machine's real speed in tokens per second, and
+                    explaining why the first call is slower.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> telling file size from resident memory, and using <code>ollama ps</code>
+                    to see whether the model is on the GPU or has spilled onto the CPU.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> the model now runs on your machine and sends data nowhere —
+              exactly the condition for letting it read internal documents. But stuffing thousands of PDF pages into
+              the context window is impossible (Lesson 11 showed what tokens cost). Lesson 14 solves that with the RAG
+              architecture.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>local_chat.py</code> — model discovery, a streaming call to the local Ollama API,
+                and the speed measurement (run <code>python3 local_chat.py</code>):
+              </p>
+              <a
+                href="../local_chat.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download local_chat.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://ollama.com/" target="_blank" rel="noopener noreferrer"
+                    >Ollama Official Website — downloads and the official API documentation</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener noreferrer"
+                    >llama.cpp GitHub — the core C++ inference library that makes local models fast on consumer
+                    CPUs/GPUs (Georgi Gerganov)</a
+                  >
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/2305.14314" target="_blank" rel="noopener noreferrer"
+                    >QLoRA: Efficient Finetuning of Quantized LLMs — the paper establishing how well 4-bit quantised
+                    models hold up (Dettmers et al., 2023)</a
+                  >
+                </li>
+              </ul>
+            </section>
