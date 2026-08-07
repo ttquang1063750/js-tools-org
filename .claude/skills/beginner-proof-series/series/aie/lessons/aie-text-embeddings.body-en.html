@@ -1,0 +1,355 @@
+            <p class="article-lead">
+              <strong>How does a computer understand what a word means?</strong> A computer only processes numbers,
+              matrices and linear algebra — it cannot read letters or sentences directly.
+            </p>
+
+            <p>
+              This lesson walks through digitising text properly: breaking sentences into token codes (tokenization),
+              getting past the out-of-vocabulary trap, and on to representing meaning as vectors in a high-dimensional
+              space (word embeddings). We also cover the mathematics of cosine similarity and build a synonym-finding
+              application, solving semantic similarity with PyTorch.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Libraries:</strong> <code>pip install torch</code>. The project at the end downloads nothing and
+                needs no network.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 2 — the <em>dot product</em> and <em>cosine similarity</em>.
+                Section 8.3 reuses that exact formula, only comparing 300-dimensional vectors instead of 3-dimensional
+                ones. If "a vector is an arrow in space" still feels unfamiliar, reread section 2.1 first.
+              </div>
+            </div>
+
+            <h2>8.1 From writing to numbers: tokenization</h2>
+            <p>
+              Before feeding text into a machine learning model, the raw text must go through a mandatory preprocessing
+              step called <strong>tokenization</strong>. This is the process of cutting a long character string into
+              smaller units of information, called <strong>tokens</strong> (single characters, syllables, words or
+              phrases).
+            </p>
+            <p>There are three main tokenizer designs:</p>
+            <ul>
+              <li>
+                <strong>Character-level tokenization:</strong> splits text down to individual letters (a, b, c...).
+                <br />
+                <em>Advantage:</em> an extremely compact vocabulary (a few hundred characters), and it never fears an
+                unknown word.
+                <br />
+                <em>Drawback:</em> the computer has to process very long sequences, and neurons struggle to learn a word's
+                overall meaning because the information is shattered at the letter level.
+              </li>
+              <li>
+                <strong>Word-level tokenization:</strong> splits on whitespace into whole words.
+                <br />
+                <em>Advantage:</em> preserves each word's original meaning well.
+                <br />
+                <em>Drawback:</em> vocabulary explosion (up to millions of words). In particular, on meeting a word never
+                seen during training, the model hits the <strong>out-of-vocabulary (OOV)</strong> problem and must replace
+                that word with a placeholder <code>[UNK]</code> (unknown), losing the sentence's information entirely.
+              </li>
+              <li>
+                <strong>Subword-level tokenization:</strong> the gold standard for today's large language models such as
+                GPT and BERT, using algorithms like <strong>BPE (byte pair encoding)</strong> or
+                <strong>WordPiece</strong>.
+                <br />
+                <em>How it works:</em> keeps common words whole, but cuts rare or compound words into meaningful
+                prefix/suffix fragments (the word "embeddings" might become "embed" and "##dings"). This keeps the
+                vocabulary at an optimal size (roughly 30,000–50,000 tokens) while still representing any new word by
+                assembling fragments, eliminating OOV entirely.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a tokenizer mismatch between training and inference</div>
+              <div class="callout__content">
+                Every tokenizer has its own vocabulary of integer identifiers (token IDs), generated independently. If you
+                train a model with tokenizer A but run inference with tokenizer B — even though both split the same
+                sentence — the output will be complete nonsense. Always save the tokenizer alongside the model's weight
+                file, to guarantee the IDs stay consistent.
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 The BPE algorithm, step by step by hand</div>
+              <div class="callout__content">
+                There is nothing mysterious about BPE — it just repeats one rule: find the most frequent pair of adjacent
+                symbols across the whole corpus and merge them into a new symbol. With a toy corpus of three words, "low"
+                (frequency 5), "lowest" (frequency 2) and "newest" (frequency 6) — each pre-split into individual
+                characters plus an end-of-word marker <code>&lt;/w&gt;</code> — the algorithm runs like this (verified by
+                running actual Python):
+                <ul>
+                  <li>
+                    <strong>Step 1:</strong> the pair <code>(w, e)</code> is the most frequent (2 times in "lowest" + 6
+                    times in "newest" = 8) → merge into <code>we</code>.
+                  </li>
+                  <li><strong>Step 2:</strong> the pair <code>(we, s)</code> appears 8 times → merge into <code>wes</code>.</li>
+                  <li><strong>Step 3:</strong> the pair <code>(wes, t)</code> appears 8 times → merge into <code>west</code>.</li>
+                  <li>
+                    <strong>Step 4:</strong> the pair <code>(west, &lt;/w&gt;)</code> appears 8 times → merge into
+                    <code>west&lt;/w&gt;</code>, producing one complete subword token shared by both "lowest" and "newest".
+                  </li>
+                </ul>
+                After 4 merges the subword vocabulary has learned by itself that "west" is a shared suffix, while "low"
+                (the highest-frequency word, but not part of the most common pair) stays as loose characters — exactly the
+                "split rare words, keep common words whole" behaviour described above.
+                <br /><br />
+                <strong>An important detail if you implement BPE yourself:</strong> at step 1 there are
+                <strong>four tied pairs</strong>, all appearing 8 times — <code>(w,e)</code>, <code>(e,s)</code>,
+                <code>(s,t)</code> and <code>(t,&lt;/w&gt;)</code>. The example above picks <code>(w,e)</code>, but that is
+                an <em>arbitrary tie-break</em>, not the single correct answer. Implementing BPE with a different
+                tie-breaking order gives a different merge sequence and a different subword set — and is still perfectly
+                valid. Know this so you don't assume your implementation is wrong when it disagrees with this article.
+              </div>
+            </div>
+
+            <h2>8.2 The semantic map: word embeddings</h2>
+            <p>
+              Once the tokenizer has turned a sentence into a list of integer IDs: $$\text{"I love AI"} \to [102, 540,
+              891]$$ how do we carry that information into a neural network?
+            </p>
+            <p>
+              The simplest approach is <strong>one-hot encoding</strong>: create a vector as long as the entire vocabulary
+              $V$, put a 1 at the word's ID position and 0 everywhere else. But this has two fatal weaknesses:
+            </p>
+            <ol>
+              <li>
+                <strong>An extremely wasteful sparse matrix:</strong> with a vocabulary of $50{,}000$ words, every single
+                word becomes a $50{,}000$-dimensional vector of almost all zeros.
+              </li>
+              <li>
+                <strong>Total loss of semantic relationship:</strong> any two one-hot vectors $v_a$ and $v_b$ are always
+                orthogonal in vector space, so their dot product is zero: $$v_a \cdot v_b = 0$$ Which means the computer
+                treats "cat" and "dog" as entirely unrelated — exactly as unrelated as "cat" and "table".
+              </li>
+            </ol>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🧠 What word embeddings really are, and the nn.Embedding layer</div>
+              <div class="callout__content">
+                <strong>Word embeddings</strong> solve this by projecting word IDs into a dense vector space of a fixed,
+                much smaller number of dimensions (typically $d = 300$, $768$ or $1536$). <br /><br />
+                In PyTorch, <code>nn.Embedding(num_embeddings, embedding_dim)</code> is really a giant lookup table
+                holding a trainable weight matrix of size $V \times d$. <br /><br />
+                When you feed in an integer token ID $k$, the layer performs no complex matrix multiplication at all — it
+                simply retrieves and returns row $k$ of the weight matrix. That operation is extremely fast
+                ($\mathcal{O}(1)$) and mathematically equivalent to multiplying a one-hot vector by the embedding layer's
+                weight matrix: $$\text{Embedding}(k) = \text{OneHot}(k) \times W_{\text{embed}}$$
+              </div>
+            </div>
+
+            <p>
+              Because it is trained simultaneously on an enormous body of text, the embedding matrix automatically shifts
+              each word's coordinates so that:
+              <strong>words appearing in similar contexts end up near each other in the high-dimensional space</strong>.
+              That is the premise behind the classic semantic-similarity arithmetic: $$\text{Embedding("King")} -
+              \text{Embedding("Man")} + \text{Embedding("Woman")} \approx \text{Embedding("Queen")}$$
+            </p>
+
+            <h2>8.3 Measuring semantic distance: cosine similarity</h2>
+            <p>
+              With words represented as vectors in a high-dimensional space, how do we measure how semantically similar
+              they are?
+            </p>
+            <p>
+              We cannot use ordinary geometric distance (Euclidean, L2) for a direct comparison, because Euclidean distance
+              is sensitive to a vector's length (its norm). In sentence-comparison tasks a long sentence can produce
+              aggregate vectors of very large magnitude, throwing Euclidean distance far off compared with a short sentence
+              even when both share the same topic.
+            </p>
+            <p>
+              Instead we measure the <strong>angle between two vectors</strong>, with the formula for
+              <strong>cosine similarity</strong>:
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">📐 The cosine similarity formula</div>
+              <div class="callout__content">
+                The cosine similarity of two high-dimensional vectors $A$ and $B$ is the dot product divided by the product
+                of their L2 norms: $$\text{Cosine Similarity}(A, B) = \cos(\theta) = \frac{A \cdot B}{\|A\|_2 \|B\|_2} =
+                \frac{\sum_{i=1}^{d} A_i B_i}{\sqrt{\sum_{i=1}^{d} A_i^2} \sqrt{\sum_{i=1}^{d} B_i^2}}$$ Where:
+                <ul>
+                  <li>The result lies in the range $[-1, 1]$.</li>
+                  <li>A result of $1$: the vectors point in exactly the same direction (angle $0^\circ$), indicating
+                  absolute similarity.</li>
+                  <li>A result of $0$: the vectors are orthogonal ($90^\circ$), with no semantic relationship.</li>
+                  <li>A result of $-1$: the vectors point in exactly opposite directions ($180^\circ$).</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: confusing semantic similarity with synonymy</div>
+              <div class="callout__content">
+                A high cosine similarity between two embeddings only shows that they tend to appear near each other in the
+                same distributional context (the distributional hypothesis).
+                <br /><br />
+                For example: two complete opposites such as "hot" and "cold" typically score extremely high on cosine,
+                because both appear in sentences about weather and temperature. Keep this in mind when designing real
+                synonym filters.
+              </div>
+            </div>
+
+            <h2>8.4 Hands-on project: a semantic space built by hand</h2>
+            <p>
+              This lesson's project takes a keyword, turns it into an embedding vector, then computes cosine similarity
+              against the whole vocabulary to find the closest words in meaning — including the word-algebra operation
+              <em>king − man + woman</em>.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ The vectors here are WRITTEN BY HAND, not learned by a machine</div>
+              <div class="callout__content">
+                This needs saying plainly, because it is the easiest thing in the lesson to misread. The embedding matrix
+                in the script is <strong>not trained</strong> — 9 four-dimensional vectors are typed out, with each
+                dimension given a meaning by a human: dimension 0 is "royalty", 1 is "gender", 2 is "technology", 3 is
+                "drinks".
+                <br /><br />
+                <strong>So this is NOT Word2Vec.</strong> Word2Vec is a <em>training algorithm</em>: it reads billions of
+                sentences and discovers those numbers itself, with nobody telling it what any dimension means. This script
+                skips the entire training half and uses only what comes <em>after</em> — lookup and angle measurement.
+                <br /><br />
+                <strong>Why it is still worth doing this way:</strong> with real 300-dimensional vectors learned from a
+                corpus, nobody can read what dimension 174 means — it is a black box. Here you can see every dimension, so
+                when <em>king − man + woman</em> produces "queen" you understand <strong>why</strong> it does, rather than
+                only seeing that it did. The price is that the numbers come out artificially clean, and the section below
+                points out exactly where they are too clean.
+                <br /><br />
+                Training a real embedding needs a loop like Lesson 6's over millions of word-context pairs; Lessons 10 and
+                14 will use embeddings already trained by real models.
+              </div>
+            </div>
+
+            {{CODE:word_similarity.py}}
+
+            <p>Running it produces:</p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              The analogy works: <em>king − man + woman</em> gives <strong>queen</strong> at 0.995. But the other three
+              numbers are the part worth learning from, because they expose the limits of building this by hand.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Three numbers that are "too good", and what they really mean</div>
+              <div class="callout__content">
+                <strong>1. The 1.0000 between "coffee" and "tea" does not mean they are perfect synonyms.</strong> The two
+                vectors are <code>[0,0,0,1]</code> and <code>[0,0,0,0.9]</code> — <em>exactly parallel</em>, differing only
+                in length, and cosine ignores length. With embeddings learned from real text, two different words
+                <strong>never</strong> score exactly 1.0. Seeing 1.0 in a real project almost always means you are
+                comparing a word with itself.
+                <br /><br />
+                <strong>2. The 0.0000 between "coffee" and "man" is one-hot encoding coming back.</strong> The two vectors
+                are orthogonal because the dimensions were assigned in completely separate slots — the very weakness of
+                one-hot that section 8.2 just criticised. Real embeddings never give an absolute 0, because every word
+                shares some context with every other.
+                <br /><br />
+                <strong>3. Excluding the input words from analogy results is mandatory.</strong> In the code,
+                <code>analogy()</code> skips <code>king</code>, <code>man</code> and <code>woman</code>. Here it barely
+                changes anything (<code>king</code> only scores 0.005), but with real embeddings
+                <em>the input word almost always ranks first</em> — and forgetting to exclude it is the classic mistake
+                that makes analogy code look broken.
+                <br /><br />
+                In short: building by hand lets you <em>see</em> the geometry, but do not take these numbers as the
+                expectation for real data.
+              </div>
+            </div>
+
+            <h3>How to run this project on your own machine</h3>
+            <ol>
+              <li>Install: <code>pip install torch</code>. No data download needed.</li>
+              <li>Download <code>word_similarity.py</code> at the end of the lesson, or retype the code above.</li>
+              <li>Run it: <code>python3 word_similarity.py</code>. There is no randomness, so the result is always identical.</li>
+              <li>
+                Then try three things, each teaching something:
+                <ul>
+                  <li>
+                    Add a new word to <code>vocab</code> and a matching vector row — say <code>'prince': 9</code> with
+                    <code>[1.0, 0.9, 0.0, 0.0]</code>. It will score 1.0 against "king", because you just typed the same
+                    direction. That is the most direct way to feel that "meaning" here is decided by you.
+                  </li>
+                  <li>
+                    Change "queen"'s gender dimension from <code>-0.9</code> to <code>+0.9</code> and rerun. The analogy
+                    stops producing "queen" — proof that the result comes from the <em>geometry</em>, not from the name.
+                  </li>
+                  <li>
+                    Remove the <code>if word in (a, b, c): continue</code> line in <code>analogy()</code>. It barely changes
+                    the answer here, but remember this behaviour when you use real embeddings in Lesson 14.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; bridge to what's next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you now have:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> the three tokenizer designs and why modern LLMs pick subwords — plus the fact
+                    that BPE can yield several different, equally valid subword sets depending on tie-breaking.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> why one-hot fails (every word orthogonal to every other), and that
+                    <code>nn.Embedding</code> is really just an $\mathcal{O}(1)$ lookup table.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> cosine similarity, and why it measures angle rather than distance — a
+                    vector's length says nothing about its meaning.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> telling <em>using</em> an embedding apart from <em>training</em> one. This
+                    lesson's project does the first; Word2Vec is the second, and this lesson does not do it.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> reading cosine scores critically — an absolute 1.0 or an absolute 0.0 both
+                    signal artificial data rather than good semantics.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> individual word vectors cannot express the order of a sentence. To
+              handle long language sequences over time we need recurrent networks and the attention mechanism, in Lesson 9.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the hands-on code for this lesson</h3>
+              <p>
+                The Python file <code>word_similarity.py</code> — builds the embedding matrix, defines the vocabulary and
+                computes cosine similarity, including the word-analogy operation (run
+                <code>python word_similarity.py</code>, needs <code>torch</code>):
+              </p>
+              <a
+                href="../word_similarity.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download word_similarity.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://web.stanford.edu/class/cs224n/" target="_blank" rel="noopener noreferrer"
+                    >CS224n: Natural Language Processing with Deep Learning — Stanford's course on word embeddings and
+                    language models</a
+                  >
+                </li>
+                <li>
+                  <a href="https://pytorch.org/docs/stable/generated/torch.nn.Embedding.html" target="_blank" rel="noopener noreferrer"
+                    >PyTorch nn.Embedding — the official parameter reference</a
+                  >
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/1301.3781" target="_blank" rel="noopener noreferrer"
+                    >Mikolov et al. — the original Word2Vec paper, i.e. how these vectors are actually learned</a
+                  >
+                </li>
+              </ul>
+            </section>
