@@ -1,0 +1,380 @@
+            <p class="article-lead">
+              A basic RAG system runs into serious failures in a corporate setting: users ask questions too short or
+              too misspelled for vector search to aim properly, or the document holding the answer sits at the bottom
+              of the result list where the LLM simply ignores it.
+            </p>
+
+            <p>
+              Lesson 15 improved <em>how you store and how you search</em>. This lesson handles the two remaining ends:
+              the input (the user's raw question) and the output of retrieval (the ranking). We build
+              <strong>query rewriting</strong> and measure how much it actually rescues, implement
+              <em>real</em> <strong>cross-encoder reranking</strong> — not a word-counting stand-in — to see how it
+              differs from a bi-encoder and what it costs, and finally implement
+              <strong>parent-child indexing</strong> to separate what you search from what you read.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Software:</strong> this is the first lesson that needs <em>both</em> kinds of model at once — a
+                chat model (<code>ollama pull qwen2.5:7b</code>) and an embedding model
+                (<code>ollama pull bge-m3</code>). Without both, the program stops immediately and says which one is
+                missing, rather than carrying on in silence.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 14 for the RAG pipeline and cosine similarity; Lesson 15
+                for two-stage retrieval and why ranking matters; Lesson 11 for few-shot prompting — section 16.1 uses
+                exactly that technique to pin down the rewriting model's behaviour.
+              </div>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Nothing here is simulated — and that is deliberate</div>
+              <div class="callout__content">
+                Lessons 14 and 15 used word counting to keep things compact. Here that is
+                <strong>not possible</strong>: the entire subject is the difference between a bi-encoder and a
+                cross-encoder, and both are neural networks. Replace them both with word overlap and the two stages
+                measure the same thing, and the lesson evaporates. So the bi-encoder here is a real embedding model,
+                and the cross-encoder is a real language model scoring the query and the document together.
+              </div>
+            </div>
+
+            <h2>16.1 Improving the question: query rewriting</h2>
+            <p>
+              Real users do not write questions with the same complete grammatical structure as the stored documents.
+              They ask extremely short questions ("maternity policy"), misspell things, drop diacritics, or use
+              unresolved pronouns ("how does it work?").
+            </p>
+            <p>
+              <strong>Query rewriting</strong> puts a small language model in front as an input filter, tasked with:
+            </p>
+            <ul>
+              <li><strong>Correction:</strong> fixing spelling and normalising domain terminology.</li>
+              <li>
+                <strong>Context resolution:</strong> using the earlier conversation to fill in hidden nouns (turning
+                "it" into the actual product name).
+              </li>
+              <li>
+                <strong>Query expansion:</strong> generating 3-4 variants of the same question to search the vector
+                database with simultaneously.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: intent drift</div>
+              <div class="callout__content">
+                If the rewriting prompt is not tight enough, the model can get "creative" and shift the question in a
+                direction unrelated to the original intent. The fix is <strong>few-shot prompting</strong> (Lesson 11)
+                — supply a couple of raw/rewritten pairs to constrain the behaviour.
+                <br /><br />
+                <strong>And you can see this happen in the run below</strong>: the raw question
+                <code>"nghi om can nhan slack luc nao"</code> was rewritten as
+                <em>"Khi nào cần <strong>nhận</strong> Slack để báo nghỉ ốm?"</em> — the model read the undiacriticised
+                "nhan" as "nhận" (to receive) rather than "nhắn" (to message), reversing the direction of the action.
+                The rewrite still retrieves the right document, but this is precisely the kind of drift to watch for —
+                and it happened on its own, not in an example I constructed.
+              </div>
+            </div>
+
+            <p>
+              The practical question is: how much does rewriting actually help? The project measures the match between
+              the question (raw and rewritten) and the document that holds the answer, under both scoring methods:
+            </p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              These two lines say something most write-ups on query rewriting skip: <strong>the size of the gain
+              depends on the retriever you are using.</strong> For keyword search, the raw question scores $0.0845$ —
+              essentially noise; it only wins because the other documents score 0. Rewriting lifts it to $0.2981$,
+              <strong>3.5 times</strong>: that is a rescue, not an optimisation. With real embeddings the raw question
+              already scores $0.4465$ — embedding models tolerate misspelling and missing diacritics rather well — so
+              rewriting only takes it to $0.7817$, $1.8$ times: welcome, but not existential.
+            </p>
+            <p>
+              The practical conclusion: if your system still runs on BM25 or TF-IDF (Lessons 14 and 15), query
+              rewriting is the single most valuable thing you can add. If you already have good embeddings, weigh it up
+              — every rewrite is another LLM call standing in front of every question, and it can drift as above.
+            </p>
+
+            <h2>16.2 Reordering the results: cross-encoder reranking</h2>
+            <p>
+              To understand why a reranker is needed, you have to distinguish clearly between how a
+              <strong>bi-encoder (vector DB)</strong> and a <strong>cross-encoder (reranker)</strong> work.
+            </p>
+            <div
+              style="margin: 24px 0; padding: 20px; background: #0f172a; border-radius: 8px; border: 1px solid #1e293b"
+            >
+              <h4 style="color: #eab308; margin-top: 0">⚖️ Bi-encoder versus cross-encoder:</h4>
+              <ul style="color: #94a3b8; line-height: 1.6; padding-left: 20px">
+                <li>
+                  <strong style="color: #fff">Bi-encoder (vector DB search):</strong> computes the meaning vector of
+                  the query and of the document completely independently. The similarity score is a dot product
+                  between two frozen vectors. Advantage: extremely fast, and document vectors are computed once and
+                  reused forever. Disadvantage: it never sees the word-to-word interaction between the two texts.
+                </li>
+                <li>
+                  <strong style="color: #fff">Cross-encoder (reranker):</strong> feeds the query and the document into
+                  one network together so they interact freely through the Transformer's self-attention (Lesson 10).
+                  Advantage: extremely sensitive to fine-grained relevance. Disadvantage: nothing can be precomputed —
+                  every (query, document) pair is its own model run.
+                </li>
+              </ul>
+            </div>
+            <p>
+              That last sentence is the whole reason the two-stage architecture exists. A bi-encoder computes document
+              vectors <em>once, at ingestion time</em>, so at query time it only compares vectors. A cross-encoder has
+              nothing to precompute: it needs to see the query and the document <em>at the same time</em>, so its cost
+              multiplies by the number of documents.
+            </p>
+
+            <p>
+              <strong>The standard two-stage retrieval flow:</strong>
+            </p>
+            <div style="text-align: center; margin: 24px 0">
+              <span
+                style="
+                  display: inline-block;
+                  padding: 10px 20px;
+                  background: #1e293b;
+                  border-radius: 6px;
+                  color: #fff;
+                  font-weight: bold;
+                "
+                >1 Million Documents</span
+              >
+              <span style="color: #eab308; font-weight: bold; margin: 0 10px">➔ Bi-Encoder (Vector DB) ➔</span>
+              <span
+                style="
+                  display: inline-block;
+                  padding: 10px 20px;
+                  background: #1e293b;
+                  border-radius: 6px;
+                  color: #fff;
+                  font-weight: bold;
+                "
+                >Top 25 Documents</span
+              >
+              <span style="color: #eab308; font-weight: bold; margin: 0 10px">➔ Cross-Encoder (Reranker) ➔</span>
+              <span
+                style="
+                  display: inline-block;
+                  padding: 10px 20px;
+                  background: #eab308;
+                  border-radius: 6px;
+                  color: #000;
+                  font-weight: bold;
+                "
+                >Top 3 Best Docs</span
+              >
+            </div>
+
+            <h3>Measured: how does a cross-encoder differ, and what does it cost?</h3>
+            <p>
+              The project's corpus holds 7 documents that <em>all</em> concern leave policy — deliberately, because a
+              corpus of 5 documents on 5 unrelated topics makes every retriever look correct and proves nothing about
+              reranking. The question: "how many hours in advance must I report sick leave?"
+            </p>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              The bi-encoder <em>gets the order right</em> — doc2 is first. But look at the distances: the four
+              documents sit between $0.617$ and $0.680$, a total spread of <strong>$0.062$</strong>, and the correct
+              document leads the annual-leave document by exactly <strong>$0.030$</strong>. To the embedding model all
+              four texts are about equally relevant — they all discuss leave, employees and procedures. Grow the
+              corpus, or shift the question slightly, and that order flips.
+            </p>
+            <p>
+              The cross-encoder scores <strong>7 / 2 / 0 / 0</strong>. It not only preserves the correct order but
+              <em>separates</em>: the last two documents are pushed to exactly 0 — not "somewhat relevant" but "does
+              not answer this question". That is something a bi-encoder cannot do in principle: it compares two frozen
+              vectors and never gets to look at the query and the document side by side.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔢 The number that justifies the two-stage architecture</div>
+              <div class="callout__content">
+                The cross-encoder costs <strong>0.23 seconds per document</strong> on the authoring machine. That
+                sounds harmless — 1.6 seconds for 7 documents. But the cost multiplies straight by corpus size: a
+                million documents would take <strong>about 64 hours for a single question</strong>. Meanwhile the
+                bi-encoder handled all 7 documents in $1.18$ seconds, and on a real corpus most of that time is
+                computing the vector for the <em>question</em>, since document vectors were computed at ingestion.
+                <br /><br />
+                So the diagram above is not an arbitrary convention: the bi-encoder filters a million down to 25 in
+                milliseconds, and only then does the cross-encoder run 25 times. Swapping the two stages is physically
+                impossible.
+              </div>
+            </div>
+
+            <h2>16.3 Parent-child indexing &amp; sentence-window retrieval</h2>
+            <p>A fundamental tension in RAG design:</p>
+            <ul>
+              <li>
+                For the embedding model to produce an accurate vector, we want very small pieces (individual
+                sentences) — the shorter the passage, the more its vector concentrates on one idea.
+              </li>
+              <li>
+                But for the LLM to have enough context to answer coherently, we want a large surrounding block.
+              </li>
+            </ul>
+            <p>Advanced RAG architectures resolve this by separating <em>what you search</em> from <em>what you read</em>:</p>
+            <ol>
+              <li>
+                <strong>Parent-child indexing:</strong> split a large document (parent) into many small pieces
+                (children). Only the children are embedded and searched. When the best child is found, the system
+                follows the link back to retrieve the <em>whole</em> parent block for the LLM's context.
+              </li>
+              <li>
+                <strong>Sentence-window retrieval:</strong> search vectors over individual sentences. When the best
+                sentence is found, the system also pulls the $K$ sentences before and after it for the LLM.
+              </li>
+            </ol>
+
+            <p>
+              The project implements parent-child over a block describing a three-step sick-leave procedure, then asks
+              the same question with two different amounts of context — that being the only variable:
+            </p>
+
+            {{CODE:Terminal#3}}
+
+            <p>
+              Same question, same model, same child sentence retrieved. The only difference is the context supplied: 93
+              characters versus 295. The child version answers only <strong>step 1</strong> and then hedges; the parent
+              version delivers all <strong>three steps</strong>. Note that the child sentence is still
+              <em>the right thing to search on</em> — it contains exactly the question's keywords. The problem was
+              never in retrieval but in reading, and that is precisely what parent-child separates.
+            </p>
+
+            <h2>16.4 Lesson 16 project: a three-stage RAG pipeline</h2>
+            <p>
+              The file has three stages matching the three sections above, and this is the first lesson in the series
+              where <strong>every component is a real model</strong>: the embedding model as bi-encoder, and the
+              language model as both the query rewriter and the scoring cross-encoder.
+            </p>
+
+            {{CODE:advanced_rag.py}}
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Why <code>rewrite_query</code> has no <code>except</code> block</div>
+              <div class="callout__content">
+                The first version of this project wrapped the Ollama call in
+                <code>except Exception: return raw_query</code> — meaning that on any hiccup (model not pulled, wrong
+                name, Ollama not running) the function <em>silently</em> returned the raw question. The program ran to
+                completion, printed plausible-looking results, and the headline feature of the whole lesson did nothing
+                at all — with nobody able to tell. In this version the error propagates and the program stops, saying
+                exactly which model is missing.
+              </div>
+            </div>
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>
+                Start Ollama and pull both models: <code>ollama pull qwen2.5:7b</code> and
+                <code>ollama pull bge-m3</code>. Then run <code>python3 advanced_rag.py</code>.
+              </li>
+              <li>
+                The numbers on your machine <strong>will differ</strong> — the cross-encoder scores come from an LLM,
+                and different models score differently (a code-tuned model is markedly harsher than an instruct model).
+                What should match is the <em>shape</em>: the bi-encoder produces a tight band of scores, the
+                cross-encoder separates them sharply, and its per-document cost is orders of magnitude higher.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    Remove the two few-shot examples from <code>rewrite_query</code>, leaving only the task
+                    description. Rewrites become wordier and sometimes carry an explanation — and you see why few-shot
+                    from Lesson 11 is the cheapest format-pinning tool there is.
+                  </li>
+                  <li>
+                    Change <code>CHAT_PREFERRED</code> to use a code-tuned model as the cross-encoder. On the authoring
+                    machine, for the same question and documents, the instruct model scored the correct document
+                    <strong>7/10</strong> while the code model scored it <strong>3/10</strong> — the ordering held, but
+                    the scale shifted entirely. This is why cross-encoder scores should only be used to
+                    <em>rank</em>, never compared against an absolute threshold.
+                  </li>
+                  <li>
+                    In <code>bi_encoder_retrieve</code>, drop <code>k=4</code> to <code>k=1</code>. The reranker loses
+                    all effect because there is nothing left to reorder — showing clearly that stage one has to return
+                    a <em>wide enough</em> set for stage two to have any work to do.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> building query rewriting with few-shot prompting, and measuring that the
+                    gain depends on the retriever: $3.5$ times for keyword search but only $1.8$ times for embeddings.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> implementing a real cross-encoder and seeing the core difference: the
+                    bi-encoder placed all four candidates within a $0.062$ band, while the cross-encoder separated them
+                    into $7/2/0/0$.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> measuring the cross-encoder's $0.23$ seconds per document — about 64
+                    hours for one question over a million-document corpus — the number that justifies the two-stage
+                    architecture.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> implementing parent-child indexing, and seeing the same question lose
+                    two thirds of its answer when only the child is supplied instead of the parent.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> at this point the system answers <em>one</em> question with
+              <em>one</em> retrieval. But many real questions need several steps: look one thing up, use that result to
+              look up the next, then combine. Lesson 17 moves from a fixed pipeline to an AI agent that decides its own
+              next step, using the ReAct loop.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>advanced_rag.py</code> — query rewriting, real bi-encoder retrieval with
+                cross-encoder reranking, and parent-child indexing (run <code>python3 advanced_rag.py</code>, needs
+                Ollama with both a chat and an embedding model):
+              </p>
+              <a
+                href="../advanced_rag.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download advanced_rag.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://arxiv.org/abs/1908.10084" target="_blank" rel="noopener noreferrer"
+                    >Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks — the work that established the
+                    bi-encoder and cross-encoder distinction (Reimers &amp; Gurevych, 2019)</a
+                  >
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/2311.07361" target="_blank" rel="noopener noreferrer"
+                    >Query Rewriting for Retrieval-Augmented Large Language Models — a survey of query rewriting
+                    techniques for RAG quality (Ma et al., 2023)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://www.sbert.net/examples/applications/retrieve_rerank/README.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Retrieve &amp; Re-Rank — the official Sentence-Transformers guide to the two-stage retrieval
+                    flow</a
+                  >
+                </li>
+              </ul>
+            </section>
