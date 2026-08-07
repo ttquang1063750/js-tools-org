@@ -79,11 +79,12 @@ class TransformerBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x, mask=None):
-        # 1. Khối Self-Attention + Kết nối tắt Residual Connection + LayerNorm
+        # 1. Self-attention + residual connection + LayerNorm.
+        #    x + attn_out is the residual: it gives gradients a path straight back.
         attn_out = self.attention(x, x, x, mask)
         x = self.norm1(x + self.dropout(attn_out))
         
-        # 2. Khối FeedForward + Kết nối tắt Residual Connection + LayerNorm
+        # 2. Feed-forward + residual connection + LayerNorm, same pattern again.
         ff_out = self.feed_forward(x)
         x = self.norm2(x + self.dropout(ff_out))
         

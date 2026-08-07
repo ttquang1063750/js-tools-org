@@ -1,0 +1,312 @@
+            <p class="article-lead">
+              In 2017 a research group at Google published the historic paper
+              <strong>"Attention Is All You Need"</strong>, introducing the <strong>Transformer</strong> architecture. It
+              ended decades of dominance by recurrent RNN/LSTM networks and opened the era of the large language models
+              reshaping the world today.
+            </p>
+            <p>
+              The Transformer's key move is removing sequential time-step loops entirely, allowing
+              <strong>100% parallel computation</strong> on GPU hardware. This lesson puts the architecture under the
+              microscope: the mathematics of scaled dot-product self-attention (Q, K, V), multi-head attention, positional
+              encoding, and assembling a complete Transformer block by hand in PyTorch.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Libraries:</strong> <code>pip install torch</code>. No downloads, no network.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 9 — the idea of attention and <em>why</em> it exists (the
+                bottleneck of a static context vector). This lesson takes that same idea and
+                <strong>removes the recurrence entirely</strong>. Lesson 2 supplies the dot product, Lesson 3 matrix
+                multiplication and shape matching — section 10.1 uses both constantly.
+              </div>
+            </div>
+
+            <h2>10.1 The parallelisation revolution: self-attention</h2>
+            <p>
+              As we saw in Lesson 9, a recurrent network processes a sentence one word at a time. It cannot compute word 10
+              until it has finished the hidden state for word 9.
+            </p>
+            <p>
+              A Transformer, by contrast, processes <strong>every word in the sentence at once</strong>. To capture the
+              context linking words together it introduces <strong>self-attention</strong>. Each input word computes how
+              semantically relevant it is to every other word in the sentence, through three representative vectors:
+            </p>
+            <ul>
+              <li><strong>Query ($Q$):</strong> represents the current word going looking for relevant context.</li>
+              <li>
+                <strong>Key ($K$):</strong> represents the identifying label of the other words, to be matched against.
+              </li>
+              <li>
+                <strong>Value ($V$):</strong> represents the actual content of that word, which gets carried forward once
+                the appropriate attention has been found.
+              </li>
+            </ul>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">📐 The scaled dot-product self-attention formula</div>
+              <div class="callout__content">
+                Given Query $Q$, Key $K$ and Value $V$ matrices (where $d_k$ is the Key's dimensionality), self-attention
+                is: $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V$$ Step by step:
+                <ul>
+                  <li>
+                    <strong>Multiply Q by K ($Q K^T$):</strong> measure the similarity (dot product) between every pair of
+                    words in the sentence. The result is a square $N \times N$ matrix ($N$ being the sequence length).
+                  </li>
+                  <li>
+                    <strong>Scale by $\sqrt{d_k}$:</strong> when $d_k$ is large the dot products $Q K^T$ tend to take very
+                    large values, pushing Softmax into a saturated region with a tiny gradient (vanishing gradient).
+                    Dividing by $\sqrt{d_k}$ keeps the score distribution at variance 1, which keeps backpropagation
+                    stable.
+                  </li>
+                  <li><strong>Softmax:</strong> turns those similarities into an attention distribution between 0 and 1.</li>
+                  <li>
+                    <strong>Multiply by Value ($V$):</strong> weight the actual Value content by the attention
+                    probabilities, producing high-level aggregated context vectors.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: the quadratic O(N²) cost</div>
+              <div class="callout__content">
+                Because the square matrix product $Q K^T$ compares every word with every other word in the sentence, a
+                self-attention layer's time and space complexity grows as <strong>$\mathcal{O}(N^2)$</strong> in the
+                context length $N$. That is why LLMs consume enormous amounts of VRAM as you enlarge the chat context
+                window, and it is the Transformer architecture's single biggest bottleneck.
+              </div>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🔢 The real numbers: why dividing by $\sqrt{d_k}$ stabilises the variance</div>
+              <div class="callout__content">
+                Suppose the components of $Q$ and $K$ are drawn independently from a standard normal distribution
+                $\mathcal{N}(0, 1)$. A statistical simulation (20,000 samples per case) shows:
+                <ul>
+                  <li>$d_k = 8$: variance of $Q K^T$ (unscaled) $\approx 8.09$ — roughly equal to $d_k$.</li>
+                  <li>$d_k = 64$: variance $\approx 63.22$.</li>
+                  <li>$d_k = 512$: variance $\approx 512.09$.</li>
+                </ul>
+                Exactly as theory predicts: the variance of a dot product of $d_k$ independent terms grows linearly with
+                $d_k$. After dividing by $\sqrt{d_k}$, all three cases land at a variance of approximately $1.0$ (0.988 →
+                1.011 → 1.0002) regardless of how large $d_k$ is — which is precisely why the scaling factor keeps the score
+                distribution stable no matter the model size.
+              </div>
+            </div>
+
+            <h2>10.2 Learning in several directions: multi-head attention &amp; positional encoding</h2>
+            <p>
+              With a single attention stream the model can only focus on one kind of semantic link at a time — a
+              noun-to-verb grammatical relation, say.
+            </p>
+            <p>
+              The fix is <strong>multi-head attention</strong>. Rather than computing attention directly on vectors of the
+              full width $d_{\text{model}}$, the network splits those dimensions into $h$ parallel streams (each of the
+              smaller width $d_k = d_{\text{model}} / h$). Each head gets independently initialised weight matrices and is
+              free to learn a different contextual relationship (head 1 subject-verb syntax; head 2 geographic relations;
+              head 3 temporal relations). The results from all heads are then concatenated and projected through a Linear
+              layer back to the original width.
+            </p>
+            <p>
+              Because a Transformer processes every word in parallel, the model <strong>has no idea of word order</strong>.
+              To a Transformer, "I love you" and "You love me" have completely identical representation matrices — the
+              sentence is a shuffled bag of words. To inject order information we must add a
+              <strong>positional encoding</strong> vector directly onto the word embedding before it reaches the first
+              attention block.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">📐 Sinusoidal positional encoding</div>
+              <div class="callout__content">
+                In Google's original paper the researchers used sine and cosine waves of differing frequencies to generate
+                a unique positional vector for coordinate $pos$ and dimension $i$: $$PE_{(pos, 2i)} =
+                \sin\left(\frac{pos}{10000^{\frac{2i}{d_{\text{model}}}}}\right)$$ $$PE_{(pos, 2i+1)} =
+                \cos\left(\frac{pos}{10000^{\frac{2i}{d_{\text{model}}}}}\right)$$ This sinusoidal relationship lets the
+                model easily learn <em>relative</em> position (two words $k$ apart, for instance), because $PE_{pos+k}$ can
+                be expressed as a linear function of $PE_{pos}$.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ A common misconception: multi-head attention costs NO extra parameters</div>
+              <div class="callout__content">
+                Many learners assume that splitting into $h$ heads multiplies the parameter count by $h$. The truth is the
+                opposite: the four <code>nn.Linear</code> layers ($W_q, W_k, W_v, W_o$) are always a fixed
+                $d_{\text{model}} \times d_{\text{model}}$ regardless of how many heads there are, because "splitting into
+                heads" is only a <code>.view()</code> reshape of an existing tensor — it creates no new weight matrices.
+                <br /><br />
+                With $d_{\text{model}} = 64$ (computed and verified in code), the four Linear layers total exactly
+                $16{,}640$ parameters whether you use $1$ head or $8$. The head count only changes how the memory is
+                "sliced" to compute several contextual perspectives in parallel; it does not make the model heavier.
+              </div>
+            </div>
+
+            <h2>10.3 Encoder-decoder architecture and the GPT (decoder-only) model</h2>
+            <p>The original Transformer architecture stacks two major parts:</p>
+            <ul>
+              <li>
+                <strong>Encoder:</strong> reads the whole source sentence to extract bidirectional features. Used in
+                language-understanding models such as BERT.
+              </li>
+              <li>
+                <strong>Decoder:</strong> adds an autoregressive mechanism to generate each next word.
+              </li>
+            </ul>
+            <p>
+              For the decoder, training text generation requires a mask called the
+              <strong>causal mask</strong> (or look-ahead mask). This layer hides all future words by overwriting the
+              $Q K^T$ dot-product scores at those positions with $-\infty$ before Softmax:
+              $$\text{Softmax}(-\infty) = 0$$ This guarantees that when predicting the next word at step $t$, the model
+              cannot "cheat" by seeing the data at steps $t+1$, $t+2$ during training.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">💡 The dominance of decoder-only models (GPT)</div>
+              <div class="callout__content">
+                Most of today's most capable LLMs — GPT-4, Llama, Gemini, Claude — drop the traditional encoder entirely
+                and move to a <strong>decoder-only</strong> design. That architecture is considerably simpler, scales more
+                easily, and optimises autoregressive computation for creative, intelligent text generation.
+              </div>
+            </div>
+
+            <h2>10.4 Hands-on project: building a complete Transformer block in PyTorch</h2>
+            <p>
+              The project assembles everything above into one working Transformer block: multi-head attention, layer
+              normalisation, residual connections and the feed-forward network.
+            </p>
+
+            {{CODE:transformer_block.py}}
+
+            <p>Running it produces:</p>
+
+            {{CODE:Terminal}}
+
+            <div class="callout callout--tip">
+              <div class="callout__title">🔬 Why this test matters more than matching shapes</div>
+              <div class="callout__content">
+                An output shape equal to the input shape is necessary, but it <strong>proves almost nothing</strong>. An
+                attention mechanism that ignored the mask completely — or that merely averaged every token — would return
+                exactly that shape and still "pass". If you implement attention yourself and only check shapes, you can
+                ship a bug that destroys the whole model.
+                <br /><br />
+                The property that <em>actually</em> has to hold in a decoder (i.e. GPT) is <strong>causality</strong>:
+                position $i$ must not see position $i+1$. If it can, the model "cheats" during training — it sees the very
+                word it is supposed to predict — and then collapses when generating real text, because there the future
+                does not exist yet.
+                <br /><br />
+                The test in the script is simple and decisive: <strong>change only the last token</strong> and rerun. If
+                the mask is correct, every earlier position must come out <em>bit-for-bit identical</em>, because none of
+                them was allowed to look at the token we changed. The measured result is <code>0.00e+00</code>: not "very
+                small" but <em>exactly zero</em>.
+                <br /><br />
+                And the counter-test is what gives the test its value: rerun with <strong>no mask</strong> and the earlier
+                positions move by 0.2319 — clearly non-zero. Without that step, the zero above might merely reflect an
+                architecture that happens not to propagate information, rather than a mask doing its job. This is a habit
+                worth carrying: a test that returns "as expected" only earns trust once you have also shown it
+                <em>knows how to fail</em>.
+              </div>
+            </div>
+
+            <h3>How to run this project on your own machine</h3>
+            <ol>
+              <li>Install: <code>pip install torch</code>.</li>
+              <li>Download <code>transformer_block.py</code> at the end of the lesson, or retype the code above.</li>
+              <li>
+                Run it: <code>python3 transformer_block.py</code>. You will get exactly the numbers above thanks to
+                <code>torch.manual_seed(42)</code> and <code>block.eval()</code> — <code>eval()</code> disables dropout,
+                without which two runs differ and the causality test reports a false failure.
+              </li>
+              <li>
+                Then break it in two ways:
+                <ul>
+                  <li>
+                    Delete the line in <code>MultiHeadAttention</code> that applies the mask (the
+                    <code>-1e9</code> fill). The test flips from PASS to FAIL, and you see exactly how that bug presents —
+                    rather than having to trust a description of it.
+                  </li>
+                  <li>
+                    Change <code>torch.tril</code> to <code>torch.triu</code> (an <em>upper</em> triangular mask). The
+                    model still runs, the shapes are still right, but now it can only see the future — precisely the class
+                    of bug a shape check will never catch.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; bridge to what's next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you now have:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> Q, K and V as three roles rather than three mysteries, and the four steps of
+                    scaled dot-product attention.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> why the $\sqrt{d_k}$ divisor exists, measured: the variance of $Q K^T$ grows
+                    linearly with $d_k$, and the division returns it to 1 at any model size.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> multi-head attention costs no extra parameters — 16,640 either way at
+                    $d_{\text{model}} = 64$, because splitting heads is a reshape, not new weights.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> why positional encoding is mandatory — without it "I love you" and "You love
+                    me" are the same matrix.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> a causal mask, and a test that <em>proves</em> it works instead of assuming
+                    it — including the counter-test that shows the test can fail.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> the $\mathcal{O}(N^2)$ cost, and therefore why a longer context window is
+                    expensive rather than free.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> the architecture is understood. From Lesson 11 the series stops
+              building models and starts <em>using</em> them: talking to a large language model through its API, and
+              controlling what comes back.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the hands-on code for this lesson</h3>
+              <p>
+                The Python file <code>transformer_block.py</code> — a complete Transformer block, plus the causality test
+                that proves the mask actually works (run <code>python transformer_block.py</code>, needs
+                <code>torch</code>):
+              </p>
+              <a
+                href="../transformer_block.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download transformer_block.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener noreferrer"
+                    >Vaswani et al. — "Attention Is All You Need", the original Transformer paper</a
+                  >
+                </li>
+                <li>
+                  <a href="https://jalammar.github.io/illustrated-transformer/" target="_blank" rel="noopener noreferrer"
+                    >The Illustrated Transformer (Jay Alammar) — the same architecture drawn out step by step</a
+                  >
+                </li>
+                <li>
+                  <a href="https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html" target="_blank" rel="noopener noreferrer"
+                    >PyTorch nn.MultiheadAttention — the production implementation of what we just built by hand</a
+                  >
+                </li>
+              </ul>
+            </section>
