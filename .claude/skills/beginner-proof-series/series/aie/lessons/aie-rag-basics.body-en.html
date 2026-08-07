@@ -1,0 +1,399 @@
+            <p class="article-lead">
+              However clever an LLM is, its knowledge is frozen at the moment its training data was collected. Ask it
+              about your company's internal information or an event from yesterday, and it will either be wrong or
+              invent something.
+            </p>
+
+            <p>
+              The <strong>RAG (Retrieval-Augmented Generation)</strong> architecture fixes that weakness: instead of
+              retraining the model, we find the passage that contains the answer and put it straight into the prompt.
+              This lesson builds the complete five-stage RAG pipeline, implements TF-IDF and cosine similarity by hand
+              in plain Python, and then <strong>measures the two places that pipeline breaks</strong> — both of which
+              you will meet again in a production system.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Software:</strong> Ollama running with at least one chat model — exactly the setup from Lesson
+                13, which the generation step calls into. In addition, if you pull an embedding model
+                (<code>ollama pull bge-m3</code>, around 1.2 GB) then section 14.5 can run the most important
+                comparison in the lesson; without it the program still runs and simply skips that part.
+                <br /><br />
+                <strong>Python libraries:</strong> none. TF-IDF and cosine similarity are written by hand rather than
+                imported from scikit-learn, so the maths is not hidden behind a library.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 13 for calling Ollama; Lesson 11 for what a token is and
+                why you cannot stuff an entire document set into the prompt; Lesson 8 for the idea of representing text
+                as a vector — section 14.4 uses a far cruder method, and section 14.5 measures what that crudeness
+                costs.
+              </div>
+            </div>
+
+            <h2>14.1 Why does an LLM need RAG? Solving hallucination</h2>
+            <p>
+              <strong>Hallucination</strong> is a neural model confidently producing false statements, fluently and
+              persuasively. The cause is that an LLM works by predicting the next word probabilistically; it has no
+              fact-checking mechanism against objective reality.
+            </p>
+            <p>
+              RAG turns the exam the model is sitting from "recite what you memorised" into "open-book comprehension".
+              When a user asks a question, the system performs two phases:
+            </p>
+            <ol>
+              <li>
+                <strong>Phase 1 (Retrieval):</strong> search the internal document store for the passages whose
+                keywords or meaning are closest to the question.
+              </li>
+              <li>
+                <strong>Phase 2 (Generation):</strong> insert those passages as reference context, send them with the
+                question, and instruct the model: <em>"Answer using only the following context..."</em>.
+              </li>
+            </ol>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: the "lost in the middle" effect</div>
+              <div class="callout__content">
+                A well-known study shows that LLMs attend well to information at the <strong>start</strong> and the
+                <strong>end</strong> of a prompt, but neglect what sits in the <strong>middle</strong>. If you retrieve
+                too many loosely related documents and cram them all in, you both increase the token cost and reduce
+                answer quality, because the important information drifts into that blind spot. This is why the
+                retrieval phase must return <em>few</em> but <em>correct</em> passages — not as many as possible.
+              </div>
+            </div>
+
+            <h2>14.2 The standard RAG pipeline</h2>
+            <p>An industry-standard RAG system has five consecutive stages:</p>
+            <div
+              style="margin: 24px 0; padding: 20px; background: #0f172a; border-radius: 8px; border: 1px solid #1e293b"
+            >
+              <h4 style="color: #eab308; margin-top: 0">🗺️ The 5 stages of a RAG pipeline:</h4>
+              <ol style="color: #94a3b8; line-height: 1.6; padding-left: 20px">
+                <li>
+                  <strong style="color: #fff">1. Ingestion:</strong> read raw data out of whatever formats you have
+                  (PDF, DOCX, TXT, HTML) and clean up the formatting.
+                </li>
+                <li>
+                  <strong style="color: #fff">2. Chunking:</strong> cut long text into small blocks that fit the
+                  model's token budget and stay semantically focused.
+                </li>
+                <li>
+                  <strong style="color: #fff">3. Embedding:</strong> turn each raw passage into a numeric vector
+                  representing its meaning.
+                </li>
+                <li>
+                  <strong style="color: #fff">4. Retrieval:</strong> when a question arrives, turn it into a vector and
+                  compare its angle (cosine similarity) against every document vector to find the closest passages.
+                </li>
+                <li>
+                  <strong style="color: #fff">5. Generation:</strong> load the retrieved passages into a prompt for the
+                  LLM (here, the local Ollama from Lesson 13) to compose the final answer.
+                </li>
+              </ol>
+            </div>
+            <p>
+              The two stages that sound most trivial — steps 2 and 3 — are exactly where the system breaks. Sections
+              14.3 and 14.4 explain them, and section 14.5 measures the real damage.
+            </p>
+
+            <h2>14.3 Splitting text into chunks</h2>
+            <p>
+              Loading an entire 500-page book into the prompt overflows the context window (and you pay for all those
+              tokens on every turn — Lesson 11). So we have to split. Two core parameters:
+            </p>
+            <ul>
+              <li>
+                <strong>Chunk size:</strong> the maximum number of characters or words in one chunk (150 characters,
+                say).
+              </li>
+              <li>
+                <strong>Chunk overlap:</strong> the number of characters repeated at the boundary between two adjacent
+                chunks (30 characters, say).
+              </li>
+            </ul>
+            <p>
+              Why is <strong>overlap</strong> necessary? If you cut mechanically at character 150, an important
+              sentence can be sliced in half. Overlap keeps the context flowing across the boundary.
+            </p>
+            <p>
+              That sounds convincing — and section 14.5 will show it is <strong>not enough</strong>. On this project's
+              own corpus, a 30-character overlap still severs a rule from the condition it depends on, so the final
+              answer loses its "if" clause. Keep that question in mind as you read on.
+            </p>
+
+            <h2>14.4 The mathematics behind TF-IDF &amp; cosine similarity</h2>
+            <p>
+              To let the computer decide which passage best matches the question without a deep learning model, we
+              start with the classic <strong>TF-IDF (Term Frequency - Inverse Document Frequency)</strong> algorithm.
+              The underlying idea is homely: a word characterises a passage when it appears <em>often in that
+              passage</em> but is <em>rare across the whole corpus</em>.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">📐 The TF-IDF formula</div>
+              <div class="callout__content">
+                TF-IDF scores the importance of a term $t$ in a document $d$ belonging to a corpus $D$:
+                <ol>
+                  <li>
+                    <strong>Term frequency ($\text{TF}$):</strong> how often the term appears in the passage:
+                    $$\text{TF}(t, d) = \frac{f_{t,d}}{\sum_{t'} f_{t',d}}$$ (occurrences divided by the passage's total
+                    word count).
+                  </li>
+                  <li>
+                    <strong>Inverse document frequency ($\text{IDF}$):</strong> how rare the term is across the whole
+                    corpus: $$\text{IDF}(t, D) = \log\left(\frac{|D|}{1 + |\{d \in D : t \in d\}|}\right)$$ A term
+                    appearing in too many passages (connectives like "and", "is", "the") has an IDF tending to 0.
+                    Distinctive keywords carrying real information score much higher.
+                  </li>
+                  <li>
+                    <strong>The combined score:</strong>
+                    $$\text{TF-IDF}(t, d, D) = \text{TF}(t, d) \times \text{IDF}(t, D)$$
+                  </li>
+                </ol>
+                Once we have TF-IDF vectors for the question $A$ and a passage $B$, we measure directional similarity
+                with <strong>cosine similarity</strong>: $$\text{Cosine Similarity}(A, B) = \frac{A \cdot B}{\|A\|_2
+                \|B\|_2} = \frac{\sum A_i B_i}{\sqrt{\sum A_i^2} \sqrt{\sum B_i^2}}$$
+              </div>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔢 Working TF-IDF out by hand on a tiny corpus</div>
+              <div class="callout__content">
+                Suppose the corpus $D$ has only 3 passages: passage 0 about "employee leave", passage 1 about "sick
+                leave and doctors", passage 2 about "director approval". Computing TF-IDF for two words in passage 0:
+                <ul>
+                  <li>
+                    <strong>The word "leave"</strong> (present in passages 0 and 1, i.e. 2 of 3 documents):
+                    $\text{TF} = 0.25$, but $\text{IDF} = \log(3/3) = 0$ → $\text{TF-IDF} = 0$. The word is wiped out
+                    entirely because it appears in too many passages relative to corpus size.
+                  </li>
+                  <li>
+                    <strong>The word "annual"</strong> (only in passage 0, i.e. 1 of 3 documents): $\text{TF} = 0.25$
+                    (identical to "leave"), but $\text{IDF} = \log(3/2) \approx 0.405$ → $\text{TF-IDF} \approx
+                    0.1014$.
+                  </li>
+                </ul>
+                Two words with the same in-passage frequency (identical TF) end up with completely different final
+                scores — a direct demonstration that IDF is what decides which word genuinely characterises a passage.
+              </div>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ The core limitation: TF-IDF counts words, it does not understand them</div>
+              <div class="callout__content">
+                Look carefully at the formula: from start to finish, TF-IDF does exactly one thing —
+                <strong>count shared words</strong>. It has no concept of meaning at all. To it, "car" and "automobile"
+                are completely unrelated strangers, while two sentences that merely happen to share the word "company"
+                look highly similar. Section 14.5 shows exactly how that blind spot produces a wrong answer — and
+                measures the distance between it and a real semantic embedding.
+              </div>
+            </div>
+
+            <p>
+              Before the project, here is an interactive playground for getting a feel for the vector space: type a
+              question, see where the passages sit relative to it, and watch similarity change as you change words. If
+              the maths above still feels abstract, a few minutes here will help more than rereading the formula.
+            </p>
+
+            <iframe
+              class="visualizer-iframe"
+              src="../aie-rag-vector-space-lab.html"
+              title="RAG &amp; Vector Space Lab"
+              loading="lazy"
+              style="
+                width: 100%;
+                height: 600px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                margin: 32px 0;
+                background: #090d16;
+              "
+            ></iframe>
+
+            <h2>14.5 Lesson 14 project: the RAG pipeline, and the two places it breaks</h2>
+            <p>
+              The project builds all five stages from section 14.2 over a small corpus: a company's leave policy. It
+              runs two questions — one that <strong>is</strong> in the documents ("who approves 10 days of leave?") and
+              one that definitely <strong>is not</strong> ("what year was the company founded?") — and measures how the
+              system handles each.
+            </p>
+
+            {{CODE:simple_rag.py}}
+
+            <h3>Break number one: TF-IDF scores the wrong question higher than the right one</h3>
+            <p>This is the real output, and it is not what you would hope for:</p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              Read the last two lines carefully. With <strong>TF-IDF</strong>, the out-of-corpus question ("what year
+              was the company founded?") scores $0.2501$, <em>higher</em> than the on-topic question ($0.2414$) — purely
+              because it happens to share the word "company" with the opening passage. The consequence is severe:
+              <strong>no threshold exists</strong> that accepts the right question and rejects the wrong one, because
+              the ordering itself is inverted. Wherever you put the cut, you either lose the good question or admit the
+              bad one.
+            </p>
+            <p>
+              With a <strong>real semantic embedding</strong> (the <code>bge-m3</code> model, 1024 dimensions, running
+              on the same Ollama from Lesson 13), the distance opens up to $0.6958$ against $0.3466$ — a gap of
+              <strong>$0.3492$</strong>. Now a threshold at $0.5$ cleanly accepts the right question and refuses the
+              wrong one. That is the whole reason real RAG systems do not use TF-IDF as their primary retriever.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Refusing to answer is a feature too</div>
+              <div class="callout__content">
+                With a threshold in place, the pipeline handles the out-of-scope question like this:
+                <pre><code class="language-bash">=== The out-of-scope question, end to end ===
+  retrieved with bge-m3:latest: 0.3466
+  below the 0.5 threshold - refusing to answer, and no
+  tokens are spent calling the model at all.</code></pre>
+                Two benefits at once: the user gets an honest "I do not have this information" rather than a fluent
+                fabrication, and you spend <em>no tokens at all</em> — because the system stops before calling the
+                model. In a real product, most junk questions are eliminated right here.
+              </div>
+            </div>
+
+            <h3>Break number two: cutting at character 150 drops the "if" clause</h3>
+            <p>
+              This break is far subtler, and it is why section 14.3 asked you to keep a question in mind. The corpus
+              contains one complete rule: <em>"If the leave is longer than 5 days, the leave request must be signed off
+              by the Chief Executive Officer (CEO)."</em> Cut on a 150-character grid with a 30-character overlap, that
+              sentence lands on a boundary and is sliced in two:
+            </p>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              At a glance the grid version's answer looks <em>right</em> — it names the CEO correctly. But it has
+              dropped the conditional clause: reading it, a user concludes that <strong>every</strong> leave request
+              needs the CEO's signature, even a single day. The actual policy only applies above 5 days. The
+              sentence-aware version keeps the "if" and applies it correctly to the 10-day case.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ This is the most dangerous class of RAG failure: right words, wrong meaning</div>
+              <div class="callout__content">
+                An empty answer is something anyone spots. An answer that <em>quotes the document correctly</em> but
+                omits the condition under which it applies looks entirely trustworthy — and no automated check in the
+                system raises the alarm, because retrieval still scored $0.6958$, the model still obeyed the prompt,
+                and no exception was thrown anywhere. The source of the error sits in the one place nobody suspects:
+                <strong>the text-splitting step</strong>.
+                <br /><br />
+                That is why the check at the end of the project does not test the model's wording (which changes on
+                every run) but a <em>deterministic</em> condition: does the chunk naming the approver also contain the
+                condition that triggers it? With the character grid that is <code>False</code>, with sentence-aware
+                chunking <code>True</code>, on every run.
+              </div>
+            </div>
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>
+                Start Ollama with a chat model available (Lesson 13). To run the most important comparison, also pull
+                an embedding model: <code>ollama pull bge-m3</code> (around 1.2 GB). Without it the program skips the
+                comparison section and says so explicitly.
+              </li>
+              <li>
+                Run <code>python3 simple_rag.py</code>. The TF-IDF numbers will match this lesson exactly (the
+                algorithm is deterministic); the embedding numbers match if you use the same model; the LLM's wording
+                will differ.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    Change <code>chunk_size=150</code> to <code>400</code>. The rule now fits inside one chunk and the
+                    dropped-condition bug disappears — but each chunk costs more tokens. This is exactly the trade-off
+                    Lesson 15 measures systematically.
+                  </li>
+                  <li>
+                    Lower <code>threshold</code> from <code>0.5</code> to <code>0.3</code>. The out-of-scope question
+                    gets through and is sent to the model. See what it answers — and remember that the only remaining
+                    line of defence at that point is the instruction in the prompt.
+                  </li>
+                  <li>
+                    Add a passage on a completely different topic to <code>KNOWLEDGE_BASE</code> (parking rules, say).
+                    Run again and watch how the out-of-scope question's TF-IDF score moves — IDF depends on the whole
+                    corpus, so adding a document changes the score of every question.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> building the complete five-stage RAG pipeline, with TF-IDF and cosine
+                    similarity written by hand in plain Python.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> measuring the limit of keyword retrieval: on this very corpus, TF-IDF
+                    scores the out-of-scope question at $0.2501$, above the on-topic question's $0.2414$, so no
+                    threshold can save it.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> seeing a real semantic embedding widen that gap to $0.3492$, enough for
+                    a $0.5$ threshold to reject the out-of-scope question without spending a single token.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> recognising the most dangerous class of RAG failure — chunking that
+                    severs a condition from its rule, producing an answer that quotes correctly but applies far too
+                    broadly.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> this lesson showed that how you cut text decides whether the
+              answer is right, and compared two strategies by eye. Lesson 15 does it systematically: chunking
+              strategies, and the internal structure of a vector database once the corpus is not 5 passages but 5
+              million.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>simple_rag.py</code> — the five-stage pipeline, hand-written TF-IDF and cosine
+                similarity, and the two measurements that expose where it breaks (run
+                <code>python3 simple_rag.py</code>):
+              </p>
+              <a
+                href="../simple_rag.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download simple_rag.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://arxiv.org/abs/2005.11401" target="_blank" rel="noopener noreferrer"
+                    >Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks — the historic paper proposing
+                    the RAG architecture, from Facebook AI Research (Lewis et al., 2020)</a
+                  >
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/2307.03172" target="_blank" rel="noopener noreferrer"
+                    >Lost in the Middle: How Language Models Use Long Contexts — the study dissecting how LLMs lose
+                    focus in the middle of a prompt (Liu et al., 2023)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://nlp.stanford.edu/IR-book/html/htmldecision/term-frequency-and-weighting-1.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Introduction to Information Retrieval: TF-IDF Weighting — the information-retrieval textbook
+                    treatment of the TF-IDF maths (Stanford IR Group)</a
+                  >
+                </li>
+              </ul>
+            </section>
