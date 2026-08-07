@@ -1,0 +1,326 @@
+            <p class="article-lead">
+              When you build genuinely complex AI agents, older frameworks (LangChain Chains and the like) show their
+              limits: they only support simple one-way linear flows. If the agent needs non-linear loops, has to test
+              its own code, branch on the result of a trial run, or pause for human approval, you need a directed state
+              graph.
+            </p>
+
+            <p>
+              The answer is <strong>LangGraph</strong> — a library for building AI agents as stateful graphs. This
+              lesson digs into how the node-and-edge structure works, how shared state is managed, how the
+              human-in-the-loop interrupt works, and building an agent that writes code, tests it, and fixes itself in
+              a cycle.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">✅ What you need before starting</div>
+              <div class="callout__content">
+                <strong>Software:</strong> Ollama with a chat model (<code>ollama pull qwen2.5:7b</code>). You do
+                <em>not</em> need to install LangGraph — see the callout immediately below.
+                <br /><br />
+                <strong>Knowledge you need:</strong> Lesson 17 for the agent loop and its three safety nets. This
+                lesson replaces that linear <code>for</code> loop with a graph that branches and cycles.
+              </div>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ The project does NOT use the LangGraph library</div>
+              <div class="callout__content">
+                Stated up front so you do not go hunting for an <code>import langgraph</code> that is not there: the
+                project <strong>reimplements the three ideas</strong> behind LangGraph using the Python standard
+                library — state with reducers, conditional edges that create a cycle, and an interrupt that returns a
+                checkpoint. The reason is the same as every other project in this series: a library hides exactly what
+                you need to see, and all three ideas fit in under 100 lines.
+                <br /><br />
+                For production, use LangGraph — it handles checkpoint persistence, parallel branches and streaming for
+                you. But after this lesson you will know precisely what it is doing underneath.
+              </div>
+            </div>
+
+            <h2>18.1 Why graph-based agents exist</h2>
+            <p>
+              A real AI workflow rarely runs in a straight line. Take writing code: the model writes code ➔ it gets
+              compiled ➔ <strong>if it fails</strong>, go back and fix it with the error attached ➔
+              <strong>if it succeeds</strong>, move on to storage. That is a graph containing a <em>cycle</em>.
+            </p>
+            <p>LangGraph models an agent as a graph:</p>
+            <ul>
+              <li>
+                <strong>Nodes:</strong> processing steps — Python functions that take the current state, do something
+                (call the LLM, run code) and return an update.
+              </li>
+              <li>
+                <strong>Edges:</strong> where to go next. Two kinds: fixed edges (always A to B) and conditional edges,
+                which branch on the logical result of the node that just ran.
+              </li>
+            </ul>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: the spaghetti graph</div>
+              <div class="callout__content">
+                When designing an agent graph it is easy to end up drawing too many cross-linked nodes, producing a
+                tangle that is extremely hard to debug and whose state is impossible to reason about. The clean design
+                rule: split a huge graph into independent sub-graphs, each responsible for exactly one specialised
+                task.
+              </div>
+            </div>
+
+            <h2>18.2 Managing shared state</h2>
+            <p>
+              The heart of LangGraph is the <strong>state</strong> object: a shared data structure (a Pydantic model or
+              a TypedDict) threaded through every node in the graph.
+            </p>
+            <ul>
+              <li>
+                <strong>State synchronisation:</strong> each node returns the fields it updated. The system writes
+                those into the shared state, either overwriting or accumulating them via a reducer.
+              </li>
+              <li>
+                <strong>Reducer functions:</strong> these define how a particular field is merged. For chat history,
+                for instance, an <code>operator.add</code> reducer appends new messages onto the existing list instead
+                of replacing it.
+              </li>
+            </ul>
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔢 Working the reducer out by hand</div>
+              <div class="callout__content">
+                Suppose the history field currently holds <code>["Xin chào"]</code> and a node has just returned
+                <code>["Tôi cần giúp đỡ"]</code>.
+                <ul>
+                  <li>
+                    With an <code>operator.add</code> reducer the result is
+                    <code>["Xin chào", "Tôi cần giúp đỡ"]</code> — the old history is preserved and the new message is
+                    appended.
+                  </li>
+                  <li>
+                    With NO reducer (the default overwrite) the result is only
+                    <code>["Tôi cần giúp đỡ"]</code> — the entire earlier conversation is wiped instantly.
+                  </li>
+                </ul>
+                This is why declaring the right reducer per field is mandatory: overwrite is the default, so any field
+                that needs to accumulate over time (chat history, an error log) must declare a reducer explicitly, or
+                important data silently disappears after every node run.
+              </div>
+            </div>
+
+            <h2>18.3 Human-in-the-loop approval</h2>
+            <p>
+              In a corporate production environment, letting AI act 100% autonomously on consequential actions (sending
+              customer email, paying invoices, writing code straight onto a live server) is extremely dangerous.
+            </p>
+            <p>
+              The <strong>human-in-the-loop</strong> mechanism places an interrupt just before the graph reaches a
+              sensitive node. The graph freezes its current state (state persistence), the system pauses and notifies
+              an administrator. Once a human approves — or edits the state directly — the graph resumes from the
+              interrupt.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Safety boundary: only approve after verification</div>
+              <div class="callout__content">
+                Human-in-the-loop is the last line of defence against an LLM losing control. A well-built code-writing
+                agent must include a trial run in an isolated sandbox to catch its own errors <em>before</em> asking a
+                human to approve anything.
+              </div>
+            </div>
+
+            <h2>18.4 Lesson 18 project: an agent that writes, tests and fixes itself</h2>
+            <p>The project builds a stateful graph engine in plain Python, running this flow:</p>
+            <p>
+              <strong>Start ➔ Coder node</strong> (writes a Python function) <strong>➔ Tester node</strong> (runs it in
+              a separate process) <strong>➔ conditional edge:</strong> on failure go back to the coder with the error
+              log (at most 3 times), on success continue to the <strong>approval interrupt</strong>.
+            </p>
+
+            {{CODE:langgraph_agent.py}}
+
+            <h3>Reducers: what decides whether history survives</h3>
+            <p>
+              Section 18.2 claims that without a reducer data silently disappears. The program demonstrates that on a
+              single merge, with two fields: <code>history</code> has a reducer, <code>code</code> does not:
+            </p>
+
+            {{CODE:Terminal}}
+
+            <p>
+              This is the worst class of bug in a stateful system: no exception is raised, no warning appears. The
+              graph keeps running, it simply erases its prior history at every node — and you only find out when the
+              agent starts forgetting what it already tried.
+            </p>
+
+            <h3>Conditional edges: does the graph really cycle?</h3>
+            <p>
+              That question has to be answered by <em>forcing</em> it, not by waiting for the model to happen to write
+              something wrong. The program injects code that is guaranteed to produce the wrong answer into the state
+              and pushes it through the tester and the router:
+            </p>
+
+            {{CODE:Terminal#2}}
+
+            <p>
+              The first two times the conditional edge returns <code>'coder'</code> — the graph loops back to fix. On
+              the third, having hit <code>MAX_RETRIES</code>, it returns <code>'give_up'</code>. That is the cycle, and
+              that is the cycle's brake. Without the brake the agent would keep fixing forever — precisely the pitfall
+              from Lesson 17.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 A tester that only checks "did it run" is an empty test</div>
+              <div class="callout__content">
+                The first version of this project only checked that <code>solve_problem</code> existed and did not
+                raise. A function returning <code>999</code> passed cleanly. That is exactly the near-meaningless test
+                Lesson 10 identified. The new version stores the <em>expected value</em> in the state and the tester
+                compares against it — which is why the line <code>failed: returned 999, expected 2</code> above means
+                something.
+              </div>
+            </div>
+
+            <h3>A real run against the model</h3>
+
+            {{CODE:Terminal#3}}
+
+            <h3>The interrupt: why you must not use <code>input()</code></h3>
+            <p>
+              The first version called <code>input()</code> inside the approval node. Convenient, but it welds the
+              agent to one running process and one keyboard with a person at it. It cannot run as a background job, it
+              cannot run in CI, and if the administrator goes to lunch the process hangs all afternoon.
+            </p>
+            <p>
+              <em>Real</em> human-in-the-loop works differently: the graph stops and <strong>returns a
+              checkpoint</strong> — a serialisable structure you can store in a database, push to a web interface, and
+              resume three days later from a different machine. The program proves it by resuming <em>the same
+              checkpoint</em> twice with two different decisions:
+            </p>
+
+            {{CODE:Terminal#4}}
+
+            <p>
+              The graph never re-ran: no second model call, no re-execution of the code. Only the human's decision
+              changed. That is the property that makes checkpoints useful in production — and the thing
+              <code>input()</code> can never give you.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ The heaviest pitfall: running code the model wrote</div>
+              <div class="callout__content">
+                Lesson 17 just taught: never <code>eval()</code> model output. And now this lesson asks you to
+                <em>run an entire program</em> the model wrote — the same problem, much larger. The first version used
+                <code>exec(state.code, local_env)</code>: the model's code ran in the same process as the agent, with
+                the same filesystem and network access, and no way to stop it if it entered an infinite loop.
+                <br /><br />
+                The new version writes the code to a temporary file and runs it via <code>subprocess</code> with a
+                <strong>timeout</strong>. To be precise: this is <em>still not</em> a security boundary — the child
+                process can still read your files and still reach the internet. It guarantees exactly two things: it
+                can be killed when it hangs, and it cannot corrupt the parent's state. For code generated from
+                untrusted input, the honest minimum is a separate container (Docker, gVisor) or a dedicated sandbox
+                service.
+              </div>
+            </div>
+
+            <h3>How to run this project on your machine</h3>
+            <ol>
+              <li>
+                Start Ollama, pull a chat model, then run <code>python3 langgraph_agent.py</code>. The first two parts
+                (reducers and the conditional edge) run even without Ollama.
+              </li>
+              <li>
+                The sample task is easy enough that the model usually gets it right first time — which is why the cycle
+                demonstration has to force the failure with broken code. To watch the agent genuinely repair itself,
+                change <code>task</code> to something harder with a matching <code>expected</code>.
+              </li>
+              <li>
+                Then try breaking it three ways:
+                <ul>
+                  <li>
+                    Delete <code>"history": operator.add</code> from <code>REDUCERS</code>. Run again and look at the
+                    <code>history</code> field in the checkpoint: only the last line remains, every earlier trace has
+                    evaporated. No error is reported.
+                  </li>
+                  <li>
+                    Change <code>MAX_RETRIES</code> to <code>1</code>. The conditional edge loses its loop-back branch
+                    entirely — the graph stops being cyclic and becomes an ordinary linear <code>for</code> loop.
+                  </li>
+                  <li>
+                    In <code>demo_retry_cycle</code>, change the broken code to
+                    <code>"def solve_problem():\n    while True: pass"</code>. The <code>subprocess</code> timeout
+                    fires after 5 seconds and returns <code>timed out</code> instead of hanging the whole program —
+                    which is exactly why a separate process is used rather than <code>exec</code>.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+
+            <h2>Lesson summary &amp; what comes next</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">🔑 What you achieved:</div>
+              <div class="callout__content">
+                <ul style="margin: 0; padding-left: 20px">
+                  <li>
+                    <strong>Achieved:</strong> implementing state with per-field reducers, and seeing a field without
+                    one get overwritten into oblivion with no error raised.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> building conditional edges that create a coder → tester → coder cycle,
+                    and proving both the cycle and its retry-limit brake by forcing broken code through it.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> implementing a genuine human-in-the-loop interrupt — returning a
+                    serialisable checkpoint that can be resumed twice with two decisions, instead of blocking the
+                    process on <code>input()</code>.
+                  </li>
+                  <li>
+                    <strong>Achieved:</strong> running model-generated code in a separate process with a timeout, and
+                    knowing precisely the limits of that measure.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <p style="margin-top: 16px">
+              <strong>Bridge to the next lesson:</strong> everything so far has been about <em>steering</em> an
+              existing model with prompts, tools and graphs. But some things prompts cannot teach: a company's house
+              voice, a highly specific output format, a narrow knowledge domain. Lesson 19 moves to changing the
+              model's weights themselves, with LoRA.
+            </p>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The Python file <code>langgraph_agent.py</code> — state with reducers, cyclic conditional edges, a
+                checkpoint-based interrupt, and sandboxed execution of the generated code (run
+                <code>python3 langgraph_agent.py</code>, needs Ollama with a chat model):
+              </p>
+              <a
+                href="../langgraph_agent.py"
+                download
+                class="btn-facebook"
+                style="background: #eab308; text-decoration: none; color: #000; font-weight: bold"
+              >
+                Download langgraph_agent.py
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a href="https://github.com/langchain-ai/langgraph" target="_blank" rel="noopener noreferrer"
+                    >LangGraph on GitHub — the open-source library for building stateful agent graphs</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://langchain-ai.github.io/langgraph/concepts/human_in_the_loop/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >LangGraph Concepts: Human-in-the-loop — the official explanation of interrupts and checkpoints</a
+                  >
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/2402.01680" target="_blank" rel="noopener noreferrer"
+                    >Flow Engineering: Directed Acyclic Graphs as Prompt Systems — research on graph-structured
+                    prompting</a
+                  >
+                </li>
+              </ul>
+            </section>
