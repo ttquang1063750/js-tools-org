@@ -1,103 +1,120 @@
+# word_similarity.py
+# Lesson 8: Text processing & word embeddings
+# Practical AI Engineer series
+#
+# Run it with:  python word_similarity.py
+# Requires:     pip install torch
+#
+# IMPORTANT — THE VECTORS BELOW ARE HAND-WRITTEN, NOT TRAINED.
+# This is not Word2Vec. Word2Vec is a training algorithm that reads billions of
+# sentences and discovers these numbers on its own. Here the 9 vectors are typed
+# out by hand, with each of the 4 dimensions given a meaning by a human, so that
+# you can SEE why the geometry works. A real 300-dimensional trained embedding is
+# opaque: nobody can say what dimension 174 means.
+#
+# The cost of that clarity is that the numbers come out artificially clean — see
+# the note on the 1.0000 score at the bottom of this file.
+
 import torch
 import torch.nn as nn
 
-# 1. Định nghĩa từ điển hệ thống (Vocabulary)
 vocab = {
-    "vua": 0,
-    "hoàng_hậu": 1,
-    "nam": 2,
-    "nữ": 3,
-    "máy_tính": 4,
-    "lập_trình": 5,
-    "trí_tuệ_nhân_tạo": 6,
-    "cà_phê": 7,
-    "trà": 8
+    'king': 0,
+    'queen': 1,
+    'man': 2,
+    'woman': 3,
+    'computer': 4,
+    'programming': 5,
+    'artificial_intelligence': 6,
+    'coffee': 7,
+    'tea': 8,
 }
 inverse_vocab = {v: k for k, v in vocab.items()}
 
-# 2. Khởi tạo ma trận nhúng giả lập với số chiều d = 4
-# Trọng số được thiết kế thủ công để mô tả mối quan hệ ngữ nghĩa rõ nét:
-# Chiều 0: Hoàng gia, Chiều 1: Giới tính (Dương: Nam, Âm: Nữ), Chiều 2: Công nghệ, Chiều 3: Đồ uống.
-embedding_weights = torch.tensor([
-    [1.0,  0.9,  0.0,  0.0],  # vua
-    [1.0, -0.9,  0.0,  0.0],  # hoàng_hậu
-    [0.0,  1.0,  0.0,  0.0],  # nam
-    [0.0, -1.0,  0.0,  0.0],  # nữ
-    [0.0,  0.0,  1.0,  0.0],  # máy_tính
-    [0.0,  0.0,  0.9,  0.0],  # lập_trình
-    [0.0,  0.1,  1.0,  0.0],  # trí_tuệ_nhân_tạo
-    [0.0,  0.0,  0.0,  1.0],  # cà_phê
-    [0.0,  0.0,  0.0,  0.9]   # trà
-], dtype=torch.float32)
+# Dimension 0: royalty · 1: gender (positive male, negative female)
+# Dimension 2: technology · 3: drinks
+embedding_weights = torch.tensor(
+    [
+        [1.0, 0.9, 0.0, 0.0],  # king
+        [1.0, -0.9, 0.0, 0.0],  # queen
+        [0.0, 1.0, 0.0, 0.0],  # man
+        [0.0, -1.0, 0.0, 0.0],  # woman
+        [0.0, 0.0, 1.0, 0.0],  # computer
+        [0.0, 0.0, 0.9, 0.0],  # programming
+        [0.0, 0.1, 1.0, 0.0],  # artificial_intelligence
+        [0.0, 0.0, 0.0, 1.0],  # coffee
+        [0.0, 0.0, 0.0, 0.9],  # tea
+    ],
+    dtype=torch.float32,
+)
 
-# 3. Tạo lớp nn.Embedding của PyTorch và gán trọng số
 vocab_size, embedding_dim = embedding_weights.shape
 embed = nn.Embedding(num_embeddings=vocab_size, embedding_dim=embedding_dim)
-# Gán trọng số cố định không huấn luyện thêm (eval mode)
+# Fixed weights, never trained further.
 embed.weight = nn.Parameter(embedding_weights, requires_grad=False)
 
-def calculate_cosine_similarity(vector_a, matrix_b):
-    # vector_a: (1, d)
-    # matrix_b: (V, d)
-    # Tích vô hướng từng phần tử (Dot product): (V,)
+
+def cosine_similarity(vector_a, matrix_b):
+    """Cosine of the angle between one vector (1,d) and every row of (V,d)."""
     dot_product = torch.sum(vector_a * matrix_b, dim=1)
-    
-    # Tính Norm L2
-    norm_a = torch.norm(vector_a, p=2, dim=1)       # (1,)
-    norm_b = torch.norm(matrix_b, p=2, dim=1)       # (V,)
-    
-    # Tránh chia cho 0
-    similarity = dot_product / (norm_a * norm_b + 1e-8)
-    return similarity
+    norm_a = torch.norm(vector_a, p=2, dim=1)
+    norm_b = torch.norm(matrix_b, p=2, dim=1)
+    # +1e-8 guards against dividing by zero for an all-zero vector.
+    return dot_product / (norm_a * norm_b + 1e-8)
+
 
 def find_most_similar(target_word, top_n=3):
     if target_word not in vocab:
-        print(f"Từ '{target_word}' không có trong từ điển.")
+        print(f"'{target_word}' is not in the vocabulary.")
         return
-        
-    target_idx = vocab[target_word]
-    # Lấy vector nhúng của từ mục tiêu (1, d)
-    target_vector = embed(torch.tensor([target_idx]))
-    
-    # Lấy toàn bộ ma trận trọng số nhúng (V, d)
-    all_vectors = embed.weight
-    
-    # Tính điểm tương đồng Cosine của từ mục tiêu với toàn bộ từ điển
-    scores = calculate_cosine_similarity(target_vector, all_vectors)
-    
-    # Sắp xếp điểm số từ cao xuống thấp
+
+    target_vector = embed(torch.tensor([vocab[target_word]]))
+    scores = cosine_similarity(target_vector, embed.weight)
     top_scores, top_indices = torch.topk(scores, k=len(vocab))
-    
-    print(f"--- Top các từ tương đồng nhất với '{target_word}': ---")
-    count = 0
+
+    print(f"--- closest words to '{target_word}':")
+    shown = 0
     for score, idx in zip(top_scores.tolist(), top_indices.tolist()):
         word = inverse_vocab[idx]
-        # Bỏ qua chính từ đang truy vấn
         if word == target_word:
-            continue
-        print(f"{count+1}. {word:<20} | Cosine Score: {score:.4f}")
-        count += 1
-        if count >= top_n:
+            continue  # a word is always its own closest match; skip it
+        print(f'  {shown + 1}. {word:<24} cosine {score:.4f}')
+        shown += 1
+        if shown >= top_n:
             break
     print()
 
-if __name__ == "__main__":
-    # Tìm kiếm từ đồng nghĩa đơn giản
-    find_most_similar("cà_phê", top_n=2)
-    find_most_similar("máy_tính", top_n=2)
-    
-    # 4. Thực hành tính đại số vector ngữ nghĩa kinh điển:
-    # Vector lý thuyết: Vua - Nam + Nữ
-    vua_idx = torch.tensor([vocab["vua"]])
-    nam_idx = torch.tensor([vocab["nam"]])
-    nu_idx = torch.tensor([vocab["nữ"]])
-    
-    analogy_vector = embed(vua_idx) - embed(nam_idx) + embed(nu_idx) # (1, 4)
-    
-    # So sánh vector kết quả với toàn bộ từ điển
-    analogy_scores = calculate_cosine_similarity(analogy_vector, embed.weight)
-    best_idx = torch.argmax(analogy_scores).item()
-    
-    print("=== Phép toán đại số từ vựng (Word Analogy) ===")
-    print("Công thức: Vua - Nam + Nữ")
-    print(f"Từ có vector gần nhất trong từ điển: '{inverse_vocab[best_idx]}' (Điểm Cosine: {analogy_scores[best_idx]:.4f})")
+
+def analogy(a, b, c, top_n=2):
+    """Solve 'a is to b as c is to ?' — the classic king - man + woman."""
+    vec = embed(torch.tensor([vocab[a]])) - embed(torch.tensor([vocab[b]])) + embed(torch.tensor([vocab[c]]))
+    scores = cosine_similarity(vec, embed.weight)
+
+    print(f'=== word analogy: {a} - {b} + {c}')
+    shown = 0
+    for score, idx in zip(*[t.tolist() for t in torch.topk(scores, k=len(vocab))]):
+        word = inverse_vocab[idx]
+        # Exclude the three input words. With hand-made vectors this barely
+        # matters, but with REAL trained embeddings the input word almost always
+        # ranks first, and forgetting to exclude it is the classic mistake that
+        # makes analogy code look broken.
+        if word in (a, b, c):
+            continue
+        print(f'  {shown + 1}. {word:<24} cosine {score:.4f}')
+        shown += 1
+        if shown >= top_n:
+            break
+    print()
+
+
+if __name__ == '__main__':
+    find_most_similar('coffee', top_n=2)
+    find_most_similar('computer', top_n=2)
+    analogy('king', 'man', 'woman')
+
+    # Why 'tea' scores exactly 1.0000 against 'coffee': their vectors are
+    # [0,0,0,1] and [0,0,0,0.9] — exactly parallel, differing only in length,
+    # and cosine ignores length. A real trained embedding never gives exactly
+    # 1.0 for two different words. This is the artificial cleanliness that comes
+    # with hand-writing the numbers.
+    print('note: coffee and tea are exactly parallel by construction, hence 1.0000.')
