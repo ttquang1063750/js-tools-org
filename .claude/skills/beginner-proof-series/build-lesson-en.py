@@ -117,12 +117,33 @@ body = open(f'{LDIR}/{SLUG}.body-en.html', encoding='utf-8').read()
 used_code, used_svg = set(), set()
 
 
+# Nhan <span class="code-filename"> co the la ten file thuan ("app.js") hoac mot
+# cau mo ta bang tieng Viet ("docker stats — luc /fast bao hoa"). Cai thu hai la
+# VAN XUOI, phai dich — va code-same chi so NOI DUNG code nen doi nhan la hop le.
+CODE_TITLES = meta.get('codeTitles', {})
+
+
+def translate_code_title(block):
+    def sub(m):
+        label = m.group(1)
+        if label in CODE_TITLES:
+            return m.group(0).replace(label, CODE_TITLES[label])
+        if re.search(VN, label, re.I):
+            raise SystemExit(
+                f'thieu ban dich nhan khoi code (them vao "codeTitles" trong '
+                f'{SLUG}.meta-en.json):\n  - {label}'
+            )
+        return m.group(0)
+
+    return re.sub(r'<span class="code-filename">([^<]*)</span>', sub, block)
+
+
 def put_code(m):
     name = m.group(1).strip()
     if name not in code_windows:
         raise SystemExit(f'placeholder tro toi khoi code khong ton tai: {name}')
     used_code.add(name)
-    return code_windows[name]
+    return translate_code_title(code_windows[name])
 
 
 def put_svg(m):

@@ -306,12 +306,12 @@ function shouldReadPrimary(id, now) {
 // ---------------------------------------------------------------------------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Chặn hẳn event loop trong `ms` — mô phỏng handler đồng bộ nặng. */
+/** Block the event loop for `ms` — simulates a heavy synchronous handler. */
 function blockFor(ms) {
   const until = Date.now() + ms;
-  // Vòng lặp bận: KHÔNG nhường quyền cho event loop, nên mọi request khác phải xếp hàng.
+  // Busy loop: does NOT yield to the event loop, so every other request queues up.
   while (Date.now() < until) {
-    /* đốt CPU có chủ đích */
+    /* burning CPU on purpose */
   }
 }
 
@@ -1317,13 +1317,13 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/slow-async') {
       const ms = Number(url.searchParams.get('ms') || 50);
-      await sleep(ms); // nhường event loop => request khác vẫn được phục vụ
+      await sleep(ms); // yields the event loop => other requests still get served
       return json(res, 200, { ok: true, mode: 'async', ms, instance: INSTANCE });
     }
 
     if (p === '/slow-sync') {
       const ms = Number(url.searchParams.get('ms') || 50);
-      blockFor(ms); // CHẶN event loop => mọi request khác nằm chờ
+      blockFor(ms); // BLOCKS the event loop => every other request waits
       return json(res, 200, { ok: true, mode: 'sync-blocking', ms, instance: INSTANCE });
     }
 

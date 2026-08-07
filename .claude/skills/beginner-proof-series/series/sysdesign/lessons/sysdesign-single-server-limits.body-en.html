@@ -1,0 +1,563 @@
+            <p>
+              <a href="sysdesign-latency-queueing">Lesson 1</a> closed on an unanswered question: what is $\mu$ — the
+              maximum service rate of a server — in practice? That number cannot be read from documentation and cannot
+              be deduced from the machine's specification. There is only one way: <strong>measure it</strong>.
+            </p>
+
+            <p>
+              This lesson stands up the measurement environment shared by all 18 lessons, then answers three questions
+              with real figures: which queues a request passes through inside Node, how much damage one badly written
+              handler does, and where your server saturates.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The machine every figure in this lesson was measured on</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Containers run
+                <strong>native arm64</strong> (Node v22.23.2), the app is limited to <strong>1 CPU / 256 MB</strong>,
+                and the load generator gets 2 CPUs. <br /><br />
+                Your numbers will differ — different machine, different kernel. What must be the same is the
+                <strong>shape</strong> of the curves and the <em>ratios</em> between the numbers. If the shape is
+                markedly different, the measurement is almost certainly at fault, and section 2.4 is about exactly
+                that.
+              </div>
+            </div>
+
+            <!-- ================= 2.1 ================= -->
+            <h2>2.1 The life of an HTTP request in plain Node <code>http</code></h2>
+
+            <p>
+              This lab uses Node's <code>http</code> module: no Express, no dependencies. The reason is not
+              minimalism for its own sake — a framework hides precisely the places where the queues are, and queues
+              are the main character of this whole series.
+            </p>
+
+            <p>
+              Before your JavaScript is called at all, a request has already passed through several layers — and
+              <strong>each layer has a queue of its own</strong>:
+            </p>
+
+            {{SVG:1}}
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ What libuv is, and why it appears in this diagram</div>
+              <div class="callout__content">
+                If you have only ever written Express, you may not have met this name. <strong>libuv</strong> is the C
+                library underneath Node, and it does one job: ask the operating system "which sockets are ready?" and
+                turn the answer into JavaScript callbacks queued up to run. It uses whichever mechanism the OS
+                provides to ask — <code>epoll</code> on Linux, <code>kqueue</code> on macOS — and those are the two
+                words you see in the middle box of the diagram.
+                <br /><br />
+                Why it matters: libuv is where thousands of connections <em>wait</em> at once without costing
+                thousands of threads. It also keeps its own thread pool for a few heavy jobs (file reads, crypto,
+                DNS) — that is where Node <em>genuinely</em> runs in parallel. But that thread pool does
+                <strong>not</strong> run your JavaScript: every callback still queues up for the one and only JS
+                thread, and that is the bottleneck section 2.2 is about.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: assuming Node runs your JavaScript in parallel</div>
+              <div class="callout__content">
+                Node is marketed as "non-blocking, handles thousands of concurrent connections", which makes it very
+                easy to conclude that it runs code in parallel. It does not. There is exactly
+                <strong>one thread running JavaScript</strong>. The parallelism is in the <em>waiting</em> for I/O:
+                10,000 connections can wait at once, but only one callback executes at any moment.
+                <br /><br />
+                The direct consequence: if your handler occupies that thread, <strong>the entire server stops</strong>
+                — not just that request. Section 2.2 measures the damage precisely.
+              </div>
+            </div>
+
+            <!-- ================= 2.2 ================= -->
+            <h2>2.2 The event loop and the blocking culprit</h2>
+
+            <p>
+              The lab's app has two endpoints that are equally slow in wall-clock terms but fundamentally different in
+              nature — and that difference is the whole problem:
+            </p>
+
+            {{CODE:app/app.js — hai kiểu "chậm" hoàn toàn khác nhau}}
+
+            <p>
+              Called one at a time, these two endpoints return after the same interval. The difference only appears
+              <strong>when other requests are in flight at the same time</strong>:
+            </p>
+
+            {{SVG:2}}
+
+            <h3>The real measurements</h3>
+
+            <p>
+              Background load is applied to <code>/slow-sync?ms=20</code> with 4 connections while
+              <code>/fast</code> is measured with 10 connections. Repeated three times, with nothing changed in
+              between:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th><code>/fast</code> when idle</th>
+                  <th><code>/fast</code> with a blocking handler running in the background</th>
+                  <th>Collapse factor</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>29,647 req/s</td>
+                  <td>129 req/s</td>
+                  <td>229×</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>28,922 req/s</td>
+                  <td>116 req/s</td>
+                  <td>250×</td>
+                </tr>
+                <tr>
+                  <td>3</td>
+                  <td>29,521 req/s</td>
+                  <td>137 req/s</td>
+                  <td>216×</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              A 20 ms synchronous handler collapses a <em>different</em> endpoint's throughput by roughly
+              <strong>200–250×</strong>, and takes its p99 from 0.71 ms to about 160 ms. Not one line of
+              <code>/fast</code> was changed — its only crime is sharing a process.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: <code>*Sync</code> functions inside a request handler</div>
+              <div class="callout__content">
+                In real code, <code>blockFor()</code> rarely appears as an obvious busy loop like the one above. It
+                arrives in lines that look entirely harmless:
+                <br /><br />
+                <code>crypto.pbkdf2Sync(...)</code> to hash a password · <code>fs.readFileSync(...)</code> reading a
+                config file "just once" · <code>JSON.parse()</code> on a payload of a few MB ·
+                <code>zlib.gzipSync(...)</code> · a loop processing an array of 100,000 elements.
+                <br /><br />
+                The common wrong instinct: "if it is slow, only that request is slow". The table above shows the
+                consequence landing on <strong>every other request</strong>. And because you usually only measure the
+                endpoint you just wrote, the damage shows up <em>somewhere else</em> — which makes it extremely hard
+                to trace.
+              </div>
+            </div>
+
+            <!-- ================= 2.3 ================= -->
+            <h2>2.3 Standing up the lab shared by the whole series</h2>
+
+            <p>
+              The entire "run it" track across 18 lessons uses one Docker stack, extended gradually through
+              <strong>profiles</strong>. You build it once here and then only switch on an extra profile when a later
+              lesson needs it.
+            </p>
+
+            {{CODE:docker-compose.yml (trích phần cốt lõi)}}
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ From here on you need Docker</div>
+              <div class="callout__content">
+                The previous four sections read fine with nothing installed. From this section you need
+                <strong>Docker Desktop</strong> (macOS/Windows) or <strong>Docker Engine</strong> with
+                <strong>Docker Compose v2</strong> (Linux) — get it from
+                <a href="https://docs.docker.com/get-started/get-docker/" target="_blank" rel="noopener noreferrer"
+                  >docs.docker.com/get-started/get-docker</a
+                >. Check with <code>docker compose version</code>; it must report <code>v2</code> or later, because
+                <code>docker-compose</code> v1 (with the hyphen) does not understand <code>profiles</code>.
+                <br /><br />
+                Without Docker you can still read the whole lesson and still compare against the Traffic Lab at the
+                end — you only lose the part where you measure your own machine.
+              </div>
+            </div>
+
+            <p>Bring it up and check the app is alive:</p>
+
+            {{CODE:terminal}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ The first and most expensive pitfall: an image for the wrong CPU architecture</div>
+              <div class="callout__content">
+                This actually happened while building this lab. The machine is Apple Silicon (<code>arm64</code>) but
+                the <code>node:22-alpine</code> image already cached locally was <code>linux/amd64</code> — so the
+                container ran <strong>through an emulation layer</strong>. Docker prints
+                <em>one faint warning line</em> among dozens of log lines and then carries on normally.
+                <br /><br />
+                The consequence: many times slower, heavily noisy latency, and
+                <strong>every subsequent measurement meaningless</strong> — with nothing raising an error. So run a
+                preflight check, and run it <strong>from inside the container</strong>:
+                <br /><br />
+                <code>uname -m</code> → compare with →
+                <code>docker compose exec app1 node -e "console.log(process.arch)"</code>
+                <br /><br />
+                The two must agree (<code>arm64</code> ↔ <code>arm64</code>, <code>x86_64</code> ↔
+                <code>amd64</code>). If they differ:
+                <code>docker pull --platform linux/arm64 node:22-alpine</code>.
+              </div>
+            </div>
+
+            <!-- ================= 2.4 ================= -->
+            <h2>2.4 Measuring correctly</h2>
+
+            <p>
+              This section is why the lab uses a hand-written load generator (<code>loadgen/loadgen.js</code>) rather
+              than <code>wrk</code>. Not because <code>wrk</code> is worse — it is considerably better — but because
+              if the measuring tool is a black box, the lesson about <em>how to measure</em> disappears with it.
+            </p>
+
+            <h3>Four principles, and what ignoring them costs</h3>
+
+            <p>
+              <strong>1. Discard the warm-up.</strong> For the first few seconds the JIT has not optimised the code,
+              caches are cold, and connections are not all open. Figures from this phase do not represent steady
+              state. The lab's tool discards every sample collected before the warm-up mark, rather than averaging
+              over the whole run.
+            </p>
+
+            <p>
+              <strong>2. Understand that the connection count <em>is</em> $L$.</strong> The tool runs closed-loop:
+              each connection only sends its next request after receiving a response. So the connection count = the
+              maximum number of concurrent requests = exactly the quantity $L$ in Little's Law from Lesson 1. This is
+              not a trivial technicality — section 2.5 uses that very relationship to confirm the formula against
+              measurements.
+            </p>
+
+            <p>
+              <strong>3. Do not let the tool and the server fight over the same CPU.</strong> If both compete for
+              cores, you do not know whether you are measuring the server's limit or the tool's. In the lab the app is
+              limited to 1 CPU and the tool gets 2, and we always verify with <code>docker stats</code>:
+            </p>
+
+            {{CODE:docker stats — lúc /fast bão hoà (32 kết nối)}}
+
+            <p>
+              Read those two lines: the app is at 83% of the 1 CPU it was given — close to saturation. The tool is
+              using 101% out of a 200% allowance, so roughly half its capacity. That lets us conclude that the
+              throughput ceiling we measured is <strong>the server's ceiling, not the tool's</strong>. If the tool had
+              hit 100% of its own allowance, every number would have to be thrown away.
+            </p>
+
+            <p>
+              <strong>4. One run is not a measurement.</strong> The three-repeat table in section 2.2 shows the same
+              experiment, unchanged, producing collapse factors of 229× / 250× / 216×. Reporting "collapsed 250×"
+              from a single run is the number of one run, not of the system. The honest form is a
+              <strong>range</strong>: 200–250×.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Going deeper: coordinated omission — why closed-loop measurement flatters p99</div>
+              <div class="callout__content">
+                Lesson 1 named this phenomenon; now we can see it sitting inside our own tool. Because each connection
+                has to wait for a response before sending again, <strong>the tool automatically sends less</strong>
+                when the server slows down. Precisely the requests that should have landed in the worst period are
+                never generated at all.
+                <br /><br />
+                Real users are not so polite: they keep clicking, keep hitting F5, and keep arriving while the server
+                is dying. That is <em>open-loop</em> measurement, and it always produces a worse p99.
+                <br /><br />
+                So every p99 in this series should be read as a <strong>lower bound on how bad it gets</strong> —
+                production will be worse. It is also why <code>loadgen.js</code> states its three limitations in the
+                comment block at the top of the file, rather than leaving the reader to guess.
+              </div>
+            </div>
+
+            <!-- ================= 2.5 ================= -->
+            <h2>2.5 Finding the knee point: where does your server saturate?</h2>
+
+            <p>
+              Now to answer Lesson 1's question. We raise the connection count step by step and record throughput
+              alongside latency. The command for each data point:
+            </p>
+
+            {{CODE:quét tải}}
+
+            <p>Real results on the machine listed at the top of the lesson:</p>
+
+            {{SVG:3}}
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Connections</th>
+                  <th>Throughput (req/s)</th>
+                  <th>p50 (ms)</th>
+                  <th>p99 (ms)</th>
+                  <th>Reading</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>8,344</td>
+                  <td>0.12</td>
+                  <td>0.15</td>
+                  <td>Not yet using full capacity</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>14,118</td>
+                  <td>0.14</td>
+                  <td>0.20</td>
+                  <td>Nearly double — still headroom</td>
+                </tr>
+                <tr>
+                  <td>4</td>
+                  <td>29,604</td>
+                  <td>0.13</td>
+                  <td>0.27</td>
+                  <td>The knee — throughput hits the ceiling, latency has not risen</td>
+                </tr>
+                <tr>
+                  <td>8</td>
+                  <td>30,531</td>
+                  <td>0.22</td>
+                  <td>0.48</td>
+                  <td>Throughput flat, latency starting to climb</td>
+                </tr>
+                <tr>
+                  <td>16</td>
+                  <td>30,577</td>
+                  <td>0.47</td>
+                  <td>0.99</td>
+                  <td>Peak throughput; p99 already 6.6× higher</td>
+                </tr>
+                <tr>
+                  <td>32</td>
+                  <td>30,278</td>
+                  <td>0.99</td>
+                  <td>2.03</td>
+                  <td>Now only paying in latency</td>
+                </tr>
+                <tr>
+                  <td>64</td>
+                  <td>29,694</td>
+                  <td>2.06</td>
+                  <td>4.14</td>
+                  <td>Throughput starting to fall</td>
+                </tr>
+                <tr>
+                  <td>128</td>
+                  <td>28,967</td>
+                  <td>4.27</td>
+                  <td>8.29</td>
+                  <td>Worse in every respect than 16 connections</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Reading this table is the whole value of the lesson. Going from 16 to 128 connections,
+              <strong>throughput drops 5% while p99 rises 8.4×</strong>. Past the knee, every additional concurrent
+              request is pure cost — it only makes the queue longer. This is Lesson 1's non-linear wall, this time in
+              measurements from a real machine.
+            </p>
+
+            <h3>Confirming Little's Law experimentally</h3>
+
+            <p>
+              The most convincing measurement comes from a different endpoint. Using
+              <code>/slow-sync?ms=5</code> — which occupies exactly 5 ms of CPU per request — the maximum service
+              rate on one CPU must be $\mu = 1000/5 = 200$ req/s. Measured:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Connections (L)</th>
+                  <th>Measured throughput</th>
+                  <th>Measured mean latency (W)</th>
+                  <th>$L / \lambda$ from Little's Law</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>198.8 req/s</td>
+                  <td>5.0 ms</td>
+                  <td>5.0 ms</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>197.3 req/s</td>
+                  <td>10.1 ms</td>
+                  <td>10.0 ms</td>
+                </tr>
+                <tr>
+                  <td>8</td>
+                  <td>200.0 req/s</td>
+                  <td>40.0 ms</td>
+                  <td>40.0 ms</td>
+                </tr>
+                <tr>
+                  <td>16</td>
+                  <td>199.6 req/s</td>
+                  <td>80.1 ms</td>
+                  <td>80.0 ms</td>
+                </tr>
+                <tr>
+                  <td>32</td>
+                  <td>200.0 req/s</td>
+                  <td>160.1 ms</td>
+                  <td>160.0 ms</td>
+                </tr>
+                <tr>
+                  <td>64</td>
+                  <td>199.7 req/s</td>
+                  <td>320.5 ms</td>
+                  <td>320.0 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The last column is computed from $W = L/\lambda$ with $\lambda = 200$. The discrepancy against the
+              measurements is <strong>under 0.3%</strong> at every level. Little's Law is not decorative theory — it
+              is an equality that holds figure by figure on a real machine.
+            </p>
+
+            <p>
+              And note the most surprising thing in that table:
+              <strong>throughput is flat at 200 req/s from a single connection onwards</strong>. With a CPU-bound
+              handler on a single-threaded server, the server is already saturated at exactly one concurrent request.
+              Every additional connection buys nothing at all — it only lengthens the queue and raises latency
+              linearly.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">🕳️ Pitfall: concluding "the server handles X req/s" from one measurement</div>
+              <div class="callout__content">
+                That sentence is missing the two most important pieces of information: <strong>at how many concurrent
+                connections</strong>, and <strong>at what p99</strong>. Look at the table above: saying
+                "<code>/fast</code> handles 29,000 req/s" is true both at 4 connections (p99 = 0.27 ms) and at 128
+                connections (p99 = 8.29 ms) — two completely different systems from the user's point of view.
+                <br /><br />
+                A complete statement has to take the form: "29,600 req/s at 4 concurrent connections with p99 =
+                0.27 ms, measured on [machine configuration]".
+              </div>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Do it yourself: find your own machine's knee point</div>
+              <div class="callout__content">
+                Run exactly the sweep loop above and build the same table. Three questions to answer for yourself:
+                <br /><br />
+                <strong>1.</strong> Where is your knee, in connections? (More cores does not necessarily mean higher —
+                the app is limited to 1 CPU.)
+                <br />
+                <strong>2.</strong> Switch to <code>/slow-sync?ms=5</code>: is throughput flat at around 200 req/s? If
+                it is far off, re-check the CPU-architecture preflight in section 2.3.
+                <br />
+                <strong>3.</strong> Drop <code>-w 2</code> (no warm-up) and compare: how far apart are the numbers?
+              </div>
+            </div>
+
+            <h3>Comparing against the simulation</h3>
+
+            <p>
+              The Traffic Lab below simulates exactly the situation we just measured. Pick the
+              <strong>"1. A single server"</strong> topology and drag the load up: you will see the same shape as the
+              table — throughput hits its ceiling and stops, while the queue and p99 keep climbing.
+            </p>
+
+            <div
+              style="
+                margin: 24px 0;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                overflow: hidden;
+                background: #0b0f19;
+              "
+            >
+              <iframe
+                src="../sysdesign-sandbox"
+                title="Traffic Lab"
+                style="width: 100%; height: 680px; border: none"
+                loading="lazy"
+              ></iframe>
+            </div>
+
+            <!-- ================= chuyen tiep ================= -->
+            <h2>The limit is known — now what?</h2>
+
+            <p>
+              We have $\mu$ as a measurement, we know where the knee is, and we know a handler that blocks the event
+              loop costs 200–250×. But however perfectly the code is written, one server still has a hard ceiling: one
+              CPU, one process, one point of failure.
+            </p>
+
+            <p>
+              Lesson 3 puts nginx in front and multiplies the app into 3 replicas, then measures these very same
+              numbers again. Along the way we meet two counter-intuitive results: a load-balancing algorithm whose
+              "requests per node" chart looks perfectly balanced while its p99 is nearly twice as bad as the
+              alternative, and the absence of graceful shutdown turning every deploy into a countable burst of 502s
+              for real users.
+            </p>
+
+            <!-- References Block -->
+            <section class="article-refs">
+              <h2>📖 Further reading</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Node.js Docs — Don't Block the Event Loop
+                  </a>
+                </li>
+                <li>
+                  <a href="https://docs.libuv.org/en/v1.x/design.html" target="_blank" rel="noopener noreferrer">
+                    libuv — Design overview (the event loop, the thread pool, the I/O queues)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://docs.docker.com/compose/how-tos/profiles/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Docker Compose — Profiles (the mechanism the lab uses to grow the stack)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.infoq.com/presentations/latency-response-time/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Gil Tene — How NOT to Measure Latency (coordinated omission)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <!-- Download Block -->
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The app server written on the plain <code>http</code> module (0 dependencies, including a minimal
+                Redis client that speaks the RESP protocol directly) and the hand-written load generator, whose three
+                limitations are stated in the file:
+              </p>
+              <a
+                href="../sysdesign-lab/app/app.js"
+                download
+                class="btn-facebook"
+                style="background: #38bdf8; text-decoration: none; color: #04263a; margin-right: 8px"
+              >
+                Download app.js
+              </a>
+              <a
+                href="../sysdesign-lab/loadgen/loadgen.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download loadgen.js
+              </a>
+            </div>

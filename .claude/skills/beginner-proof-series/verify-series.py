@@ -147,7 +147,15 @@ for num, slug in order:
 
     # --- hreflang / urls
     want = {('vi', f'{base_url}/{slug}'), ('en', f'{base_url}/en/{slug}'), ('x-default', f'{base_url}/{slug}')}
-    ok_hl = all(set(re.findall(r'hreflang="([^"]+)" href="([^"]+)"', s)) == want for s in (vi, en))
+    # Prettier ngat thẻ <link> dai thanh nhieu dong, nen KHONG duoc doi hreflang va
+    # href nam sat nhau tren cung mot dong — truoc day slug dai hon la check nay do.
+    hl_re = r'hreflang="([^"]+)"\s+href="([^"]+)"|href="([^"]+)"\s+hreflang="([^"]+)"'
+    def hreflangs(doc):
+        out = set()
+        for a, b, c, d in re.findall(hl_re, doc):
+            out.add((a, b) if a else (d, c))
+        return out
+    ok_hl = all(hreflangs(s) == want for s in (vi, en))
     checks.append(('hreflang', ok_hl, 'bo ba thieu hoac tro sai'))
     urls_ok = True
     for s, expect in ((vi, f'{base_url}/{slug}'), (en, f'{base_url}/en/{slug}')):
