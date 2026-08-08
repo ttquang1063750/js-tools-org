@@ -1,0 +1,476 @@
+            <p>
+              <a href="sysdesign-observability">Lesson 16</a> just finished building the measurement toolkit. This
+              lesson uses it to look at something hard to believe if you only hear it described:
+              <strong>a system taking itself down</strong> with traffic it generates itself, long after the root cause
+              is gone.
+            </p>
+
+            <p>
+              Four measurements from the lab. First, a three-tier chain where each tier retries three times turns
+              <strong>30 user requests into 810</strong> hits on the leaf service — exactly 27 times, and no tier did
+              anything wrong. Second, backoff without jitter bursts traffic to <strong>19.6 times</strong> the average;
+              adding jitter brings that down to 5.3 times. Third, a circuit breaker cuts calls into a sick dependency
+              from 17 down to 7 and turns <strong>5,291 ms of waiting</strong> into 2,173 ms. Fourth, a timeout placed
+              in the wrong spot makes the server do the full <strong>50,000 ms of wasted work</strong> — 100 complete
+              responses that nobody receives.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Measurement setup</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Three
+                <code>node:22-alpine</code> containers (app1/app2/app3) playing three service tiers, each 1 CPU and 256
+                MB; the retry/breaker/deadline logic lives in <code>worker/resilience.js</code>, running in a fourth
+                container, no dependencies.<br /><br />
+                The circuit breaker sits on the <strong>client side</strong> — exactly where it belongs in practice:
+                the caller is the one who knows when to stop calling. The breaker and deadline measurements use
+                <em>one</em> sequential client, so the throughput numbers in them are not capacity measurements; what
+                matters there is <em>the number of calls that reach the dependency</em> and
+                <em>the time spent waiting</em>.
+              </div>
+            </div>
+
+            <!-- ================= 17.1 ================= -->
+            <h2>17.1 Cascading failure: when a system takes itself down</h2>
+
+            <p>
+              The propagation mechanism is always the same and doesn't depend on the technology. A dependency slows
+              down — not dead, just slow. Whoever calls it holds a connection and a thread open, waiting. Connections
+              held longer means the pool drains faster. A drained pool means the caller itself starts slowing down, and
+              whoever calls <em>it</em> starts holding connections open longer too. Within a few dozen seconds, a small
+              incident at the bottom tier has propagated all the way up to the user.
+            </p>
+
+            <p>
+              The most dangerous trait of a cascade is that it is <strong>self-sustaining</strong>: after the root
+              cause has been fixed, the system keeps falling over, because what's keeping it down now is the retry
+              traffic piling up. And the biggest amplifier of that traffic is something that looks harmless in code
+              review.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">🚨 A cascade outlives the cause that started it</div>
+              <div class="callout__content">
+                This is what sets a cascade apart from every other kind of incident, and it's what makes it the
+                hardest to handle while on call. You find the root cause — a slow query, a dead node — and you fix it.
+                The system is <strong>still down</strong>. Because what's holding it down is no longer the root cause,
+                it's the pile of retries feeding on itself.<br /><br />
+                The consequence is deeply counterintuitive: the fastest way out is usually to
+                <strong>actively cut load down to near zero</strong> — block incoming traffic entirely, let the queues
+                drain, then reopen gradually. It feels like hurting yourself in the middle of an incident, but without
+                it the system never gets enough breathing room to recover. This is also why the load shedding from
+                <a href="sysdesign-rate-limiting">Lesson 13</a> is a <em>rescue</em> tool, not just a preventive one.
+              </div>
+            </div>
+
+            {{CODE:tang_nao_cung_the.js}}
+
+            <p>
+              Nobody catches the problem reviewing that snippet, because the problem isn't in the snippet — it lives in
+              the <strong>product of the whole chain</strong>. The lab builds three real tiers, each running exactly
+              that code, then counts how many times the leaf service gets called:
+            </p>
+
+            {{CODE:ket_qua_amplify.txt}}
+
+            <p>
+              <strong>810 calls for 30 requests.</strong> The factor of 27 = 3 × 3 × 3, and it lands right when the
+              leaf service is weakest — because that very weakness is what's generating the retries in the first
+              place. This is a pure positive feedback loop: the weaker it gets, the more it gets called; the more it
+              gets called, the weaker it gets.
+            </p>
+
+            {{SVG:1}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: retrying at multiple tiers at once</div>
+              <div class="callout__content">
+                The practical rule is surprisingly simple: <strong>only one tier should retry</strong>, and it should
+                be the tier closest to the user that still has enough context to decide. Every other tier should fail
+                and return the error immediately.<br /><br />
+                The problem is that nobody violates this rule <em>on purpose</em> — it happens because different teams
+                write different tiers, and each team only sees its own. Worse, retries are often already built into
+                the HTTP client library with defaults turned on, so they never appear in any line of code to review.
+                The only reliable check: <strong>count how many times the leaf service gets called</strong> for one
+                request, exactly as measured above.
+              </div>
+            </div>
+
+            <!-- ================= 17.2 ================= -->
+            <h2>17.2 Getting retries right: conditions, backoff, and jitter</h2>
+
+            <p>Three conditions must hold <em>at the same time</em> for a retry to be safe. Missing any one breaks it:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Condition</th>
+                  <th>Why</th>
+                  <th>How it breaks if skipped</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>The error must be transient</strong></td>
+                  <td>Timeout, 503, dropped connection — something that could be different next time</td>
+                  <td>Retrying a <code>400</code> or <code>404</code> just wastes resources; it will fail identically
+                    next time</td>
+                </tr>
+                <tr>
+                  <td><strong>The operation must be idempotent</strong></td>
+                  <td>A retry means the operation may run twice (<a href="sysdesign-idempotency">Lesson 11</a>)</td>
+                  <td>Charging twice, sending an email twice — and you have no way of knowing it happened</td>
+                </tr>
+                <tr>
+                  <td><strong>There must be backoff with jitter</strong></td>
+                  <td>Retrying immediately just adds load exactly when the system is already weak</td>
+                  <td>A synchronized wave of retries takes down the server right as it recovers</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The third condition is the one most often done halfway: plenty of systems have backoff but
+              <em>no jitter</em>. The consequence is very concrete — when a service dies and comes back, every client
+              that hit the error at the same moment also waits exactly 100 ms, then exactly 200 ms, then 400 ms.
+              Every one of those points is a synchronized wave.
+            </p>
+
+            <p>The lab fails 200 clients at once and lets them retry 4 times, both modes using the same backoff formula:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Mode</th>
+                  <th>Peak per 20 ms</th>
+                  <th>Mean per 20 ms</th>
+                  <th>Burst factor</th>
+                  <th>Duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Backoff <strong>without</strong> jitter</td>
+                  <td><strong>185</strong></td>
+                  <td>9.4</td>
+                  <td><strong>19.6×</strong></td>
+                  <td>1,694 ms</td>
+                </tr>
+                <tr>
+                  <td>Backoff <strong>with</strong> jitter</td>
+                  <td><strong>65</strong></td>
+                  <td>12.3</td>
+                  <td><strong>5.3×</strong></td>
+                  <td>1,302 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The column worth staring at is the <em>burst factor</em> — how many times the peak is above the average.
+              No jitter gives 19.6 times: a server that just recovered has to absorb a spike nearly 20 times the
+              average load, and that spike is usually enough to kill it again, producing a crash–recover–crash loop.
+              Adding jitter brings the factor down to 5.3 and the peak down to a third.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Jitter also finishes everything sooner</div>
+              <div class="callout__content">
+                An easy-to-miss detail in the table above: the jittered mode finishes after
+                <strong>1,302 ms</strong> while the non-jittered mode takes 1,694 ms. That sounds backwards — adding
+                randomness makes it faster?<br /><br />
+                The reason: "full jitter" waits a random amount within <code>[0, backoff]</code> instead of exactly
+                <code>backoff</code>, so the expected wait is only half as long. You get both benefits at once: more
+                evenly spread load <em>and</em> a lower average latency. This is one of very few places in this series
+                where a single change improves both sides of a trade-off.
+              </div>
+            </div>
+
+            {{SVG:2}}
+
+            <!-- ================= 17.3 ================= -->
+            <h2>17.3 Timeouts and deadlines: don't do work for a request that's already dead</h2>
+
+            <p>
+              Every network call needs a timeout. That sentence sounds obvious enough to skip, but the default in a
+              great many HTTP libraries is <strong>infinite</strong> — meaning your default is also infinite, unless
+              you've explicitly set one. A call with no timeout holds a connection open indefinitely, and that is
+              exactly the first step of the cascade mechanism in section 17.1.
+            </p>
+
+            <p>
+              But having a timeout isn't enough on its own; timeouts must <strong>shrink with depth</strong>. If the
+              outer tier waits 1 second while the inner tier waits 3, the outer tier gives up first while the rest of
+              the chain keeps grinding away on a request nobody is waiting for anymore. The lab measures exactly that
+              situation: the client gives up after 100 ms, the server works for 500 ms.
+            </p>
+
+            {{CODE:ket_qua_deadline.json}}
+
+            <p>
+              The scariest part of this number is that it's <strong>invisible on the dashboard</strong>. From the
+              server's point of view, those 100 requests completed normally, no errors, processing time exactly as
+              designed. From the user's point of view, all 100 failed. Both sides are looking at the same system and
+              seeing opposite truths — and the side with the dashboard is the one looking at it wrong.
+            </p>
+
+            <p>
+              The fix is called <strong>deadline propagation</strong>: instead of every tier setting its own timeout,
+              the first tier computes an <em>absolute point in time</em> by which the request must finish, and passes
+              that point downward. Every tier checks it before doing work, and bails immediately if it's already past.
+              The result: nobody does work for a request that's already dead.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: an outer timeout shorter than an inner one</div>
+              <div class="callout__content">
+                This is the most common misconfiguration, and it usually happens by accident: each team sets a
+                reasonable timeout for <em>its own</em> service, and nobody looks at the whole chain. The result is
+                that all the resources further down the chain get burned producing a result nobody receives — and
+                worse, if the outer tier then <em>retries</em> after timing out, you now have both problems at once:
+                wasted work <strong>multiplied</strong> by the amplification factor from section 17.1.<br /><br />
+                The cheapest check that almost nobody does: <strong>draw the timeout of every hop on one
+                timeline</strong>. They must shrink from outer to inner, and the sum of a tier's children's timeouts
+                must be smaller than the parent's. If you've never drawn that, chances are good you have at least one
+                spot backwards.
+              </div>
+            </div>
+
+            <!-- ================= 17.4 ================= -->
+            <h2>17.4 Circuit breakers and bulkheads</h2>
+
+            <p>
+              Retrying assumes an error is temporary. Once a dependency is genuinely broken, that assumption is wrong
+              — and every retry just adds another wait before receiving the same error again. A
+              <strong>circuit breaker</strong> recognizes that and stops calling entirely for a while, giving the
+              dependency room to breathe and saving itself from sitting there waiting.
+            </p>
+
+            {{SVG:3}}
+
+            <p>The lab kills a dependency for the first 5 seconds (every call hangs 300 ms then returns 503), then lets it recover:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Calls into the sick dependency</th>
+                  <th>Time wasted waiting</th>
+                  <th>Immediate rejections</th>
+                  <th>Recovers after</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>No breaker</strong></td>
+                  <td>17</td>
+                  <td><strong>5,291 ms</strong></td>
+                  <td>0</td>
+                  <td>299 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>With breaker</strong></td>
+                  <td><strong>7</strong></td>
+                  <td><strong>2,173 ms</strong></td>
+                  <td>407</td>
+                  <td>188 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Read the table both ways. For the <em>dependency</em>: calls hitting it drop 59% exactly when it needs
+              quiet the most. For the <em>caller itself</em>: 5.3 seconds of waiting turns into 2.2 seconds, and 407
+              requests get an answer immediately instead of hanging — meaning threads and connections get freed up,
+              which is exactly where the cascade gets stopped.
+            </p>
+
+            <p>
+              <strong>Bulkheads</strong> solve a sibling problem: even with a breaker, if every dependency shares one
+              connection pool, a slow dependency can still drain the pool before the breaker has a chance to open. The
+              fix is to give each dependency its own pool — exactly like the watertight compartments on a ship the name
+              evokes: one flooded compartment doesn't sink the whole vessel.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Why a slow dependency drains a pool so fast</div>
+              <div class="callout__content">
+                The number is easy to compute and worth being startled by. Say your service has a pool of 50
+                connections and serves 500 requests/second. Normally each call takes 10 ms, so by
+                <a href="sysdesign-latency-queueing">Little's Law</a> the connections in use are
+                500 × 0.01 = <strong>5</strong> — plenty of room in 50.<br /><br />
+                Now the dependency slows to 2 seconds (not dead, just slow). The same traffic now needs 500 × 2 =
+                <strong>1,000 connections</strong> — 20 times capacity. The pool drains in under a hundred
+                milliseconds, and from that second on, every other request, including requests
+                <em>completely unrelated</em> to the slow dependency, queues up waiting for a connection.<br /><br />
+                That is the entire argument for a <strong>bulkhead</strong>: if the slow dependency only gets 10
+                connections out of its own dedicated pool, it drains <em>its own</em> pool and stops there — the other
+                40 connections keep serving everything else normally. The limit isn't there to protect the dependency,
+                it's there to <em>contain the damage</em> once it breaks.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a breaker scoped too broadly, or half-open letting through too many probes</div>
+              <div class="callout__content">
+                A breaker for the <em>entire</em> service means one broken endpoint blocks every other endpoint —
+                including perfectly healthy ones. The right scope is usually
+                <strong>one breaker per dependency</strong>, sometimes per important endpoint.<br /><br />
+                At the other end, half-open letting through too many probe requests at once is a reliable way to kill a
+                dependency that just barely came back up — it recovered at 10% capacity and you just threw 100% of the
+                load at it. The lab uses exactly <strong>2</strong> probe requests. That small number is deliberate:
+                half-open's job is to <em>ask one question</em>, not to reconnect the service.
+              </div>
+            </div>
+
+            <!-- ================= 17.5 ================= -->
+            <h2>17.5 Graceful degradation and chaos engineering</h2>
+
+            <p>
+              The three sections above are all about <em>not making the system worse</em>. This one is about making it
+              <em>still usable</em> once a part is already broken. The principle: a degraded result is almost always
+              better than an error page.
+            </p>
+
+            <ul>
+              <li>A product page loses its personalized recommendations — you can still buy something.</li>
+              <li>Cached data that's 10 minutes stale instead of an error — on most screens, nobody notices.</li>
+              <li>Hide the view count when the stats service is dead — nobody's there for that number.</li>
+              <li>A safe default value instead of calling the config service — as long as that default is tested.</li>
+            </ul>
+
+            <p>
+              The precondition is identical to prioritized load shedding in
+              <a href="sysdesign-rate-limiting">Lesson 13</a>: you need to know in advance
+              <strong>which paths have to survive no matter what</strong>, and which parts are fine to switch off.
+              That's a product decision, not a technical one, and it has to be made before the incident.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: the fallback path calls the very thing that's dying</div>
+              <div class="callout__content">
+                A familiar pattern: "call the recommendations service; on error, read a default recommendation from
+                the database." Sounds reasonable — until you realize the recommendations service is dying
+                <em>because</em> the database is overloaded. At that point, the fallback path adds even more load to
+                the exact component that's already gasping, turning a local incident into a system-wide one.<br /><br />
+                A fallback must depend on <strong>fewer</strong> things than the primary path, not on other things
+                entirely. A constant value embedded in code is the best fallback there is, because it depends on
+                nothing.<br /><br />
+                A close relative of this pitfall: a failover mechanism <em>that has never been drilled</em>. A backup
+                path that hasn't run in six months will also be broken by the time you need it — credentials expired,
+                config drifted, or nobody remembers how to switch it on. That is exactly why
+                <strong>chaos engineering</strong> exists: deliberately inject failures during business hours, when
+                everyone is alert, instead of letting failure find you at 3 a.m.
+              </div>
+            </div>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              Cascading failure isn't a type of error, it's an <em>operating mode</em> a system falls into, and it's
+              self-sustaining after the root cause is gone. The fuel that feeds it is retries: three tiers, three
+              retries each, turning 30 requests into <strong>810</strong> hits on the leaf service — exactly when that
+              service is weakest. No tier did anything wrong; the factor of 27 only exists at the whole-system level,
+              so the only way to catch it is <strong>counting how many times the leaf service gets called per
+              request</strong>.
+            </p>
+
+            <p>
+              Three fixes, each solving a different part. <strong>Retry budgets</strong> stop the amplification
+              itself: 810 down to 69, 11.7 times fewer, because it limits by <em>ratio</em> rather than by count.
+              <strong>Jitter</strong> stops the synchronized wave: burst factor 19.6 times down to 5.3, and it finishes
+              sooner too. <strong>Circuit breakers</strong> stop the waiting: 5.3 seconds of waiting becomes 2.2
+              seconds, 407 requests get an answer immediately instead of hanging — and that's exactly where threads and
+              connections get freed.
+            </p>
+
+            <p>
+              On timeouts, the number worth remembering is <strong>50,000 ms of wasted work</strong>: 100 complete
+              responses nobody receives, and <em>nothing on the server's dashboard shows it</em> — from its side, every
+              request completed normally. Timeouts must shrink from outer to inner, and the correct way is propagating
+              an absolute deadline rather than letting each tier pick its own number.
+            </p>
+
+            <p>
+              Finally, a lesson that came from writing this lab itself: the first version of the circuit breaker was
+              missing the "probe fails → reopen immediately" branch, and it got
+              <strong>stuck in half-open forever</strong> — rejecting every request permanently even after the
+              dependency was healthy again, without throwing a single error. Resilience mechanisms are code too, and
+              code has bugs; the difference is this kind of bug only shows up exactly when you need it most. That is
+              the entire argument for chaos engineering.
+            </p>
+
+            <p>
+              <strong>Lesson 18</strong> is the last one: put it all together into a real system, run it, measure it,
+              find the bottleneck, fix it, then measure again — with before-and-after numbers for every step, so it's
+              clear which steps were worth it and which just added complexity.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a href="https://sre.google/sre-book/addressing-cascading-failures/" target="_blank" rel="noopener noreferrer">
+                    Google SRE Book — Addressing Cascading Failures: the propagation mechanism and why actively
+                    shedding load is the way out, source for section 17.1
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    AWS Architecture Blog — Exponential Backoff and Jitter: the origin of "full jitter" and why it both
+                    spreads load and finishes sooner, source for section 17.2
+                  </a>
+                </li>
+                <li>
+                  <a href="https://grpc.io/docs/guides/deadlines/" target="_blank" rel="noopener noreferrer">
+                    gRPC — Deadlines: the model of propagating one absolute point in time across hops instead of each
+                    tier setting its own timeout, source for section 17.3
+                  </a>
+                </li>
+                <li>
+                  <a href="https://martinfowler.com/bliki/CircuitBreaker.html" target="_blank" rel="noopener noreferrer">
+                    Martin Fowler — CircuitBreaker: the closed/open/half-open state machine, source for section 17.4
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://learn.microsoft.com/en-us/azure/architecture/patterns/bulkhead"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Microsoft Azure Architecture Center — Bulkhead pattern: isolating resource pools per dependency,
+                    source for section 17.4
+                  </a>
+                </li>
+                <li>
+                  <a href="https://principlesofchaos.org/" target="_blank" rel="noopener noreferrer">
+                    Principles of Chaos Engineering: the definition and principles of deliberately injecting failure to
+                    verify resilience mechanisms, source for section 17.5
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the practice source code</h3>
+              <p>
+                The resilience toolkit used in the lab: a three-state circuit breaker, backoff with and without
+                jitter, deadlines propagated across tiers — every number in this lesson comes from this file:
+              </p>
+              <a
+                href="../sysdesign-lab/worker/resilience.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download resilience.js (circuit breaker, jitter, deadline — 0 dependencies)
+              </a>
+            </div>
