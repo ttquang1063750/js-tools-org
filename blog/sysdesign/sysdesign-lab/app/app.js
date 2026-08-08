@@ -774,19 +774,20 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/rww') {
-      // Tai tao dung mot bug: nguoi dung doi anh dai dien (GHI vao primary) roi tai lai
-      // trang (DOC tu replica) va thay anh CU. Day la vi pham read-your-writes.
+      // Reproduces exactly one bug: the user changes their avatar (WRITE to the primary)
+      // then reloads the page (READ from the replica) and sees the OLD avatar. That is a
+      // read-your-writes violation.
       //
-      // ?id=N     dong du lieu de ghi/doc (mac dinh ngau nhien trong 1..1000)
-      // ?pin=1    dung co che ghim-ve-primary neu READ_PIN_MS > 0
+      // ?id=N     the row to write/read (default: random in 1..1000)
+      // ?pin=1    use the pin-to-primary mechanism, if READ_PIN_MS > 0
       if (!pgPrimary || !pgReplica) {
-        return json(res, 503, { error: 'chua dat PG_PRIMARY / PG_REPLICA' });
+        return json(res, 503, { error: 'PG_PRIMARY / PG_REPLICA not set' });
       }
       const id = Number(url.searchParams.get('id') || 1 + Math.floor(Math.random() * 1000));
       const usePin = url.searchParams.get('pin') !== '0';
       const now = Date.now();
 
-      // 1) GHI vao primary. RETURNING cho biet chinh xac version vua ghi.
+      // 1) WRITE to the primary. RETURNING tells us exactly which version we just wrote.
       const wrote = await pgPrimary.query(
         `UPDATE profiles SET avatar = 'avatar-v' || (version + 1) || '.png',
                              version = version + 1, updated_at = now()
@@ -795,7 +796,7 @@ const server = http.createServer(async (req, res) => {
       const wroteVersion = Number(wrote[0] && wrote[0].version);
       if (usePin && READ_PIN_MS > 0) readPin.set(id, Date.now() + READ_PIN_MS);
 
-      // 2) DOC NGAY LAP TUC. Day la thoi diem quyet dinh: chua chac replica da kip.
+      // 2) READ IMMEDIATELY. This is the decisive moment: the replica may not have caught up.
       const pinned = usePin && shouldReadPrimary(id, Date.now());
       if (pinned) rwwPinned++;
       const target = pinned ? pgPrimary : pgReplica;
@@ -803,8 +804,8 @@ const server = http.createServer(async (req, res) => {
       const readVersion = Number(read[0] && read[0].version);
 
       rwwTotal++;
-      // "Cu" la mot dieu DO DUOC, khong phai cam nhan: doc ra version NHO HON version
-      // vua ghi thi khong the tranh cai.
+      // "Stale" is MEASURABLE, not a feeling: reading a version LOWER than the one we
+      // just wrote is not open to argument.
       const stale = readVersion < wroteVersion;
       if (stale) rwwStale++;
 

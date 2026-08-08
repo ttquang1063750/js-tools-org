@@ -1,0 +1,630 @@
+
+            <p>
+              The last five lessons were all layers that sit <em>in front of</em> the database. This one steps into the
+              database itself, and the first question is the cheapest in the whole series: if your read-to-write ratio
+              is 100:1 — a very common number — then simply adding copies to read from already handles 99% of the work.
+            </p>
+
+            <p>
+              This lesson's lab stands up a PostgreSQL primary and a <strong>real</strong> read replica, with streaming
+              replication. And the very first measurement produced a number I did not see coming: the lab's replication
+              lag is only <strong>0.557 ms</strong> — less than half a thousandth of a second — and yet the share of
+              users who "write, read back, and see stale data" was still <strong>87.21%</strong>. Lag does not need to
+              be large to break a system; it only needs to be larger than the gap between that same user's write and
+              their next read.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The measurement machine, and one thing to say up front</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Native arm64 containers.
+                <strong>PostgreSQL 18.3</strong> (the Debian build), primary and replica in two separate containers,
+                asynchronous streaming replication. Three app replicas at 1 CPU / 256 MB each, nginx 1.27-alpine, load
+                generator on 2 CPUs.<br /><br />
+                Because both PostgreSQL nodes sit on the same machine, the natural lag is under 1 ms — far smaller than
+                for a replica in another geographic region. So besides the measurements at natural lag, this lesson
+                also uses <code>recovery_min_apply_delay</code> to impose a <strong>controlled</strong> lag of 200 ms,
+                simulating a distant replica. Every table states which mode it was measured in.
+              </div>
+            </div>
+
+            <!-- ================= 7.1 ================= -->
+            <h2>7.1 Three different purposes, usually collapsed into one</h2>
+
+            <p>
+              "Add a replica" sounds like one job, but it serves three different goals — and those three goals need
+              three different configurations. Collapsing them is the source of most disappointment with replicas.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Purpose</th>
+                  <th>What it needs</th>
+                  <th>What it does NOT give you</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Scaling the read tier</strong></td>
+                  <td>Several replicas, async is enough, tolerate slightly stale data</td>
+                  <td>
+                    No help at all with <strong>write throughput</strong> — every write still funnels into one primary.
+                    It does not increase storage capacity either
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>High availability (HA)</strong></td>
+                  <td>At least semi-synchronous, plus election and fencing, plus a replica in another region</td>
+                  <td>You do not get it for free by enabling an async replica and promoting by hand during an incident</td>
+                </tr>
+                <tr>
+                  <td><strong>A backup copy</strong></td>
+                  <td>
+                    A deliberately <em>delayed</em> copy, or point-in-time snapshots, or a logical backup somewhere
+                    else entirely
+                  </td>
+                  <td>
+                    <strong>A replica is not a backup.</strong> See the pitfall right below — this is the most
+                    expensive misconception of the lot
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: treating a replica as a backup</div>
+              <div class="callout__content">
+                A replica copies <em>every</em> change, faithfully and very quickly — including that
+                <code>DELETE FROM orders</code> with the missing <code>WHERE</code> you just ran. In the lab the lag is
+                0.557 ms. That is roughly half a thousandth of a second to regret it.<br /><br />
+                A replica protects you from <strong>hardware failure</strong>. A backup protects you from a
+                <strong>logic error</strong> — yours, a deploy's, or an attacker's. Two different kinds of incident
+                need two different tools. If all you have is a replica then you do not have a backup, and you will find
+                that out at the worst possible moment.<br /><br />
+                There is something in between, and it is well worth knowing: a <strong>deliberately delayed
+                replica</strong>. Using exactly the mechanism this lesson uses to simulate lag —
+                <code>recovery_min_apply_delay</code> — you can keep a replica permanently one hour behind. It is still
+                a replica, but it gives you an hour to notice a bad delete and stop it.
+              </div>
+            </div>
+
+            <!-- ================= 7.2 ================= -->
+            <h2>7.2 The replication mechanism, and the price of each safety level</h2>
+
+            <p>
+              PostgreSQL does not copy "the data", it copies the <strong>WAL</strong> (write-ahead log) — the journal
+              stream recording every change before it is applied. The replica receives that stream and <em>replays</em>
+              it. MySQL calls it the binlog; the idea is the same.
+            </p>
+
+            <p>
+              What matters comes down to a single question: <strong>at what moment does the primary answer "write
+              committed"?</strong> Answer early and writes are fast but data can be lost when the primary dies; answer
+              late and it is safer, but every write has to wait for the replica.
+            </p>
+            {{SVG:1}}
+            <p>
+              The figures in the diagram come from <code>pgbench</code> — the load-measuring tool that ships with every
+              PostgreSQL installation, nothing extra to install. It opens N connections, loops one SQL script for T
+              seconds, and reports transactions per second (tps) and the average latency of a transaction. Here it runs
+              inside the primary container with 8 connections for 10 seconds, and the script is a single
+              <code>INSERT</code> — the less work inside the transaction, the closer the rest is to the pure cost of
+              the commit step, which is exactly what the four synchronisation modes change:
+            </p>
+
+            {{CODE:measure_commit_cost.sh}}
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ One surprise in the measurements</div>
+              <div class="callout__content">
+                <code>remote_apply</code> measured <strong>0.811 ms</strong> — very slightly <em>faster</em> than
+                <code>on</code> at 0.836 ms, even though in theory it waits for more (for the replica to finish
+                applying, not just flushing). That 0.025 ms gap is within run-to-run variation, so the correct
+                conclusion is that <strong>these two modes cost the same in this lab</strong>, not that remote_apply is
+                cheaper.<br /><br />
+                The reason: both nodes are on the same machine, so the "apply" step is nearly free next to the "flush
+                to disk" step. With a replica in another region that distance widens sharply and
+                <code>remote_apply</code> becomes distinctly more expensive. This is a good example of something to
+                keep in mind throughout the series: the lab removes geographic distance, so it
+                <strong>measures the mechanism correctly but not the proportions</strong>.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: enabling synchronous mode with a replica in another region</div>
+              <div class="callout__content">
+                If <code>synchronous_standby_names</code> points at a replica in another geographic region, every write
+                has to wait a full cross-region RTT. With the number from
+                <a href="sysdesign-cdn-edge">Lesson 6</a> — 150 ms for a long route — maximum write throughput on one
+                connection drops to about 6 transactions per second, no matter how powerful the machine is.<br /><br />
+                The signature is very distinctive: write throughput collapses while
+                <strong>the database's CPU stays idle</strong>. Nothing is computing — everything is waiting on the
+                network. If you see that combination, check <code>synchronous_standby_names</code> before you go off
+                optimising queries.
+              </div>
+            </div>
+
+            <!-- ================= 7.3 ================= -->
+            <h2>7.3 Replication lag, and the bug every replicated system meets</h2>
+
+            <p>
+              This is the heart of the lesson. The familiar scenario: a user changes their avatar — the write goes to
+              the primary. The page reloads — the read goes to a replica. If the replica has not applied the change
+              yet, they see the <strong>old avatar</strong> and conclude the system is broken. That is a
+              <strong>read-your-writes</strong> violation: you must always be able to read back what you yourself just
+              wrote.
+            </p>
+
+            <p>
+              The figure below names the two intervals that decide this, and both symbols are used for the rest of the
+              section: <strong>Δ</strong> (delta) is the <em>replication lag</em> — how long the replica needs to
+              finish applying a change that just happened on the primary. <strong>ε</strong> (epsilon) is the gap
+              between <em>that same user's write and their next read</em>. If ε is larger than Δ the replica has caught
+              up and the user sees fresh data; if ε is smaller than Δ they see stale data. That is all there is to it —
+              and note that both are intervals, so what decides the outcome is <em>the ratio between them</em>, not
+              whether Δ is large or small.
+            </p>
+
+            {{SVG:2}}
+
+            <p>
+              The lab has a <code>/rww</code> endpoint that does exactly two things: write to the primary (using
+              <code>RETURNING version</code> so it knows precisely which version it wrote), then immediately read from
+              the replica. If the version read back is <em>lower</em> than the version just written, that is stale data
+              — measurable, not a matter of impression. This is the smallest ε possible: the two statements sit right
+              next to each other inside one request, with nothing in between. The three counters
+              <code>rwwPinned</code>, <code>rwwTotal</code> and <code>rwwStale</code> are exactly where the percentages
+              in the table below come from:
+            </p>
+
+            {{CODE:app/app.js — handler /rww}}
+
+            <p>Four configurations, each with 16 connections for 12 seconds, about 100,000 write-then-read rounds:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Configuration</th>
+                  <th><code>replay_lag</code></th>
+                  <th>Stale-read rate</th>
+                  <th>Throughput</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>A · natural lag, no pinning</td>
+                  <td>0.557 ms</td>
+                  <td><strong>87.21%</strong> (90,376/103,627)</td>
+                  <td>7,547 rps</td>
+                  <td>4.71 ms</td>
+                </tr>
+                <tr>
+                  <td>B · lag forced to 200 ms, no pinning</td>
+                  <td>200.3 ms</td>
+                  <td><strong>100.00%</strong> (102,625/102,625)</td>
+                  <td>7,516 rps</td>
+                  <td>4.88 ms</td>
+                </tr>
+                <tr>
+                  <td>C · lag 200 ms, <strong>pinned to primary for 500 ms</strong></td>
+                  <td>200.2 ms</td>
+                  <td><strong>0.00%</strong> (0/98,358)</td>
+                  <td>7,200 rps</td>
+                  <td>5.16 ms</td>
+                </tr>
+                <tr>
+                  <td>D · lag 200 ms, pinning disabled per request</td>
+                  <td>200.9 ms</td>
+                  <td>100.00%</td>
+                  <td>7,295 rps</td>
+                  <td>5.10 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Row A is the one worth stopping on. A lag of <strong>0.557 ms</strong> — a number no dashboard would
+              alert on, and many people would call "essentially no lag" — still made <strong>87% of reads</strong>
+              return stale data. Because the app writes and then reads inside the same request, the gap ε between the
+              two statements is only a few tens of microseconds. Against that ε, half a millisecond is a very long
+              time.
+            </p>
+
+            <p>
+              Row C shows the fix working absolutely: 0 out of 98,358. And the price is surprisingly cheap —
+              throughput falls from 7,547 to 7,200, which is <strong>4.6%</strong>. Row D is the control: the same
+              configuration but with pinning disabled per request sends the rate straight back to 100%, proving it is
+              the pinning mechanism itself that made the difference and not some other incidental change.
+            </p>
+            <h3>The second fix: let the database handle it</h3>
+
+            <p>
+              There is another way that needs no application code changed at all: set
+              <code>synchronous_commit = remote_apply</code>. The primary then answers "write committed" only after the
+              replica has finished <em>applying</em> it, so every subsequent read on the replica sees fresh data.
+              Measured for real, at natural lag, with no pinning whatsoever:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Fix</th>
+                  <th>Stale-read rate</th>
+                  <th><code>/rww</code> throughput</th>
+                  <th>What it really costs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>No fix</td>
+                  <td>87.21%</td>
+                  <td>7,547 rps</td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <td><strong>Pin reads to the primary (application layer)</strong></td>
+                  <td><strong>0.00%</strong></td>
+                  <td>7,200 rps (−4.6%)</td>
+                  <td>More code and more state; only correct for the person who just wrote</td>
+                </tr>
+                <tr>
+                  <td>
+                    <strong><code>remote_apply</code> (database layer)</strong>
+                  </td>
+                  <td><strong>0.00%</strong></td>
+                  <td>6,594 rps (−12.6%)</td>
+                  <td>Every write gets slower, including for people who never read back; pure writes −42% tps</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Both fixes give 0%, but they pay for it in two different places.
+              <strong>Pinning at the application layer</strong> only slows down the reads of someone who just wrote — a
+              very small share of traffic. <strong><code>remote_apply</code></strong> slows down <em>every</em> write
+              in the system, including those of people who never read anything back. That is why the application-layer
+              fix is the more common one, even though it means writing code.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 The limits of the pin table, and why it should not be a Map in RAM</div>
+              <div class="callout__content">
+                In the lab the pin table is a <code>Map</code> in the app process's memory. It gives 0% because
+                <code>/rww</code> writes and reads inside <em>the same request</em>, so it is always the same
+                process.<br /><br />
+                A real system is not like that: the user writes (the request lands on app1) then reloads the page (the
+                request lands on app2). app2 knows nothing about that write and reads the replica anyway —
+                <strong>the bug is back</strong>. And it comes back in the most annoying way possible: it only happens
+                to a fraction of users, it cannot be reproduced on demand, and it disappears when you try it on a dev
+                machine with a single app replica. Same family as the local-state bug in
+                <a href="sysdesign-load-balancing">Lesson 3</a> section 3.5.<br /><br />
+                Three ways to make the pin state shared, from simple to strict: (1) put a flag in
+                <strong>the user's own cookie or token</strong> — needs no extra infrastructure, and it naturally
+                follows the right person; (2) store it in <strong>Redis</strong> (already present since
+                <a href="sysdesign-caching">Lesson 5</a>); (3) strictest of all, pass around the <strong>LSN</strong> —
+                the position in the WAL — that the user needs to see, then only read from a replica that has replayed
+                up to that position, comparing with <code>pg_last_wal_replay_lsn()</code>. Option (3) needs no time
+                window and no guessing, but it does require carrying the LSN through the API layer.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: spreading reads across replicas with different lag</div>
+              <div class="callout__content">
+                You have three replicas and round-robin your reads across all three. Replica A is 5 ms behind, replica
+                B is 400 ms behind. The user hits F5 twice: the first time they land on A and see fresh data, the
+                second time they land on B and see stale data. The data <strong>jumps forward and then back</strong>.<br /><br />
+                This is a <strong>monotonic reads</strong> violation, and it is the worst kind of bug to deal with: the
+                user reports "it keeps jumping around", you try it ten times and it is fine every time, and no log
+                records anything because no request failed. The usual fix is to
+                <strong>pin each session to a fixed replica</strong> — that guarantees nothing about freshness, but it
+                does guarantee the data never goes backwards. For a user, "a bit stale but stable" is far easier to
+                accept than "jumping back and forth".
+              </div>
+            </div>
+
+            <h3>Measuring lag correctly</h3>
+
+            <p>
+              PostgreSQL exposes three different kinds of lag, and only one of the three is the number a reader
+              actually feels. The lab's <code>tools/pg-lag.sh</code> script asks the primary directly; here is its
+              query portion, quoted verbatim:
+            </p>
+
+            {{CODE:tools/pg-lag.sh — phần hỏi primary}}
+
+            <p>
+              Two columns worth noting: <code>unsent</code> is how much WAL the primary has not sent yet, and
+              <code>unreplayed</code> is how much WAL the replica has received but not applied. The three lag columns
+              behind them are wrapped in <code>COALESCE</code> because PostgreSQL returns <code>NULL</code> when there
+              has been no transaction to measure — and <code>NULL</code> here means "not known", not "zero".
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚡ Do not alert on <code>pg_last_xact_replay_timestamp()</code> while the system is idle
+              </div>
+              <div class="callout__content">
+                The most commonly passed-around way to measure lag is
+                <code>now() - pg_last_xact_replay_timestamp()</code> on the replica. The problem: when
+                <strong>there is no write traffic</strong>, that number grows steadily over time even though the
+                replica has caught up perfectly — because it measures "how long since the last transaction was
+                replayed", not "how far behind are we".<br /><br />
+                The practical consequence: an alert built on that formula fires at 3 in the morning, exactly when the
+                system is quietest and nothing is wrong. In the lab this measured 0.944 seconds while the real
+                <code>replay_lag</code> was 0.000465 seconds — two thousand times apart.<br /><br />
+                The right way: alert on <code>replay_lag</code> from <code>pg_stat_replication</code> on the primary
+                side, or on the LSN distance (<code>unreplayed</code> in the script above). Both are zero when the
+                replica has genuinely caught up.
+              </div>
+            </div>
+            <!-- ================= 7.4 ================= -->
+            <h2>7.4 Failover and split-brain — building the disaster by hand</h2>
+
+            <p>
+              When the primary dies, a replica has to be <strong>promoted</strong> to become the new primary. It sounds
+              simple, and PostgreSQL does it with exactly one statement. The problem is not the promoting, it is the
+              question: <em>how do you know for certain that the old primary really is dead?</em>
+            </p>
+
+            <p>
+              The lab lets you reproduce the worst case exactly. We <strong>cut the network</strong> between the
+              replica and the primary — simulating a partition, with the primary still alive and still accepting
+              writes — and then promote the replica with <em>no</em> mechanism guaranteeing the old primary has
+              stopped:
+            </p>
+
+            {{CODE:cause_split_brain.sh}}
+
+            <p>
+              The result: for the same row <code>id=500</code>, the old primary holds
+              <code>762 | tu-PRIMARY-CU.png</code> and the new one holds <code>862 | tu-PRIMARY-MOI.png</code> (those
+              two strings are just labels the write statements set — Vietnamese for "from-OLD-PRIMARY" and
+              "from-NEW-PRIMARY" — so you can tell at a glance which node a row came from). The data has
+              <strong>diverged</strong>. And reconnecting the network reconciles <em>nothing</em> — the log line
+              <code>selected new timeline ID: 2</code> is PostgreSQL itself telling you that history has forked in two.
+            </p>
+
+            {{SVG:3}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: automatic failover without fencing</div>
+              <div class="callout__content">
+                This is precisely the experiment above, and it is the default setup in a great many "build PostgreSQL
+                HA in 10 minutes" guides. The monitoring sees the primary not responding, so it promotes the replica.
+                But "not responding" may just be <strong>a lost network link</strong> — the old primary is still alive
+                and still accepting writes from whichever clients can still reach it.<br /><br />
+                Once the network recovers you have two sets of data, both valid, with no way to reconcile them
+                automatically. One side's data <em>has</em> to be thrown away, and during the divergence clients on
+                both sides were told "success".<br /><br />
+                That is why every trustworthy failover system has three things: <strong>fencing</strong> (making sure
+                the old node cannot write), <strong>quorum</strong> (a majority decides who is primary, rather than
+                each node deciding for itself), and a <strong>witness</strong> (a third node whose only job is to break
+                a 1–1 tie). Without fencing, the other two cannot save you either.
+              </div>
+            </div>
+            <!-- ================= 7.5 ================= -->
+            <h2>7.5 Operating it: what to watch, and the classic conflict</h2>
+
+            <p>
+              The replica is the most easily forgotten component in a system, because when it works nobody sees it, and
+              when it falls behind the symptom shows up somewhere else entirely — users report "wrong data", nobody
+              reports "the replica is slow".
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Watch</th>
+                  <th>Why</th>
+                  <th>Start alerting at</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>replay_lag</code>, per replica</td>
+                  <td>This is the number a reader actually feels</td>
+                  <td>When it exceeds the threshold your application logic assumes (the pin window, for instance)</td>
+                </tr>
+                <tr>
+                  <td>Unreplayed LSN distance</td>
+                  <td>It does not suffer the "grows while idle" artefact that the time-based measure does</td>
+                  <td>Any value that climbs continuously without coming back down</td>
+                </tr>
+                <tr>
+                  <td>Row count in <code>pg_stat_replication</code></td>
+                  <td>A <em>disconnected</em> replica vanishes from this view entirely — complete silence</td>
+                  <td>Fewer than the number of replicas you think you have</td>
+                </tr>
+                <tr>
+                  <td>WAL still retained on the primary</td>
+                  <td>
+                    If a replica falls too far behind and the WAL has been deleted, it has to
+                    <code>pg_basebackup</code> from scratch — that is, copy the <em>entire</em> data directory from the
+                    primary again, because there is no longer enough journal left to catch up by replaying; hours on a
+                    large database
+                  </td>
+                  <td>When WAL volume approaches <code>wal_keep_size</code></td>
+                </tr>
+                <tr>
+                  <td><strong>Do NOT</strong> alert on the replica's CPU</td>
+                  <td>
+                    Replaying WAL is a single-threaded process: a replica can fall a very long way behind while total
+                    CPU still looks perfectly idle
+                  </td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: running reports on a replica that is serving users</div>
+              <div class="callout__content">
+                This is the classic conflict, and it is very tempting: you already have a replica, so let the analytics
+                team run their reports against it instead of the primary — it sounds like efficient use of
+                resources.<br /><br />
+                The problem: an analytical query scanning a whole table competes for I/O and memory with the WAL replay
+                process, making <strong>lag balloon</strong>. And ballooning lag means the user-facing read path starts
+                returning stale data — an internal report has just broken the customer experience. Worse, PostgreSQL
+                may also have to cancel that very query (<em>conflict with recovery</em>) or postpone replay to keep it
+                running, depending on <code>hot_standby_feedback</code> and
+                <code>max_standby_streaming_delay</code>.<br /><br />
+                The right answer is almost always <strong>a separate replica for analytics</strong>, outside the pool
+                serving users. It costs more money, and that is the entire content of this decision: you are buying
+                separation between two kinds of load with completely different requirements.
+              </div>
+            </div>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ After the split-brain experiment, the lab needs rebuilding</div>
+              <div class="callout__content">
+                Once you promote the replica it becomes a primary on a new timeline and <strong>cannot</strong> go back
+                to being a standby of the old primary. The cleanest way to rebuild is to delete the data so the replica
+                <code>pg_basebackup</code>s itself from scratch:<br /><br />
+                <code>docker compose --profile replica down -v</code> then
+                <code>docker compose --profile replica up -d</code>.<br /><br />
+                The <code>-v</code> flag deletes the volumes — which means deleting the primary's data as well. In the
+                lab that is fine because the schema is reloaded automatically from <code>postgres/init/</code>, but
+                remember it is a destructive command.
+              </div>
+            </div>
+
+            <h3>In summary</h3>
+
+            <p>
+              A replica serves three different purposes that need three different configurations, and a replica is
+              <strong>not a backup</strong> — in the lab you get 0.557 ms to regret a bad delete. Choosing a
+              synchronisation level is choosing a point on the durability ↔ write-latency axis: going from async to
+              sync, write latency rose 79% and write throughput fell 44%.
+            </p>
+
+            <p>
+              The biggest lesson is row A of the table in section 7.3. A replication lag of
+              <strong>0.557 ms</strong> — a number every dashboard would show in green — still broke read-your-writes
+              on <strong>87%</strong> of reads. Because what decides the outcome is not whether the lag is large or
+              small, but whether it is larger than the gap between that same user's write and their read. Inside a web
+              request, that gap is measured in microseconds.
+            </p>
+
+            <p>
+              Both fixes give exactly 0%: pinning reads to the primary (application layer, −4.6% throughput) and
+              <code>synchronous_commit = remote_apply</code> (database layer, −12.6%). They differ in where they pay:
+              the application-layer fix only slows down the person who just wrote, while the database-layer fix slows
+              down every write in the system.
+            </p>
+
+            <p>
+              <strong>Lesson 8</strong> asks the question replicas cannot answer: what happens when the
+              <em>writes themselves</em> exceed what one machine can take, or when the data no longer fits on one disk.
+              That is when you have to shard — the most expensive step in the whole series in terms of complexity, and
+              also the one people reach for too early most often.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://www.postgresql.org/docs/18/runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PostgreSQL — <code>synchronous_commit</code>: the official definition of all five levels
+                    <code>off</code> / <code>local</code> / <code>remote_write</code> / <code>on</code> /
+                    <code>remote_apply</code> measured in section 7.2
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.postgresql.org/docs/18/warm-standby.html#SYNCHRONOUS-REPLICATION"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PostgreSQL — Synchronous Replication, including the syntax of
+                    <code>synchronous_standby_names</code> and the warning about having only one synchronous standby
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.postgresql.org/docs/18/monitoring-stats.html#MONITORING-PG-STAT-REPLICATION-VIEW"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PostgreSQL — the <code>pg_stat_replication</code> view: the precise meaning of
+                    <code>write_lag</code>, <code>flush_lag</code> and <code>replay_lag</code>, used in "Measuring lag
+                    correctly"
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.postgresql.org/docs/18/runtime-config-replication.html#GUC-RECOVERY-MIN-APPLY-DELAY"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PostgreSQL — <code>recovery_min_apply_delay</code>: the mechanism used to impose the controlled
+                    200 ms lag, and also the way to build the deliberately delayed replica from section 7.1
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-RECOVERY-CONTROL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PostgreSQL — <code>pg_promote()</code> and the recovery control functions used in the split-brain
+                    experiment (section 7.4)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.postgresql.org/docs/18/wal-intro.html" target="_blank" rel="noopener noreferrer">
+                    PostgreSQL — Write-Ahead Logging: why the WAL exists, and why it is the thing that gets replicated
+                    rather than the data itself
+                  </a>
+                </li>
+                <li>
+                  <a href="https://jepsen.io/consistency" target="_blank" rel="noopener noreferrer">
+                    Jepsen — Consistency Models: the formal definitions of read-your-writes and monotonic reads, the
+                    two properties broken in this lesson (and the groundwork for Lesson 9)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The two files this lesson reads from directly: the hand-written, dependency-free PostgreSQL client (the
+                app uses it to talk to both the primary and the replica), and the lag-measuring script quoted verbatim
+                in "Measuring lag correctly":
+              </p>
+              <a
+                href="../sysdesign-lab/app/minipg.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download minipg.js (0-dependency PostgreSQL client)
+              </a>
+              <a
+                href="../sysdesign-lab/tools/pg-lag.sh"
+                download
+                class="btn-facebook"
+                style="
+                  background: #0f1626;
+                  text-decoration: none;
+                  color: #38bdf8;
+                  border: 1px solid #38bdf8;
+                  margin-left: 8px;
+                "
+              >
+                Download pg-lag.sh
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
