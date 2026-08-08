@@ -44,13 +44,20 @@ console.log(
 // playground và sandbox là công cụ tương tác (thường nhúng iframe) nên được miễn.
 // `sandbox.html`: đặt tên theo `vdb-sandbox.html` (Series 19) và `sysdesign-sandbox.html`
 // (Series 20).
+// Danh sách này còn thiếu vài cách đặt tên khác cho cùng loại trang công cụ, nên
+// 10 trang app bị đòi JSON-LD và `.article-body` mà chúng không thể có: `-lab.html`
+// (aie-rag-vector-space-lab), `-sim.html` (cpu-pipeline-sim), `visualizer.html`
+// (ds_visualizer, bst_visualizer, event_loop_visualizer) và `canvas_game.html`.
+// Dấu hiệu chung, kiểm được bằng máy: các trang này KHÔNG có nút `#langToggle`
+// vì chúng được nhúng trong iframe của bài học chứ không tự đứng thành trang đọc.
 const isLessonPage =
   filePath.includes('blog/') &&
   !filePath.endsWith('series.html') &&
   !filePath.endsWith('simulator.html') &&
   !filePath.endsWith('playground.html') &&
   !filePath.endsWith('sandbox.html') &&
-  !filePath.endsWith('index.html');
+  !filePath.endsWith('index.html') &&
+  !/(?:-lab|-sim|visualizer|_game)\.html$/.test(filePath);
 
 let hasError = false;
 
@@ -88,21 +95,32 @@ const rawHTML = fs.readFileSync(filePath, 'utf8');
 
 // Strip script, style, and comment content blocks but preserve the tags and spacing/newlines to preserve line numbers
 let cleanHTML = rawHTML;
-cleanHTML = cleanHTML.replace(
-  /(<script[\s>][^>]*?>)([\s\S]*?)(<\/script>)/gi,
-  (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3
-);
-cleanHTML = cleanHTML.replace(
-  /(<style[\s>][^>]*?>)([\s\S]*?)(<\/style>)/gi,
-  (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3
-);
+// `script`, `style`, `textarea` là raw-text element: trình duyệt KHÔNG parse thẻ
+// bên trong chúng, nên `vec3<f32>` trong shader hay `<div>` trong ô nhập của
+// js-playground là text thường, không phải phần tử. Làm trắng nội dung để bộ đếm
+// thẻ không dựng ra những thẻ chẳng hề tồn tại — một `<f32>` giả kéo theo cả chuỗi
+// "div đóng bằng main", "body đóng bằng html" phía sau nó.
+// KHÔNG làm trắng `<pre>`/`<code>`: chúng KHÔNG phải raw-text element, trình duyệt
+// vẫn parse thẻ bên trong, nên một `<div>` chưa escape ở đó là lỗi thật.
+// `</tag\s*>`: Prettier ngắt thẻ đóng của phần tử nhạy khoảng trắng thành
+// `</textarea\n        >` để không chèn ký tự trắng vào nội dung.
+for (const tag of ['script', 'style', 'textarea']) {
+  cleanHTML = cleanHTML.replace(
+    new RegExp(`(<${tag}(?:\\s[^>]*)?>)([\\s\\S]*?)(</${tag}\\s*>)`, 'gi'),
+    (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3
+  );
+}
 cleanHTML = cleanHTML.replace(/(<!--)([\s\S]*?)(-->)/g, (m, p1, p2, p3) => p1 + p2.replace(/[^\n]/g, ' ') + p3);
 
 // ----------------------------------------------------
 // 2. HTML Tag Balancing Check (Strict stack check)
 // ----------------------------------------------------
 const tagsStack = [];
-const tagRegex = /<\/?([a-z0-9\-]+)(?:[\s][^>]*?)?>/gi;
+// Tên thẻ phải BẮT ĐẦU bằng chữ cái. Theo spec HTML, `<` đi sau ký tự không phải
+// chữ cái là text thường — trình duyệt render `<->` và `<-->` nguyên văn, không tạo
+// phần tử nào. Mẫu cũ `[a-z0-9\-]+` nhận cả `-` nên đọc `k <-> k Hz` trong một
+// comment JS thành "thẻ mở <->", rồi mọi thẻ sau đó đều bị báo lệch theo.
+const tagRegex = /<\/?([a-z][a-z0-9-]*)(?:[\s][^>]*?)?>/gi;
 let match;
 let nestingError = false;
 
@@ -183,8 +201,15 @@ function getPlainTextOnly(html) {
   // Strip script/style blocks entirely (handles template literals in JS)
   let out = html.replace(/<script[\s>][\s\S]*?<\/script>/gi, '');
   out = out.replace(/<style[\s>][\s\S]*?<\/style>/gi, '');
-  // Strip pre/code blocks
-  out = out.replace(/<(pre|code)[\s\S]*?<\/\1>/gi, '');
+  // Strip pre/code blocks.
+  // `<\/\1\s*>` chứ không phải `<\/\1>`: Prettier ngắt thẻ đóng của phần tử nhạy
+  // khoảng trắng thành `</textarea\n                >` để không chèn thêm ký tự
+  // trắng vào nội dung. Markup đó hợp lệ, nên regex phải chấp nhận.
+  out = out.replace(/<(pre|code)[\s\S]*?<\/\1\s*>/gi, '');
+  // Strip <textarea> — đây là ô nhập source của js-playground, nội dung bên trong
+  // là code thật. Không lột thì mọi template literal JavaScript (`Item ${i}`) bị
+  // báo oan là "markdown thô chưa convert": 21 lần trên các trang js/canvas.
+  out = out.replace(/<textarea[\s>][\s\S]*?<\/textarea\s*>/gi, '');
   return out;
 }
 
@@ -297,7 +322,19 @@ if (!canonicalMatch) {
 } else {
   const canonicalUrl = canonicalMatch[1];
   const expectedSlug = path.basename(filePath, '.html');
-  if (!canonicalUrl.endsWith(expectedSlug)) {
+  // Trang index của một thư mục phải canonical về chính URL thư mục (kết thúc bằng
+  // "/"), KHÔNG phải về ".../index". `blog/index.html` khai `.../blog/` là đúng —
+  // đòi URL kết thúc bằng "index" ở đây là bắt lỗi một thứ vốn không sai.
+  if (expectedSlug === 'index') {
+    if (canonicalUrl.endsWith('/')) {
+      reportPass('SEO Canonical', `Trang index canonical về URL thư mục: ${canonicalUrl}`);
+    } else {
+      reportError(
+        'SEO Canonical',
+        `Trang index nên canonical về URL thư mục kết thúc bằng "/", đang là "${canonicalUrl}".`
+      );
+    }
+  } else if (!canonicalUrl.endsWith(expectedSlug)) {
     reportError(
       'SEO Canonical',
       `Đường dẫn canonical "${canonicalUrl}" không khớp với tên tệp thực tế "${expectedSlug}" (bỏ .html).`
