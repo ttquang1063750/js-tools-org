@@ -1,0 +1,651 @@
+
+            <p>
+              <a href="sysdesign-replication">Lesson 7</a> section 7.4 left a question open: when the network is cut,
+              neither node knows whether the other has died or has merely lost contact — from the inside, those two
+              situations are completely identical. This lesson formalises that question, and more importantly, points
+              out the part CAP <em>leaves out</em> but that you meet every day.
+            </p>
+
+            <p>
+              This lesson's lab creates a <strong>real</strong> partition with
+              <code>docker network disconnect</code>, and the answer turns out to be neither "an error" nor "stale
+              data" but three different things across three consecutive calls: the first request
+              <strong>hangs for 30 seconds</strong>, the next two error out in 29–40 ms, and writes to the primary
+              <strong>keep succeeding normally</strong>. The consistency model you <em>think</em> you have and what
+              the system <em>actually</em> does when the network breaks are usually two different things.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Where the numbers in this lesson come from</div>
+              <div class="callout__content">
+                Sections 9.4 and 9.5 run on <code>node sysdesign-quorum.js</code> — a deterministic simulation, same
+                seed for the same result, 100,000 rounds per configuration. No Docker needed; you can repeat it in
+                seconds.<br /><br />
+                The lab parts in sections 9.1 and 9.3 ran on an Apple M1 Max, macOS 26.5.2, Docker 29.6.2, PostgreSQL
+                18.3 primary + replica, three app replicas. The partition is created with
+                <code>docker network disconnect</code> — a real partition at the network layer, not a simulation.
+              </div>
+            </div>
+
+            <!-- ================= 9.1 ================= -->
+            <h2>9.1 Reading CAP correctly: P is not a choice</h2>
+
+            <p>
+              CAP is usually told as "pick two of three: Consistency, Availability, Partition tolerance". That telling
+              leads to a wrong conclusion from the very start, because <strong>P is not something you pick</strong>.
+              The network <em>will</em> be cut: a cable is severed, a switch dies, a region loses connectivity, or a
+              container simply leaves the network. That is physical reality, not a line in a config file.
+            </p>
+
+            <p>
+              The correct statement: <strong>while a partition is happening</strong>, you must choose between C and A.
+              Outside of that, the question does not exist. Which is why the notion of "a CA system" is a confusion —
+              it only means "a system that has never met a partition", which is to say a system that has not run long
+              enough.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: using CAP as an excuse</div>
+              <div class="callout__content">
+                "We're an AP system so we don't need strong consistency" is the most common abuse of CAP. It is wrong
+                in two places.<br /><br />
+                <strong>One:</strong> the C–A trade-off only exists <em>during</em> a partition. Throughout the other
+                99.9% of the time you can be strongly consistent and lose nothing in availability.<br /><br />
+                <strong>Two:</strong> the choice is not for the whole system but for <em>each operation</em>. Eventual
+                is perfectly sensible for a view counter; it is not for debiting an account. One system, two
+                operations, two different consistency levels — and that is correct design, not inconsistency.
+              </div>
+            </div>
+
+            <h3>Lab: a real partition, and three different behaviours</h3>
+
+            <p>
+              Theory says "choose C or A". But when a partition really happens, what does your system do? The answer
+              is usually not what you think. Cut the replica off the network while the app is reading from it:
+            </p>
+
+            {{CODE:cause_real_partition.sh}}
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Operation during the partition</th>
+                  <th>Measured result</th>
+                  <th>What it means</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Read from the replica, first request</td>
+                  <td><strong>Hangs 30 seconds</strong>, then the client gives up</td>
+                  <td>
+                    The already-open TCP connection receives neither data nor a FIN. The app has
+                    <strong>no read timeout</strong>, so it waits forever
+                  </td>
+                </tr>
+                <tr>
+                  <td>Read from the replica, later requests</td>
+                  <td>Error after 29–40 ms: <code>ENOTFOUND</code></td>
+                  <td>The container has left the network so DNS cannot resolve — a fast failure, easy to handle</td>
+                </tr>
+                <tr>
+                  <td>Write to the primary</td>
+                  <td><strong>Succeeds, 135 ms</strong></td>
+                  <td>
+                    The primary was not cut off. The system is <em>partially available</em>: writes fine, reads broken
+                    — a state CAP has no name for
+                  </td>
+                </tr>
+                <tr>
+                  <td>Immediately after healing the network</td>
+                  <td><code>stale: true</code> on the second read</td>
+                  <td>
+                    The replica is replaying the WAL it missed — stale data is the normal state of this phase
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 The first row is the most important one</div>
+              <div class="callout__content">
+                A partition does not show up as an error. It shows up as <strong>silence</strong>. An open TCP
+                connection to a node that has vanished reports nothing at all — no error, no connection close — so the
+                caller waits until some timeout cuts it off. There is no timeout at the app layer here, so the thing
+                that finally cuts it is <code>curl</code>'s <code>-m 30</code>: 30 seconds for one request.<br /><br />
+                Which means <strong>if you set no timeout, you have chosen A by accident</strong>: the system does not
+                reject requests, it merely holds on to them — and every held request is a connection, a thread, a slot
+                in a pool. Enough of them and the pool is exhausted, at which point parts of the system with nothing to
+                do with the replica stop serving too. This is exactly the cascade failure Lesson 17 digs into, and the
+                reason <a href="sysdesign-api-gateway">Lesson 4</a> section 4.5 treats the timeout budget as a design
+                item rather than a default parameter.<br /><br />
+                The second row, by contrast, is good news: when the failure is <em>fast and explicit</em> (29 ms, a
+                specific error name), you get to choose — return an error, read the primary, or serve stale data from
+                cache. Fast failure gives you the decision; hanging forever does not.
+              </div>
+            </div>
+            {{SVG:1}}
+            <!-- ================= 9.2 ================= -->
+            <h2>9.2 PACELC — the part CAP leaves out, and the part you meet daily</h2>
+
+            <p>
+              CAP only speaks about the moment of a partition. But partitions are rare; the other
+              <strong>99.9% of the time the network is perfectly fine</strong> — and throughout that time there is
+              still a trade-off, CAP just does not mention it. PACELC adds exactly that part:
+            </p>
+
+            <p>
+              <strong>if (P) then (A or C) else (L or C)</strong> — if there is a partition, choose between
+              availability and consistency; <em>otherwise</em> (Else), choose between <strong>latency</strong> and
+              consistency.
+            </p>
+
+            <p>
+              The second half is the half you meet every day, and you already met it in
+              <a href="sysdesign-replication">Lesson 7</a> without naming it: reading from a replica is fast but may be
+              stale; reading from the primary is fresh but slower and consumes the primary's resources. That is exactly
+              "L or C" — the network is not cut at all, every node is healthy, and you still have to choose.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>A real decision already made in this series</th>
+                  <th>Choosing L (fast)</th>
+                  <th>Choosing C (fresh)</th>
+                  <th>The measured price</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Read from a replica or the primary (Lesson 7)</td>
+                  <td>Replica</td>
+                  <td>Pin to the primary after a write</td>
+                  <td>87.21% stale reads ↔ −4.6% throughput</td>
+                </tr>
+                <tr>
+                  <td><code>synchronous_commit</code> level (Lesson 7)</td>
+                  <td><code>local</code></td>
+                  <td><code>remote_apply</code></td>
+                  <td>0.468 ms ↔ 0.811 ms per write; tps 17,096 ↔ 9,867</td>
+                </tr>
+                <tr>
+                  <td>Cache TTL (Lesson 5)</td>
+                  <td>Long TTL</td>
+                  <td>Short TTL or explicit deletion</td>
+                  <td>Staleness window ↔ database load rising with (1−h)</td>
+                </tr>
+                <tr>
+                  <td><code>s-maxage</code> at the edge (Lesson 6)</td>
+                  <td>Cache long at the edge</td>
+                  <td>Revalidate every time</td>
+                  <td>the origin handles 4 of 208,173 requests ↔ data can be stale up to s-maxage</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Why PACELC is more useful than CAP in day-to-day work</div>
+              <div class="callout__content">
+                CAP helps you understand a situation you hope never to meet. PACELC gives a name to a decision you have
+                already made <em>dozens of times</em> in this series without calling it a consistency
+                decision.<br /><br />
+                How to use it in practice: for every read path in your system, answer one question —
+                <strong>does this path choose L or C?</strong> If you cannot answer, it is choosing L (because L is the
+                default of every architecture with a cache and replicas), and you ought to know that is what you are
+                choosing.
+              </div>
+            </div>
+
+            <!-- ================= 9.3 ================= -->
+            <h2>9.3 The spectrum of consistency models</h2>
+
+            <p>
+              "Consistency" is not an on/off switch but a range. Each stronger level eliminates one kind of anomaly the
+              user can perceive — and its price is latency or availability.
+            </p>
+
+            {{SVG:2}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: saying "eventual consistency" without saying how long eventual is</div>
+              <div class="callout__content">
+                "Eventual consistency" only promises that <em>if writes stop</em>, all replicas will eventually agree.
+                It promises nothing about <strong>how long</strong> — and that is the whole difference in
+                experience.<br /><br />
+                In the lab, "eventual" was <strong>0.557 ms</strong> and users would never notice. For a replica in
+                another region that is falling behind, "eventual" could be 5 minutes — the same name, but one system is
+                usable and the other is considered broken. When somebody says their system is eventually consistent,
+                the next question always has to be:
+                <strong>what is the p99 of your convergence delay, and do you measure it?</strong>
+              </div>
+            </div>
+            <!-- ================= 9.4 ================= -->
+            <h2>9.4 Quorums: why $R + W > N$</h2>
+
+            <p>
+              With $N$ replicas, write to $W$ of them and read from $R$ of them. If $R + W > N$ then by the pigeonhole
+              principle the set of $W$ nodes just written and the set of $R$ nodes being read
+              <strong>must share at least one node</strong> — and that shared node holds the newest version. That is
+              the whole idea.
+            </p>
+
+            {{SVG:3}}
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>N</th>
+                  <th>W</th>
+                  <th>R</th>
+                  <th>Condition</th>
+                  <th>Stale reads / 100,000</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>3</td>
+                  <td>1</td>
+                  <td>1</td>
+                  <td>2 ≤ 3</td>
+                  <td>66,581 (66.58%)</td>
+                </tr>
+                <tr>
+                  <td>3</td>
+                  <td>1</td>
+                  <td>2</td>
+                  <td>3 ≤ 3</td>
+                  <td>33,167 (33.17%)</td>
+                </tr>
+                <tr>
+                  <td>3</td>
+                  <td>2</td>
+                  <td>1</td>
+                  <td>3 ≤ 3</td>
+                  <td>33,336 (33.34%)</td>
+                </tr>
+                <tr>
+                  <td>3</td>
+                  <td>2</td>
+                  <td>2</td>
+                  <td><strong>4 &gt; 3</strong></td>
+                  <td><strong>0</strong></td>
+                </tr>
+                <tr>
+                  <td>3</td>
+                  <td>3</td>
+                  <td>1</td>
+                  <td><strong>4 &gt; 3</strong></td>
+                  <td><strong>0</strong></td>
+                </tr>
+                <tr>
+                  <td>3</td>
+                  <td>1</td>
+                  <td>3</td>
+                  <td><strong>4 &gt; 3</strong></td>
+                  <td><strong>0</strong></td>
+                </tr>
+                <tr>
+                  <td>5</td>
+                  <td>2</td>
+                  <td>2</td>
+                  <td>4 ≤ 5</td>
+                  <td>30,111 (30.11%)</td>
+                </tr>
+                <tr>
+                  <td>5</td>
+                  <td>3</td>
+                  <td>3</td>
+                  <td><strong>6 &gt; 5</strong></td>
+                  <td><strong>0</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h3>What read-repair does — and does not do</h3>
+
+            <p>
+              Read-repair is this mechanism: when a read finds that some node in the $R$ set holds an old version, it
+              writes the new version across to that node there and then. The interesting part is that it does
+              <em>not</em> reduce the stale-read rate of that very read — it makes the divergence converge.
+            </p>
+
+            <p>Write once to $W=1$ node, then read 40 times in a row with $R=2$, $N=3$ (20,000 trials):</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Read-repair</th>
+                  <th>Read 1</th>
+                  <th>2</th>
+                  <th>5</th>
+                  <th>10</th>
+                  <th>20</th>
+                  <th>40</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Off</td>
+                  <td>33.7%</td>
+                  <td>33.1%</td>
+                  <td>33.2%</td>
+                  <td>33.4%</td>
+                  <td>33.0%</td>
+                  <td><strong>33.4%</strong></td>
+                </tr>
+                <tr>
+                  <td>On</td>
+                  <td>33.7%</td>
+                  <td>11.2%</td>
+                  <td>0.3%</td>
+                  <td>0.0%</td>
+                  <td>0.0%</td>
+                  <td><strong>0.0%</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The two rows start out identical — 33.7% — and that is the main point: read-repair
+              <strong>does nothing for the first read</strong>. But without it, the rate stays at 33% forever. That is
+              the concrete meaning of an "eventual consistency" system that is never eventual: if no mechanism
+              propagates the new version to lagging nodes, they stay stale permanently.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Read-repair needs $R \ge 2$ to have any effect</div>
+              <div class="callout__content">
+                My first experiment used $R = 1$, and read-repair made no difference at all — both rows sat at 66.6%.
+                The reason is simple once you see it: a read set of one node has
+                <strong>nothing to compare against and nothing to repair</strong>. If that node is stale, the read sees
+                the stale version and writes back that same stale version.<br /><br />
+                This is exactly the same experimental error as the jitter measurement in
+                <a href="sysdesign-caching">Lesson 5</a> section 5.3: the configuration never gave the mechanism a
+                chance to work, and then the mechanism was declared useless. The practical consequence:
+                <strong>$R = 1$ silently disables read-repair</strong> — if you are running $W=3, R=1$ for fast reads
+                then you do have consistency, but you have no self-healing.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: assuming a quorum automatically gives linearizability</div>
+              <div class="callout__content">
+                The simulation above gives exactly 0 stale reads when $R+W>N$, but it models
+                <em>one writer and monotonically increasing versions</em>. Reality is more complicated, and $R+W>N$ is
+                not sufficient for linearizability in three cases:<br /><br />
+                <strong>A partially failed write:</strong> the write reaches 1 of the 2 nodes it needed and then
+                errors. It did not succeed, but it was not rolled back either — some later reads will see it, some will
+                not.<br /><br />
+                <strong>Two concurrent writes:</strong> both reach a quorum, each on a different set of nodes. Now
+                there has to be a rule deciding who wins — and if that rule is a timestamp, see section 9.5.<br /><br />
+                <strong>A replaced node:</strong> a new, empty node joins. It counts towards the quorum but holds no
+                data, so it "agrees" without holding any version at all.<br /><br />
+                A quorum gives you overlap. Linearizability needs a global order on top of that — and that has to come
+                from a consensus protocol (Raft, Paxos), not from an inequality.
+              </div>
+            </div>
+
+            <!-- ================= 9.5 ================= -->
+            <h2>9.5 Linearizability, serializability, and how LWW loses data</h2>
+
+            <p>
+              These two words get used interchangeably but describe two different things, and knowing the difference
+              helps you ask the right question when reading a database's documentation:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Linearizability</th>
+                  <th>Serializability</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Talks about</td>
+                  <td>A single operation on a single object</td>
+                  <td>A transaction of several operations on several objects</td>
+                </tr>
+                <tr>
+                  <td>Guarantees</td>
+                  <td>
+                    Every operation appears to happen at a single instant, in real-time order
+                  </td>
+                  <td>
+                    The result is equivalent to running the transactions one after another in <em>some</em> order
+                  </td>
+                </tr>
+                <tr>
+                  <td>Has a real-time constraint?</td>
+                  <td>Yes — if A finished before B started, B must see A</td>
+                  <td>No — the equivalent order may differ from real-time order</td>
+                </tr>
+                <tr>
+                  <td>Belongs to</td>
+                  <td>Distributed systems, consensus</td>
+                  <td>Transaction isolation levels in a database</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The practical consequence: a database can be serializable without being linearizable (the transactions
+              are correct but you are reading from a stale replica), and vice versa. When documentation says "we
+              support serializable", that is a statement about transactions, <em>not</em> a promise that your reads
+              will see the freshest data.
+            </p>
+
+            <h3>Last-write-wins: losing data without a sound</h3>
+
+            <p>
+              When two writes arrive together, there has to be a rule for who wins. The simplest rule — and the most
+              common — is <strong>last-write-wins</strong>: the version with the larger timestamp wins. The problem:
+              "later" is decided by a wall clock, and two machines' clocks never agree exactly.
+            </p>
+
+            <p>
+              The scenario: client A writes at $t=1000$, client B writes 50 ms later at $t=1050$. But B's clock is
+              skewed. Run for real:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>B's clock skew</th>
+                  <th>A's stamp</th>
+                  <th>B's stamp</th>
+                  <th>LWW picks</th>
+                  <th>Should have picked</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0 ms</td>
+                  <td>1000</td>
+                  <td>1050</td>
+                  <td>B</td>
+                  <td>B</td>
+                  <td>correct</td>
+                </tr>
+                <tr>
+                  <td>−20 ms</td>
+                  <td>1000</td>
+                  <td>1030</td>
+                  <td>B</td>
+                  <td>B</td>
+                  <td>correct</td>
+                </tr>
+                <tr>
+                  <td><strong>−50 ms</strong></td>
+                  <td>1000</td>
+                  <td>1000</td>
+                  <td><strong>A</strong></td>
+                  <td>B</td>
+                  <td><strong>B's write is LOST</strong></td>
+                </tr>
+                <tr>
+                  <td>−80 ms</td>
+                  <td>1000</td>
+                  <td>970</td>
+                  <td><strong>A</strong></td>
+                  <td>B</td>
+                  <td><strong>B's write is LOST</strong></td>
+                </tr>
+                <tr>
+                  <td>−200 ms</td>
+                  <td>1000</td>
+                  <td>850</td>
+                  <td><strong>A</strong></td>
+                  <td>B</td>
+                  <td><strong>B's write is LOST</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The threshold is exactly the time gap between the two writes: a clock skew of just 50 ms — precisely the
+              gap between them — is enough for the later write to be dropped. And it is dropped
+              <strong>silently</strong>: both clients receive a success response, there is no error, and no log records
+              that a value was overwritten by an older one.
+            </p>
+
+            {{CODE:sysdesign-quorum.js — hàm lastWriteWins}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: LWW is the default in more places than you think</div>
+              <div class="callout__content">
+                LWW shows up in many places under other names: an <code>updated_at</code> column used to decide which
+                version is newer when syncing; <code>UPDATE ... WHERE updated_at &lt; :now</code>; the reconciliation
+                logic in a mobile app syncing offline changes; and the default of many multi-master
+                systems.<br /><br />
+                It works well for data where losing one write does not matter — presence status, approximate counters,
+                caches. It is <strong>unusable</strong> for money, stock levels, or anything where a dropped write is a
+                business incident.<br /><br />
+                Three alternatives: <strong>vector clocks</strong> (they detect the real conflict instead of hiding it,
+                but they make the app reconcile); <strong>CRDTs</strong> (design the data structure so that every merge
+                order produces the same result — good for sets and counters); or <strong>consensus</strong> for the
+                operations that genuinely need one single order. And the cheapest, most overlooked route: make the
+                operation <strong>commutative</strong> — <code>SET balance = 150</code> loses data when merged, while
+                <code>balance = balance + 50</code> does not.
+              </div>
+            </div>
+
+            <p>
+              There is one more thing the table above implies: everything here depends on
+              <strong>how far the clocks are skewed</strong> — a quantity you do not control and usually do not
+              measure. <strong>Lesson 10</strong> continues exactly along that line: a distributed lock also rests on
+              an assumption about time, and when that assumption is wrong two workers both believe they are holding
+              the lock — while Redis behaves perfectly correctly throughout.
+            </p>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              P is not a choice — the network will be cut. The choice between C and A only appears during a partition,
+              and it is a choice per operation, not for the whole system. The part you meet daily is the second half of
+              PACELC: when the network is perfectly healthy, every read path still has to choose between latency and
+              freshness — and if you do not choose, latency has been chosen for you.
+            </p>
+
+            <p>
+              $R + W > N$ guarantees the read set and write set overlap, measured at exactly 0 stale reads across
+              100,000 rounds; but $R + W = N$ still gives 33%, so the inequality has to be strict. A quorum gives you
+              overlap, not linearizability — that needs a consensus protocol. And read-repair does not improve the
+              first read; it is what turns a 33% that stays put forever into 33% → 11.2% → 0.3% → 0%.
+            </p>
+
+            <p>
+              The most memorable finding of this lesson came from the lab: a partition does not show up as an error but
+              as <strong>silence</strong> — the first request hung for 30 seconds, no error, no connection close. Which
+              means that if you set no timeout you have chosen A by accident, and that is the worst of the three
+              options: neither consistent nor available.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://users.ece.cmu.edu/~adrian/731-sp04/readings/GL-cap.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Gilbert &amp; Lynch (2002) — the formal proof of the CAP theorem, turning Brewer's conjecture into
+                    a proven theorem
+                  </a>
+                </li>
+                <li>
+                  <a href="https://arxiv.org/abs/1509.05393" target="_blank" rel="noopener noreferrer">
+                    Martin Kleppmann (2015) — <em>A Critique of the CAP Theorem</em>: a rigorous analysis of why the
+                    "pick two of three" reading is wrong, exactly the argument in section 9.1
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.cs.umd.edu/~abadi/papers/abadi-pacelc.pdf" target="_blank" rel="noopener noreferrer">
+                    Daniel Abadi (2012) — the paper introducing <strong>PACELC</strong>, the source of section 9.2
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://martin.kleppmann.com/2015/05/11/please-stop-calling-databases-cp-or-ap.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Martin Kleppmann — <em>Please stop calling databases CP or AP</em>: why labelling a whole system
+                    CP or AP is meaningless, the point made in the pitfall in 9.1
+                  </a>
+                </li>
+                <li>
+                  <a href="https://jepsen.io/consistency" target="_blank" rel="noopener noreferrer">
+                    Jepsen — Consistency Models: the full map of the spectrum in section 9.3, including the levels
+                    this lesson does not mention
+                  </a>
+                </li>
+                <li>
+                  <a href="https://raft.github.io/raft.pdf" target="_blank" rel="noopener noreferrer">
+                    Ongaro &amp; Ousterhout (2014) — Raft: the consensus protocol providing the global order a quorum
+                    <em>does not</em> give you (the last pitfall in section 9.4)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://crdt.tech/" target="_blank" rel="noopener noreferrer">
+                    crdt.tech — an overview of CRDTs, one of the three alternatives to last-write-wins in section 9.5
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://lamport.azurewebsites.net/pubs/time-clocks.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Leslie Lamport (1978) — <em>Time, Clocks, and the Ordering of Events</em>: why wall clocks cannot
+                    be used to order events, the root of the LWW failure in section 9.5
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The deterministic simulator that produced every number in sections 9.4 and 9.5 — quorums, read-repair
+                and last-write-wins. No dependencies, runs straight away with <code>node</code>, no Docker needed:
+              </p>
+              <a
+                href="../sysdesign-quorum.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download sysdesign-quorum.js
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
