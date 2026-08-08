@@ -1,0 +1,679 @@
+
+            <p>
+              <a href="sysdesign-replication">Lesson 7</a> solved the read tier very cheaply. But it does nothing for
+              two things: <strong>write throughput</strong> — every write still funnels into one primary — and
+              <strong>capacity</strong> — every replica holds the complete dataset. When either of those exceeds what
+              one machine can take, there is no option left but to split the data: <strong>sharding</strong>.
+            </p>
+
+            <p>
+              This is the most expensive step in the whole series, and the price is not money but
+              <strong>permanent complexity</strong>: no cross-shard transactions, no JOINs, pagination becomes hard,
+              and every query that does not carry the shard key turns into a full sweep.
+            </p>
+
+            <p>
+              Two measurements in this lesson stand out. First, the share of data that must migrate when you add a
+              shard: modulo hashing going from 4 to 5 shards moves <strong>79.97%</strong> of the data, while
+              consistent hashing moves only 18.78% — and both match the theoretical formula almost perfectly. Second, a
+              skewed shard key makes <strong>p99 10.3 times worse</strong> while <strong>p50 actually gets
+              better</strong> — the hotspot lives entirely in the tail.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The measurement machine</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Native arm64 containers. Two
+                <strong>completely independent</strong> PostgreSQL 18.3 shards (no replication, no knowledge of each
+                other), each limited to <strong>1 CPU / 512 MB</strong>; three app replicas at 1 CPU each; nginx
+                1.27-alpine; load generator on 2 CPUs. The migration-ratio and virtual-node figures were produced by
+                <code>node</code> running <code>sysdesign-hashring.js</code> over 100,000 keys, with no Docker
+                needed.<br /><br />
+                The 1-CPU-per-shard limit is <strong>not a decorative detail</strong> — see section 8.2, where its
+                absence made the lab measure the exact opposite result.
+              </div>
+            </div>
+
+            <!-- ================= 8.1 ================= -->
+            <h2>8.1 When you are forced to shard — and why it should be the last step</h2>
+
+            <p>The correct order of priority, cheapest to most expensive. Take each step only once the previous one has run out:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Step</th>
+                  <th>What it solves</th>
+                  <th>Complexity cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1 · Optimise queries and add indexes</td>
+                  <td>Most real-world "the database is slow" problems</td>
+                  <td>Practically none</td>
+                </tr>
+                <tr>
+                  <td>2 · Caching (<a href="sysdesign-caching">Lesson 5</a>)</td>
+                  <td>Read load; each extra nine of hit ratio divides database load by ten</td>
+                  <td>Low, but it adds the invalidation problem</td>
+                </tr>
+                <tr>
+                  <td>3 · Read replicas (<a href="sysdesign-replication">Lesson 7</a>)</td>
+                  <td>Read throughput</td>
+                  <td>Moderate: lag and read-your-writes</td>
+                </tr>
+                <tr>
+                  <td>4 · Scale the primary vertically</td>
+                  <td>Write throughput, up to the hardware ceiling</td>
+                  <td>Low, but there is a ceiling and it is expensive</td>
+                </tr>
+                <tr>
+                  <td><strong>5 · Sharding</strong></td>
+                  <td><strong>Write throughput and capacity, with no ceiling</strong></td>
+                  <td><strong>High and PERMANENT</strong> — there is no easy way back</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>Three signs that you <em>genuinely</em> need to shard, rather than just feeling that you do:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Sign</th>
+                  <th>Why replicas and caching cannot help</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>The primary is saturating write I/O, not CPU</td>
+                  <td>Replicas multiply read load rather than dividing write load; a cache does not sit in front of the write path</td>
+                </tr>
+                <tr>
+                  <td>The data exceeds the largest disk you can buy</td>
+                  <td>Every replica holds the <em>complete</em> dataset, so adding replicas adds no capacity</td>
+                </tr>
+                <tr>
+                  <td>Backup and restore times have become unacceptable</td>
+                  <td>
+                    This is the most overlooked sign of the three. A 5 TB database means your <strong>RTO</strong>
+                    (Recovery Time Objective — the maximum time you commit to for recovering after an incident) is
+                    measured in hours, even while the system runs perfectly
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: sharding too early</div>
+              <div class="callout__content">
+                Sharding early is the hardest decision in this lesson to reverse. You pay immediately — no
+                <code>JOIN</code>, no cross-shard transactions, pagination becomes a project of its own, every query
+                without the shard key turns into a <strong>scatter-gather</strong> (it must ask <em>every</em> shard
+                and then merge the results, so latency equals the slowest shard and load is multiplied by the shard
+                count) — in exchange for a benefit you may never need.<br /><br />
+                The test question is very simple:
+                <strong>have you measured, and do you know exactly what is saturating?</strong> If the answer is "no,
+                but it's probably the database", then the next step is to go and measure, not to go and shard. Very
+                often the thing saturating is one query missing an index, and a single <code>CREATE INDEX</code> solves
+                the problem that sharding would charge you for over years.
+              </div>
+            </div>
+            <!-- ================= 8.2 ================= -->
+            <h2>8.2 Choosing a shard key — and a measurement that nearly inverted the conclusion</h2>
+
+            <p>A good shard key has to satisfy all three of these, and the third is the one most often forgotten:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Requirement</th>
+                  <th>What happens without it</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>High cardinality</strong> (the number of distinct values that column can take)</td>
+                  <td>
+                    Few distinct values ⇒ you cannot split into many shards, however perfect the hash function. For
+                    example: <code>country</code> has around 200 values and <code>plan</code> has 3 — no hashing will
+                    ever produce 50 balanced shards from them; <code>user_id</code> has as many values as you have
+                    users
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Even distribution</strong></td>
+                  <td>Hotspot: one shard receives nearly all the load while the others sit idle</td>
+                </tr>
+                <tr>
+                  <td><strong>Matching how you query</strong></td>
+                  <td>
+                    Every query without the shard key must ask <em>every</em> shard and merge the results
+                    (scatter-gather) — latency equals the slowest shard, and load is multiplied by the shard count
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: sharding by time or by auto-incrementing ID</div>
+              <div class="callout__content">
+                Sharding by <code>created_at</code> or by an auto-incrementing ID sounds very natural and is very easy
+                to understand. The consequence: <strong>every new write funnels into one shard</strong> — today's shard
+                — while the older shards receive only thin read traffic. You have paid the full complexity cost of
+                sharding without receiving the thing you bought: split write load.<br /><br />
+                Sharding by tenant has the same problem in another form: if one tenant is a hundred times larger than
+                the rest, the shard holding it is a separate, overloaded system. In that case you usually have to
+                <strong>handle the giant tenant specially</strong> — give it its own shard — because no shard key
+                solves it by hashing.
+              </div>
+            </div>
+
+            <h3>Measured for real: a good shard key versus a skewed one</h3>
+
+            <p>
+              The lab stands up two <em>completely independent</em> PostgreSQL shards — no replication, no knowledge of
+              each other — and a router inside the app decides which key goes to which shard. The <code>skew</code>
+              mode reproduces the "one giant tenant" situation exactly: 95% of requests use the same shard key.
+            </p>
+
+            <p>24 connections, 12 seconds, 20,000 distinct keys, each shard limited to 1 CPU, two repetitions:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Good shard key</th>
+                  <th>Skewed shard key</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Load distribution</td>
+                  <td>49.3% / 50.7%</td>
+                  <td>97.0% / 3.0%</td>
+                </tr>
+                <tr>
+                  <td>Spread</td>
+                  <td><strong>2.7% / 3.0%</strong></td>
+                  <td><strong>188.0%</strong></td>
+                </tr>
+                <tr>
+                  <td>Throughput</td>
+                  <td><strong>12,024 / 11,982 rps</strong></td>
+                  <td>9,099 / 9,078 rps</td>
+                </tr>
+                <tr>
+                  <td>p50</td>
+                  <td>1.96 / 1.98 ms</td>
+                  <td><strong>1.73 / 1.73 ms</strong> (better!)</td>
+                </tr>
+                <tr>
+                  <td>p95</td>
+                  <td>3.03 / 3.01 ms</td>
+                  <td>2.84 / 2.82 ms (still better)</td>
+                </tr>
+                <tr>
+                  <td><strong>p99</strong></td>
+                  <td><strong>3.59 / 3.59 ms</strong></td>
+                  <td><strong>37.08 / 36.59 ms</strong></td>
+                </tr>
+                <tr>
+                  <td>Maximum latency</td>
+                  <td>12.19 / 14.45 ms</td>
+                  <td>48.47 / 50.62 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The good shard key gives <strong>+32% throughput</strong>. But read the three percentile rows carefully:
+              the <em>skewed</em> key has a better p50 <strong>and</strong> a better p95, and then p99 suddenly gets
+              <strong>10.3 times worse</strong>. A hotspot does not slow most requests down — it concentrates the
+              entire damage in the tail.
+            </p>
+
+            <p>
+              This is the third time the same pattern has appeared in this series: in
+              <a href="sysdesign-load-balancing">Lesson 3</a> round robin produced a balanced chart but a p95 340 times
+              worse; in <a href="sysdesign-caching">Lesson 5</a> single-flight made p50 worse but cut the tail 11-fold;
+              here a skewed shard key wins on p50 and p95 and then loses 10-fold on p99. If your dashboard only has the
+              mean and p95, you would draw the wrong conclusion all three times.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 This measurement nearly inverted the conclusion — and why</div>
+              <div class="callout__content">
+                On the first run the two PostgreSQL shards had <strong>no CPU limit</strong>. The result: the
+                <em>skewed</em> key was faster — 14,058 rps against 12,090 rps for the good key — and its p99 was
+                better too (3.06 against 3.61 ms). Stopping there, this lesson would have concluded "a skewed shard key
+                is better", which is absurd but came with numbers attached.<br /><br />
+                The cause: both shards sit on <em>the same machine</em> and share its CPU. The evenly distributed
+                configuration keeps <strong>two</strong> PostgreSQL containers busy, adding CPU contention with the
+                three apps and the load generator; the skewed configuration only keeps <strong>one</strong> container
+                busy. On a single machine, "evenly distributed" is a <em>disadvantage</em>.<br /><br />
+                But that is precisely what sharding exists to overcome: <strong>the limits of one machine</strong>. A
+                lab on one laptop cannot measure that benefit unless we impose a resource limit per shard to simulate
+                "each shard is its own machine". Adding <code>cpus: '1.0'</code> per shard — for exactly the same
+                reason each app has been limited to 1 CPU since
+                <a href="sysdesign-single-server-limits">Lesson 2</a> — flipped the result back to what theory
+                predicts.<br /><br />
+                The general lesson: when a measurement contradicts theory, the most likely explanation is that
+                <strong>the measurement environment has cancelled out the very phenomenon being measured</strong>. The
+                question to ask is "does this setup even give that phenomenon a chance to appear", before concluding
+                the theory is wrong.
+              </div>
+            </div>
+
+            <p>The lab's shard router, exactly as the running code has it:</p>
+
+            {{CODE:app/app.js — router shard}}
+            {{SVG:1}}
+
+            <!-- ================= 8.3 ================= -->
+            <h2>8.3 Modulo hashing and the resharding disaster</h2>
+
+            <p>
+              The simplest way to divide is <code>hash(key) % N</code>, where $N$ is the shard count. It is short, easy
+              to understand, evenly distributed, and it is exactly what the lab's router does. The problem shows up on
+              the day you add shard number $N+1$.
+            </p>
+
+            <p>
+              A key <em>stays where it is</em> only if $h \bmod N = h \bmod (N+1)$. By the Chinese remainder theorem,
+              when $N$ and $N+1$ are coprime — and two consecutive integers always are — the pair
+              $(h \bmod N,\ h \bmod (N+1))$ is uniformly distributed over $N(N+1)$ possibilities. The number of pairs
+              satisfying the stay condition is $N$, so:
+            </p>
+
+            <p>
+              $$P(\text{stay}) = \frac{N}{N(N+1)} = \frac{1}{N+1} \quad\Rightarrow\quad P(\text{move}) = \frac{N}{N+1}$$
+            </p>
+
+            <p>
+              Note that this figure is $N/(N+1)$, <strong>not</strong> $(N-1)/N$ as it is often quoted. Run for real
+              over 100,000 keys, comparing both algorithms, with consistent hashing using 150 virtual nodes:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Adding a shard</th>
+                  <th>Modulo — measured</th>
+                  <th>Modulo — theory $\frac{N}{N+1}$</th>
+                  <th>Consistent — measured</th>
+                  <th>Consistent — theory $\frac{1}{N+1}$</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>2 → 3</td>
+                  <td>66.81%</td>
+                  <td>66.67%</td>
+                  <td>37.19%</td>
+                  <td>33.33%</td>
+                </tr>
+                <tr>
+                  <td>3 → 4</td>
+                  <td>74.89%</td>
+                  <td>75.00%</td>
+                  <td>29.46%</td>
+                  <td>25.00%</td>
+                </tr>
+                <tr>
+                  <td><strong>4 → 5</strong></td>
+                  <td><strong>79.97%</strong></td>
+                  <td><strong>80.00%</strong></td>
+                  <td><strong>18.78%</strong></td>
+                  <td><strong>20.00%</strong></td>
+                </tr>
+                <tr>
+                  <td>8 → 9</td>
+                  <td>88.74%</td>
+                  <td>88.89%</td>
+                  <td>12.76%</td>
+                  <td>11.11%</td>
+                </tr>
+                <tr>
+                  <td>16 → 17</td>
+                  <td>94.03%</td>
+                  <td>94.12%</td>
+                  <td>5.74%</td>
+                  <td>5.88%</td>
+                </tr>
+              </tbody>
+            </table>
+
+            {{SVG:2}}
+            <p>
+              Modulo matches theory to two decimal places on every row. And the number worth remembering is the 4 → 5
+              row: adding <em>one</em> shard to a four-shard system forces <strong>80% of the data to move</strong>.
+              With 16 shards the figure is 94% — the more shards you have, the worse adding one more becomes.
+            </p>
+
+            <p>
+              Consistent hashing tracks $1/(N+1)$ closely but deviates more visibly at small $N$ (37.19% against a
+              theoretical 33.33% at 2 → 3). The reason: with few nodes, the positions of the hash points on the ring
+              have high variance, so the actual ratio fluctuates around the expected value. The more nodes and the more
+              virtual nodes, the closer the match.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ The real cost of that 80% is not bandwidth</div>
+              <div class="callout__content">
+                Moving 80% of the data is heavy work, but it can be planned. The more expensive part is the three
+                knock-on effects:<br /><br />
+                <strong>One:</strong> every cache layer using the same hashing misses completely too — if you were
+                running a 99% hit ratio, database load goes up 100-fold at exactly the moment it is also migrating data
+                (this connects back to <a href="sysdesign-caching">Lesson 5</a> section 5.1).<br /><br />
+                <strong>Two:</strong> during the migration a key may live on the old shard, the new shard, or both — so
+                the application layer has to know how to read from both and which one is authoritative.<br /><br />
+                <strong>Three:</strong> if you have to stop halfway you are in a state that is neither the old one nor
+                the new one. That is why consistent hashing is not merely "better on the numbers" — it is the
+                precondition for adding a shard being a routine operation rather than a project.
+              </div>
+            </div>
+            <!-- ================= 8.4 ================= -->
+            <h2>8.4 Consistent hashing and virtual nodes</h2>
+
+            <p>
+              The idea: instead of hashing the key into a <em>shard index</em>, hash both the key and the shard name
+              into <strong>the same space</strong> — a 32-bit ring. Each key belongs to the first shard it meets going
+              clockwise. Adding a shard only takes over the arc immediately before it, so only the keys inside that arc
+              have to migrate.
+            </p>
+
+            {{SVG:3}}
+
+            <p>The full table, with the same 8 nodes and 100,000 keys (the ideal is 12,500 keys per node):</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Virtual nodes / shard</th>
+                  <th>Smallest node</th>
+                  <th>Largest node</th>
+                  <th>Spread</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>66</td>
+                  <td>25,465</td>
+                  <td>203.2%</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>1,002</td>
+                  <td>28,766</td>
+                  <td>222.1%</td>
+                </tr>
+                <tr>
+                  <td>5</td>
+                  <td>5,621</td>
+                  <td>18,705</td>
+                  <td>104.7%</td>
+                </tr>
+                <tr>
+                  <td>10</td>
+                  <td>8,428</td>
+                  <td>20,368</td>
+                  <td>95.5%</td>
+                </tr>
+                <tr>
+                  <td>50</td>
+                  <td>10,599</td>
+                  <td>14,722</td>
+                  <td>33.0%</td>
+                </tr>
+                <tr>
+                  <td>150</td>
+                  <td>11,514</td>
+                  <td>14,688</td>
+                  <td>25.4%</td>
+                </tr>
+                <tr>
+                  <td>500</td>
+                  <td>10,887</td>
+                  <td>13,483</td>
+                  <td>20.8%</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The first row is the reason virtual nodes exist: with one hash point per node, one shard receives
+              <strong>66 keys</strong> while another receives <strong>25,465</strong> — a
+              <strong>386-fold</strong> difference, for an algorithm still routinely introduced as "evenly
+              distributed".
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ The spread does not decrease monotonically at small values</div>
+              <div class="callout__content">
+                Look at the 2-vnode row: a spread of <strong>222.1%</strong>, <em>worse</em> than 1 vnode (203.2%).
+                This is not a measurement error — with very few hash points the result depends entirely on where those
+                points happened to land, so the spread fluctuates rather than falling smoothly.<br /><br />
+                That has a practical consequence:
+                <strong>do not pick a small vnode count and raise it until it looks acceptable</strong>, because the
+                curve is not monotonic and you may stop at a lucky point. Pick a sufficiently large value outright
+                (100–200 is the usual range in practice) and verify by measuring with your own key set. The cost is
+                memory and ring lookup time — both grow with the vnode count, so 500 is not always better than 150
+                (measured 20.8% against 25.4%, in exchange for more than three times as many points to hold).
+              </div>
+            </div>
+
+            <p>
+              Both tables above can be reproduced in seconds, with no Docker. One small note so it does not alarm you:
+              Node will first print a <code>MODULE_TYPELESS_PACKAGE_JSON</code> warning — that is only because the
+              repo's <code>package.json</code> does not declare <code>"type": "module"</code>; the results below it are
+              still correct.
+            </p>
+
+            {{CODE:reproduce_hashring.sh}}
+
+            <!-- ================= 8.5 ================= -->
+            <h2>8.5 The consequences at the application layer — the genuinely expensive part</h2>
+
+            <p>
+              Choosing a good shard key and using consistent hashing only solves the <em>infrastructure</em> part. The
+              expensive part is at the application layer, because four things you have always taken for granted are
+              gone.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>What you lose</th>
+                  <th>Why you lose it</th>
+                  <th>What has to replace it</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>JOIN</code> across two tables on different shards</td>
+                  <td>Two shards are two databases that know nothing about each other</td>
+                  <td>
+                    Replicate the small table to every shard, or give both tables the same shard key so they always
+                    land together
+                  </td>
+                </tr>
+                <tr>
+                  <td>Transactions spanning several shards</td>
+                  <td>There is no transaction coordinator between independent databases</td>
+                  <td>
+                    Redesign so each transaction fits inside <em>one</em> shard; if that is impossible, use a saga
+                    (Lesson 14)
+                  </td>
+                </tr>
+                <tr>
+                  <td>A globally auto-incrementing key</td>
+                  <td>Each shard has its own sequence ⇒ two shards produce the same ID</td>
+                  <td>UUIDs, or IDs with the shard embedded, or Snowflake-style IDs (Lesson 10)</td>
+                </tr>
+                <tr>
+                  <td>Queries on a column that is not the shard key</td>
+                  <td>You do not know which shard the data is on</td>
+                  <td>
+                    A global secondary index (a lookup table mapping value → shard), or accepting scatter-gather
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: doing the JOIN yourself in the application layer</div>
+              <div class="callout__content">
+                Once <code>JOIN</code> is gone, the natural reflex is to pull the data from both shards into the app
+                and stitch it together in memory. For a few hundred rows that is fine. For a few hundred thousand you
+                have just turned a distributed database into a network bottleneck — and worse, the bottleneck is in the
+                app rather than the database, so every database dashboard stays green while the system is
+                slow.<br /><br />
+                This is the same fan-out problem as <a href="sysdesign-api-gateway">Lesson 4</a> section 4.4, with
+                exactly the same two rules: call the shards <strong>in parallel</strong> (latency equals the slowest
+                shard, not the sum), and <strong>give each shard its own timeout</strong> so one slow shard cannot drag
+                the whole query down.<br /><br />
+                But the best answer is usually not to optimise the stitching, it is to <em>not need it</em>: choose a
+                shard key such that data queried together lives together. That is the third requirement from section
+                8.2 — "matching how you query" — and it matters more than the first two.
+              </div>
+            </div>
+
+            <p>
+              There is one more thing that no advice makes easy: <strong>pagination across shards</strong>. To get "the
+              20 most recent rows" across 8 shards you have to fetch the 20 most recent from <em>each</em> shard (160
+              rows), merge, sort, then cut to 20. The second page needs 40 per shard, and page 100 needs each shard to
+              return 2,000 rows so that 20 can be used. The cost grows with the page number, not with the number of
+              rows you want.
+            </p>
+
+            <p>
+              The usual escape is to drop page-number pagination in favour of
+              <strong>cursor (keyset) pagination</strong>: "give me 20 rows after this marker". That removes the
+              per-page cost growth, but in exchange the user can no longer jump to page 100 — a <em>product</em>
+              change, not just a technical one. This is a very characteristic sharding trade-off: an infrastructure
+              limit travels back up and shapes the feature set.
+            </p>
+
+            <h3>Reproduce the shard measurements yourself</h3>
+
+            {{CODE:reproduce_shard_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              Sharding is the last step because it is the only one with a <em>permanent</em> cost: no JOINs, no
+              cross-shard transactions, pagination as a project of its own. Four cheaper steps come before it, and the
+              test question is always "have you measured, and do you know exactly what is saturating".
+            </p>
+
+            <p>
+              Modulo hashing is simple, but adding one shard forces $N/(N+1)$ of the data to migrate — measured at
+              79.97% going from 4 to 5 shards, matching theory to two decimal places. Consistent hashing brings that
+              down to 18.78%, but <strong>only with virtual nodes</strong>: without them, one shard receives 66 keys
+              while another receives 25,465.
+            </p>
+
+            <p>
+              And the measurement lesson repeats for the third time in this series: a skewed shard key has a better p50
+              <em>and</em> a better p95 than a good one, and then a p99 10.3 times worse. Plus a new lesson: the first
+              run of section 8.2 produced the exact opposite result, because both shards shared one machine's CPU — the
+              measurement environment had cancelled out the very phenomenon being measured.
+            </p>
+
+            <p>
+              <strong>Lesson 9</strong> formalises the question section 7.4 left open: when the network is cut, and
+              neither node knows whether the other has died or has merely lost contact, what do you choose? That is CAP
+              — and the part that matters more than CAP itself, which fewer people talk about: the choice you face
+              <em>every single day</em>, while the network is perfectly healthy.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a href="https://people.csail.mit.edu/karger/Papers/web.pdf" target="_blank" rel="noopener noreferrer">
+                    Karger et al. (1997) — <em>Consistent Hashing and Random Trees</em> (free PDF at MIT): the original
+                    paper introducing consistent hashing, the foundation for all of section 8.4
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Amazon (2007) — <em>Dynamo: Amazon's Highly Available Key-value Store</em>: section 4.2 introduces
+                    virtual nodes for exactly the reason measured in the table in 8.4
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — the FNV-1a hash function, the algorithm the lab's shard router uses as its first step
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/aappleby/smhasher/wiki/MurmurHash3"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    MurmurHash3 — the source of the <code>fmix32</code> mixing step, and of the
+                    <em>avalanche</em> property that step fixes
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Chinese_remainder_theorem"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — the Chinese remainder theorem, the basis of the $N/(N+1)$ proof in section 8.3
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/imul"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    MDN — <code>Math.imul()</code>: why it is needed instead of <code>*</code> when multiplying 32-bit
+                    integers inside a hash function
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.postgresql.org/docs/18/ddl-partitioning.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PostgreSQL — Table Partitioning: splitting a table <em>within</em> one database, the step often
+                    confused with sharding and worth trying first
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The hash ring and the modulo-versus-consistent comparison that produced every number in sections 8.3
+                and 8.4. No dependencies, and it runs straight away with <code>node</code> — no Docker required:
+              </p>
+              <a
+                href="../sysdesign-hashring.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download sysdesign-hashring.js
+              </a>
+            </div>
+
+            <!-- Related Links Block -->

@@ -269,9 +269,10 @@ const readPin = new Map();
 const pgShards = PG_SHARDS.map((host) => new PgPool({ host }, 4));
 const shardHits = new Array(pgShards.length).fill(0);
 
-// FNV-1a rồi trộn bằng fmix32 của MurmurHash3. Vì sao cần bước trộn: FNV-1a có avalanche
-// kém với chuỗi ngắn và giống nhau ('user:1', 'user:2'...), nên các key liên tiếp rơi vào
-// cùng shard theo cụm. Bước fmix32 rẻ và xoá hẳn hiện tượng đó.
+// FNV-1a, then mixed with MurmurHash3's fmix32.
+// Why the mixing step is needed: FNV-1a has POOR avalanche for short, similar strings
+// ('user:1', 'user:2'...), so consecutive keys land on the same shard in clumps.
+// The fmix32 step is cheap and removes that effect entirely.
 function shardHash(key) {
   let h = 2166136261;
   for (let i = 0; i < key.length; i++) {
@@ -286,6 +287,8 @@ function shardHash(key) {
   return h >>> 0;
 }
 
+// WARNING: this is modulo hashing. Simple, but read section 8.3 before using it for
+// real — adding one shard means migrating nearly all of the data.
 function pickShard(shardKey) {
   return shardHash(String(shardKey)) % pgShards.length;
 }
