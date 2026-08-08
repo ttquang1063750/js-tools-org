@@ -850,26 +850,27 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/charge') {
-      // Tru tien mot lan. ?idem=1 dung idempotency key, ?idem=0 thi khong.
+      // Charge once. ?idem=1 uses an idempotency key, ?idem=0 does not.
       //
-      // Diem quan trong nhat: CA hai viec — ghi bang dedup VA tru so du — nam trong
-      // MOT cau lenh SQL duy nhat. Postgres chay mot cau lenh trong mot transaction ngam,
-      // nen khong ton tai cua so nao cho hai request song song cung lot qua (muc 11.3).
-      if (!pgPrimary) return json(res, 503, { error: 'chua dat PG_PRIMARY' });
+      // The most important point: BOTH jobs — writing the dedup row AND debiting the
+      // balance — live in ONE SQL statement. Postgres runs a single statement inside an
+      // implicit transaction, so there is no window for two concurrent requests to slip
+      // through (section 11.3).
+      if (!pgPrimary) return json(res, 503, { error: 'PG_PRIMARY not set' });
       const useIdem = url.searchParams.get('idem') !== '0';
       const amount = Math.max(1, Number(url.searchParams.get('amount') || 100));
-      // Khong co idempotency key thi moi lan thu la mot "y dinh" moi => key ngau nhien.
-      // Day chinh la hanh vi cua `POST /orders` khong kem key.
+      // With no idempotency key every attempt is a new "intent" => a random key.
+      // This is exactly the behaviour of a `POST /orders` that carries no key.
       const key = useIdem
         ? String(url.searchParams.get('key') || 'idem-demo')
         : `no-idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      // minipg khong tham so hoa duoc, nen phai tu lam sach. Chi cho phep ky tu an toan.
+      // minipg cannot parameterise, so we sanitise by hand. Safe characters only.
       const safeKey = key.replace(/[^A-Za-z0-9:_-]/g, '').slice(0, 120) || 'k';
 
-      // CTE: `ins` co gang ghi ban ghi dedup. ON CONFLICT DO NOTHING nghia la neu key da
-      // ton tai thi khong ghi gi va `ins` rong. `upd` chi tru so du KHI `ins` co dong —
-      // tuc la chi lan DAU TIEN moi co hieu ung nghiep vu.
-      // Cau SELECT cuoi tra ve ket qua moi (created=true) hoac ket qua DA LUU (false).
+      // CTE: `ins` tries to write the dedup row. ON CONFLICT DO NOTHING means that if the
+      // key already exists nothing is written and `ins` is EMPTY. `upd` only debits the
+      // balance WHEN `ins` produced a row — so only the FIRST time has a business effect.
+      // The final SELECT returns either the new result (created=true) or the STORED one.
       const sql = `
         WITH ins AS (
           INSERT INTO charges (idem_key, amount, response)
@@ -896,7 +897,7 @@ const server = http.createServer(async (req, res) => {
         idempotencyKey: useIdem ? safeKey : null,
         chargeId: row && row.id,
         amount: row && Number(row.amount),
-        // Tra lai CHINH ket qua da luu, khong phai mot 200 rong (muc 11.2).
+        // Return the STORED result itself, not an empty 200 (section 11.2).
         response: row && row.response,
         replayed: Boolean(replay),
       });

@@ -1,0 +1,522 @@
+
+            <p>
+              <a href="sysdesign-distributed-lock">Lesson 10</a> concluded that the strongest way to avoid a lock is
+              to make repetition harmless. This lesson is how you do that — and it is also the answer to a problem
+              every distributed system has to face:
+              <strong>when a client receives a timeout, it cannot know whether the request was processed</strong>.
+            </p>
+
+            <p>
+              This lesson's lab fires 78,774 concurrent requests carrying the same idempotency key at a charging
+              endpoint. The result: <strong>exactly one row</strong> in the database, exactly one
+              <code>201 Created</code>, and the balance debited exactly once. Turn idempotency off and run the same
+              load: <strong>14,236 rows</strong>, 1,423,600 debited — an account 423,600 in the red.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The measurement machine</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Native arm64 containers (Node
+                v22.23.2), PostgreSQL 18.3, three app replicas at 1 CPU each, nginx 1.27-alpine, load generator on 2
+                CPUs, 64 concurrent connections for 10 seconds.<br /><br />
+                The database access layer is <code>app/minipg.js</code> — a hand-written wire-protocol client with no
+                dependencies (introduced in <a href="sysdesign-replication">Lesson 7</a>). It does not support
+                parameterised queries, so the endpoint sanitises its input by hand; this is stated in the code and is a
+                limitation of the lab, not a practice to copy.
+              </div>
+            </div>
+
+            <!-- ================= 11.1 ================= -->
+            <h2>11.1 Why "exactly-once" is an illusion</h2>
+
+            <p>
+              A client sends a charge request. It waits, and receives a timeout. The question: did the server charge
+              the money or not? <strong>The client has no way to know.</strong> The following three situations produce
+              exactly the same experience on the client side:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>What actually happened</th>
+                  <th>What the client sees</th>
+                  <th>What happens if the client retries</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>The request never reached the server</td>
+                  <td>Timeout</td>
+                  <td>Correct — a retry is needed</td>
+                </tr>
+                <tr>
+                  <td>The server finished, and the response was lost on the way back</td>
+                  <td>Timeout</td>
+                  <td><strong>Wrong — charged a second time</strong></td>
+                </tr>
+                <tr>
+                  <td>The server is still processing, not finished</td>
+                  <td>Timeout</td>
+                  <td>Wrong — it may be processed twice in parallel</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              This is the <strong>Two Generals problem</strong>: no protocol lets two parties reach absolute certainty
+              that a message arrived, when the channel can lose messages. The consequence:
+              <strong>exactly-once delivery is impossible</strong>.
+            </p>
+
+            <p>
+              But there is a combination that achieves what people actually want:
+              <strong>at-least-once delivery + idempotent processing</strong>. Keep resending until you are sure it
+              arrived (at-least-once), and design things so that receiving it many times has the effect of receiving it
+              once. From the outside the result looks like exactly-once, even though no step in it is exactly-once.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: believing "exactly-once delivery" marketing</div>
+              <div class="callout__content">
+                Several message brokers advertise exactly-once. What they actually provide is
+                <strong>exactly-once processing within a narrow scope</strong>: when both reading the message and
+                writing the result live inside their system, they can make those two things atomic with each
+                other.<br /><br />
+                That scope does <strong>not</strong> include side effects reaching the outside world. If your consumer
+                calls a payment API, sends an email, or pushes a notification, no broker can guarantee that happens
+                only once — because that call is itself subject to the Two Generals problem. For those side effects,
+                you still have to make things idempotent yourself.
+              </div>
+            </div>
+
+            {{SVG:1}}
+
+            <!-- ================= 11.2 ================= -->
+            <h2>11.2 Idempotency keys and the dedup table</h2>
+
+            <p>
+              The mechanism is compact: the client generates a unique key for its <strong>intent</strong> — not for
+              each attempt. The server stores the key → result mapping in a <strong>dedup table</strong> (dedup =
+              deduplication: a table whose only job is to remember "this key has been processed, and here is the
+              result"). On seeing a key it already has, the server <strong>returns the stored result</strong> instead
+              of processing again.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Decision</th>
+                  <th>Doing it right</th>
+                  <th>Doing it wrong, and the consequence</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Who generates the key</td>
+                  <td>The client, one key per intent</td>
+                  <td>
+                    The server generating it ⇒ every attempt is a new key ⇒ nothing can be deduplicated. A client
+                    generating a fresh key per attempt has the same consequence
+                  </td>
+                </tr>
+                <tr>
+                  <td>What to store</td>
+                  <td>The complete result, so it can be returned again</td>
+                  <td>
+                    Storing only a "processed" flag ⇒ the retry gets an empty <code>200</code>, and the client loses
+                    the transaction ID with no idea what to do next
+                  </td>
+                </tr>
+                <tr>
+                  <td>The key's TTL</td>
+                  <td>Longer than the client's maximum retry span</td>
+                  <td>Shorter ⇒ the key expires between two retries, and the second is processed as a new intent</td>
+                </tr>
+                <tr>
+                  <td>Status code on a duplicate</td>
+                  <td>The same code and the same body as the first time</td>
+                  <td>
+                    Returning <code>409 Conflict</code> ⇒ the client thinks it failed and may retry with a different
+                    key — precisely what we set out to avoid
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 The key is for the INTENT, not for the attempt</div>
+              <div class="callout__content">
+                This is the most easily misunderstood part, and it decides whether the whole mechanism works at all. If
+                the user clicks "Pay" once, that is <strong>one intent</strong> — so there is only one key, even if the
+                HTTP library retries five times.<br /><br />
+                The practical consequence: the key must be generated where the intent originates (when the user clicks
+                the button, or when the job is created) and kept unchanged across every attempt. If you generate the
+                key just before the HTTP call, every retry gets a different key, and you will have implemented the
+                entire mechanism without receiving any of its benefit.
+              </div>
+            </div>
+
+            {{SVG:2}}
+
+            <!-- ================= 11.3 ================= -->
+            <h2>11.3 The dedup write and the business logic must be in the SAME transaction</h2>
+
+            <p>This is the most important section of the lesson. The most intuitive implementation — and the wrong one — looks like this:</p>
+
+            {{CODE:mẫu check-then-act (SAI — không có trong lab)}}
+
+            <p>
+              The fix is not to add a lock (see <a href="sysdesign-distributed-lock">Lesson 10</a>) but to let
+              <strong>the database enforce</strong> uniqueness itself, via a <code>UNIQUE</code> constraint, and to do
+              both jobs in <strong>one statement</strong>:
+            </p>
+
+            {{CODE:app/app.js — câu lệnh SQL của handler /charge}}
+
+            <p>
+              The <code>charges</code> table has <code>idem_key TEXT NOT NULL UNIQUE</code>. That constraint is what
+              does the real work: it turns duplicate prevention from a <em>piece of code</em> that can be wrong into an
+              <em>invariant</em> the database will not allow to be violated.
+            </p>
+
+            <h3>Measured for real: 78,774 concurrent requests on one key</h3>
+
+            <p>64 connections, 10 seconds, one and the same <code>idem_key</code>, against the same load without an idempotency key:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>WITH an idempotency key</th>
+                  <th>WITHOUT</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Requests processed</td>
+                  <td>78,774</td>
+                  <td>14,172</td>
+                </tr>
+                <tr>
+                  <td>Status codes</td>
+                  <td><strong>201 × 1</strong> · 200 × 78,773</td>
+                  <td>201 × 14,172</td>
+                </tr>
+                <tr>
+                  <td><strong>Rows in the database</strong></td>
+                  <td><strong>1</strong></td>
+                  <td><strong>14,236</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Amount debited</strong></td>
+                  <td><strong>100</strong></td>
+                  <td><strong>1,423,600</strong> (balance now −423,600)</td>
+                </tr>
+                <tr>
+                  <td>Throughput</td>
+                  <td>6,596 rps</td>
+                  <td>1,183 rps</td>
+                </tr>
+                <tr>
+                  <td>p50 / p99</td>
+                  <td>3.41 / 72.47 ms</td>
+                  <td>39.62 / 189.92 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The "status codes" row is the most compact evidence: out of <strong>78,774</strong> concurrent requests
+              all aimed at one key, exactly <strong>one</strong> received <code>201 Created</code>. Every other one
+              received <code>200</code> with <em>the stored result itself</em> — the same <code>chargeId</code>, the
+              same <code>response</code>. No request failed (0 errors).
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Why the idempotent version is 5.6 times FASTER</div>
+              <div class="callout__content">
+                This initially looks like an unexpected bonus of idempotency, but the real cause lies elsewhere and
+                needs stating clearly. The <em>non</em>-idempotent version performs an <code>INSERT</code> and an
+                <code>UPDATE balances</code> on <strong>every</strong> request, and all of them update
+                <em>the same row</em> of the balance table. Postgres locks that row at row level, so 64 connections
+                have to queue through a single row.<br /><br />
+                The idempotent version only writes on the first request; the remaining 78,773 only
+                <code>SELECT</code> and need no write lock at all. So the throughput gap here is
+                <strong>a consequence of eliminating lock contention</strong>, not a general property of idempotency.
+                Under a load where requests target <em>different</em> keys, this gap would not appear.<br /><br />
+                But there is one general point: the non-idempotent version <em>creates</em> the very contention it then
+                suffers from. Duplicate processing does not only corrupt the data — it also generates extra load
+                exactly when the system is having network trouble, which is exactly when clients are retrying most.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: splitting dedup and business logic into two transactions</div>
+              <div class="callout__content">
+                Even with a <code>UNIQUE</code> constraint, if you write the dedup row in transaction A and do the
+                business work in transaction B, two broken windows remain.<br /><br />
+                <strong>Dedup first:</strong> A succeeds, the process dies before B runs. The key exists, so every
+                retry is told "already processed" — but the money was never debited. The request
+                <em>vanishes silently</em>.<br /><br />
+                <strong>Business logic first:</strong> B succeeds, the process dies before A runs. The money is debited
+                but there is no dedup row, so the retry debits it again.<br /><br />
+                No ordering is safe. There is only one way: <strong>the same transaction</strong> — and the cheapest
+                way to guarantee that is to write both jobs in <em>one statement</em>, as in the SQL above.
+              </div>
+            </div>
+            {{SVG:3}}
+
+            <!-- ================= 11.4 ================= -->
+            <h2>11.4 HTTP semantics, and two properties that get conflated</h2>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Method</th>
+                  <th>Idempotent per the spec?</th>
+                  <th>Practical note</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>GET</code></td>
+                  <td>Yes (and safe — it changes no state)</td>
+                  <td>If your GET changes state you have violated the spec, and every cache layer will hurt you</td>
+                </tr>
+                <tr>
+                  <td><code>PUT</code></td>
+                  <td>Yes</td>
+                  <td>
+                    With a client-generated ID, PUT makes creation <strong>naturally idempotent</strong> — no dedup
+                    table needed
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>DELETE</code></td>
+                  <td>Yes</td>
+                  <td>Deleting twice changes nothing. But returning 404 the second time can mislead the client</td>
+                </tr>
+                <tr>
+                  <td><code>POST</code></td>
+                  <td><strong>No</strong></td>
+                  <td>This is why idempotency keys exist. Every POST creation endpoint needs one</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>Two properties get conflated constantly, and they are independent of each other:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Idempotent</th>
+                  <th>Commutative</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Meaning</td>
+                  <td>Repeating does not change the result</td>
+                  <td>Reordering does not change the result</td>
+                </tr>
+                <tr>
+                  <td>Example that is</td>
+                  <td><code>SET x = 5</code></td>
+                  <td><code>x = x + 1</code> and <code>x = x + 2</code></td>
+                </tr>
+                <tr>
+                  <td>Example that is not</td>
+                  <td><code>x = x + 1</code> (repeating adds twice)</td>
+                  <td><code>SET x = 5</code> and <code>SET x = 9</code> (order decides the result)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Note that the last two rows are opposites: <code>SET</code> is idempotent but not commutative;
+              <code>+= 1</code> is commutative but not idempotent. In a distributed system you usually need both, and
+              the way to get there is addition plus deduplication — <code>+= 1</code> for commutativity, the dedup
+              table for idempotency. This also explains the hint from
+              <a href="sysdesign-cap-consistency">Lesson 9</a> section 9.5:
+              <code>balance = balance + 50</code> merges cleanly while <code>SET balance = 150</code> does not.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: POST /orders without an idempotency key</div>
+              <div class="callout__content">
+                This is the most common pitfall in the whole lesson, and it is almost perfectly silent. The endpoint
+                behaves correctly in every test, behaves correctly on a stable network, and only produces duplicate
+                orders when the network is flaky — that is, for a small fraction of users, not reproducible on demand,
+                and usually only discovered when a customer complains or when accounting reconciles the
+                books.<br /><br />
+                Two fixes, both good: add an idempotency key (the <code>Idempotency-Key</code> header is the common
+                convention), or switch to <code>PUT /orders/{id}</code> with a client-generated id — at which point
+                idempotency is a consequence of the URL design and needs no extra infrastructure at all.
+              </div>
+            </div>
+
+            <!-- ================= 11.5 ================= -->
+            <h2>11.5 Idempotency at the data layer and for consumers</h2>
+
+            <p>
+              You do not always need a separate dedup table. Often idempotency can live in the way you design the data
+              itself:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Technique</th>
+                  <th>How it works</th>
+                  <th>When to use it</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>INSERT ... ON CONFLICT</code></td>
+                  <td>Upsert on a natural key</td>
+                  <td>
+                    The data has a natural key (an email, an order number from the source system) — cheapest and most
+                    certain
+                  </td>
+                </tr>
+                <tr>
+                  <td>A natural key instead of auto-increment</td>
+                  <td>The primary key is the <code>order_no</code> issued by the source system</td>
+                  <td>
+                    Whenever possible. Auto-increment means every rewrite creates a new ID, so there is nothing to
+                    deduplicate on
+                  </td>
+                </tr>
+                <tr>
+                  <td>Dedup on <code>event_id</code></td>
+                  <td>The consumer records processed <code>event_id</code>s and skips ones it has seen</td>
+                  <td>A precondition for at-least-once message queues (Lesson 12)</td>
+                </tr>
+                <tr>
+                  <td>A <code>version</code> column (optimistic)</td>
+                  <td><code>UPDATE ... WHERE version = :expected</code></td>
+                  <td>When you need both duplicate prevention and protection from mutual overwrites (Lesson 10 section 10.5)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ The dedup table's TTL must exceed the queue's retry span</div>
+              <div class="callout__content">
+                The dedup table has to be cleaned out, otherwise it grows without bound. But if its TTL is shorter than
+                the message queue's redelivery span, you create a very hard-to-trace bug: a job is redelivered after
+                the key has expired, so it is processed a second time as an entirely new job.<br /><br />
+                The comparison to make is: dedup TTL &gt; (max retry count × longest backoff) + the time a job may sit
+                in a dead letter queue before being replayed. For systems with a DLQ where an operator replays jobs
+                after a few days, <strong>a TTL of a few hours is definitely not enough</strong> — and this bug only
+                appears after an incident, which is to say at the worst possible moment.
+              </div>
+            </div>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              Exactly-once delivery is impossible — the Two Generals problem says a client that receives a timeout
+              cannot distinguish three different situations. What is possible, and what people actually want, is
+              <strong>at-least-once + idempotent processing</strong>, and from the outside that combination looks like
+              exactly-once.
+            </p>
+
+            <p>
+              An idempotency key must be a key <strong>for the intent</strong>, generated by the client and kept
+              unchanged across every attempt. The server must store the <strong>complete result</strong> rather than
+              just a "processed" flag, and return that same result when it meets a duplicate key.
+            </p>
+
+            <p>
+              The most important part is section 11.3: the dedup write and the business logic must be in
+              <strong>the same transaction</strong>. No ordering is safe once you split them — dedup first and the
+              request vanishes silently; business logic first and the retry charges again. And do not use the
+              "check then write" pattern: two concurrent requests both see "not there". The cheapest and most certain
+              approach is to let a <code>UNIQUE</code> constraint enforce uniqueness, in a single statement.
+            </p>
+
+            <p>
+              Measured: <strong>78,774 concurrent requests on one key → exactly 1 row, exactly 1 status 201, exactly
+              100 debited, and not a single error.</strong> With idempotency off: 14,236 rows and a balance of
+              −423,600.
+            </p>
+
+            <p>
+              <strong>Lesson 12</strong> is where all of the above stops being a choice and becomes a requirement:
+              message queues with at-least-once semantics. When a job can be redelivered at any moment, the consumer
+              <em>must</em> be idempotent — otherwise every redelivery is another side effect.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a href="https://docs.stripe.com/api/idempotent_requests" target="_blank" rel="noopener noreferrer">
+                    Stripe — Idempotent requests: the <code>Idempotency-Key</code> header convention section 11.2 is
+                    based on, including their TTL policy (24 hours)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-idempotent-methods" target="_blank" rel="noopener noreferrer">
+                    IETF RFC 9110 §9.2.2 — the official definition of an "idempotent method", the source of the table
+                    in section 11.4
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Two_Generals%27_Problem" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — the Two Generals problem, the theoretical basis for "exactly-once is impossible" in
+                    section 11.1
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.postgresql.org/docs/18/sql-insert.html#SQL-ON-CONFLICT" target="_blank" rel="noopener noreferrer">
+                    PostgreSQL — <code>INSERT ... ON CONFLICT</code>, the mechanism behind the statement in section
+                    11.3
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.postgresql.org/docs/18/queries-with.html#QUERIES-WITH-MODIFYING" target="_blank" rel="noopener noreferrer">
+                    PostgreSQL — data-modifying CTEs (<code>WITH ... INSERT/UPDATE</code>): why the whole CTE runs
+                    against <em>one</em> snapshot, which is what makes the pattern in 11.3 safe
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/" target="_blank" rel="noopener noreferrer">
+                    Confluent — how Kafka does "exactly-once": read it to see precisely the scope in which it applies,
+                    exactly the point of the pitfall in section 11.1
+                  </a>
+                </li>
+                <li>
+                  <a href="https://brandur.org/idempotency-keys" target="_blank" rel="noopener noreferrer">
+                    Brandur Leach — <em>Implementing Stripe-like Idempotency Keys in Postgres</em>: the extended
+                    version of section 11.3 for business logic that will not fit into one statement
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The lab's schema, containing the <code>charges</code> table with its
+                <code>idem_key TEXT NOT NULL UNIQUE</code> constraint — that constraint, and not any piece of code, is
+                what enforced uniqueness throughout the measurements in section 11.3:
+              </p>
+              <a
+                href="../sysdesign-lab/postgres/init/20-schema.sql"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download 20-schema.sql
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
