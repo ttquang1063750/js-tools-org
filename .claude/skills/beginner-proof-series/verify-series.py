@@ -166,16 +166,28 @@ for num, slug in order:
     checks.append(('urls', urls_ok, 'canonical/og:url sai locale'))
 
     # --- links tuong doi + link next khoa dung
+    # Bai cuoi cung cua series (khong co bai N+1 nao ca) co hai kieu hop le da
+    # thay trong repo: mot span khoa an mung "hoan thanh lo trinh" (sysdesign)
+    # hoac don gian la bo han khoi --next (aie). Ca hai deu dung vi ca hai deu
+    # KHONG phai mot <a href> song tro toi trang khong ton tai — do moi la thu
+    # bat bien nay thuc su can bat, khong phai su co mat/vang cua class
+    # --locked. Vi vay kiem tra bang TAG cua --next (a hay span/khong co), chu
+    # khong kiem tra substring "--locked" co mat trong ca file hay khong.
     bad_links = []
     for m in re.finditer(r'href="(?!https?:|#|/|mailto:)([^"#?]+)"', en):
         p = os.path.normpath(os.path.join(EDIR, m.group(1)))
         if not (os.path.exists(p) or os.path.exists(p + '.html')):
             bad_links.append(m.group(1))
     nxt = next((s for n, s in order if n == num + 1), None)
-    locked = 'article-related__link--locked' in en
-    should_lock = bool(nxt) and not os.path.exists(f'{EDIR}/{nxt}.html')
-    checks.append(('links', not bad_links and locked == should_lock,
-                   f'chet={sorted(set(bad_links))} khoa={locked} nen_khoa={should_lock}'))
+    next_exists = bool(nxt) and os.path.exists(f'{EDIR}/{nxt}.html')
+    m_next = re.search(r'<(a|span)\b[^>]*\bclass="[^"]*article-related__link--next[^"]*"', en)
+    next_tag = m_next.group(1) if m_next else None
+    # next_exists=True  -> --next PHAI la <a> song (bai da co ban EN, phai mo khoa)
+    # next_exists=False -> --next KHONG duoc la <a> (bai chua co EN, hoac day la
+    #                      bai cuoi series nen khong co bai N+1 nao ca)
+    next_ok = (next_tag == 'a') if next_exists else (next_tag != 'a')
+    checks.append(('links', not bad_links and next_ok,
+                   f'chet={sorted(set(bad_links))} next_tag={next_tag} next_da_co_EN={next_exists}'))
 
     # --- dang ky
     reg = f'{base_url.replace("https://js-tools.org", "")}/en/{slug}'.lstrip('/')
