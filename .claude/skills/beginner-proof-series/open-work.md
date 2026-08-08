@@ -1,28 +1,3 @@
-# task.md — Kỹ Sư AI Thực Chiến / Practical AI Engineer
-
-> File nay do `make-task.py` sinh ra tu hien trang repo. **Dung tich tay cac o
-> trong muc "May kiem duoc"** — chay lai script la chung tu dong dong bo:
->
-> ```bash
-> D=.claude/skills/beginner-proof-series
-> python3 $D/make-task.py .claude/skills/beginner-proof-series/series/aie
-> ```
-
-## Bat dau tu day
-
-Doc `.claude/skills/beginner-proof-series/SKILL.md` truoc — no giai thich
-_cach_ lam. File nay chi noi _con lai nhung gi_.
-
-Hai lenh cho biet trang thai bat ky luc nao:
-
-```bash
-D=.claude/skills/beginner-proof-series
-python3 $D/next-lesson.py blog/aie/aie-programming-series.html
-python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/aie
-```
-
-**Tien do: 20/20 bai da co ban EN.** Checker dang **xanh**.
-
 ## Viec o cap toan site (khong thuoc series nao)
 
 > Ghi tay vao `.claude/skills/beginner-proof-series/open-work.md`.
@@ -53,7 +28,6 @@ TUYET DOI, nen bam nut tren localhost se nhay sang js-tools.org that — noi chu
 co ban sua. Kiem tra tren production roi ket luan ve code local la sai.
 
 Hai nghi van dang co, chua cai nao duoc xac nhan:
-
 - `i18n.js` ghi `localStorage.lang` khi bam, nhung trang co `hreflang` lai lay
   `lang` tu `contentLang` chu khong tu localStorage. Chuyen qua lai giua trang co
   va khong co ban dich co the tao ra trang thai mau thuan.
@@ -94,47 +68,3 @@ xung hai chieu giua hai file).
 
 **Bat buoc negative-test** truoc khi tin: tiem mot `hreflang` tro sai roi xac nhan
 check bao do. Mot checker chi biet bao "dat" thi te hon la khong co.
-
-## Cac bai con lai
-
-Khong con bai nao. Neu checker xanh, chay `make-task.py --finish` de don file nay.
-
-## Cac bai da xong
-
-Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
-
-- [x] Bai 1: Chuyển dịch tư duy lập trình: Từ JS sang Python cho AI
-- [x] Bai 2: Đại số Tuyến tính & Đạo hàm qua dòng lệnh
-- [x] Bai 3: Làm việc với Dữ liệu lớn: NumPy & Pandas chuyên sâu
-- [x] Bai 4: PyTorch Cơ Bản: Tensor & Autograd chuyên sâu
-- [x] Bai 5: Mạng Nơ-ron Đơn Giản (Perceptron & MLP)
-- [x] Bai 6: Huấn luyện mạng: Loss & Backpropagation
-- [x] Bai 7: Thị giác Máy tính cơ bản: Khám phá mạng tích chập CNN
-- [x] Bai 8: Xử lý Văn bản & Word Embeddings
-- [x] Bai 9: Mạng tuần hoàn (RNN) và Sự trỗi dậy của Attention
-- [x] Bai 10: Kiến trúc Transformer Dưới Kính Hiển Vi
-- [x] Bai 11: Lập trình Prompt & Làm chủ API LLM
-- [x] Bai 12: Structured Outputs & Function Calling
-- [x] Bai 13: Cục bộ hóa AI: Chạy LLM offline với Ollama
-- [x] Bai 14: Hệ thống RAG Cơ Bản: Hỏi đáp tài liệu
-- [x] Bai 15: Chiến thuật Chunking tối ưu & Vector Databases chuyên sâu
-- [x] Bai 16: RAG Nâng Cao: Query Translation & Cross-Encoder Reranking
-- [x] Bai 17: AI Agents & Vòng lặp ReAct
-- [x] Bai 18: Đại lý có trạng thái phức tạp với LangGraph
-- [x] Bai 19: Tinh chỉnh mô hình (Fine-tuning LLM) bằng QLoRA
-- [x] Bai 20: MLOps: Serving vLLM, Tracing và Đánh giá tự động
-
-## Viec o cap series (lam mot lan)
-
-- [x] Hub co ban tieng Anh (`blog/aie/en/aie-programming-series.html`)
-- [x] Hub tieng Viet co `hreflang` va link locale hien thi
-- [ ] Chrome thong nhat giua cac bai EN (checker ep theo `config.json`)
-
-## Khi xong het
-
-```bash
-python3 .claude/skills/beginner-proof-series/make-task.py .claude/skills/beginner-proof-series/series/aie --finish
-```
-
-Lenh nay chi chay khi moi bai da co ban EN **va** checker xanh. No don noi
-dung file, giu lai file cho lan lam viec sau.

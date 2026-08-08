@@ -78,6 +78,9 @@ if FINISH:
         raise SystemExit(f'chua xong: con {len(todo)} bai chua co ban EN — khong don duoc')
     if not green:
         raise SystemExit('verify-series.py dang DO — sua cho xanh roi moi don task.md')
+    ow = f'{HERE}/open-work.md'
+    if os.path.exists(ow) and open(ow, encoding='utf-8').read().strip():
+        raise SystemExit(f'con viec o cap site trong {ow} — xu ly hoac xoa het roi moi don duoc')
     open(TASK, 'w', encoding='utf-8').write(STUB)
     print(f'da don {TASK} ve stub ({len(done)} bai hoan tat, checker xanh)')
     sys.exit(0)
@@ -123,6 +126,14 @@ lines = [
     + ('Checker dang **xanh**.' if green else 'Checker dang **DO** — xem muc "Viec phai sua ngay" ben duoi.'),
     '',
 ]
+
+# Viec o cap toan site, ghi tay trong open-work.md. Chen nguyen van vao day de no
+# song sot qua moi lan sinh lai — day la cho duy nhat trong task.md duoc viet tay.
+OPEN = f'{HERE}/open-work.md'
+if os.path.exists(OPEN):
+    body = open(OPEN, encoding='utf-8').read().strip()
+    if body:
+        lines += [body, '']
 
 if not green:
     lines += [
