@@ -1,0 +1,537 @@
+            <p>
+              <a href="sysdesign-monolith-microservices">Lesson 15</a> just split a use case into four services and
+              created a new problem: once a request crosses four processes, no single process sees its whole journey.
+              Which hop ate the time? Where did it break? Without an answer to those two questions, every resilience
+              mechanism in Lesson 17 is just guessing.
+            </p>
+
+            <p>
+              This lesson's lab builds all three pillars by hand in <code>app.js</code> — histogram, correlation ID,
+              span — no library. Three measurements stand out. First, with an incident that makes
+              <strong>1% of requests 300 ms slower</strong>, the measured p99 is <strong>0.90 ms</strong> — it
+              <em>completely misses</em> the incident; only p99.9 reveals the 474 ms. Second, adding exactly one
+              <code>user_id</code> label makes the number of time series jump from <strong>2 to 49,317</strong> and
+              memory from 330 bytes to <strong>8.4 MB</strong> — in just 8 seconds of load, on one instance. Third,
+              forgetting to propagate the correlation ID across one hop drops the waterfall from 4 spans to
+              <strong>1 span</strong>, and all the time gets blamed on the wrong service.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Measurement setup</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Three
+                <code>node:22-alpine</code> containers (app1/app2/app3), each 1 CPU and 256 MB; the load generator is a
+                hand-written <code>loadgen.js</code>, 20 connections, closed-loop.<br /><br />
+                Metrics, logs, and traces are all hand-written in <code>app.js</code>: a fixed-bucket histogram
+                <code>[1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, ∞]</code> ms, spans kept in a 200-trace ring
+                buffer, the correlation ID generated at the first hop and propagated via an
+                <code>X-Correlation-Id</code> header.<br /><br />
+                <strong>One consequence of this choice needs saying up front:</strong> the first bucket boundary is 1
+                ms, so <code>/metrics</code> reports p50 = 0.5 ms while <code>loadgen</code> measures 0.13 ms. That is
+                not a bug — it is a real limitation of every histogram-based metrics system, and section 16.2 covers it
+                in depth.
+              </div>
+            </div>
+
+            <!-- ================= 16.1 ================= -->
+            <h2>16.1 Monitoring answers old questions, observability answers new ones</h2>
+
+            <p>
+              These two words get used interchangeably, but they describe two very different capabilities.
+              <strong>Monitoring</strong> is having answers ready for questions you <em>already knew</em> you would
+              ask: how much CPU, what's the error rate, did we cross a threshold. It produces dashboards and alerts.
+              <strong>Observability</strong> is the ability to answer a question you <em>never anticipated</em> —
+              exactly the kind that shows up in every real incident, because if you had anticipated it, you would
+              already have fixed it.
+            </p>
+
+            <p>
+              The three pillars below differ along three dimensions at once: granularity, cost, and the kind of
+              question they can answer. Getting any one of those dimensions wrong leads to a big bill and a system you
+              still cannot debug.
+            </p>
+
+            {{SVG:1}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: "log everything to be safe"</div>
+              <div class="callout__content">
+                This sounds like a safe strategy, but it fails in three ways at once. The bill grows exponentially
+                because logging cost scales directly with traffic — right when traffic goes up, so does the
+                bill. Queries get slower and slower until they are useless <em>exactly when it's urgent</em>, when you
+                need an answer in minutes, not tens of minutes. And most paradoxically: you still tend to be missing
+                the exact field you need, because "log everything" in practice means "log whatever was convenient,"
+                not "log whatever is useful."<br /><br />
+                The alternative: decide up front <strong>which questions you want to be able to answer during an
+                incident</strong>, then log exactly the fields those questions need — with a schema, with types. That
+                is the difference between structured logging and free-form logging.
+              </div>
+            </div>
+
+            <!-- ================= 16.2 ================= -->
+            <h2>16.2 Getting metrics right: RED, USE, and two pitfalls</h2>
+
+            <p>
+              Two sets of metrics cover almost every need. <strong>RED</strong> per <em>service</em>: Rate, Errors,
+              Duration (the distribution of latency). <strong>USE</strong> per <em>resource</em>: Utilization,
+              Saturation (queue depth — Lesson 1 already showed this is the real early-warning signal), Errors. A
+              service with full RED per route and full USE per resource already answers most of the questions you'll
+              ask.
+            </p>
+
+            <p>
+              But the D in RED has to be a <strong>distribution</strong>, not a single number. The lab reproduces the
+              most typical shape of incident — the vast majority of requests fast, a small fraction 300 ms slower —
+              and asks: <em>which percentile can actually see that incident?</em>
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Fraction of slow requests</th>
+                  <th>mean</th>
+                  <th>p50</th>
+                  <th>p95</th>
+                  <th>p99</th>
+                  <th>max</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0.5%</td>
+                  <td>1.61 ms</td>
+                  <td>0.13 ms</td>
+                  <td>0.27 ms</td>
+                  <td><strong>0.49 ms</strong></td>
+                  <td>305.82 ms</td>
+                </tr>
+                <tr>
+                  <td>1%</td>
+                  <td>3.06 ms</td>
+                  <td>0.13 ms</td>
+                  <td>0.22 ms</td>
+                  <td><strong>0.90 ms</strong></td>
+                  <td>306.29 ms</td>
+                </tr>
+                <tr>
+                  <td>2%</td>
+                  <td>6.28 ms</td>
+                  <td>0.20 ms</td>
+                  <td>0.78 ms</td>
+                  <td><strong>300.01 ms</strong></td>
+                  <td>314.29 ms</td>
+                </tr>
+                <tr>
+                  <td>5%</td>
+                  <td>15.60 ms</td>
+                  <td>0.39 ms</td>
+                  <td>10.57 ms</td>
+                  <td><strong>303.05 ms</strong></td>
+                  <td>313.99 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The p99 column has a <strong>cliff edge</strong> between 1% and 2%: from 0.90 ms up to 300 ms. The
+              reason is simple once stated: p99 is the threshold below which 99% of requests fall, so when exactly 1%
+              of requests are slow, that threshold sits right at the edge and can land on the fast side.
+              <strong>p99 is blind to an incident that affects exactly 1% of users.</strong> At 1%, only p99.9 sees it
+              — the app's histogram measures p99.9 = <strong>474 ms</strong>.
+            </p>
+
+            <p>
+              The mean column is bad in a different way: it climbs steadily (1.61 → 3.06 → 6.28 → 15.60) so it looks
+              informative, but <em>no request actually took 3.06 ms</em>. At 1% slow, the mean is
+              <strong>23 times</strong> higher than the median. It doesn't describe anyone's experience: not the
+              normal user's (0.13 ms), not the affected user's (300 ms) either.
+            </p>
+
+            {{SVG:2}}
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Histogram resolution caps how precise a percentile can be</div>
+              <div class="callout__content">
+                In the same measurement above, <code>loadgen</code> reports p50 = 0.13 ms while the app's
+                <code>/metrics</code> reports p50 = <strong>0.5 ms</strong>. Neither is wrong: loadgen keeps every
+                sample so it computes the exact percentile, while the app uses a
+                <strong>fixed-bucket histogram</strong> whose first bucket is
+                <code>[0, 1] ms</code> — every request under 1 ms falls into that one bucket, and the percentile can
+                only interpolate linearly inside it, producing 0.5.<br /><br />
+                This is an inherent trade-off, not a bug: keeping every sample gives an exact answer but memory scales
+                with the number of requests (the same problem as the sliding window log in
+                <a href="sysdesign-rate-limiting">Lesson 13</a>), while a histogram has fixed memory but its precision
+                is capped by the bucket boundaries. The practical consequence:
+                <strong>put dense buckets around your SLO threshold</strong>. If your SLO is 250 ms, you need dense
+                buckets around 200–300 ms; sparse buckets in exactly that range make your SLI wrong in a way you won't
+                catch.
+              </div>
+            </div>
+
+            <p>
+              The second pitfall of metrics is not about values but about <strong>labels</strong>. Every combination
+              of label values is its own time series, and every time series costs its own memory. The lab runs the
+              same load with two different label configurations, 50,000 distinct users, over 8 seconds:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Labels</th>
+                  <th>Number of time series</th>
+                  <th>Memory</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>route</code>, <code>status</code></td>
+                  <td>2</td>
+                  <td>330 bytes</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>route</code>, <code>status</code>, <strong><code>user</code></strong>
+                  </td>
+                  <td><strong>49,317</strong></td>
+                  <td><strong>8,855,160 bytes (8.4 MB)</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Pitfall: using <code>user_id</code> or <code>request_id</code> as a label
+              </div>
+              <div class="callout__content">
+                The number above is <strong>24,658 times</strong> the number of time series, from exactly one label,
+                in 8 seconds, on one instance. With a million active users and three replicas, that is hundreds of
+                megabytes <em>for a single route</em> — and the metrics system has to hold onto it for the entire
+                retention period.<br /><br />
+                The familiar outcome: <strong>the monitoring system crashes before the system it's monitoring
+                does</strong>, and it crashes exactly during high load — exactly when you need it most. The rule:
+                labels must have a <strong>finite, known-in-advance set of values</strong> (route, status, region,
+                version). Anything whose count grows with the number of users belongs in <em>logs</em> or
+                <em>traces</em>, not in metrics.
+              </div>
+            </div>
+
+            <!-- ================= 16.3 ================= -->
+            <h2>16.3 The correlation ID: one header, and where it gets dropped</h2>
+
+            <p>
+              Structured logging means every line is an object with a schema instead of a free-form string, so you can
+              query by field instead of writing a regex at 3 a.m. But the single most important field in it is not the
+              error message — it's the <strong>correlation ID</strong>: an identifier generated at the first hop
+              (usually the gateway, <a href="sysdesign-api-gateway">Lesson 4</a>) that travels with the request through
+              every service.
+            </p>
+
+            {{CODE:correlation_id.js}}
+
+            <p>
+              Everyone gets the "generate" part right. The "propagate" part is where it breaks, and it breaks
+              <em>silently</em>: no error, every request still runs, it's just that the trace gets cut into two pieces
+              that can't be joined back together. The lab measures the consequence by running the same three-hop chain
+              with <code>propagate=1</code> and <code>propagate=0</code>:
+            </p>
+
+            {{CODE:ket_qua_trace.txt}}
+
+            <p>
+              Read the last line closely: when the ID isn't propagated, the system reports
+              <strong>app1 accounting for 100% of the time</strong>. That is not "missing information" — it is
+              <strong>wrong information</strong>, and it's wrong in the most dangerous direction, pointing straight at
+              an innocent service. A team reading that waterfall will go optimize app1 while the real culprit (app2,
+              eating 45.7% of the time) sits untouched.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: losing the correlation ID at a queue boundary</div>
+              <div class="callout__content">
+                With HTTP, propagating the ID is at least easy to remember because there's already a spot to put a
+                header. With a <a href="sysdesign-message-queue">message queue</a> there isn't: the producer pushes a
+                message, the consumer picks it up in a different process, at a different time, sometimes minutes
+                later — and no "header" automatically comes along for the ride.<br /><br />
+                The consequence: <strong>the trace breaks exactly at the async boundary</strong>, which is the hardest
+                place to debug, where work runs in the background with nobody watching. The fix is mandatory and has
+                to happen at message-design time: put the correlation ID inside <em>the message body itself</em> as a
+                required field, and have the consumer restore it into its own logging context before processing it. If
+                your messages don't have that field today, every background job you run is a black box.
+              </div>
+            </div>
+
+            <!-- ================= 16.4 ================= -->
+            <h2>16.4 Tracing: spans are scattered, someone has to collect them</h2>
+
+            <p>
+              A <strong>trace</strong> is a request's entire journey; each <strong>span</strong> is one leg of it,
+              with a start time, a duration, and a parent span. Stitched together they form a waterfall — which
+              answers "which hop ate the time" by <em>showing</em> you, not by making you guess.
+            </p>
+
+            <p>
+              There's one architectural detail the lab is forced to confront, and it's worth calling out: each
+              service's spans live in the memory of <em>that service alone</em>. No process naturally sees the whole
+              picture. That's why every real tracing system needs a <strong>collector</strong> — in this lab it's the
+              <code>/trace-all</code> endpoint, which asks every instance and stitches the spans together. This is
+              exactly the role a collector plays in real systems, and it's why tracing always drags in one more piece
+              of infrastructure you have to operate.
+            </p>
+
+            {{SVG:3}}
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Decision</th>
+                  <th>Head-based sampling</th>
+                  <th>Tail-based sampling</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>When it decides</strong></td>
+                  <td>Right at the start of the request, before knowing the outcome</td>
+                  <td>After the request finishes, already knowing it was slow or errored</td>
+                </tr>
+                <tr>
+                  <td><strong>Cost</strong></td>
+                  <td>Cheap — dropped up front, no spans ever generated</td>
+                  <td>Expensive — every span has to be buffered before deciding</td>
+                </tr>
+                <tr>
+                  <td><strong>Weakness</strong></td>
+                  <td>At a 1% sample rate, the trace of a 1% incident is almost certainly dropped</td>
+                  <td>The collector has to absorb the full volume of spans</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              This table connects straight back to section 16.2: if your incident only affects 1% of requests, then
+              head-based sampling at a 1% rate will keep exactly 1% of that 1% — one in ten thousand. You'll have
+              metrics reporting a bad p99.9 but <em>no trace at all</em> of a slow request to look at. That's why
+              mature systems tend to use tail sampling to keep exactly the traces worth keeping: the slow ones and the
+              erroring ones.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: instrumenting HTTP only</div>
+              <div class="callout__content">
+                Tracing libraries usually wrap HTTP calls automatically, so that part is "free" and everyone has it.
+                But database queries, Redis commands, and queue jobs have to be instrumented by hand — and those are
+                exactly the three places time most often goes missing.<br /><br />
+                The symptom is easy to spot once you know what to look for: the waterfall has a
+                <strong>large gap</strong> between two HTTP spans, meaning the service received the request and
+                answered it, but 200 ms in the middle belongs to no span at all. That gap is almost always a database
+                query. A waterfall full of gaps is barely more useful than a single log line.
+              </div>
+            </div>
+
+            <!-- ================= 16.5 ================= -->
+            <h2>16.5 SLI, SLO, and error budget: turning reliability into a decidable number</h2>
+
+            <p>
+              These three concepts are often treated as management process, but they solve a genuinely technical
+              problem: deciding <em>when to stop shipping features and go fix reliability</em>. Without them, that
+              debate happens by gut feeling and is usually won by whoever talks loudest.
+            </p>
+
+            <ul>
+              <li>
+                <strong>SLI</strong> — a metric measured from the user's point of view, shaped like "good events over
+                total events." Example: the fraction of requests that succeed and finish under 250 ms.
+              </li>
+              <li><strong>SLO</strong> — a numeric target for that SLI, e.g. 99.9%.</li>
+              <li>
+                <strong>Error budget</strong> — the share you're allowed to fail: 100% − SLO. With a 99.9% SLO, the
+                budget is 0.1%, about 43 minutes a month.
+              </li>
+            </ul>
+
+            <p>
+              The lab computes the SLI directly from the histogram — the way real systems do it, and only possible
+              <em>because</em> there's a histogram rather than an average:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Fraction of slow requests</th>
+                  <th>SLI (under 250 ms)</th>
+                  <th>SLO</th>
+                  <th>Error budget burned</th>
+                  <th>Meeting the SLO?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0.1%</td>
+                  <td>99.899%</td>
+                  <td>99.9%</td>
+                  <td>0.9%</td>
+                  <td>Right at the edge</td>
+                </tr>
+                <tr>
+                  <td>1%</td>
+                  <td>99.034%</td>
+                  <td>99.9%</td>
+                  <td><strong>865.5%</strong></td>
+                  <td>No</td>
+                </tr>
+                <tr>
+                  <td>2%</td>
+                  <td>98.110%</td>
+                  <td>99.9%</td>
+                  <td><strong>1,790.4%</strong></td>
+                  <td>No</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The middle row is the one worth remembering, and it closes the loop on the whole lesson:
+              <strong
+                >the exact incident that p99 cannot see (1% slow, p99 = 0.90 ms) burns 8.7 times that month's error
+                budget.</strong
+              >
+              If you only alert on p99, you'll sleep soundly while the whole quarter's budget evaporates.
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Alert on symptoms and on budget burn rate</div>
+              <div class="callout__content">
+                Two kinds of alert are worth having. <strong>Symptom-based</strong>: alert when <em>users</em> are
+                actually being affected (error rate rising, SLI dropping), not when some internal resource shows an
+                unusual number. <strong>Burn-rate-based</strong>: alert when the pace of error-budget consumption
+                shows you'll run out before the end of the period — it distinguishes "failing slowly and steadily"
+                from "failing hard for 5 minutes," two situations that need different responses.<br /><br />
+                Both share a common trait: they track <em>impact</em>, so they stay correct as the system changes.
+                Cause-based alerts are the opposite — every infrastructure change means re-tuning the thresholds.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: alerting on "CPU &gt; 80%" and setting a 100% SLO</div>
+              <div class="callout__content">
+                A CPU-based alert wakes someone up at 3 a.m. for a condition <strong>users never felt</strong> — high
+                CPU might just be a background job running exactly as designed. A few of those are enough to produce
+                <em>alert fatigue</em>: the on-call engineer starts muting alerts, and eventually ignores the real one
+                too. An alerting system people learn to ignore is worse than no alerting at all.<br /><br />
+                At the other extreme, a 100% SLO fails in its own way: a zero error budget means
+                <strong>every single deploy is a violation</strong>, so the rule gets ignored within the first week and
+                the whole SLO system loses its authority. An SLO has to leave enough room to breathe that the system
+                can still change — that's its job, not a flaw.
+              </div>
+            </div>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              The three pillars don't replace each other: metrics tell you <em>that</em> something's wrong, traces
+              tell you <em>where</em>, logs tell you <em>why</em>. Their cost grows in exactly that order, and each one
+              has its own pitfall.
+            </p>
+
+            <p>
+              The pitfall of metrics is assuming p99 is enough. The measurements show the opposite: with an incident
+              affecting exactly 1% of users, p99 = <strong>0.90 ms</strong> — completely blind — while p99.9 = 474 ms
+              and that month's error budget was burned <strong>8.7 times over</strong>. Pick a percentile based on the
+              fraction of users you need to protect, not out of habit. And the mean is bad in a different way: 23
+              times higher than the median while describing nobody's actual experience.
+            </p>
+
+            <p>
+              The second pitfall of metrics is labels, and it costs real money: adding exactly one
+              <code>user_id</code> label makes the number of time series jump from 2 to <strong>49,317</strong> —
+              over 24 thousand times — in just 8 seconds on one instance. Labels must have a finite, known-in-advance
+              set of values.
+            </p>
+
+            <p>
+              On tracing, the most expensive lesson isn't technical — it's the consequence of one small omission:
+              forgetting to propagate the correlation ID doesn't leave you <em>missing</em> data, it gives you
+              <strong>wrong</strong> data — 100% of the time blamed on an innocent service, while the real culprit eats
+              45.7%. And the spot it's most often forgotten is the queue boundary, exactly the hardest place to debug.
+            </p>
+
+            <p>
+              <strong>Lesson 17</strong> uses this exact measurement setup to look at something you'd never believe
+              without measuring it: a system taking itself down with its own retry traffic, where three layers each
+              retrying three times produce <em>twenty-seven</em> times the load on the weakest service.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a href="https://sre.google/sre-book/service-level-objectives/" target="_blank" rel="noopener noreferrer">
+                    Google SRE Book — Service Level Objectives: the origin of SLI/SLO/error budget, source for section
+                    16.5
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.brendangregg.com/usemethod.html" target="_blank" rel="noopener noreferrer">
+                    Brendan Gregg — The USE Method: the definition of Utilization/Saturation/Errors per resource,
+                    source for section 16.2
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://grafana.com/blog/2018/08/02/the-red-method-how-to-instrument-your-services/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Tom Wilkie (Grafana Labs) — The RED Method: the definition of Rate/Errors/Duration per service,
+                    source for section 16.2
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://prometheus.io/docs/practices/naming/#labels"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Prometheus — Metric and label naming: the official guidance on label cardinality, source for the
+                    cardinality pitfall in section 16.2
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.w3.org/TR/trace-context/" target="_blank" rel="noopener noreferrer">
+                    W3C Trace Context: the standard for propagating a correlation/trace context over HTTP headers,
+                    source for section 16.3
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://opentelemetry.io/docs/concepts/signals/traces/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    OpenTelemetry — Traces: the official definition of a trace, a span, and a parent span, source for
+                    section 16.4
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the practice source code</h3>
+              <p>
+                The observability toolkit used in the lab: a fixed-bucket histogram, generating and propagating a
+                correlation ID, collecting spans into a trace, computing SLI/error budget — every number in this
+                lesson comes from this file:
+              </p>
+              <a
+                href="../sysdesign-lab/tools/observe-test.sh"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download observe-test.sh (4 observability measurements)
+              </a>
+            </div>
