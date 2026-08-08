@@ -21,32 +21,9 @@ python3 $D/next-lesson.py blog/sysdesign/sysdesign-programming-series.html
 python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/sysdesign
 ```
 
-**Tien do: 11/18 bai da co ban EN.** Checker dang **xanh**.
+**Tien do: 12/18 bai da co ban EN.** Checker dang **xanh**.
 
 ## Cac bai con lai
-
-### Bai 12: Message Queue & Xử Lý Bất Đồng Bộ
-
-- VI: `blog/sysdesign/sysdesign-message-queue.html`
-- EN can tao: `blog/sysdesign/en/sysdesign-message-queue.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [ ] ban EN ton tai (`blog/sysdesign/en/sysdesign-message-queue.html`)
-- [ ] co template de dung lai (`sysdesign-message-queue.body-en.html` + `.meta-en.json`)
-- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
-- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
 
 ### Bai 13: Rate Limiting & Backpressure
 
@@ -201,6 +178,7 @@ Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
 - [x] Bai 9: CAP & Các Mô Hình Nhất Quán
 - [x] Bai 10: Distributed Lock
 - [x] Bai 11: Idempotency & Retry An Toàn
+- [x] Bai 12: Message Queue & Xử Lý Bất Đồng Bộ
 
 ## Viec o cap series (lam mot lan)
 

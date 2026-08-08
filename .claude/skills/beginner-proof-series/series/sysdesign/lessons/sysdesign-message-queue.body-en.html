@@ -1,0 +1,531 @@
+
+            <p>
+              <a href="sysdesign-idempotency">Lesson 11</a> concluded that at-least-once plus idempotent processing is
+              the only workable combination. A message queue is where that combination stops being a choice and becomes
+              a <strong>requirement</strong>: when a job can be redelivered at any moment, the consumer
+              <em>must</em> be idempotent — otherwise every redelivery is another side effect.
+            </p>
+
+            <p>
+              This lesson's lab stands up a real producer/consumer on Redis Streams. Two measurements stand out. First,
+              going from 1 consumer to 4 is only <strong>2.68 times</strong> faster, not 4 — because the bottleneck has
+              moved from the consumers to Redis itself. Second, acking at the wrong moment makes
+              <strong>352 jobs vanish without a trace</strong>: the number of recoverable jobs is <code>0</code>
+              instead of <code>352</code>.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The measurement machine</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Native arm64 containers (Node
+                v22.23.2), Redis 7-alpine. The producer and the consumer are <em>the same file</em>,
+                <code>worker/queue.js</code> (the role is switched with the <code>ROLE</code> variable), each container
+                limited to 1 CPU, with no dependencies — only <code>XADD</code>, <code>XREADGROUP</code>,
+                <code>XACK</code> and <code>XPENDING</code>.<br /><br />
+                The key metric is <code>msActive</code>: the time from the start until the <em>last</em> job was
+                processed, <strong>excluding</strong> time spent waiting on an empty stream. Counting that time would
+                make "rate" reflect the <code>DURATION_MS</code> parameter rather than real consumption capacity.
+              </div>
+            </div>
+
+            <!-- ================= 12.1 ================= -->
+            <h2>12.1 Why go asynchronous</h2>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Benefit</th>
+                  <th>Concretely</th>
+                  <th>The price</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Decouple user latency from heavy work</strong></td>
+                  <td>Answer in 20 ms, then process the video for 5 minutes in the background</td>
+                  <td>The user gets a <code>202 Accepted</code> — you must give them a way to learn when it is done</td>
+                </tr>
+                <tr>
+                  <td><strong>Decouple producer and consumer</strong></td>
+                  <td>The consumer can be down while the producer keeps accepting work; deploy the two independently</td>
+                  <td>One more piece of infrastructure to run, monitor and understand</td>
+                </tr>
+                <tr>
+                  <td><strong>Absorb bursts</strong></td>
+                  <td>The queue buffers the peak — 10× traffic for 30 seconds brings nothing down</td>
+                  <td>The peak turns into a <em>backlog</em>, and backlogs have their own price (section 12.5)</td>
+                </tr>
+                <tr>
+                  <td><strong>Natural retries</strong></td>
+                  <td>A failed job stays in the queue instead of being lost</td>
+                  <td>It forces the consumer to be idempotent (Lesson 11)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: queueing work whose result the user needs immediately</div>
+              <div class="callout__content">
+                Going asynchronous solves the problem of <em>server latency</em>, not the problem of
+                <em>the user needing to know the result</em>. If the user clicks "Pay" and you return a
+                <code>202 Accepted</code>, they are left guessing: did it work? was the card charged? can I click
+                again?<br /><br />
+                The test question: <strong>can the user carry on without knowing the result?</strong> For a
+                notification email, yes. For a ticket booking confirmation, no. If the answer is "no" then either do it
+                synchronously, or invest in a mechanism for them to track the status — and that mechanism usually costs
+                more work than the processing itself.
+              </div>
+            </div>
+
+            {{SVG:1}}
+            <!-- ================= 12.2 ================= -->
+            <h2>12.2 Ack semantics — and 352 vanished jobs</h2>
+
+            <p>
+              The entire reliability of a message queue rests on <strong>when you send the ack</strong>. An ack means
+              "this job is done, stop redelivering it" — so sending it too early is throwing away your own ability to
+              recover.
+            </p>
+
+            <p>
+              The mechanism behind that has a name: when the broker hands out a job it does not delete it but moves it
+              to the <strong>pending list</strong> and starts a timer. If the ack arrives before the timer runs out, the
+              job counts as done. If it does not — the worker died, or is simply too slow — the broker concludes the
+              worker is broken and hands the job to somebody else. That waiting period is called the
+              <strong>visibility timeout</strong>, and it is exactly what turns "the worker died" from data loss into a
+              redelivery.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>At-most-once (ack on receipt)</th>
+                  <th>At-least-once (ack after completion)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>When the ack is sent</td>
+                  <td>Right after reading, before processing</td>
+                  <td>After processing succeeds</td>
+                </tr>
+                <tr>
+                  <td>The worker dies mid-job</td>
+                  <td><strong>The job is lost forever</strong></td>
+                  <td>The job stays in the pending list and is redelivered</td>
+                </tr>
+                <tr>
+                  <td>Can a job be processed twice?</td>
+                  <td>No</td>
+                  <td>Yes — so the consumer must be idempotent</td>
+                </tr>
+                <tr>
+                  <td>Use it when</td>
+                  <td>Almost never — silently losing jobs is the worst kind of failure</td>
+                  <td>The correct default for nearly every case</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The lab measures the damage. The consumer reads 500 jobs ahead at a time (prefetch 500) and each job
+              takes 5 ms — so one batch takes about 2.5 seconds. We <code>docker kill</code> the consumer after 1.2
+              seconds, which is mid-batch:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Ack mode</th>
+                  <th>Recoverable jobs (pending)</th>
+                  <th>What it means</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Ack on receipt (auto-ack the whole batch)</td>
+                  <td><strong>0</strong></td>
+                  <td>
+                    Around 352 jobs had been read but not processed — and had already been acked. They
+                    <strong>vanish without a trace</strong>: no error, no log, nobody knows
+                  </td>
+                </tr>
+                <tr>
+                  <td>Ack after completion</td>
+                  <td><strong>352</strong></td>
+                  <td>
+                    Everything unprocessed sits in the pending list and can be taken back with
+                    <code>XAUTOCLAIM</code>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 The number of jobs lost equals the prefetch size</div>
+              <div class="callout__content">
+                The figure 352 is not a constant — it is whatever remained of the prefetch batch at the moment the
+                worker died. Which means the worst-case damage formula is very compact:
+                <strong>jobs at risk = prefetch size</strong>.<br /><br />
+                That turns prefetch from a performance parameter into a <strong>reliability parameter</strong>. A large
+                prefetch reduces round-trips to the broker (so it is faster), but if you ack at the wrong moment it is
+                also exactly how many jobs you lose every time a worker dies.<br /><br />
+                And here is where I had to correct myself while building the lab: the first version of
+                <code>ACK_MODE=on-receive</code> acked each message individually just before processing it, and the
+                result was nearly identical to the correct mode (pending 359 against 351). That is not the real trap in
+                practice — the real one is <strong>auto-acking the whole batch right after reading</strong>, which is
+                the default in quite a few clients. Once corrected, the gap appears: 0 against 352.
+              </div>
+            </div>
+
+            {{SVG:2}}
+
+            {{CODE:worker/queue.js — vòng lặp consumer}}
+
+            <!-- ================= 12.3 ================= -->
+            <h2>12.3 Poison messages and DLQs — and one thing usually said wrongly</h2>
+
+            <p>
+              A <strong>poison message</strong> is a job that can never be processed: a malformed payload, a reference
+              to a deleted record, or one that hits a bug exactly. It fails, is redelivered, fails again — forever.
+            </p>
+
+            <p>
+              The standard treatment is a <strong>DLQ</strong> — short for <em>dead letter queue</em>. It is simply a
+              second queue: once a job has failed more times than allowed, instead of letting it come back forever, you
+              move it there and ack it on the main queue. The job is not lost, but it no longer disturbs the normal
+              flow — it sits waiting for a human to look at it.
+            </p>
+
+            <p>The lab pushes 5,000 jobs with one poison job every 500 (10 poison jobs in total), and one consumer:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Configuration</th>
+                  <th>Jobs completed</th>
+                  <th>Jobs failed</th>
+                  <th>Still pending</th>
+                  <th>In the DLQ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>No DLQ</td>
+                  <td>4,990</td>
+                  <td>10</td>
+                  <td><strong>10</strong> — stuck forever</td>
+                  <td>0</td>
+                </tr>
+                <tr>
+                  <td>With a DLQ (<code>MAX_ATTEMPTS=1</code>)</td>
+                  <td>4,990</td>
+                  <td>10</td>
+                  <td><strong>0</strong></td>
+                  <td><strong>10</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚡ Correcting a common claim: a poison message does NOT block the queue here</div>
+              <div class="callout__content">
+                "One poison message blocks every message behind it" is repeated constantly, but it only holds for an
+                <strong>ordered log with sequential offsets</strong> — the Kafka style, where the consumer cannot commit
+                the offset of the broken message and therefore cannot move on within that partition.<br /><br />
+                With Redis Streams it does <em>not</em>: the measurements above show the other 4,990 jobs processed
+                normally. The broken message merely stays in the <strong>pending list</strong>. That makes the damage
+                quieter: there is no incident to notice, just a number growing while nobody looks at it.<br /><br />
+                So the required work differs by broker type. For an ordered log: a DLQ is mandatory, otherwise one bad
+                record stalls the whole pipeline. For Redis Streams: an
+                <strong>alert on the pending-list length</strong> is mandatory, otherwise you will lose jobs without
+                knowing — which is why section 12.5 calls queue depth the number one health metric.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: having a DLQ that nobody looks at</div>
+              <div class="callout__content">
+                A DLQ is just a box. It solves "a broken message clogs the pipeline" but it does not solve "this
+                message has not been processed". A DLQ with no alert and no owner will accumulate for six months, until
+                the day someone opens it and finds 40,000 unprocessed orders.<br /><br />
+                Three things are needed at once: an <strong>alert</strong> when the DLQ is non-empty, an
+                <strong>owner</strong> who looks at it, and <strong>a way to replay jobs</strong> after the bug is
+                fixed. Missing the third is the most common reason people abandon their DLQ — with no way to replay,
+                looking at it achieves nothing.
+              </div>
+            </div>
+            <!-- ================= 12.4 ================= -->
+            <h2>12.4 Ordering and consumer groups — adding a consumer breaks the order</h2>
+
+            <p>
+              First, the name in the heading. A <strong>consumer group</strong> is the mechanism that lets several
+              consumers read <em>one</em> queue without treading on each other: the broker remembers which consumer
+              each job went to, and each job is handed to <em>exactly one</em> member of the group. That is why the
+              command in section 12.2 is <code>XREADGROUP</code> and not <code>XREAD</code> — adding a consumer to the
+              group adds processing capacity rather than duplicating the work. The trade-off is what this section is
+              about.
+            </p>
+
+            <p>
+              Ordering is only guaranteed <strong>within one partition</strong> (or one stream key). The moment you add
+              a second consumer to scale, jobs are processed in parallel and there is <em>no</em> global order left.
+            </p>
+
+            <p>The lab's scaling measurements show exactly that — plus something nobody expects:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Consumers</th>
+                  <th><code>msActive</code> (time to consume 20,000 jobs)</th>
+                  <th>Total throughput</th>
+                  <th>Rate per consumer</th>
+                  <th>Speedup</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>1,764 ms</td>
+                  <td>11,338/s</td>
+                  <td>11,338/s</td>
+                  <td>1.00×</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>1,200–1,202 ms</td>
+                  <td>16,652/s</td>
+                  <td>~8,300/s</td>
+                  <td><strong>1.47×</strong></td>
+                </tr>
+                <tr>
+                  <td>4</td>
+                  <td>649–664 ms</td>
+                  <td>30,375/s</td>
+                  <td>~7,600/s</td>
+                  <td><strong>2.68×</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Four times the consumers is only <strong>2.68 times</strong> faster. And the "rate per consumer" column
+              explains why: it falls from 11,338 to about 7,600. The bottleneck has
+              <strong>moved from the consumers to Redis</strong> — Redis executes commands on a single thread, so four
+              consumers are contending for one sequential resource.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 A repeating lesson: horizontal scaling is linear only until the bottleneck moves</div>
+              <div class="callout__content">
+                This is the fourth time the same phenomenon has appeared in this series. In
+                <a href="sysdesign-load-balancing">Lesson 3</a>, adding app replicas did nothing while the database was
+                the bottleneck. In <a href="sysdesign-caching">Lesson 5</a>, single-flight did not improve p99 because
+                the bottleneck was not there. In <a href="sysdesign-sharding">Lesson 8</a>, two shards on one machine
+                were slower than one. And here, four consumers are only 2.68 times faster because Redis is
+                single-threaded.<br /><br />
+                The general rule:
+                <strong>horizontal scaling is linear only until the bottleneck moves to a shared component</strong>. So
+                before adding workers, answer this: are the workers really the bottleneck? The cheapest check is to look
+                at the <em>rate per worker</em> — if it falls as you add workers, you are re-slicing a fixed cake, not
+                baking a bigger one.<br /><br />
+                In the lab, the way past it is <strong>partitioning</strong>: several stream keys instead of one, with
+                one consumer per key. That is also the mechanism for preserving order where it matters — see just
+                below.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: assuming a global order</div>
+              <div class="callout__content">
+                With two consumers, an <code>OrderCancelled</code> event can perfectly well be processed
+                <strong>before</strong> the <code>OrderCreated</code> of the same order. The system lands in a
+                nonsensical state: cancelling an order that does not exist yet, then creating an order that should
+                already have been cancelled.<br /><br />
+                The fix is not to abandon scaling but to <strong>choose the partition key by entity</strong>: every
+                event for the same <code>order_id</code> goes to the same partition, so they are always processed
+                sequentially <em>relative to each other</em>, while different orders still run in parallel. You trade
+                "global ordering" — which you do not need — for "ordering within an entity" — which you actually
+                do.<br /><br />
+                This is also the technique from <a href="sysdesign-distributed-lock">Lesson 10</a> section 10.5 under
+                another name: partitioning by key makes the lock unnecessary, because each key is touched by exactly
+                one worker.
+              </div>
+            </div>
+
+            <!-- ================= 12.5 ================= -->
+            <h2>12.5 Backpressure and queue depth</h2>
+
+            <p>
+              <strong>Queue depth is the number one health metric</strong> of an asynchronous system, and the reason
+              lies back in <a href="sysdesign-latency-queueing">Lesson 1</a>: if the arrival rate $\lambda$ exceeds the
+              service rate $\mu$ then depth grows <em>without bound</em>, and by Little's Law so does the waiting time.
+              No load level is "safe" if $\lambda > \mu$ — there is only the time before the consequences show.
+            </p>
+
+            {{SVG:3}}
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Situation</th>
+                  <th>Depth over time</th>
+                  <th>What the user experiences</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>$\lambda &lt; \mu$ (enough consumers)</td>
+                  <td>Fluctuates around 0</td>
+                  <td>Results arrive within seconds</td>
+                </tr>
+                <tr>
+                  <td>A short burst, $\lambda \gg \mu$ for 30 seconds</td>
+                  <td>Spikes then returns to 0</td>
+                  <td>Slow for a while — this is exactly what the queue is for</td>
+                </tr>
+                <tr>
+                  <td>$\lambda > \mu$ continuously</td>
+                  <td>Grows without bound</td>
+                  <td>Results arrive hours later — for an action they long ago forgot about</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: treating the queue as "unbounded, therefore safe"</div>
+              <div class="callout__content">
+                A queue does not make an incident disappear — it <strong>changes the incident's shape</strong>. A
+                5-minute incident at $\lambda = 2\mu$ creates a backlog that takes another 5 minutes to drain. But if
+                the consumers are down for 30 minutes while traffic keeps arriving, you have a backlog that by Little's
+                Law will take hours to clear — and throughout that time, every new job also waits behind the old
+                queue.<br /><br />
+                The worst consequence is not the delay but <strong>the work becoming meaningless</strong>: an "your
+                order is confirmed" email sent 6 hours later, a notification about a livestream that has already ended,
+                or an order-cancellation job running after the order was delivered.
+              </div>
+            </div>
+
+            <p>
+              Four relief valves, in the order to try them: <strong>scale the consumers</strong> (if the bottleneck
+              really is there — see section 12.4); <strong>cap the queue length</strong> and reject new jobs beyond it,
+              so you fail fast rather than promise; <strong>load shedding</strong> — drop unimportant jobs to protect
+              important ones; and <strong>slow the producer down</strong> (rate limiting, Lesson 13). What all four have
+              in common: they are all ways of <em>saying no</em> — and an asynchronous system with no way to say no is
+              merely postponing saying it.
+            </p>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              Going asynchronous decouples user latency from heavy work and absorbs bursts, but it
+              <strong>changes the shape of the problem</strong> rather than removing it: the peak becomes a backlog, and
+              backlogs have their own price.
+            </p>
+
+            <p>
+              All the reliability rests on when you ack. Measured with a prefetch of 500 and the worker killed
+              mid-batch: ack-on-receipt gives <strong>0 recoverable jobs</strong>, ack-after-completion gives
+              <strong>352</strong>. The maximum number of jobs lost equals the prefetch size exactly — so prefetch is a
+              reliability parameter, not just a performance one. And because at-least-once means a job may be processed
+              twice, the consumer <em>must</em> be idempotent (Lesson 11).
+            </p>
+
+            <p>
+              On poison messages, I corrected a claim that is usually stated wrongly: with Redis Streams a poison
+              message <strong>does not block</strong> the messages behind it — the other 4,990 jobs ran normally, and
+              the broken message merely stayed in the pending list. That makes the damage quieter, so for this kind of
+              broker the mandatory thing is an alert on pending-list length, not just a DLQ.
+            </p>
+
+            <p>
+              Finally, four times the consumers is only 2.68 times faster — the fourth time in this series that the
+              bottleneck moved to a shared component the moment we scaled out. The cheapest check is the rate per
+              worker: if it falls as you add workers, you are re-slicing a fixed cake.
+            </p>
+
+            <p>
+              <strong>Lesson 13</strong> covers the last relief valve on the list in section 12.5: rate limiting. It is
+              the mechanism by which a system says no in a controlled way — instead of accepting everything and
+              breaking, or accepting everything and promising a six-hour backlog.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a href="https://redis.io/docs/latest/develop/data-types/streams/" target="_blank" rel="noopener noreferrer">
+                    Redis — Streams: consumer groups, the pending entries list (PEL) and <code>XAUTOCLAIM</code>, the
+                    whole mechanism the lab uses in sections 12.2 and 12.4
+                  </a>
+                </li>
+                <li>
+                  <a href="https://redis.io/docs/latest/commands/xreadgroup/" target="_blank" rel="noopener noreferrer">
+                    Redis — <code>XREADGROUP</code>: what <code>&gt;</code> means versus a specific ID, and why
+                    <code>NOACK</code> is precisely the at-most-once mode measured in section 12.2
+                  </a>
+                </li>
+                <li>
+                  <a href="https://redis.io/docs/latest/commands/xpending/" target="_blank" rel="noopener noreferrer">
+                    Redis — <code>XPENDING</code>: how to read the pending list, the metric used for the alert in
+                    section 12.3
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    AWS SQS — Visibility timeout: the same mechanism, explained most clearly, including what happens
+                    when it is set shorter than the processing time
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    AWS SQS — Dead-letter queues, including redrive (replaying jobs) — exactly the "third thing" the
+                    pitfall in section 12.3 says is usually missing
+                  </a>
+                </li>
+                <li>
+                  <a href="https://kafka.apache.org/intro" target="_blank" rel="noopener noreferrer">
+                    Apache Kafka — partitions and ordering: the source of "ordering only within a partition" in section
+                    12.4, and the kind of broker where a poison message <em>does</em> block the queue
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Little%27s_law" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Little's Law, the basis of the queue-depth argument in section 12.5 (first met in
+                    Lesson 1)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The producer and the consumer in one file, speaking the Redis Streams protocol directly with no
+                library. All three measurement modes in this lesson — scaling, poison/DLQ, and acking at the wrong
+                moment — are toggled by environment variables in this file:
+              </p>
+              <a
+                href="../sysdesign-lab/worker/queue.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download queue.js (Redis Streams, 0 dependencies)
+              </a>
+            </div>
+
+            <!-- Related Links Block -->

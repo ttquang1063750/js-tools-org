@@ -33,8 +33,9 @@ const ACK_MODE = process.env.ACK_MODE || 'after';
 const MAX_ATTEMPTS = Number(process.env.MAX_ATTEMPTS || 0);
 const IDEMPOTENT = process.env.IDEMPOTENT === '1';
 const DURATION_MS = Number(process.env.DURATION_MS || 30000);
-// So job doc truoc moi lan XREADGROUP (prefetch). Cang lon cang it round-trip, nhung
-// voi ACK_MODE=on-receive thi day CHINH LA so job co the mat khi worker chet (Bai 12, 12.2).
+// How many jobs to read ahead per XREADGROUP (the prefetch). Larger means fewer
+// round-trips, but with ACK_MODE=on-receive this is EXACTLY the number of jobs that can
+// be lost when a worker dies (Lesson 12, section 12.2).
 const BATCH = Number(process.env.BATCH || 32);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -152,13 +153,13 @@ async function consume() {
   let dup = 0;
   let toDlq = 0;
   let failed = 0;
-  // msActive = tu luc bat dau den job CUOI CUNG duoc xu ly. Khong tinh thoi gian ngoi cho
-  // stream rong — neu tinh ca phan do thi "rate" se phu thuoc vao DURATION_MS chu khong
-  // phan anh nang luc tieu thu thuc.
+  // msActive = from the start until the LAST job was processed. It excludes time spent
+  // waiting on an empty stream — counting that would make "rate" depend on DURATION_MS
+  // rather than reflect real consumption capacity.
   let lastJobAt = t0;
 
   while (Date.now() - t0 < DURATION_MS) {
-    // BLOCK 1000: chờ tối đa 1s nếu stream rỗng, thay vì quay tròn đốt CPU.
+    // BLOCK 1000: wait up to 1s if the stream is empty, instead of spinning and burning CPU.
     const res = await redis.cmd(
       'XREADGROUP',
       'GROUP',
@@ -175,9 +176,9 @@ async function consume() {
     if (!res) continue;
     const entries = res[0][1] || [];
 
-    // ACK SAI (auto-ack / auto-commit): ack TOAN BO lo ngay sau khi doc, truoc khi xu ly
-    // bat cu job nao. Day la mac dinh cua nhieu client va la cai bay lon nhat cua Bai 12:
-    // worker chet giua lo thi TOAN BO phan chua xu ly bien mat, khong ai biet.
+    // THE WRONG ACK (auto-ack / auto-commit): ack the WHOLE batch right after reading it,
+    // before processing any job. This is the default in many clients and the biggest trap in
+    // Lesson 12: if the worker dies mid-batch, EVERYTHING unprocessed vanishes unnoticed.
     if (ACK_MODE === 'on-receive' && entries.length) {
       await redis.cmd('XACK', STREAM, GROUP, ...entries.map(([id]) => id));
     }
@@ -186,7 +187,7 @@ async function consume() {
       const f = {};
       for (let i = 0; i < fields.length; i += 2) f[fields[i]] = fields[i + 1];
 
-      // Dedup theo event_id TRƯỚC khi gây side-effect (điều kiện của at-least-once).
+      // Dedup on event_id BEFORE causing any side effect (the precondition of at-least-once).
       if (IDEMPOTENT) {
         const fresh = await redis.cmd('SET', `lab:q:seen:${f.event_id}`, '1', 'NX', 'EX', '3600');
         if (fresh !== 'OK') {
@@ -196,7 +197,7 @@ async function consume() {
         }
       }
 
-      // "Xử lý". Job độc luôn thất bại — đó là định nghĩa của poison message.
+      // "Process" it. A poison job always fails — that is the definition of a poison message.
       let ok = true;
       if (f.payload === 'POISON') ok = false;
       else if (WORK_MS > 0) await sleep(WORK_MS);
@@ -207,8 +208,8 @@ async function consume() {
         if (ACK_MODE !== 'on-receive') await redis.cmd('XACK', STREAM, GROUP, id);
       } else {
         failed++;
-        // DLQ: sau MAX_ATTEMPTS lần thử, chuyển job sang stream khác rồi ACK để nó
-        // KHÔNG chặn các job phía sau nữa. Không có bước này, một job độc quay lại mãi.
+        // DLQ: after MAX_ATTEMPTS tries, move the job to another stream and then ACK it so it
+        // does NOT hold a slot any longer. Without this step a poison job returns forever.
         if (MAX_ATTEMPTS > 0) {
           const pend = await redis.cmd('XPENDING', STREAM, GROUP, '-', '+', '1', CONSUMER).catch(() => null);
           const attempts = pend && pend[0] ? Number(pend[0][3]) : 1;
