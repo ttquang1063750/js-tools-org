@@ -9,6 +9,9 @@
       content="Bốn thuật toán rate limit chạy thật trên Redis: cùng hạn mức 100/giây, fixed window cho lọt 200 request trong một giây ở mốc giao cửa sổ còn sliding window log giữ đúng 100 — nhưng tốn gấp hơn 10 lần bộ nhớ; token bucket cũng cho burst (119%) chỉ khác là burst có chặn trên. Viết limiter bằng INCR rồi EXPIRE ở hai lệnh riêng làm 20/200 khoá mắc kẹt không TTL, tức 20 người dùng bị chặn vĩnh viễn. Ba replica dùng chung một script Lua nguyên tử giữ hạn mức toàn cục sai lệch 0,13%. Và vì sao phải trả 429 kèm Retry-After chứ không bao giờ 5xx."
     />
     <link rel="canonical" href="https://js-tools.org/blog/sysdesign/sysdesign-rate-limiting" />
+    <link rel="alternate" hreflang="vi" href="https://js-tools.org/blog/sysdesign/sysdesign-rate-limiting" />
+    <link rel="alternate" hreflang="en" href="https://js-tools.org/blog/sysdesign/en/sysdesign-rate-limiting" />
+    <link rel="alternate" hreflang="x-default" href="https://js-tools.org/blog/sysdesign/sysdesign-rate-limiting" />
     <meta property="og:type" content="article" />
     <meta property="og:url" content="https://js-tools.org/blog/sysdesign/sysdesign-rate-limiting" />
     <meta property="og:title" content="Bài 13: Rate Limiting &amp; Backpressure — js-tools" />
@@ -115,7 +118,10 @@
           <a href="sysdesign-programming-series" class="article-hero__back">← Quay lại Lộ trình Thiết Kế Hệ Thống</a>
           <div class="article-hero__tag article-hero__tag--sysdesign">Thiết Kế Hệ Thống</div>
           <h1 class="article-hero__title">Bài 13: Rate Limiting &amp; Backpressure</h1>
-          <div class="article-hero__meta">4 tháng 8, 2026 · 19 phút đọc</div>
+          <div class="article-hero__meta">
+            4 tháng 8, 2026 · 19 phút đọc ·
+            <a href="en/sysdesign-rate-limiting" style="color: #38bdf8">Read in English</a>
+          </div>
         </div>
       </section>
 
@@ -162,8 +168,9 @@
               limit sai chỗ. Trong phần lớn sự cố thật, thứ đánh sập hệ thống không phải người lạ mà là
               <strong>chính client của bạn</strong>: một ứng dụng di động vừa ra bản mới có vòng retry không jitter, một
               job cron của đội khác chạy lúc 0 giờ, hoặc một service nội bộ đang thử lại điên cuồng vì service phía sau
-              nó chậm. Người lạ thì bị chặn ở tầng khác (WAF, chống DDoS); còn client của chính bạn thì có khoá API hợp
-              lệ và đi thẳng vào đường chính.
+              nó chậm. Người lạ thì bị chặn ở tầng khác (WAF — <em>web application firewall</em>, tường lửa lọc lưu
+              lượng độc hại trước khi nó vào tới app — và chống DDoS); còn client của chính bạn thì có khoá API hợp lệ
+              và đi thẳng vào đường chính.
             </p>
 
             <p>
@@ -715,15 +722,15 @@
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">cach_viet_sai.js</span>
+                <span class="code-filename">cách viết phổ biến — và sai</span>
                 <button class="code-copy" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-js">// SAI: hai lenh rieng biet, co mot khoang trong o giua
+              <pre><code class="language-javascript">// WRONG: two separate commands, with a gap in between
 const n = await redis.incr(key);
 if (n === 1) {
-  await redis.expire(key, 60); // (!) neu tien trinh chet TRUOC dong nay...
+  await redis.expire(key, 60);   // (!) if the process dies BEFORE this line...
 }
-if (n > limit) return deny();</code></pre>
+if (n &gt; limit) return deny();</code></pre>
             </div>
 
             <p>
@@ -736,15 +743,17 @@ if (n > limit) return deny();</code></pre>
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">ket_qua_nonatomic.json</span>
+                <span class="code-filename">kết quả đo — ROLE=nonatomic</span>
                 <button class="code-copy" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-json">{
   "role": "nonatomic",
   "crashEvery": 10,
   "report": [
-    { "mode": "hai-lenh", "soKhoa": 200, "khoaKhongTtl": 20, "hauQua": "20 nguoi dung bi chan VINH VIEN" },
-    { "mode": "lua",      "soKhoa": 200, "khoaKhongTtl":  0, "hauQua": "khong khoa nao mac ket" }
+    { "mode": "two-commands", "keyCount": 200, "keysWithoutTtl": 20,
+      "consequence": "20 users blocked FOREVER" },
+    { "mode": "lua", "keyCount": 200, "keysWithoutTtl": 0,
+      "consequence": "no keys stuck" }
   ]
 }</code></pre>
             </div>
@@ -757,38 +766,40 @@ if (n > limit) return deny();</code></pre>
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">token_bucket.lua</span>
+                <span class="code-filename">worker/ratelimit.js — script Lua của token bucket</span>
                 <button class="code-copy" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-bash">local cap  = tonumber(ARGV[1])          -- suc chua xo
-local win  = tonumber(ARGV[2])          -- thoi gian rot day xo (ms)
+              <pre><code class="language-lua">-- A bucket of capacity `cap`, refilled steadily at `cap` per `win`.
+-- There are no window boundaries at all, so there is no cliff to exploit. Bursts are
+-- ALLOWED but capped by exactly the bucket capacity — the difference from fixed window.
+--
+-- The time comes from redis.call('TIME'), NOT from the client: many app instances call
+-- the same limiter and their clocks differ. If the client sent `now`, a machine running
+-- 200 ms fast would move itself into the next window early.
+local cap  = tonumber(ARGV[1])
+local win  = tonumber(ARGV[2])
 local k    = KEYS[1]
-
--- Lay gio o REDIS, khong nhan `now` tu client: nhieu app instance goi cung mot
--- limiter ma dong ho cua chung lech nhau. De client gui `now` thi mot may chay
--- nhanh 200ms tu cho minh sang cua so moi som hon phan con lai.
 local t    = redis.call('TIME')
 local now  = t[1] * 1000 + math.floor(t[2] / 1000)
-
-local d = redis.call('HMGET', k, 'tokens', 'ts')
+local d    = redis.call('HMGET', k, 'tokens', 'ts')
 local tokens = tonumber(d[1])
 local ts     = tonumber(d[2])
-if tokens == nil then tokens = cap; ts = now end
-
--- Rot them token theo thoi gian da troi qua, khong bao gio vuot suc chua.
+if tokens == nil then
+  tokens = cap
+  ts = now
+end
 local delta = now - ts
 if delta &lt; 0 then delta = 0 end
 tokens = math.min(cap, tokens + delta * cap / win)
-
+local ttl = win * 2
 if tokens &lt; 1 then
   redis.call('HSET', k, 'tokens', tokens, 'ts', now)
-  redis.call('PEXPIRE', k, win * 2)
-  return '0|0|' .. math.ceil((1 - tokens) * win / cap)   -- tu choi + bao cho bao lau
+  redis.call('PEXPIRE', k, ttl)
+  return '0|0|' .. math.ceil((1 - tokens) * win / cap)
 end
-
 tokens = tokens - 1
 redis.call('HSET', k, 'tokens', tokens, 'ts', now)
-redis.call('PEXPIRE', k, win * 2)                        -- PEXPIRE nam TRONG script
+redis.call('PEXPIRE', k, ttl)
 return '1|' .. math.floor(tokens) .. '|0'</code></pre>
             </div>
 
@@ -854,10 +865,12 @@ return '1|' .. math.floor(tokens) .. '|0'</code></pre>
             <div class="callout callout--pitfall">
               <div class="callout__title">⚠️ Cạm bẫy: giới hạn theo IP khi client nằm sau NAT</div>
               <div class="callout__content">
-                Một công ty, một trường học, một nhà mạng di động — tất cả có thể đi ra Internet bằng
-                <em>một</em> địa chỉ IP. Đặt hạn mức 100 request/phút theo IP nghĩa là toàn bộ nhân viên của công ty đó
-                chia nhau 100 request, và khi hết, tất cả cùng bị chặn. Từ phía bạn nhìn vào thì đó là "một client hung
-                hăng"; từ phía họ thì đó là "dịch vụ này hỏng".<br /><br />
+                <strong>NAT</strong> (<em>network address translation</em>) là cơ chế cho nhiều máy trong một mạng nội
+                bộ cùng đi ra Internet qua một địa chỉ IP công cộng — và nó phổ biến hơn bạn nghĩ. Một công ty, một
+                trường học, một nhà mạng di động — tất cả có thể đi ra Internet bằng <em>một</em> địa chỉ IP. Đặt hạn
+                mức 100 request/phút theo IP nghĩa là toàn bộ nhân viên của công ty đó chia nhau 100 request, và khi
+                hết, tất cả cùng bị chặn. Từ phía bạn nhìn vào thì đó là "một client hung hăng"; từ phía họ thì đó là
+                "dịch vụ này hỏng".<br /><br />
                 Tệ hơn, IPv6 lật ngược vấn đề: một máy khách có thể có sẵn cả một dải
                 <code>/64</code> địa chỉ và đổi địa chỉ sau mỗi request, nên giới hạn theo IPv6 đơn lẻ gần như vô dụng —
                 phải giới hạn theo prefix. Và nhớ lại <a href="sysdesign-api-gateway">Bài 4</a>: nếu bạn lấy IP từ
@@ -876,16 +889,16 @@ return '1|' .. math.floor(tokens) .. '|0'</code></pre>
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">phan_hoi_429.txt</span>
+                <span class="code-filename">phản hồi 429 thật của lab</span>
                 <button class="code-copy" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-bash">$ curl -si "localhost:3001/limited?user=drain2"
 
 HTTP/1.1 429 Too Many Requests
-X-RateLimit-Limit: 500          # han muc cua ban
-X-RateLimit-Remaining: 0        # con lai bao nhieu
-X-RateLimit-Reset: 1            # bao lau nua thi co lai (giay)
-Retry-After: 1                  # HAY CHO DUNG TUNG NAY GIAY
+X-RateLimit-Limit: 500          # your quota
+X-RateLimit-Remaining: 0        # how much is left
+X-RateLimit-Reset: 1            # how long until it refills (seconds)
+Retry-After: 1                  # WAIT EXACTLY THIS MANY SECONDS
 Content-Type: application/json; charset=utf-8
 
 {"error":"rate_limited","retryAfterMs":2}</code></pre>
@@ -1158,9 +1171,10 @@ Content-Type: application/json; charset=utf-8
               <div class="callout__title">⚠️ Cạm bẫy: shed đồng đều tất cả</div>
               <div class="callout__content">
                 Bỏ ngẫu nhiên 60% request nghe có vẻ công bằng, và nó dễ cài đặt đến mức thường được chọn mặc định.
-                Nhưng "công bằng" ở đây nghĩa là bạn phá SLO của nhóm quan trọng nhất
-                <em>đúng bằng mức</em> bạn phá SLO của nhóm ít quan trọng nhất. Người đang thanh toán bị mất giao dịch
-                với xác suất y hệt người đang xem gợi ý.<br /><br />
+                Nhưng "công bằng" ở đây nghĩa là bạn phá <strong>SLO</strong> (<em>service level objective</em> — mục
+                tiêu chất lượng dịch vụ bạn tự cam kết, ví dụ "99,9% request thanh toán thành công"; sẽ nói kỹ ở Bài 16)
+                của nhóm quan trọng nhất <em>đúng bằng mức</em> bạn phá SLO của nhóm ít quan trọng nhất. Người đang
+                thanh toán bị mất giao dịch với xác suất y hệt người đang xem gợi ý.<br /><br />
                 Load shedding có ưu tiên đòi hỏi một thứ phải có <strong>từ trước khi sự cố xảy ra</strong>: mỗi request
                 mang theo mức ưu tiên của nó (header, loại endpoint, phân hạng người dùng). Không thể thêm chiều thông
                 tin đó vào lúc 3 giờ sáng khi hệ thống đang cháy. Nếu hôm nay bạn không phân loại được request nào quan
@@ -1172,27 +1186,27 @@ Content-Type: application/json; charset=utf-8
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">tu_do_lai.sh</span>
+                <span class="code-filename">reproduce_measurements.sh</span>
                 <button class="code-copy" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-bash">cd blog/sysdesign/sysdesign-lab
 
-# --- Bien cua so: cung han muc 100/s, do so lot qua trong 1 giay te nhat ---
-./tools/ratelimit-test.sh boundary     # fixed=200 · log=100 · counter=105 · token=119
+# --- Window boundary: same 100/s limit, count the worst 1-second window ---
+./tools/ratelimit-test.sh boundary    # fixed=200 · log=100 · counter=105 · token=119
 
-# --- Thoi gian vs bo nho: 4 thuat toan gan nhu bang nhau ve toc do... ---
-./tools/ratelimit-test.sh bench        # p50 deu ~0.08ms (moc GET rong: 0.073ms)
-# --- ...nhung chenh hon 10 lan ve bo nho ---
-./tools/ratelimit-test.sh memory       # log 1499 B/user vs 121-171 B/user
+# --- Time vs memory: the 4 algorithms are near-identical in speed... ---
+./tools/ratelimit-test.sh bench       # p50 all ~0.08ms (empty GET baseline: 0.073ms)
+# --- ...but differ more than 10-fold in memory ---
+./tools/ratelimit-test.sh memory      # log 1499 B/user vs 121-171 B/user
 
-# --- INCR + EXPIRE tach roi: khoa mac ket vinh vien ---
-./tools/ratelimit-test.sh nonatomic    # hai-lenh: 20/200 khoa khong TTL · lua: 0/200
+# --- INCR + EXPIRE as two commands: keys stuck forever ---
+./tools/ratelimit-test.sh nonatomic   # two-commands: 20/200 keys with no TTL · lua: 0/200
 
-# --- Chi phi limiter cong vao moi request ---
-./tools/ratelimit-test.sh overhead     # /fast vs /limited: p50 +0.04ms
+# --- What the limiter adds to every request ---
+./tools/ratelimit-test.sh overhead    # /fast vs /limited: p50 +0.04ms
 
-# --- 3 replica sau LB, han muc 500/s TOAN CUC, 10 giay ---
-./tools/ratelimit-test.sh e2e 500      # 5493 qua (ky vong 5500) · 185.660 x 429</code></pre>
+# --- 3 replicas behind the LB, a GLOBAL 500/s limit, 10 seconds ---
+./tools/ratelimit-test.sh e2e 500     # 5493 allowed (expected 5500) · 185,660 x 429</code></pre>
             </div>
 
             <h3>Tóm lại</h3>
@@ -1230,7 +1244,75 @@ Content-Type: application/json; charset=utf-8
               lỗi — và đòi hỏi một thứ đã học ở Bài 11 làm điều kiện bắt buộc: tính idempotent.
             </p>
 
-            <div style="margin: 32px 0; text-align: center">
+            <section class="article-refs">
+              <h2>📖 Tài liệu tham khảo</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    IETF RFC 6585 §4 — định nghĩa chính thức mã <code>429 Too Many Requests</code>, và vì sao nó phải là
+                    4xx chứ không phải 5xx (cạm bẫy ở mục 13.4)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    IETF RFC 9110 §10.2.3 — header <code>Retry-After</code>: đặc tả nói rõ đơn vị là <em>giây</em>,
+                    chính là giới hạn khiến lab phải kèm <code>retryAfterMs</code> trong body
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.ietf.org/archive/id/draft-ietf-httpapi-ratelimit-headers-09.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    IETF draft — RateLimit header fields for HTTP: nỗ lực chuẩn hoá nhóm header
+                    <code>X-RateLimit-*</code> dùng ở mục 13.4
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://redis.io/docs/latest/develop/programmability/eval-intro/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Redis — Scripting với Lua: vì sao một script chạy nguyên tử, nền của toàn bộ mục 13.3
+                  </a>
+                </li>
+                <li>
+                  <a href="https://redis.io/docs/latest/commands/time/" target="_blank" rel="noopener noreferrer">
+                    Redis — lệnh <code>TIME</code>: từ Redis 5.0 nhân bản theo hiệu ứng nên gọi được trong script, đúng
+                    như callout ở mục 13.3 giải thích
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Token_bucket" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Token bucket (và <a href="https://en.wikipedia.org/wiki/Leaky_bucket">leaky bucket</a>
+                    để so sánh): định nghĩa hình thức của thuật toán thứ tư ở mục 13.2
+                  </a>
+                </li>
+                <li>
+                  <a href="https://stripe.com/blog/rate-limiters" target="_blank" rel="noopener noreferrer">
+                    Stripe — <em>Scaling your API with rate limiters</em>: bốn loại limiter họ chạy thật trong
+                    production, và vì sao load shedding là một loại riêng (mục 13.5)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Tải mã nguồn thực hành</h3>
+              <p>
+                Cả bốn thuật toán ở mục 13.2 dưới dạng script Lua nguyên tử, cộng với các chế độ đo đã sinh ra mọi con
+                số trong bài — biên cửa sổ, thời gian, bộ nhớ, khoá mắc kẹt, và chi phí thêm vào mỗi request:
+              </p>
               <a
                 href="sysdesign-lab/worker/ratelimit.js"
                 download

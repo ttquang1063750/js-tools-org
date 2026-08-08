@@ -207,13 +207,20 @@ for num, slug in order:
         continue
     tag = ' '.join(m_tag.group(1).split())
     meta_txt = ' '.join(re.search(r'<div class="article-hero__meta"[^>]*>(.*?)</div>', en, re.S).group(1).split())
+    # `date` chap nhan mot chuoi HOAC mot danh sach: mot series xuat ban nhieu ngay
+    # la chuyen binh thuong (sysdesign: Bai 1-12 ngay 3, Bai 13-18 ngay 4). Ep mot
+    # ngay duy nhat se bat oan dung trang, va cach "sua" duy nhat la sua sai ngay.
+    dates = STD.get('date', '')
+    if isinstance(dates, str):
+        dates = [dates]
+    ok_date = any(d in meta_txt for d in dates)
     ok_chrome = (
         re.match(STD.get('tagPattern', '.*'), tag)
-        and STD.get('date', '') in meta_txt
+        and ok_date
         and STD.get('byline', '') in meta_txt
     )
     chrome_seen[slug] = (tag, meta_txt[:40])
-    checks.append(('chrome', bool(ok_chrome), f'tag="{tag}"'))
+    checks.append(('chrome', bool(ok_chrome), f'tag="{tag}" meta="{meta_txt[:34]}"'))
 
     # --- dau $ le trong van xuoi EN
     n_dollar = prose(en_p).count('$')

@@ -118,20 +118,21 @@ class MiniRedis {
 const redis = new MiniRedis(REDIS_URL);
 
 // ---------------------------------------------------------------------------
-// BỐN THUẬT TOÁN
+// THE FOUR ALGORITHMS
 //
-// Cả bốn trả về cùng một định dạng chuỗi: "<0|1>|<còn lại>|<retryAfterMs>".
-// Trả chuỗi thay vì mảng là có chủ ý: client RESP tối giản trong lab chỉ cần biết
-// bóc bulk string, và mọi limiter thật cũng chỉ cần đúng ba con số này để dựng header.
+// All four return the same string format: "<0|1>|<remaining>|<retryAfterMs>".
+// Returning a string rather than an array is deliberate: the minimal RESP client in this
+// lab only needs to unwrap a bulk string, and any real limiter needs exactly these three
+// numbers to build its headers.
 //
-// Cả bốn đều lấy thời gian bằng `redis.call('TIME')` chứ KHÔNG nhận `now` từ client.
-// Lý do: nhiều app instance gọi cùng một limiter, mà đồng hồ của chúng lệch nhau —
-// nếu để client gửi `now` thì một máy chạy nhanh 200 ms tự cho mình sang cửa sổ mới
-// sớm hơn phần còn lại. Lấy giờ ở Redis là cách rẻ nhất để có MỘT đồng hồ duy nhất.
+// All four read the time with `redis.call('TIME')` rather than taking `now` from the
+// client. The reason: many app instances call the same limiter and their clocks differ —
+// if the client sent `now`, a machine running 200 ms fast would move itself into the next
+// window early. Reading the clock in Redis is the cheapest way to have ONE single clock.
 // ---------------------------------------------------------------------------
 const LUA = {
-  // 1. FIXED WINDOW — bộ đếm reset theo mốc thời gian tuyệt đối.
-  //    Rẻ nhất: một khoá số nguyên cho mỗi (người dùng × cửa sổ).
+  // 1. FIXED WINDOW — the counter resets on absolute time boundaries.
+  //    Cheapest: one integer key per (user × window).
   fixed: `
 local limit = tonumber(ARGV[1])
 local win   = tonumber(ARGV[2])
@@ -141,8 +142,8 @@ local wid   = math.floor(now / win)
 local k     = KEYS[1] .. ':' .. wid
 local n     = redis.call('INCR', k)
 if n == 1 then
-  -- PEXPIRE nằm TRONG script nên nó không thể bị bỏ sót: hoặc cả hai lệnh cùng chạy,
-  -- hoặc không lệnh nào chạy. Đây chính là lỗi mà ROLE=nonatomic tái tạo.
+  -- PEXPIRE is INSIDE the script so it cannot be skipped: either both commands run,
+  -- or neither does. This is precisely the bug that ROLE=nonatomic reproduces.
   redis.call('PEXPIRE', k, win * 2)
 end
 if n > limit then
@@ -150,9 +151,9 @@ if n > limit then
 end
 return '1|' .. (limit - n) .. '|0'`,
 
-  // 2. SLIDING WINDOW LOG — lưu dấu thời gian của TỪNG request trong một ZSET.
-  //    Chính xác tuyệt đối, và đắt đúng bằng cái giá của sự chính xác đó:
-  //    bộ nhớ tỉ lệ thuận với SỐ REQUEST được cho qua, không phải số người dùng.
+  // 2. SLIDING WINDOW LOG — stores the timestamp of EVERY request in a ZSET.
+  //    Perfectly exact, and expensive by exactly the price of that exactness:
+  //    memory is proportional to the NUMBER OF REQUESTS allowed, not the number of users.
   slidinglog: `
 local limit = tonumber(ARGV[1])
 local win   = tonumber(ARGV[2])
@@ -172,9 +173,9 @@ redis.call('ZADD', k, now, id)
 redis.call('PEXPIRE', k, win)
 return '1|' .. (limit - n - 1) .. '|0'`,
 
-  // 3. SLIDING WINDOW COUNTER — xấp xỉ cửa sổ trượt bằng HAI bộ đếm cố định:
-  //    lấy phần còn lại của cửa sổ trước theo trọng số tuyến tính, cộng cửa sổ hiện tại.
-  //    Bộ nhớ như fixed window, nhưng không còn vách đứng ở mốc giao cửa sổ.
+  // 3. SLIDING WINDOW COUNTER — approximates a sliding window with TWO fixed counters:
+  //    take a linearly weighted share of the previous window, plus the current one.
+  //    Memory like fixed window, but without the cliff at the window boundary.
   slidingcounter: `
 local limit = tonumber(ARGV[1])
 local win   = tonumber(ARGV[2])
@@ -194,9 +195,10 @@ local n = redis.call('INCR', cur)
 if n == 1 then redis.call('PEXPIRE', cur, win * 2) end
 return '1|' .. math.floor(limit - est - 1) .. '|0'`,
 
-  // 4. TOKEN BUCKET — xô có sức chứa `cap`, rót thêm đều `cap` token mỗi `win`.
-  //    Không có mốc cửa sổ nào cả, nên không có vách để lách. Burst được PHÉP nhưng
-  //    bị chặn trên bởi đúng sức chứa của xô — đó là điểm khác fixed window.
+  // 4. TOKEN BUCKET — a bucket of capacity `cap`, refilled steadily at `cap` per `win`.
+  //    There are no window boundaries at all, so there is no cliff to exploit. Bursts are
+  //    ALLOWED but capped by exactly the bucket capacity — that is the difference from
+  //    fixed window.
   token: `
 local cap  = tonumber(ARGV[1])
 local win  = tonumber(ARGV[2])
@@ -359,30 +361,30 @@ async function bench() {
 }
 
 // ---------------------------------------------------------------------------
-// ROLE=nonatomic — vì sao INCR rồi EXPIRE ở HAI lệnh là một quả bom hẹn giờ
+// ROLE=nonatomic — why INCR then EXPIRE as TWO commands is a time bomb
 //
-// Cách viết limiter phổ biến nhất trên mạng:
+// The most common limiter you will find online:
 //     INCR key
 //     if n == 1: EXPIRE key 60
-// Giữa hai lệnh đó có một khoảng trống. Nếu tiến trình chết đúng lúc ấy — deploy,
-// OOM kill, container bị siết CPU — thì khoá tồn tại VĨNH VIỄN không TTL. Bộ đếm
-// không bao giờ reset, và người dùng đó bị chặn mãi mãi cho tới khi có người vào
-// xoá khoá bằng tay. Ở đây "chết" được mô phỏng bằng cách bỏ hẳn lệnh EXPIRE.
+// There is a gap between those two commands. If the process dies right there — a
+// deploy, an OOM kill, a CPU-throttled container — the key survives FOREVER with no
+// TTL. The counter never resets, and that user is blocked permanently until somebody
+// deletes the key by hand. Here "dying" is simulated by skipping the EXPIRE entirely.
 // ---------------------------------------------------------------------------
 async function nonatomic() {
   const N = 200;
   const report = [];
 
-  for (const mode of ['hai-lenh', 'lua']) {
+  for (const mode of ['two-commands', 'lua']) {
     const prefix = `lab:rl:na:${mode}`;
     const old = await redis.cmd('KEYS', `${prefix}*`);
     if (Array.isArray(old) && old.length) await redis.cmd('DEL', ...old);
 
     for (let i = 0; i < N; i++) {
       const k = `${prefix}:u${i}`;
-      if (mode === 'hai-lenh') {
+      if (mode === 'two-commands') {
         const n = await redis.cmd('INCR', k);
-        // "Tiến trình chết" ngay tại đây với xác suất 1/CRASH_EVERY.
+        // The "process dies" right here, with probability 1/CRASH_EVERY.
         if (i % CRASH_EVERY === 0) continue;
         if (n === 1) await redis.cmd('PEXPIRE', k, String(WINDOW_MS));
       } else {
@@ -394,14 +396,14 @@ async function nonatomic() {
     let noTtl = 0;
     for (const k of keys) {
       const ttl = await redis.cmd('PTTL', k);
-      // -1 nghĩa là: khoá tồn tại nhưng KHÔNG có hạn dùng.
+      // -1 means: the key exists but has NO expiry.
       if (ttl === -1) noTtl++;
     }
     report.push({
       mode,
-      soKhoa: keys.length,
-      khoaKhongTtl: noTtl,
-      hauQua: noTtl > 0 ? `${noTtl} nguoi dung bi chan VINH VIEN` : 'khong khoa nao mac ket',
+      keyCount: keys.length,
+      keysWithoutTtl: noTtl,
+      consequence: noTtl > 0 ? `${noTtl} users blocked FOREVER` : 'no keys stuck',
     });
   }
   console.log(JSON.stringify({ role: 'nonatomic', crashEvery: CRASH_EVERY, report }, null, 2));

@@ -1,0 +1,623 @@
+
+            <p>
+              <a href="sysdesign-message-queue">Lesson 12</a> ended with four ways an asynchronous system can
+              <em>say no</em>, and promised that the last one — slowing the sender down — would be this lesson. Rate
+              limiting is the mechanism by which a system <strong>refuses in a controlled way</strong>, instead of
+              accepting everything and breaking, or accepting everything and promising a six-hour backlog.
+            </p>
+
+            <p>
+              This lesson's lab runs all four rate-limiting algorithms for real on Redis, each as a Lua script. Three
+              measurements stand out. First, with the same limit of 100 requests/second, fixed window lets
+              <strong>200 requests through in one second</strong> right at the window boundary — twice the limit, and
+              that number repeated identically across all three runs. Second, writing the limiter as <code>INCR</code>
+              then <code>EXPIRE</code> in two separate commands left <strong>20 of 200 keys stuck with no TTL</strong>
+              — that is, 20 users blocked forever. Third, the four algorithms barely differ in speed (p50 all around
+              0.08 ms) but differ more than tenfold in memory.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The measurement machine</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Native arm64 containers: Redis
+                7-alpine and Node v22 (node:22-alpine), each limited to 1 CPU, no dependencies — the four algorithms
+                live in <code>worker/ratelimit.js</code>, loaded into Redis with <code>SCRIPT LOAD</code> and called
+                with <code>EVALSHA</code>.<br /><br />
+                One important caveat for every latency figure in this lesson: Redis here sits
+                <strong>on the same machine</strong> as the app, connected over Docker's internal network, so one
+                network round trip costs about <strong>0.07 ms</strong>. Real production Redis usually sits on another
+                machine, sometimes in another availability zone, and a round trip there is <strong>1–2 ms</strong> —
+                15 to 30 times more expensive. The conclusions about <em>ratios between</em> the algorithms still hold;
+                the conclusion that "the limiter is nearly free" holds only under these measurement conditions.
+              </div>
+            </div>
+
+            <!-- ================= 13.1 ================= -->
+            <h2>13.1 Who rate limiting actually protects you from</h2>
+
+            <p>
+              The familiar answer is "from attackers". That answer is not wrong, but it leads people to put rate limits
+              in the wrong place. In most real incidents, what brings a system down is not a stranger but
+              <strong>your own clients</strong>: a mobile app that just shipped a release with a retry loop and no
+              jitter, another team's cron job firing at midnight, or an internal service retrying frantically because
+              the service behind it is slow. Strangers get stopped at another layer (a WAF, DDoS protection); your own
+              clients hold a valid API key and walk straight in the front door.
+            </p>
+
+            <p>
+              Three concepts get conflated constantly, while they serve three quite different purposes and usually live
+              in three different places:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Concept</th>
+                  <th>Purpose</th>
+                  <th>Who decides the number</th>
+                  <th>What happens when exceeded</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Rate limit</strong></td>
+                  <td>Protect the system from receiving more than it can process</td>
+                  <td>Engineering — derived from measured real capacity (Lesson 2)</td>
+                  <td>Refuse immediately, <code>429</code></td>
+                </tr>
+                <tr>
+                  <td><strong>Quota</strong></td>
+                  <td>Allocate resources by pricing tier</td>
+                  <td>Commercial — it is in the contract</td>
+                  <td>Refuse or bill extra, usually monthly</td>
+                </tr>
+                <tr>
+                  <td><strong>Throttle</strong></td>
+                  <td>Smooth the output rather than refuse</td>
+                  <td>Engineering — by the receiver's capacity</td>
+                  <td>Queue and slow down, no requests lost</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The most memorable difference is in the last column. A rate limit says <em>no</em>; a throttle says
+              <em>wait</em>. Throttling sounds kinder, and that is exactly the trap: every slowed request still holds a
+              connection, a thread, a slot in a queue. <a href="sysdesign-latency-queueing">Lesson 1</a> showed what
+              happens when a queue rises — throttling does not remove load, it converts load into latency. When you are
+              genuinely overloaded, refusing quickly is the kinder act.
+            </p>
+
+            {{SVG:1}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: putting the rate limit only at the edge</div>
+              <div class="callout__content">
+                This is the default configuration almost everywhere, because it is the easiest: one limiter at the API
+                gateway, done. The problem is that <strong>most internal overload incidents never pass through the
+                edge</strong>. When service B is slow and service A retries three times per request, traffic to B goes
+                up fourfold while inbound traffic at the edge <em>does not change at all</em> — the chart you are
+                looking at stays flat.<br /><br />
+                The cheapest test question:
+                <strong>if an internal service suddenly called you ten times as often, is there anything that would
+                stop it?</strong> If the answer is "surely nobody would do that", then you do not have an answer — you
+                have an assumption.
+              </div>
+            </div>
+
+            <!-- ================= 13.2 ================= -->
+            <h2>13.2 Four algorithms, and what each really costs</h2>
+
+            <p>
+              The four algorithms below answer the same question — "may this request go through?" — but they define
+              the words "one second" in four different ways, and the entire difference lies there.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Algorithm</th>
+                  <th>How it reads "one second"</th>
+                  <th>What it stores in Redis</th>
+                  <th>Its weakness</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Fixed window</td>
+                  <td>From second N to second N+1 on the absolute clock</td>
+                  <td>One integer per (user × window)</td>
+                  <td>The counter resets abruptly at the boundary → a burst of double the limit</td>
+                </tr>
+                <tr>
+                  <td>Sliding window log</td>
+                  <td>The 1000 ms just past, counted from right now</td>
+                  <td>The timestamp of every request (a ZSET)</td>
+                  <td>Memory proportional to the number of requests allowed</td>
+                </tr>
+                <tr>
+                  <td>Sliding window counter</td>
+                  <td>An approximation: the remainder of the previous window plus this one</td>
+                  <td>Two integers</td>
+                  <td>It is an estimate — it assumes traffic was spread evenly in the previous window</td>
+                </tr>
+                <tr>
+                  <td>Token bucket</td>
+                  <td>No window at all — tokens are poured in steadily over time</td>
+                  <td>A token count plus the timestamp of the last update</td>
+                  <td>Allows a burst equal to the bucket capacity</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              Fixed window's weakness gets mentioned everywhere, but nearly always as an anecdote. This lesson's lab
+              builds exactly that scenario and counts: a limit of 100 requests per 1000 ms, firing 100 requests just
+              before the window boundary and 100 just after it, then measuring the only number the server behind it
+              actually cares about — <strong>the most requests that got through in any sliding 1-second window</strong>.
+            </p>
+
+            {{SVG:2}}
+
+            <p>
+              Fixed window's 200% is <strong>not a rare worst case</strong> — it happens every time traffic clusters
+              around the window boundary, and that boundary is a fixed instant in the day, so clustering is very easy:
+              cron jobs are scheduled on round numbers, and retrying clients round to the second. Worse, no parameter
+              fixes it: the 2× is a direct consequence of the counter resetting abruptly.
+            </p>
+
+            <p>
+              A point worth stating correctly: <strong>token bucket also allows a burst</strong> — 119% in the
+              measurement above, not 100%. Many articles present token bucket as if it "has no burst problem", which is
+              not true. The real difference is that token bucket's burst is <strong>capped and adjustable</strong>: it
+              is at most the bucket capacity, so if you need a flat output, lower the capacity below the refill rate.
+              Fixed window's burst is 2× no matter how you configure it.
+            </p>
+
+            <p>
+              So why not use sliding window log for everything, given that it is perfectly exact? The answer is not
+              speed but <strong>memory</strong>. Measured over 20,000 calls per algorithm, all four take almost exactly
+              the same time — because what costs time is the network round trip to Redis, not the arithmetic inside:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Algorithm</th>
+                  <th>p50 (ms)</th>
+                  <th>p99 (ms)</th>
+                  <th>Calls/second</th>
+                  <th>Memory per user</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><em>baseline: an empty GET</em></td>
+                  <td>0.073</td>
+                  <td>0.142</td>
+                  <td>12,682</td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <td>Fixed window</td>
+                  <td>0.082</td>
+                  <td>0.148</td>
+                  <td>11,527</td>
+                  <td>121 B</td>
+                </tr>
+                <tr>
+                  <td>Sliding window log</td>
+                  <td>0.084</td>
+                  <td>0.141</td>
+                  <td>11,223</td>
+                  <td><strong>1,499 B</strong></td>
+                </tr>
+                <tr>
+                  <td>Sliding window counter</td>
+                  <td>0.083</td>
+                  <td>0.143</td>
+                  <td>11,442</td>
+                  <td>136 B</td>
+                </tr>
+                <tr>
+                  <td>Token bucket</td>
+                  <td>0.084</td>
+                  <td>0.148</td>
+                  <td>11,274</td>
+                  <td>171 B</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The first four columns are practically indistinguishable; the last differs more than tenfold. That is
+              because sliding window log has to remember the timestamp of every request still in force, so its memory
+              is proportional to <strong>the limit</strong> rather than to the number of users: a limit of 100 costs
+              1,499 bytes per user, a limit of 10,000 would cost a hundred times more. With a million active users that
+              is the difference between a few hundred megabytes and a few dozen gigabytes — which is to say, between
+              "one Redis node" and "a Redis cluster to operate".
+            </p>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 How to choose quickly</div>
+              <div class="callout__content">
+                <strong>Token bucket</strong> is the right default for a public API: it allows short bursts (real
+                people do click quickly a few times) but the burst is capped.
+                <strong>Sliding window counter</strong> when you want a flat output and do not need perfect exactness.
+                <strong>Sliding window log</strong> only when the number has to be exact because it is in a contract —
+                and in that case, work out the memory bill first. <strong>Fixed window</strong> when the limit is
+                generous enough that exceeding it twofold does not matter (say "1000 requests/hour per API key"), where
+                its simplicity is a genuine advantage.
+              </div>
+            </div>
+
+            <!-- ================= 13.3 ================= -->
+            <h2>13.3 In a distributed system, the counter must be atomic</h2>
+
+            <p>
+              <a href="sysdesign-load-balancing">Lesson 3</a> gave the system three app replicas, and that immediately
+              breaks the most natural way to write a limiter: keeping the counter in process memory. With three
+              replicas, each counts separately, and the real limit becomes three times the one you configured. The
+              counter has to live somewhere shared — but shared alone is not enough.
+            </p>
+
+            <p>This is the most common limiter you will find online, and it has a serious bug:</p>
+
+            {{CODE:cách viết phổ biến — và sai}}
+
+            <p>
+              The gap between <code>INCR</code> and <code>EXPIRE</code> is small, but it is real. If the process dies
+              right there — a deploy, an OOM kill, a CPU-throttled container that gets reaped — that key exists
+              <strong>forever with no TTL</strong>. The counter never resets, and that user is blocked permanently
+              until somebody deletes the key by hand. The lab reproduces exactly this with 200 users, "dying" on 1 in
+              10:
+            </p>
+
+            {{CODE:kết quả đo — ROLE=nonatomic}}
+
+            <p>
+              The fix is to bundle the whole "read — decide — write" into <strong>one</strong> Lua script. Redis runs a
+              complete script as a single command, so either both commands run or neither does. This is the real token
+              bucket running in the lab:
+            </p>
+
+            {{CODE:worker/ratelimit.js — script Lua của token bucket}}
+
+            <p>
+              This runs on all three app replicas at once in the lab, behind the load balancer, with a global limit of
+              500 requests/second. Firing 20 connections for 10 seconds:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Measured</th>
+                  <th>Against theory</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Requests allowed (<code>200</code>)</td>
+                  <td><strong>5,493</strong></td>
+                  <td>500 (a full bucket at the start) + 500/second × 10 seconds = <strong>5,500</strong></td>
+                </tr>
+                <tr>
+                  <td>Requests refused (<code>429</code>)</td>
+                  <td><strong>185,660</strong></td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <td>Actual throughput served</td>
+                  <td>549.4 req/s</td>
+                  <td>Exactly the limit, even though the three replicas never talk to each other</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              An error of 7 in 5,500 — that is 0.13%. That is measured evidence that a shared atomic counter really
+              does hold a <em>global</em> limit, rather than the limit multiplied by the replica count.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Why the script calls <code>redis.call('TIME')</code></div>
+              <div class="callout__content">
+                Old Redis documentation (before 5.0) forbade this outright: back then scripts were replicated to
+                replicas <em>verbatim</em>, so a script calling <code>TIME</code> would produce different results on
+                the primary and the replica, leaving the two sides with divergent data. Since Redis 5.0 the default
+                mode changed to <strong>effect replication</strong> (only the actual write commands are propagated), so
+                calling <code>TIME</code> inside a script is safe.<br /><br />
+                Why the detail is worth caring about: the alternative is to have each app send <em>its own</em> clock
+                into the script. With three replicas on three machines, that is three different clocks — and you have
+                just introduced clock drift into the one component that needs a single source of time. This is a
+                milder version of the problem from <a href="sysdesign-distributed-lock">Lesson 10</a>.
+              </div>
+            </div>
+
+            <p>
+              There is one more decision as important as the algorithm: <strong>which dimension to limit on</strong>.
+              Per logged-in user is the most precise but does not protect the login endpoint (there is no user yet).
+              Per IP protects public endpoints but runs into NAT. Per endpoint protects exactly the expensive places.
+              In practice you need several dimensions at once, and each is its own Redis key.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: limiting by IP when clients sit behind NAT</div>
+              <div class="callout__content">
+                <strong>NAT</strong> (<em>network address translation</em>) is the mechanism that lets many machines on
+                an internal network reach the Internet through one public IP address — and it is more common than you
+                think. A company, a school, a mobile carrier — all of them can reach the Internet through
+                <em>one</em> IP address. Setting a limit of 100 requests/minute per IP means every employee of that
+                company shares 100 requests, and when they run out, all of them are blocked together. From your side it
+                looks like "one aggressive client"; from theirs it is "this service is broken".<br /><br />
+                Worse, IPv6 inverts the problem: a single client machine may have an entire <code>/64</code> range
+                available and change address on every request, so limiting by an individual IPv6 address is nearly
+                useless — you have to limit by prefix. And recall <a href="sysdesign-api-gateway">Lesson 4</a>: if you
+                take the IP from <code>X-Forwarded-For</code> without counting trusted proxy hops correctly, an attacker
+                sets that header themselves and walks past the limiter entirely legitimately.
+              </div>
+            </div>
+
+            <!-- ================= 13.4 ================= -->
+            <h2>13.4 Refusing properly</h2>
+
+            <p>
+              Refusing is an act of communication. A refused client will do <em>something</em>, and what it does
+              depends entirely on what you told it. This is the lab's real response once the bucket is empty:
+            </p>
+
+            {{CODE:phản hồi 429 thật của lab}}
+
+            <p>
+              Those four headers are the contract. <code>Retry-After</code> tells the client exactly when to come back
+              — without it, the client can only guess, and the most common guess is to retry immediately, exactly what
+              you were trying to prevent. The three <code>X-RateLimit-*</code> headers additionally let a client
+              self-regulate <em>before</em> hitting the limit: a well-behaved SDK seeing <code>Remaining: 3</code>
+              slows itself down rather than driving into the wall.
+            </p>
+
+            <p>
+              That real response exposes a notable detail: the true wait is <strong>2 milliseconds</strong> (the token
+              bucket refills 500 tokens per second, so the next token arrives after 2 ms), but
+              <code>Retry-After</code> is measured in <em>seconds</em>, so the smallest thing it can say is
+              <code>1</code> — 500 times slower than the truth. That is why the response body also carries
+              <code>retryAfterMs</code>: the header stays correct HTTP for generic clients, while a client that
+              understands your API reads the exact number. With only the header, every refused client would wait a
+              round second and all come back at the same moment — you would have created a synchronised wave, exactly
+              the problem jitter exists to solve in Lesson 17.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: returning 500 or 503 when the limit is exceeded</div>
+              <div class="callout__content">
+                This mistake is surprisingly common, usually because the limiter was implemented as a generic exception
+                handler. The consequence is very concrete: <strong>every HTTP client library treats 5xx as a temporary
+                server fault and retries immediately</strong> — often with automatic retries the developer on the other
+                side does not even know are enabled. You have just told the client "my server is having trouble, try
+                again" when you meant "you are sending too fast, please slow down".<br /><br />
+                <code>429</code> states clearly that the fault is on the client side (the 4xx class) and carries a wait
+                time. The difference between these two codes is the difference between a system that stabilises itself
+                and a system that amplifies load onto itself — <a href="sysdesign-message-queue">Lesson 12</a> named
+                that phenomenon, and Lesson 17 will measure it.
+              </div>
+            </div>
+
+            <p>
+              A question that often goes unasked: <strong>what does the limiter cost?</strong> It sits on the path of
+              every request, including the ones allowed through, so its cost adds directly to the whole system's p99.
+              Measured by comparing the same endpoint with and without a limiter, with the limit set high enough that
+              no request is refused (four paired runs, 20 connections, 10 seconds each):
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Endpoint</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p95</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>/fast</code> — no limiter</td>
+                  <td>25,849 – 27,115 req/s</td>
+                  <td>0.64 – 0.66 ms</td>
+                  <td>1.26 – 1.32 ms</td>
+                  <td>1.59 – 1.75 ms</td>
+                </tr>
+                <tr>
+                  <td><code>/limited</code> — with a limiter</td>
+                  <td>26,554 – 28,354 req/s</td>
+                  <td>0.67 – 0.69 ms</td>
+                  <td>1.04 – 1.16 ms</td>
+                  <td>1.41 – 1.50 ms</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              p50 rises by about 0.04 ms — exactly one network round trip to Redis, no surprise there. The surprise is
+              that <strong>p95 and p99 are consistently lower</strong>, across all four paired runs. A plausible
+              explanation: <code>/fast</code> replies entirely synchronously so many requests are handled in clumps
+              within one event-loop turn, while <code>/limited</code> has a yield point (the <code>await</code> on
+              Redis) that breaks those clumps up. This is a <strong>hypothesis, not a proven conclusion</strong> — this
+              lab does not measure event-loop delay directly, so I am recording exactly what was measured.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">🚨 Do not take this 0.04 ms figure out of the lab</div>
+              <div class="callout__content">
+                Redis here is on the same machine as the app. In production Redis usually sits on another machine —
+                sometimes in another availability zone — and a round trip there is 1–2 ms. For a service with a p99
+                around 20 ms, adding 2 ms is <strong>+10%</strong>; for a service with a p99 around 5 ms, it is
+                <strong>+40%</strong>.<br /><br />
+                That is why genuinely high-performance limiters usually use a <strong>hybrid architecture</strong>:
+                count locally in each instance's memory against a pre-allocated share of the limit, and only
+                synchronise with Redis periodically. In exchange you lose perfect exactness — which is precisely the
+                trade-off from <a href="sysdesign-cap-consistency">Lesson 9</a>, appearing here in a very concrete
+                problem.
+              </div>
+            </div>
+
+            <!-- ================= 13.5 ================= -->
+            <h2>13.5 Load shedding: when refusal has to be selective</h2>
+
+            <p>
+              A rate limit answers "has this client used more than its share?". Load shedding answers a quite different
+              question: <strong>"the system is overloaded, what do we drop?"</strong> The second question only arises
+              when every client is within its limit and the total still exceeds capacity — and at that point a rate
+              limit helps not at all, because nobody is violating anything.
+            </p>
+
+            <p>
+              The figures from the global measurement in section 13.3 show the first thing to know about refusing:
+              <strong>it is not free, but it is far cheaper than serving</strong>. In 10 seconds the lab served 5,493
+              requests and refused 185,660 — so it handled about <strong>18,500 refusals per second</strong>, 34 times
+              the number of requests it actually served. That is why "fail fast" is a viable strategy: you still pay a
+              price, but the price is an order of magnitude smaller.
+            </p>
+
+            <p>
+              But that price is only small when the refusal happens <strong>early</strong>. Refusing after you have
+              already queried the database to check the limit means you paid almost the entire cost before saying no.
+              The rule: the limiter must sit before everything expensive — before authentication if possible, certainly
+              before the database.
+            </p>
+
+            {{SVG:3}}
+
+            <p>
+              The easiest detail to miss in that figure is the first row: <strong>health checks</strong>. If load
+              shedding also drops health checks, the load balancer concludes the node is dead and pulls it out of
+              rotation (<a href="sysdesign-load-balancing">Lesson 3</a>), pushing the load onto the remaining nodes,
+              which then start shedding too, failing their health checks too, and being pulled out too. The mechanism
+              built to save the system becomes the mechanism that kills it. This is the form of cascade failure that
+              Lesson 17 dissects in full.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: shedding everything uniformly</div>
+              <div class="callout__content">
+                Dropping a random 60% of requests sounds fair, and it is so easy to implement that it usually becomes
+                the default. But "fair" here means you break the <strong>SLO of your most important group</strong>
+                <em>by exactly as much as</em> you break the SLO of your least important one. Someone in the middle of
+                paying loses their transaction with the same probability as someone browsing
+                recommendations.<br /><br />
+                Prioritised load shedding requires something that must exist <em>before</em> the incident: every
+                request carries its own priority (a header, the endpoint class, the customer tier). You cannot add that
+                dimension of information at 3 in the morning while the system is burning. If today you cannot classify
+                which requests matter more than others, then the only shedding option you have is the worst one.
+              </div>
+            </div>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              Rate limiting mostly protects you from your own clients, not from attackers — so putting it only at the
+              edge leaves exactly the place where cascade failure begins uncovered.
+            </p>
+
+            <p>
+              On algorithms, the measurements give a compact conclusion: <strong>choosing an algorithm is not about
+              speed</strong>. All four give a p50 around 0.08 ms because what costs time is the network round trip, not
+              the arithmetic. The real differences are elsewhere — behaviour at the window boundary (fixed window lets
+              200% through and no configuration fixes it) and memory (sliding window log costs 1,499 bytes per user,
+              more than ten times the other three). Token bucket also allows a burst, 119% rather than 100% — but its
+              burst is capped and adjustable, and that is the difference worth stating.
+            </p>
+
+            <p>
+              On implementation, one rule with almost no exceptions: <strong>bundle the whole decision into one Lua
+              script</strong>. The <code>INCR</code>-then-<code>EXPIRE</code> version left 20 of 200 keys stuck with no
+              TTL in the measurement — 20 users permanently blocked by the very mechanism meant to protect them. In
+              return, a shared atomic counter holds the global limit very tightly: 5,493 against an expected 5,500,
+              with three replicas that never talk to each other.
+            </p>
+
+            <p>
+              And on how to refuse: <code>429</code> with <code>Retry-After</code>, never 5xx. Refusing is about 34
+              times cheaper than serving in this lab — but only when it happens <em>early</em>, and only when it is
+              <em>selective</em>. Shedding uniformly is a reliable way to break the SLO of your most important group.
+            </p>
+
+            <p>
+              <strong>Lesson 14</strong> changes direction: instead of storing the current state and overwriting it
+              continuously, we store <strong>the sequence of events that happened</strong> and recompute the state from
+              it. That opens up the ability to replay history to find a bug — and it requires something from Lesson 11
+              as a precondition: idempotency.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a href="https://www.rfc-editor.org/rfc/rfc6585.html#section-4" target="_blank" rel="noopener noreferrer">
+                    IETF RFC 6585 §4 — the official definition of <code>429 Too Many Requests</code>, and why it must
+                    be a 4xx rather than a 5xx (the pitfall in section 13.4)
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after" target="_blank" rel="noopener noreferrer">
+                    IETF RFC 9110 §10.2.3 — the <code>Retry-After</code> header: the spec states the unit is
+                    <em>seconds</em>, which is exactly the limitation that forces the lab to add
+                    <code>retryAfterMs</code> to the body
+                  </a>
+                </li>
+                <li>
+                  <a href="https://www.ietf.org/archive/id/draft-ietf-httpapi-ratelimit-headers-09.html" target="_blank" rel="noopener noreferrer">
+                    IETF draft — RateLimit header fields for HTTP: the effort to standardise the
+                    <code>X-RateLimit-*</code> family used in section 13.4
+                  </a>
+                </li>
+                <li>
+                  <a href="https://redis.io/docs/latest/develop/programmability/eval-intro/" target="_blank" rel="noopener noreferrer">
+                    Redis — Scripting with Lua: why a script runs atomically, the foundation of all of section 13.3
+                  </a>
+                </li>
+                <li>
+                  <a href="https://redis.io/docs/latest/commands/time/" target="_blank" rel="noopener noreferrer">
+                    Redis — the <code>TIME</code> command: since Redis 5.0 replication is by effect, so it can be
+                    called inside a script, exactly as the callout in section 13.3 explains
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Token_bucket" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Token bucket (and
+                    <a href="https://en.wikipedia.org/wiki/Leaky_bucket">leaky bucket</a> for comparison): the formal
+                    definition of the fourth algorithm in section 13.2
+                  </a>
+                </li>
+                <li>
+                  <a href="https://stripe.com/blog/rate-limiters" target="_blank" rel="noopener noreferrer">
+                    Stripe — <em>Scaling your API with rate limiters</em>: the four kinds of limiter they run in
+                    production, and why load shedding is a category of its own (section 13.5)
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                All four algorithms from section 13.2 as atomic Lua scripts, plus the measurement modes that produced
+                every number in this lesson — window boundary, timing, memory, stuck keys, and the overhead added to
+                every request:
+              </p>
+              <a
+                href="../sysdesign-lab/worker/ratelimit.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download ratelimit.js (4 algorithms, atomic Lua, 0 dependencies)
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
