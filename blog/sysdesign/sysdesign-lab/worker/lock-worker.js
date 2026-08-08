@@ -122,10 +122,10 @@ const redis = new MiniRedis(REDIS_URL);
 // ---------------------------------------------------------------------------
 
 /**
- * Ba điều BẮT BUỘC của một Redis lock đúng (Bài 10, mục 10.2):
- *   NX      chỉ đặt khi key chưa tồn tại — đó là phần "giành lock"
- *   PX ttl  BẮT BUỘC có TTL, nếu không thì holder chết là deadlock vĩnh viễn
- *   token   giá trị ngẫu nhiên, để CHỈ chủ sở hữu mới xoá được (xem release)
+ * The three MANDATORY parts of a correct Redis lock (Lesson 10, section 10.2):
+ *   NX      only set if the key does not exist — this is the "acquire" part
+ *   PX ttl  a TTL is MANDATORY, otherwise a dead holder is a permanent deadlock
+ *   token   a random value, so ONLY the owner can delete it (see release)
  */
 async function acquire(key, token, ttlMs) {
   const res = await redis.cmd('SET', key, token, 'NX', 'PX', String(ttlMs));
@@ -133,10 +133,11 @@ async function acquire(key, token, ttlMs) {
 }
 
 /**
- * Giải phóng lock PHẢI atomic: kiểm token rồi mới DEL, trong cùng một lệnh.
+ * Releasing MUST be atomic: check the token and only then DEL, in one command.
  *
- * Vì sao không được `DEL` thẳng: lock của bạn có thể đã HẾT HẠN và người khác đã giành
- * được nó. `DEL` thẳng sẽ xoá lock CỦA HỌ, và từ đó trở đi mọi thứ hỏng theo dây chuyền.
+ * Why a plain `DEL` is wrong: your lock may already have EXPIRED and someone else may
+ * have acquired it. A plain `DEL` would delete THEIR lock, and from there everything
+ * breaks in a chain.
  */
 const RELEASE_LUA = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -150,22 +151,22 @@ async function release(key, token) {
 }
 
 /**
- * Ghi vào "tài nguyên" có kiểm fencing token (Bài 10, mục 10.4).
+ * Write to the "resource", with fencing-token checking (Lesson 10, section 10.4).
  *
- * Đây là mấu chốt: tài nguyên đích tự từ chối token NHỎ HƠN token lớn nhất nó đã thấy.
- * Nhờ vậy một worker "zombie" quay lại sau GC pause — vẫn tin mình giữ lock — bị chặn ở
- * TẦNG TÀI NGUYÊN, chứ không phải nhờ lock. Nếu tài nguyên không kiểm thì fencing token
- * chỉ là một con số trang trí.
+ * This is the crux: the target resource itself rejects any token LOWER than the highest
+ * one it has seen. That is how a "zombie" worker returning from a GC pause — still
+ * believing it holds the lock — gets blocked AT THE RESOURCE LAYER rather than by the
+ * lock. If the resource does not check, the fencing token is just a decorative number.
  */
 const FENCED_WRITE_LUA = `
 local seen = tonumber(redis.call('GET', KEYS[1]) or '0')
 local tok  = tonumber(ARGV[1])
 if tok < seen then
-  redis.call('INCR', KEYS[3])          -- dem so lan bi TU CHOI
+  redis.call('INCR', KEYS[3])          -- count the REJECTED writes
   return 0
 end
 redis.call('SET', KEYS[1], tok)
-redis.call('INCR', KEYS[2])            -- dem so lan duoc CHAP NHAN
+redis.call('INCR', KEYS[2])            -- count the ACCEPTED writes
 return 1`;
 
 async function fencedWrite(token) {
@@ -236,24 +237,25 @@ async function main() {
     }
     acquired++;
 
-    // Fencing token: một số TĂNG ĐƠN ĐIỆU, do Redis cấp bằng INCR (atomic).
-    // Lấy SAU khi có lock để thứ tự token khớp với thứ tự giành được lock.
+    // Fencing token: a MONOTONICALLY INCREASING number, issued by Redis via INCR (atomic).
+    // Taken AFTER acquiring the lock, so token order matches lock-acquisition order.
     const fence = USE_FENCE ? Number(await redis.cmd('INCR', 'lab:fence:seq')) : 0;
 
-    // "GC pause": worker bị dừng lâu hơn TTL của lock. Trong lúc này lock hết hạn,
-    // worker khác giành được, và khi worker này tỉnh lại nó VẪN TIN mình đang giữ lock.
+    // "GC pause": the worker is stopped for longer than the lock TTL. Meanwhile the lock
+    // expires, another worker acquires it, and when this one wakes up it STILL BELIEVES
+    // it holds the lock.
     if (PAUSE_MS > 0 && round % PAUSE_EVERY === 0) {
       pauses++;
       await sleep(PAUSE_MS);
     }
 
-    // Vùng tới hạn: đây là chỗ "chỉ được một worker tại một thời điểm".
-    // enterCritical đếm xem có bao nhiêu worker cùng ở đây — đó là thước đo lock.
+    // The critical section: the place where "only one worker at a time" must hold.
+    // enterCritical counts how many workers are in here at once — that is the lock's score.
     await enterCritical();
 
-    // Fencing được kiểm TẠI TÀI NGUYÊN, sau khi đã vào vùng tới hạn. Thứ tự này có chủ ý:
-    // fencing KHÔNG ngăn hai worker cùng vào (chỉ lock làm được việc đó) — nó ngăn
-    // THIỆT HẠI, bằng cách từ chối lệnh ghi của worker có token cũ.
+    // Fencing is checked AT THE RESOURCE, after entering the critical section. That order
+    // is deliberate: fencing does NOT stop two workers entering (only the lock does that)
+    // — it stops the DAMAGE, by rejecting the write from the worker with the stale token.
     let accepted = true;
     if (USE_FENCE) accepted = (await fencedWrite(fence)) === 1;
 
