@@ -269,6 +269,23 @@ result between lessons, so a big batch defeats the point.
    `verify-series.py`. A lesson is not finished while the checker is red.
 7. **Refresh `task.md`** — `make-task.py`. Its tick marks come from the repo, so a
    stale `task.md` sends the next person to redo work that is already done.
+   **Stage only the files you touched — never `git add -A`.** More than one session
+   may be working in this repo at the same time, and `-A` sweeps whatever another
+   session has half-finished into your commit. This has already come close once: a
+   commit was made while eleven unrelated files sat modified in the working tree.
+
+List the paths explicitly:
+
+```bash
+git add blog/<series>/<slug>.html blog/<series>/en/<slug>.html \
+        blog/<series>/<script>.py sitemap.xml blog/search-index.json task.md \
+        .claude/skills/beginner-proof-series/series/<series>/lessons/<slug>.*
+```
+
+Run `git status --short` before committing and confirm every staged path is one
+you meant to change. Files you did not touch belong to someone else's work in
+progress — leave them alone rather than tidying them up.
+
 8. **Commit** with the lesson name in the subject and the findings in the body.
    Write down anything you deliberately left undone; the next person should learn
    it from the commit, not by rediscovering it.
