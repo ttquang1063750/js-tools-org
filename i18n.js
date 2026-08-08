@@ -657,17 +657,27 @@ const TRANSLATIONS = {
   // Wait for DOM
   document.addEventListener('DOMContentLoaded', () => {
     const btn = document.getElementById('langToggle');
-    if (btn) {
-      btn.addEventListener('click', () => {
-        const other = lang === 'vi' ? 'en' : 'vi';
-        if (hasTranslations && altLinks[other]) {
-          // Ghi lua chon lai truoc khi roi trang, de trang dich mo ra dung ngon ngu.
-          localStorage.setItem('lang', other);
-          window.location.href = altLinks[other];
-          return;
-        }
-        applyLang(other);
-      });
+    const other = lang === 'vi' ? 'en' : 'vi';
+
+    // Tren trang CO ban dich, doi ngon ngu la di sang MOT URL KHAC — nen day dung
+    // ra la mot LIEN KET, khong phai mot cai nut. Thay <button> bang <a href>:
+    //   - link khong the "bam ma khong di dau";
+    //   - chay duoc ca khi tat JavaScript;
+    //   - cong cu tim kiem doc duoc quan he giua hai ban dich.
+    // Nut JS chi con can cho trang CHUA co ban dich: o do khong ton tai URL nao
+    // de tro toi, nen buoc phai doi chu cua nav/footer tai cho.
+    if (btn && hasTranslations && altLinks[other]) {
+      const a = document.createElement('a');
+      a.id = 'langToggle';
+      a.className = btn.className;
+      a.href = altLinks[other];
+      a.rel = 'alternate';
+      a.hreflang = other;
+      // Ghi lua chon lai truoc khi roi trang, de trang dich mo ra dung ngon ngu.
+      a.addEventListener('click', () => localStorage.setItem('lang', other));
+      btn.replaceWith(a);
+    } else if (btn) {
+      btn.addEventListener('click', () => applyLang(other));
     }
     applyLang(lang, false);
   });

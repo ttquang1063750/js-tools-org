@@ -55,14 +55,28 @@ function makeDom({ htmlLang, alternates, savedLang, navLang }) {
   const store = { lang: savedLang };
   const nav = { pathname: '/start' };
 
+  // i18n.js thay <button> bang <a href> tren trang co ban dich, nen fake DOM phai
+  // ho tro createElement + replaceWith. `toggle` tro toi phan tu DANG nam trong
+  // cay — neu getElementById cu tra ve `btn` cu thi khang dinh se do nham phan tu
+  // da bi thay the va bao "dat" trong khi trang thuc te khong doi gi.
+  let toggle = btn;
+  btn.replaceWith = (n) => {
+    toggle = n;
+  };
   const doc = {
     documentElement: htmlEl,
+    createElement(tag) {
+      const e = el({});
+      e.tagName = tag.toUpperCase();
+      e.replaceWith = undefined;
+      return e;
+    },
     querySelectorAll(sel) {
       if (sel.includes('alternate')) return altEls;
       return [];
     },
     getElementById(id) {
-      return id === 'langToggle' ? btn : null;
+      return id === 'langToggle' ? toggle : null;
     },
     addEventListener(evt, fn) {
       if (evt === 'DOMContentLoaded') this._ready = fn;
@@ -81,7 +95,19 @@ function makeDom({ htmlLang, alternates, savedLang, navLang }) {
     window: nav,
     Date,
   };
-  return { sandbox, doc, htmlEl, btn, store, nav };
+  // `toggle` la getter, khong phai gia tri chup mot lan: sau replaceWith no phai
+  // tra ve phan tu MOI, neu khong test se do vao cai <button> da bi bo khoi cay.
+  return {
+    sandbox,
+    doc,
+    btn,
+    htmlEl,
+    store,
+    nav,
+    get toggle() {
+      return toggle;
+    },
+  };
 }
 
 function run(cfg) {
@@ -125,17 +151,23 @@ const ALT = [
 console.log('\n[1] Trang EN co ban dich, localStorage=vi — lang KHONG duoc ghi de');
 let d = run({ htmlLang: 'en', alternates: ALT, savedLang: 'vi', navLang: 'vi-VN' });
 check('html lang', d.htmlEl.lang, 'en');
-check('nhan nut (moi sang VI)', d.btn.title, 'Chuyển sang tiếng Việt');
+check('nhan nut (moi sang VI)', d.toggle.title, 'Chuyển sang tiếng Việt');
+check('nut la mot LIEN KET, khong phai <button>', d.toggle.tagName, 'A');
+check('href tro dung ban tieng Viet', d.toggle.href, 'https://js-tools.org/blog/aie/aie-js-to-python');
 
 console.log('\n[2] Trang VI co ban dich, localStorage=en — lang KHONG duoc ghi de');
 d = run({ htmlLang: 'vi', alternates: ALT, savedLang: 'en', navLang: 'en-US' });
 check('html lang', d.htmlEl.lang, 'vi');
-check('nhan nut (moi sang EN)', d.btn.title, 'Switch to English');
+check('nhan nut (moi sang EN)', d.toggle.title, 'Switch to English');
+check('href tro dung ban tieng Anh', d.toggle.href, 'https://js-tools.org/blog/aie/en/aie-js-to-python');
 
-console.log('\n[3] Bam nut tren trang EN — phai DIEU HUONG sang URL tieng Viet');
+console.log('\n[3] Trang EN co ban dich — dieu huong bang href, khong bang JS');
 d = run({ htmlLang: 'en', alternates: ALT, savedLang: 'en', navLang: 'en-US' });
-d.btn._click();
-check('dieu huong toi', d.navigatedTo, 'https://js-tools.org/blog/aie/aie-js-to-python');
+check('dich den nam trong href', d.toggle.href, 'https://js-tools.org/blog/aie/aie-js-to-python');
+// Trinh duyet tu di theo href, nen i18n.js KHONG duoc tu gan window.location:
+// lam ca hai la dieu huong hai lan va tao mot muc lich su rac.
+d.toggle._click();
+check('KHONG tu gan window.location', d.navigatedTo, undefined);
 check('localStorage duoc ghi truoc khi roi trang', d.store.lang, 'vi');
 
 console.log('\n[4] Trang KHONG co ban dich — giu hanh vi cu (doi chu, ghi de lang)');

@@ -175,7 +175,14 @@ for attr, val in [
         flags=re.S,
     )
 VI_URL, EN_URL = cfg['urlVi'], cfg['urlEn']
-head = head.replace(f'"{VI_URL}"', f'"{EN_URL}"')
+# CHI doi canonical va og:url. Truoc day dung replace chung cho moi lan xuat hien
+# cua VI_URL, nen no ghi de luon ca hreflang="vi" va x-default thanh URL tieng Anh.
+# Hau qua: hreflang vi va en tro CUNG mot URL, nut doi ngon ngu dieu huong ve chinh
+# trang dang xem, va nguoi dung thay "bam khong doi gi". build-lesson-en.py da sua
+# loi nay tu truoc — day la cho bi bo sot.
+head = head.replace(
+    f'<link rel="canonical" href="{VI_URL}" />', f'<link rel="canonical" href="{EN_URL}" />'
+).replace(f'<meta property="og:url" content="{VI_URL}" />', f'<meta property="og:url" content="{EN_URL}" />')
 if 'hreflang' not in head:
     head = head.replace(
         f'<link rel="canonical" href="{EN_URL}" />',

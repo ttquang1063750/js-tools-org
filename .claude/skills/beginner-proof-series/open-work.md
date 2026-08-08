@@ -42,13 +42,36 @@ truoc khi commit. Nho bat bien da co: **so lieu truoc/sau phai so theo LOAI loi 
 so luong, khong so nguyen van** — `check-lesson.js` bao loi kem `[Dong N]`, ma them
 bot dong se lam lech het so dong.
 
-### 3. Them kiem tra "chuyen ngon ngu hai chieu" vao verify-series.py
+### 3. ~~Nut doi ngon ngu la LINK, khong phai nut JS~~ — DA SUA
 
-Sau khi sua xong muc 1, ma hoa no thanh mot check de loi khong quay lai.
+Loi that su nguoi dung gap KHONG phai localStorage, ma la `build-hub-en.py` dung
+`head.replace(f'"{VI_URL}"', f'"{EN_URL}"')` — mot phep thay CHUNG, nen no ghi de
+luon `hreflang="vi"` thanh URL tieng Anh. Ket qua: `hreflang` vi va en tro CUNG
+mot URL, bam doi ngon ngu thi dieu huong ve chinh trang dang xem.
+`build-lesson-en.py` da sua loi nay tu truoc — hub bi bo sot.
+Bi anh huong: 2 trang hub (aie, sysdesign). Da sua bo dung + dung lai. 40/40 dung.
 
-Y tuong: voi moi cap trang VI/EN, xac nhan `hreflang` cua ban nay tro dung ban kia
-VA nguoc lai (hien tai check `hreflang` chi kiem bo ba co du, chua kiem tinh doi
-xung hai chieu giua hai file).
+Da doi nut thanh `<a href>` that (y kien cua nguoi dung): tren trang CO ban dich,
+`i18n.js` thay `<button>` bang `<a href>` lay tu `hreflang`. Link thi khong the
+"bam ma khong di dau", chay duoc khi tat JS, va cong cu tim kiem doc duoc.
+Trang CHUA co ban dich van dung nut JS — o do khong ton tai URL nao de tro toi.
+`.btn-lang` phai co `display: inline-block` + `text-decoration: none` cho the `<a>`.
+`i18n-locale-selftest.mjs`: 11 khang dinh, da negative-test (tro href sai locale
+thi truot dung 3 khang dinh).
 
-**Bat buoc negative-test** truoc khi tin: tiem mot `hreflang` tro sai roi xac nhan
-check bao do. Mot checker chi biet bao "dat" thi te hon la khong co.
+### 4. Con thieu: check hreflang doi xung o CAP FILE
+
+Muc 3 kiem phia JavaScript. Chua ai kiem cap file VI/EN co tro dung nhau khong —
+va do chinh la cho loi vua roi phat sinh. Bo kiem tam thoi da dung:
+
+```python
+alts = {h: u for h, u in (
+    (re.search(r'hreflang="([^"]+)"', t).group(1), re.search(r'href="([^"]+)"', t).group(1))
+    for t in re.findall(r'<link\s+rel="alternate"[^>]*>', s, re.S))}
+# SAI neu: thieu vi/en, hoac alts['vi'] == alts['en'], hoac '/en/' in alts['vi']
+```
+
+Luu y da tra gia mot lan: regex `hreflang="..." href="..."` tren MOT dong la sai —
+prettier ngat the `<link>` thanh nhieu dong, nen phai khop `<link ...>` voi `re.S`
+roi moi tach thuoc tinh. Ban dau toi bao oan mot trang thu ba "loi" chinh vi vay.
+Dua vao `verify-series.py`, kem negative-test.
