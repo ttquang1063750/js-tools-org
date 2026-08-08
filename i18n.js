@@ -622,9 +622,13 @@ const TRANSLATIONS = {
   // khong phai lua chon con luu trong localStorage.
   let lang = hasTranslations ? contentLang : saved || browser;
 
-  function applyLang(l) {
+  // persist=false cho lan ve dau tien. Truoc day lan ve dau cung ghi localStorage,
+  // nen chi can MO mot trang tieng Viet co ban dich la lua chon "English" cua nguoi
+  // dung bi ghi de thanh "vi" — ho doi ngon ngu xong, sang trang khac la mat.
+  // Chi ghi khi nguoi dung THUC SU bam nut.
+  function applyLang(l, persist = true) {
     lang = l;
-    localStorage.setItem('lang', l);
+    if (persist) localStorage.setItem('lang', l);
     if (!hasTranslations) document.documentElement.lang = l;
 
     const t = TRANSLATIONS[l];
@@ -665,6 +669,6 @@ const TRANSLATIONS = {
         applyLang(other);
       });
     }
-    applyLang(lang);
+    applyLang(lang, false);
   });
 })();

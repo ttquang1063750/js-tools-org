@@ -145,5 +145,19 @@ d.btn._click();
 check('khong dieu huong', d.navigatedTo, undefined);
 check('localStorage doi sang vi', d.store.lang, 'vi');
 
+console.log('\n[5] Mo trang VI co ban dich khi da chon "en" — KHONG duoc ghi de lua chon');
+d = run({ htmlLang: 'vi', alternates: ALT, savedLang: 'en', navLang: 'vi-VN' });
+check('localStorage van giu lua chon cua nguoi dung', d.store.lang, 'en');
+check('html lang van la cua trang', d.htmlEl.lang, 'vi');
+
+console.log('\n[6] Mo trang KHONG co ban dich — cung khong duoc ghi de');
+d = run({ htmlLang: 'vi', alternates: [], savedLang: 'en', navLang: 'vi-VN' });
+check('localStorage van giu "en"', d.store.lang, 'en');
+
+console.log('\n[7] Bam nut thi MOI duoc ghi');
+d = run({ htmlLang: 'vi', alternates: [], savedLang: 'en', navLang: 'vi-VN' });
+d.btn._click();
+check('sau khi bam, localStorage doi', d.store.lang, 'vi');
+
 console.log(fail === 0 ? '\n==> TAT CA DEU DAT\n' : `\n==> ${fail} KHANG DINH TRUOT\n`);
 process.exit(fail ? 1 : 0);
