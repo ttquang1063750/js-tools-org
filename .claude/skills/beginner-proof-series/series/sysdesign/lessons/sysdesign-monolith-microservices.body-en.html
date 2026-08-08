@@ -1,0 +1,494 @@
+            <p>
+              The question "should we split into microservices" usually gets answered by gut feeling, because the cost
+              of splitting is hard to picture until you have actually paid it. By this lesson we already have: Lesson 4
+              showed that every hop adds latency, Lesson 9 showed what eventual consistency feels like, Lesson 10 showed
+              how hard a distributed lock is, Lesson 11 showed why everything has to be idempotent. That is why this
+              lesson sits at position 15, not position 3.
+            </p>
+
+            <p>
+              The lab measures that cost in numbers. Same four-step use case, same amount of work per step: running in
+              one process gives p99 <strong>2.06 ms</strong> and 18,887 req/s; splitting it into HTTP calls gives p99
+              <strong>8.25 ms</strong> and 3,744 req/s — <strong>4 times</strong> slower at the tail and
+              <strong>5 times</strong> less throughput. With each service failing 1% of the time, an 8-hop chain
+              measures a success rate of <strong>92.18%</strong>, matching the 92.27% predicted by theory. And a saga
+              missing a compensating action left <strong>200 orders charged but never fulfilled</strong>, with not a
+              single error logged.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ Measurement setup</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. Three
+                <code>node:22-alpine</code> containers (app1/app2/app3), each capped at 1 CPU and 256 MB, calling each
+                other over Docker's internal network with HTTP keep-alive. The load generator is a hand-written
+                <code>loadgen.js</code>, 20 connections, closed-loop, 3-second warm-up.<br /><br />
+                The single most important thing about the method:
+                <strong>each step does exactly the same amount of work in both architectures</strong> — the same
+                <code>doUnitOfWork(w)</code> function — so any difference measured comes only from
+                <em>how it is called</em>. And that work is CPU-bound computation, not <code>sleep</code>: with
+                <code>sleep</code>, the cost of a hop would be swallowed by the wait and the measurement would flatter
+                microservices artificially.<br /><br />
+                All three containers sit on the same machine, so the network hop here is
+                <strong>cheaper than reality</strong> (no switch, no crossing an availability zone). Your real numbers
+                will be worse, not better.
+              </div>
+            </div>
+
+            <!-- ================= 15.1 ================= -->
+            <h2>15.1 Microservices solve an organizational problem, not a technical one</h2>
+
+            <p>
+              The first thing to say clearly, because it decides everything that follows: splitting a system up
+              <strong>does not make it faster</strong>. Section 15.2 proves the opposite with measurements. What
+              microservices actually solve are <em>people</em> problems:
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Problem</th>
+                  <th>How microservices help</th>
+                  <th>Can a modular monolith help too?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Two teams block each other on deploy</strong></td>
+                  <td>Each service deploys on its own, without waiting for anyone</td>
+                  <td><strong>No</strong> — still one pipeline, one release</td>
+                </tr>
+                <tr>
+                  <td><strong>Blurry ownership boundaries</strong></td>
+                  <td>A service boundary is a hard boundary nobody can accidentally reach across</td>
+                  <td>Yes, if module discipline is enforced with tooling</td>
+                </tr>
+                <tr>
+                  <td><strong>One hot part needs to scale on its own</strong></td>
+                  <td>Replicate just that service, not the whole system</td>
+                  <td><strong>No</strong> — replicating a monolith replicates everything</td>
+                </tr>
+                <tr>
+                  <td><strong>One part needs a different language or runtime</strong></td>
+                  <td>Each service picks its own technology</td>
+                  <td><strong>No</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Tangled code, hard to follow, one fix breaks another spot</strong></td>
+                  <td><em>Does not help</em> — tangled code split up is still tangled, plus a network</td>
+                  <td>Yes — this is exactly what modularization is for</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The last row is the most misunderstood. Very often the decision to "move to microservices" is really an
+              attempt to fix a tangled codebase, and it never fixes it — because the boundaries you draw are only as
+              good as your understanding of the domain at that moment, and if the code is already tangled that
+              understanding usually is not good enough yet. The result is tangled code spread across a network: still
+              tangled, now with debugging made harder.
+            </p>
+
+            <p>
+              This is also where <strong>Conway's law</strong> shows up: a system's structure tends to mirror the
+              communication structure of the organization that built it. The practical consequence: if your
+              organization has three teams with three clear responsibilities, three services is the natural shape; if
+              your organization has one five-person team, eight services are just eight folders scattered across eight
+              places — plus eight pipelines, eight dashboards, and eight on-call rotations.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: choosing microservices because it is "modern"</div>
+              <div class="callout__content">
+                For a five-person team, the operational cost of microservices dwarfs any benefit: every service needs
+                its own CI/CD, its own monitoring, its own alerts, its own on-call process, and a way to trace a request
+                as it travels through all of them (Lesson 16). Multiply all of that by the number of services — that is
+                real work, taking real time, while the headcount stays at five.<br /><br />
+                The cheapest sanity check: <strong>when was the last time a deploy was actually blocked by another
+                team?</strong> If you cannot remember, the problem you are about to solve with microservices may not
+                exist yet.
+              </div>
+            </div>
+
+            <!-- ================= 15.2 ================= -->
+            <h2>15.2 The measured cost</h2>
+
+            <p>
+              The lab runs the same four-step use case two ways. <code>mode=mono</code>: the four steps are four
+              function calls inside one process. <code>mode=micro</code>: the four steps are four HTTP requests to
+              other instances. The amount of work per step is identical.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Architecture</th>
+                  <th>Throughput</th>
+                  <th>p50</th>
+                  <th>p95</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Monolith</strong> — 4 function calls</td>
+                  <td>18,887 req/s</td>
+                  <td>0.97 ms</td>
+                  <td>1.89 ms</td>
+                  <td>2.06 ms</td>
+                </tr>
+                <tr>
+                  <td><strong>Microservices</strong> — 4 HTTP hops</td>
+                  <td>3,744 req/s</td>
+                  <td>5.18 ms</td>
+                  <td>6.09 ms</td>
+                  <td><strong>8.25 ms</strong></td>
+                </tr>
+                <tr>
+                  <td><em>Ratio</em></td>
+                  <td><em>5.0x less</em></td>
+                  <td><em>5.3x slower</em></td>
+                  <td><em>3.2x slower</em></td>
+                  <td><em>4.0x slower</em></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              And remember the measurement conditions: three containers <em>on the same machine</em>, no switch, no
+              crossing to a different availability zone. With Redis in Lesson 13 we already saw a Docker-internal
+              network round trip cost about 0.07 ms while a real round trip inside a data center costs 0.5–2 ms. Apply
+              that same order of magnitude here and four real hops would add several extra milliseconds, not fractions
+              of one.
+            </p>
+
+            <p>
+              But latency is not the most expensive part. The most expensive part is
+              <strong>cumulative availability</strong>: a chain only succeeds when <em>every</em> link succeeds, so
+              with $n$ services each available with probability $p$, the chain is only available $p^n$ of the time.
+            </p>
+
+            <p style="text-align: center">$$P_{\text{chain}} = p^{\,n}$$</p>
+
+            <p>The lab injects 1% errors into <em>every</em> step and counts the chain's real end-to-end success rate:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Number of hops</th>
+                  <th>Success (measured)</th>
+                  <th>Theory $0.99^n$</th>
+                  <th>p99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>98.95%</td>
+                  <td>99.00%</td>
+                  <td>3.08 ms</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>98.08%</td>
+                  <td>98.01%</td>
+                  <td>4.50 ms</td>
+                </tr>
+                <tr>
+                  <td>4</td>
+                  <td>96.01%</td>
+                  <td>96.06%</td>
+                  <td>9.04 ms</td>
+                </tr>
+                <tr>
+                  <td>8</td>
+                  <td><strong>92.18%</strong></td>
+                  <td>92.27%</td>
+                  <td><strong>16.52 ms</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The gap between measured and theoretical is under 0.1 percentage points at all four levels — the formula
+              is not a rough estimate, it accurately describes what is actually happening. Translated into operational
+              terms: five services each at 99.9% give you a chain of $0.999^5 \approx 99.5\%$, meaning downtime grows
+              from about <strong>43 minutes a month to about 3.6 hours a month</strong> — with no single service ever
+              violating its own SLO.
+            </p>
+
+            {{SVG:1}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: only looking at average latency when splitting a service</div>
+              <div class="callout__content">
+                In the measurement above, the mean for micro is 5.34 ms while p99 is 8.25 ms — looking at the mean
+                makes it feel like "just a few extra milliseconds," which sounds acceptable. But
+                <a href="sysdesign-latency-queueing">Lesson 1</a> already showed why that is the wrong number to look
+                at: when a request has to pass through $n$ services, the probability it hits <em>at least one</em> slow
+                service is $1-(1-p)^n$ — meaning each service's own p99 becomes part of the user's tail.<br /><br />
+                The two numbers you must look at together when splitting a service are <strong>p99</strong> and
+                <strong>cumulative error probability</strong>. Both get worse with every hop, and both are invisible on
+                an average-latency chart.
+              </div>
+            </div>
+
+            <!-- ================= 15.3 ================= -->
+            <h2>15.3 Crossing a service boundary means losing ACID</h2>
+
+            <p>
+              In a monolith, "create the order — charge the card — reserve the stock" lives inside one transaction:
+              either all three happen, or none of them do, and the database takes care of that. Once those three things
+              belong to three services with three databases, that transaction <strong>no longer exists</strong>.
+              Nothing at the infrastructure layer replaces it — you have to write the replacement yourself, and it is
+              called a <strong>saga</strong>: a chain of local transactions, each step paired with a
+              <strong>compensating action</strong> to undo it if a later step fails.
+            </p>
+
+            <p>
+              The lab builds a three-step saga across three real services, each holding its own data, then makes the
+              third step fail 200 times in a row:
+            </p>
+
+            {{CODE:ket_qua_saga.txt}}
+
+            <p>
+              Read the second result in business terms:
+              <strong>200 orders were created, 200 charges succeeded, and 0 times was inventory reserved</strong>. Two
+              hundred customers paid for something that will never arrive. No exception was thrown, no error line was
+              logged — every individual step reported success exactly because it did succeed. Only the
+              <em>whole</em> is wrong, and no single service stands anywhere that can see the whole.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: building a saga but forgetting the compensating action</div>
+              <div class="callout__content">
+                This is almost always the result of only thinking through the happy path. The failure path only runs
+                when something goes wrong, and something going wrong is rare — so the gap does not show up in tests, it
+                does not show up in staging, and in production it quietly accumulates.<br /><br />
+                What catches it is not an error log but <strong>a periodic reconciliation job</strong>: count orders in
+                the "paid" state, compare against orders in the "inventory reserved" state, and alert when the two
+                numbers diverge. If you have a saga with no reconciliation job, you have no way of knowing you are
+                drifting — the only question is how long before someone notices, usually a customer.
+              </div>
+            </div>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 Why not just pull in 2PC to "keep ACID"</div>
+              <div class="callout__content">
+                Two-phase commit (2PC) promises exactly what we just lost: one atomic transaction across multiple
+                databases. Its price is <strong>holding locks for the entire duration of both phases</strong>. That
+                means one slow service holds locks on <em>every</em> other service, and one service that dies right
+                after voting "ready" leaves a hung transaction that nobody is allowed to release.<br /><br />
+                Seen through the lens of <a href="sysdesign-cap-consistency">Lesson 9</a>: 2PC picks C and sacrifices A
+                hard — it turns the availability of the whole system into the availability of its weakest link, exactly
+                when you were trying to avoid that. A saga goes the other way: accept a window where data is not yet
+                consistent, in exchange for no service ever having to wait on another.<br /><br />
+                The saga's precondition: every step and every compensating action must be
+                <strong>idempotent</strong> (<a href="sysdesign-idempotency">Lesson 11</a>), because both will be
+                retried. A compensating action that runs twice and deducts stock twice is a worse bug than the one it
+                was meant to fix.
+              </div>
+            </div>
+
+            <!-- ================= 15.4 ================= -->
+            <h2>15.4 Where to cut</h2>
+
+            <p>
+              If you have decided to split, the next question decides success or failure: where the cut goes. There is
+              exactly one principle worth remembering — cut along <strong>business bounded contexts</strong>, meaning by
+              the <em>work</em> a part is responsible for, not by technical layer. And every service
+              <strong>owns its own data</strong>: no service reads another service's tables directly.
+            </p>
+
+            {{SVG:2}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: several services sharing one database</div>
+              <div class="callout__content">
+                This is the most common "split" because it is the easiest — the code gets split into several processes
+                but they all still point at one database. The result is
+                <strong>the worst of both worlds</strong>: coupling is untouched (changing one column means fixing
+                every service that reads it, and you cannot be sure how many services that is), yet the transaction is
+                gone (each service has its own connection, so there is no longer one shared transaction scope).<br /><br />
+                The blunt test: <strong>can you drop a table without asking another team first?</strong> If not, that
+                is not a service yet — that is a module that got pushed across a network.
+              </div>
+            </div>
+
+            <!-- ================= 15.5 ================= -->
+            <h2>15.5 The practical path, and when not to split</h2>
+
+            <p>
+              The lowest-risk path is almost always: start with a <strong>modularized monolith</strong> — one process,
+              but with clear module boundaries enforced by tooling (dependency checks in CI, banning cross-imports).
+              That boundary gives you most of the organizational benefit without paying a cent for network hops, sagas,
+              or tracing. Then only split out of the process when you see a
+              <em>concrete signal</em>:
+            </p>
+
+            <ul>
+              <li>One part has scaling needs very different from the rest (image processing versus plain CRUD, say).</li>
+              <li>
+                Two teams are genuinely blocking each other on deploy — measured by the number of releases actually
+                delayed, not by a gut feeling.
+              </li>
+              <li>One part needs a different runtime or different compliance requirements (card data, health data).</li>
+              <li>One part has a different risk profile: you want it to be able to fail on its own, not take the rest
+                down with it.</li>
+            </ul>
+
+            <p>
+              When you do split, use the <strong>strangler fig</strong> approach: put a routing layer in front (this is
+              exactly the API gateway from <a href="sysdesign-api-gateway">Lesson 4</a>), move one route at a time to
+              the new service, and keep the rest inside the monolith. This lets you roll back a step at a time and there
+              is never a "big bang" day. A full rewrite is the opposite: you have to guess every boundary correctly on
+              the very first try, while the thing you are missing is exactly the understanding of those boundaries.
+            </p>
+
+            {{SVG:3}}
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Multiply operational cost by the number of services before deciding</div>
+              <div class="callout__content">
+                Every service needs: a CI/CD pipeline, a dashboard, a set of alerts, an on-call process, an API
+                versioning strategy, and a place in the tracing system (Lesson 16). With one service that is work you
+                have already done. With eight services that is eight times over — and unless headcount grows too, that
+                time gets subtracted directly from time spent building features.<br /><br />
+                A rough but useful rule of thumb: if you cannot automate spinning up a new service (repo, pipeline,
+                monitoring, alerts) in under an hour, you are not ready for a fourth service.
+              </div>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">🚨 A wrong cut is far more expensive than splitting late</div>
+              <div class="callout__content">
+                Splitting late costs you a stretch of time living with a slightly-too-large monolith. A wrong cut leaves
+                you with two services constantly calling each other back and forth for every operation — and fixing
+                that means merging them back or migrating data between two live databases, i.e. a project of its own,
+                with downtime, with real risk of data loss.<br /><br />
+                So the asymmetry is clear:
+                <strong>the cost of waiting longer is linear, the cost of cutting wrong is a step function</strong>.
+                When you are not sure about the business boundary, waiting is the better bet in expectation — and while
+                you wait, build that boundary as a module first, to test whether it actually holds up.
+              </div>
+            </div>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              Microservices solve an organizational problem — independent deploys, clear ownership boundaries, scaling
+              a hot part on its own — not a performance problem. The measurements say the opposite: same four-step use
+              case, splitting it makes p99 <strong>4 times</strong> worse and throughput <strong>5 times</strong> lower,
+              on three containers on the same machine where the network hop is cheaper than reality.
+            </p>
+
+            <p>
+              The part that costs more than latency is cumulative availability, and it has an exact formula rather than
+              a rough estimate: the measured success rate (98.95% / 98.08% / 96.01% / 92.18% for 1/2/4/8 hops) matches
+              $0.99^n$ to within 0.1 percentage points. Five services each at 99.9% give you 99.5% — from about 43
+              minutes to about 3.6 hours of downtime a month, with no single service ever violating its own SLO.
+            </p>
+
+            <p>
+              Crossing a service boundary means losing ACID, and its replacement — the saga — only works if you
+              actually write the compensating action. Skip it and the system reports no error at all: the lab left
+              <strong>200 orders charged and 0 times inventory reserved</strong>, with every single step reporting
+              success. What catches that is a reconciliation job, not an error log.
+            </p>
+
+            <p>
+              On where to cut: cut along business bounded contexts, each service owns its own data, and accept
+              deliberate data duplication. Cutting by technical layer or sharing one database produces a distributed
+              monolith — paying the full cost of distribution while getting none of the benefit. And because the cost
+              of waiting is linear while the cost of a wrong cut is a step function, a modularized monolith is the
+              better bet whenever you are not sure.
+            </p>
+
+            <p>
+              <strong>Lesson 16</strong> solves the problem this lesson just created: once a request crosses four
+              services, how do you know which hop ate the time and where it broke. Without measuring that, you cannot
+              catch a cascading failure — which is why observability has to come before Lesson 17.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a
+                    href="https://martinfowler.com/articles/microservices.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Martin Fowler &amp; James Lewis — Microservices: the article that shaped the term, source for
+                    section 15.1's organizational-versus-modular distinction
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Conway%27s_law" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Conway's law: source for the claim that system structure mirrors organizational
+                    structure in section 15.1
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://learn.microsoft.com/en-us/azure/architecture/patterns/saga"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Microsoft Azure Architecture Center — Saga pattern: the official description of compensating
+                    actions, source for section 15.3
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Two-phase_commit_protocol"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Wikipedia — Two-phase commit protocol: the mechanism and the cost of holding locks through both
+                    phases, source for the "Why not just pull in 2PC" callout in section 15.3
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://martinfowler.com/bliki/BoundedContext.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Martin Fowler — Bounded Context: the DDD concept used as the cutting principle in section 15.4
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://martinfowler.com/bliki/StranglerFigApplication.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Martin Fowler — StranglerFigApplication: the pattern for migrating gradually from a monolith to a
+                    new service, source for section 15.5
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the practice source code</h3>
+              <p>
+                The lab app used in this lesson: the same four-step use case runnable in both
+                <code>mode=mono</code> and <code>mode=micro</code>, plus a <code>/saga</code> endpoint with and without
+                the compensating action — every number in this lesson comes from this file:
+              </p>
+              <a
+                href="../sysdesign-lab/app/app.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download app.js (/chain and /saga endpoints — 0 dependencies)
+              </a>
+            </div>
