@@ -317,8 +317,16 @@ if (!canonicalMatch) {
 // 8. JSON-LD syntax check (chỉ bắt buộc với trang bài học)
 // ----------------------------------------------------
 const jsonLdMatch = rawHTML.match(/<script\s+type="application\/ld\+json">([\s\S]*?)<\/script>/i);
+// Trang stub tiếng Anh (`noindex`, thân bài chỉ có "coming soon") KHÔNG được khai
+// JSON-LD: khai `BlogPosting` ở đó là nói với Google rằng đã tồn tại một bài tiếng
+// Anh hoàn chỉnh, trong khi trang chưa có nội dung nào. Nhận diện bằng chính thẻ
+// `noindex` — không dựa vào đường dẫn, vì `/en/` cũng chứa cả bài đã dịch thật.
+const isNoindexStub = /<meta\s+name="robots"\s+content="[^"]*noindex/i.test(rawHTML);
+
 if (!jsonLdMatch) {
-  if (isLessonPage) {
+  if (isNoindexStub) {
+    reportPass('JSON-LD', 'Trang stub noindex không được khai JSON-LD — bỏ qua.');
+  } else if (isLessonPage) {
     reportError('JSON-LD', 'Không tìm thấy khối script Dữ liệu cấu trúc JSON-LD.');
   } else {
     reportPass('JSON-LD', 'Trang Hub/Simulator/Playground không yêu cầu JSON-LD — bỏ qua.');

@@ -15,32 +15,36 @@ Chi ghi khi nguoi dung THUC SU bam nut.
 Da them 4 khang dinh vao `i18n-locale-selftest.mjs` va negative-test: khoi phuc
 hanh vi cu thi truot dung khang dinh do.
 
-### 2. Tao trang stub tieng Anh — CAN XEM LAI CO CON CAN KHONG
+### 2. ~~Tao trang stub tieng Anh~~ — DA XONG
 
-So lieu da dem duoc: **350 trang tieng Viet, chi 35 co ban EN**, va chung chi
-thuoc 2 series — `aie` (21) va `sysdesign` (14). Con **315 trang chua co**, trai
-khap 12+ series (ai, webgl, canvas, electronics, sql, embedded, cpp, vlsi, dsp,
-cpu, js, aisys...).
+298 stub duoi `blog/<series>/en/`, sinh boi
+`.claude/skills/beginner-proof-series/build-stub-en.py` (co `--dry-run`,
+`--vi-only`, va nhan duong dan de gioi han pham vi mot series).
 
-Muc 1 da sua xong loi chuyen ngon ngu, va no KHONG can trang stub — nut doi ngon
-ngu gio hoat dong hai chieu tren ca 390 trang co header. Nen truoc khi sinh 315
-trang, hay xac dinh lai con van de gi that su chua giai quyet.
+Tieu chi chon trang la MAY MOC, khong theo ten file: trang nao co `#langToggle`
+thi can ban EN. 12 trang app nhung (sandbox, visualizer, playground) khong co nut
+nen khong can — dung ten file de doan thi da phan loai sai `canvas-physics-simulation`
+va `vectordb-similarity-metrics`, hai bai hoc that.
 
-Y dinh ban dau: sinh san trang EN co header/footer that, body ghi "coming soon".
+Phat hien them, va la loi that: **91 trang tieng Viet dang khai `<html lang="en">`**
+(tron cac series bash, c, canvas, cpp, js, webgl). `i18n.js` doc chinh thuoc tinh
+do lam `contentLang`, nen neu de nguyen thi sau khi them hreflang chung se hien
+chrome tieng Anh va bam "sang tieng Viet" lai nhay sang stub. Da sua het.
 
-**Hai chot chan bat buoc phai co NGAY tu khi sinh** — 315 trang gan giong het
-nhau la thin content, khong phai vo hai:
+Hai chot chan da co: `noindex, follow` tren ca 298 stub; `sitemap.xml` khong doi
+mot dong. `check-lesson.js` duoc day them ngoai le: trang `noindex` KHONG duoc khai
+JSON-LD (khai `BlogPosting` o trang chua co noi dung la noi voi Google rang da ton
+tai ban tieng Anh day du). Ngoai le nhan dien bang chinh the `noindex`, khong dua
+vao duong dan `/en/` — vi `/en/` con chua ca 40 ban dich THAT.
 
-- `<meta name="robots" content="noindex">` tren moi stub. Go ra khi co noi dung that.
-- **KHONG dua stub vao `sitemap.xml`.** Sitemap la loi moi lap chi muc.
-
-Van nen co `hreflang` (do chinh la thu lam nut hoat dong hai chieu), nhung di kem
-`noindex` de khong tu nhan "day la ban tieng Anh day du".
-
-Khi lam: dung script sinh hang loat, va chay `check-lesson.js` tren toan bo dau ra
-truoc khi commit. Nho bat bien da co: **so lieu truoc/sau phai so theo LOAI loi va
-so luong, khong so nguyen van** — `check-lesson.js` bao loi kem `[Dong N]`, ma them
-bot dong se lam lech het so dong.
+Hai bai hoc phai tra gia trong lan nay:
+- `deepen()` chi sua duong dan co `../`. Script cung thu muc (`src="<slug>.js"`,
+  `vendor/sql-wasm.js`) bi giu nguyen nen tro vao `en/` va 404 — o CA `<head>` lan
+  cuoi trang. Stub khong co demo nao de chung dieu khien nen bo han la dung.
+- Dung chay `prettier --write` tren 298 trang VI. Lan dau toi lam vay, diff phong
+  len va lan sang toan bo than bai. So theo LOAI loi voi `git show HEAD:<file>` cho
+  thay khac biet duy nhat la lo Prettier — moi loi noi dung deu co san tu truoc.
+  Da hoan nguyen; diff cuoi cung chi con `lang` + 3 dong hreflang moi file.
 
 ### 3. ~~Nut doi ngon ngu la LINK, khong phai nut JS~~ — DA SUA
 
