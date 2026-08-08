@@ -1,0 +1,545 @@
+
+            <p>
+              Every system in this series so far has stored the <em>current state</em>: the balance is 100, the
+              avatar is <code>avatar-v3.png</code>, the order is in the <code>shipped</code> state. Every time
+              something changes, we overwrite the old value. This lesson reverses that: store the
+              <strong>sequence of things that happened</strong>, and treat the current state as merely something
+              computed from that sequence.
+            </p>
+
+            <p>
+              The lab builds a real event store on PostgreSQL with 200,000 events. Three measurements stand out.
+              First, a projection that is <em>not</em> idempotent, run a second time, produces a balance
+              <strong>exactly 2.00 times too high</strong> — 9,132,892 instead of 4,566,446 — with no error thrown
+              at all; the read model is simply wrong. Second, rebuilding the entire read model from 200,000 events
+              takes <strong>235 ms</strong> when replayed in application code, meaning replay at this scale is
+              routine, not an emergency operation. Third, a snapshot makes a long aggregate <strong>6.6 times</strong>
+              faster but makes a short aggregate <strong>slower</strong> — it is a conditional tool, not a mandatory
+              step.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">ℹ️ The measurement machine</div>
+              <div class="callout__content">
+                Apple M1 Max, 10 cores, 32 GB RAM, macOS 26.5.2, Docker 29.6.2. PostgreSQL 18 in a native arm64
+                container, limited to 1 CPU and 512 MB RAM; the worker runs <code>node:22-alpine</code>, no
+                dependencies, reusing <code>minipg.js</code> — the hand-written PostgreSQL client from
+                <a href="sysdesign-replication">Lesson 7</a>.<br /><br />
+                All the figures come from <code>worker/eventstore.js</code> with 200,000 events spread across 1,000
+                aggregates. Both the database and the worker sit on the same machine, so the millisecond figures
+                here <strong>do not include real network cost</strong>; read them as ratios between the options, not
+                as absolute values for your own system.
+              </div>
+            </div>
+
+            <!-- ================= 14.1 ================= -->
+            <h2>14.1 State is the result of history</h2>
+
+            <p>
+              The same bank account, two ways to store it. The familiar way: one row, a
+              <code>balance = 100</code> column, every transaction is an <code>UPDATE</code>. The event-sourcing
+              way: three rows, <code>Deposited(+50)</code>, <code>Deposited(+70)</code>,
+              <code>Withdrawn(-20)</code>, and 100 is the number we add up when we need it.
+            </p>
+
+            <p>
+              This bank account is an example of a concept that recurs throughout the lesson: an
+              <strong>aggregate</strong> — the unit that an event history is grouped around, each with its own
+              sequence of events and its own version number, entirely separate from every other unit. Your account
+              is one aggregate; someone else's account is a different aggregate with its own event sequence. An
+              order, a shopping cart, an insurance policy — each of those is an aggregate in exactly this sense too.
+              By contrast, a row of system configuration or an entry in a product catalog usually does not need to
+              become an aggregate this way: nobody needs to know who changed a product's description three months
+              ago — see the pitfall right below.
+            </p>
+
+            <p>
+              The difference is not which way is "more correct" but what each preserves and what each loses. From a
+              sequence of events, you can always compute the current state. From the current state, you
+              <em>cannot</em> reconstruct the history — that information was overwritten by the <code>UPDATE</code>
+              and no longer lives anywhere. This transformation is one-way, and event sourcing's entire value sits
+              in the direction that gets lost.
+            </p>
+
+            {{SVG:1}}
+
+            <p>
+              Three abilities come nearly free from storing data this way. <strong>A full audit trail</strong>: every
+              change is a row with a timestamp and a cause, not an <code>updated_at</code> column that just says
+              "something changed". <strong>Debugging by rewinding</strong>: fold the log up to the exact moment
+              right before the incident and look at the state then, instead of guessing from application logs.
+              <strong>Answering questions nobody thought to ask at design time</strong> — and this is the most
+              valuable ability: when the business side asks "how many people deposited money and then withdrew it
+              all within 24 hours", with a state table you have to answer "we don't store that data"; with an event
+              log, the answer is already sitting in the history.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: applying event sourcing to ordinary CRUD</div>
+              <div class="callout__content">
+                For a settings table, a product catalog, a user profile form — <em>nobody</em> needs to know what the
+                "description" field used to say three months ago. In exchange, every engineer who touches that part
+                of the system has to understand events, projections, replay, versioning; every simple query becomes
+                an architecture question; and a <code>SELECT</code> that should have been one line now has to go
+                through a read model.<br /><br />
+                The test question: <strong>has anyone ever asked you "what was this value before"?</strong> If not,
+                and there is no legal requirement to keep history, you are paying a very high price for an ability
+                nobody uses. Event sourcing usually only earns its keep for a handful of core aggregates — money,
+                orders, permissions — not for the whole system.
+              </div>
+            </div>
+
+            <!-- ================= 14.2 ================= -->
+            <h2>14.2 Events are immutable facts</h2>
+
+            <p>
+              One very small naming convention decides almost everything that follows: events are named in the
+              <strong>past tense</strong>. <code>OrderPlaced</code>, not <code>PlaceOrder</code>. The second one is
+              a <em>command</em> — a request, which can be rejected, which can fail. The first one is a
+              <em>fact</em> — it already happened, and there is no way to make it not have happened.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Command</th>
+                  <th>Event</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Naming</strong></td>
+                  <td><code>PlaceOrder</code>, <code>Withdraw</code></td>
+                  <td><code>OrderPlaced</code>, <code>Withdrawn</code></td>
+                </tr>
+                <tr>
+                  <td><strong>Can it be rejected?</strong></td>
+                  <td>Yes — validation, insufficient balance, insufficient permission</td>
+                  <td>No — it already happened</td>
+                </tr>
+                <tr>
+                  <td><strong>Number of recipients</strong></td>
+                  <td>Exactly one — the handler that processes it</td>
+                  <td>As many as you like — every projection is a listener</td>
+                </tr>
+                <tr>
+                  <td><strong>Fixing a mistake</strong></td>
+                  <td>Don't send it, or send it again</td>
+                  <td>Write a <strong>compensating event</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The last row is the one violated most often. When you discover an event recorded the wrong amount,
+              the natural reflex is to <code>UPDATE</code> it to the correct value. Don't. Write a new
+              <code>AmountCorrected</code> event — exactly the way an accountant never erases an entry but always
+              writes a reversing entry. The reason is not purity but very practical: every projection already built
+              from the old event still exists, and every projection built in the future will read the corrected
+              one. The two worlds no longer agree, and nobody can trace why.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">
+                ⚠️ Pitfall: running <code>UPDATE</code> on the event table to "quickly fix a bug"
+              </div>
+              <div class="callout__content">
+                This is the most thoroughly destructive mistake in this lesson, and it always starts with good
+                intentions: one event was recorded wrong, fixing one row seems like it settles it. But the entire
+                model rests on exactly one assumption — the log is <strong>immutable</strong>. Drop that assumption
+                and replay no longer reconstructs the past faithfully, two read models built at two different times
+                give two different results, and the audit trail — the main reason you chose event sourcing — becomes
+                something you cannot trust.<br /><br />
+                The cheapest and most effective defense: <strong>revoke</strong> <code>UPDATE</code> and
+                <code>DELETE</code> privileges on the event table at the database layer, so even you cannot do it,
+                not even at 3 in the morning. This lab's entire <code>worker/eventstore.js</code> does not have a
+                single <code>UPDATE</code> statement touching the <code>events</code> table — that is a
+                self-imposed constraint, and it is the precondition for every number in this lesson being
+                reproducible.
+              </div>
+            </div>
+
+            <p>
+              Immutability throws in one more thing for free: <strong>optimistic concurrency control</strong>. If
+              every event carries a version number within its aggregate, and there is a
+              <code>UNIQUE(aggregate, version)</code> constraint, then two processes that both read "the account is
+              at version 1" and both try to write version 2 will produce exactly one winner. The lab runs exactly
+              that scenario:
+            </p>
+
+            {{CODE:ket_qua_concurrent.json}}
+
+            <p>
+              Worth comparing with an ordinary state table: two <code>UPDATE balance = ...</code> commands running
+              at the same time mean the later one overwrites the earlier one, both report success, and
+              <strong>nobody knows a change went missing</strong>. Here, the loser gets an error immediately — and
+              "getting an error immediately" is something you can act on: reread the latest version, reapply the
+              business rule, retry. This is exactly the lost update that
+              <a href="sysdesign-distributed-lock">Lesson 10</a> had to use a distributed lock to avoid; here it is
+              blocked by a single <code>UNIQUE</code> constraint, with no lock at all.
+            </p>
+
+            <!-- ================= 14.3 ================= -->
+            <h2>14.3 Projections: read the log, build a read table</h2>
+
+            <p>
+              Nobody queries the event log directly to render a UI — folding up several thousand events on every
+              page load is not viable. Instead, a <strong>projection worker</strong> reads the log and builds tables
+              that are already optimized for each screen. A balances table is one projection. A recent-transactions
+              list is another projection. A monthly report is a third projection. All three are built from
+              <em>the same</em> log.
+            </p>
+
+            {{SVG:2}}
+
+            <p>Lab measures both ways to build a read model from 200,000 events:</p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Replay method</th>
+                  <th>Time</th>
+                  <th>Speed</th>
+                  <th>When it matches reality</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>One <code>SQL GROUP BY</code></td>
+                  <td>43 ms</td>
+                  <td>~4.6 million events/s</td>
+                  <td>Only when the projection folds down to one aggregation</td>
+                </tr>
+                <tr>
+                  <td>Pull into the application and fold in code</td>
+                  <td>235 ms <em>(174 ms is pulling the data)</em></td>
+                  <td>~850 thousand events/s</td>
+                  <td>Closer to reality — a real projection has business rules, branching by event type</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The number worth remembering is the second one, and it says this: at a scale of hundreds of thousands
+              of events, rebuilding the entire read model is a matter of <em>a few hundred milliseconds</em>. At a
+              scale of hundreds of millions, the same speed gives a few minutes. Both fall in the range of "runs
+              during business hours", not "needs a maintenance window scheduled". That is why "fix the bug and
+              replay" is a true statement rather than a slogan.
+            </p>
+
+            <p>
+              But it is only true when the projection is <strong>idempotent</strong>. The lab runs exactly one naive
+              projection — the kind that simply accumulates every event it reads — and then runs it a second time:
+            </p>
+
+            {{CODE:ket_qua_replay2x.json}}
+
+            <p>
+              The most alarming detail is not the doubled number but the line <code>"ms": 39</code>: the wrong run
+              <em>succeeded</em>, faster than the first run, with no warning at all. The read model is simply wrong
+              from that second onward. The idempotent version applies <strong>0 events</strong> on the second run
+              and finishes in 1 ms — because it remembers which <code>seq</code> it already processed.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a non-idempotent projection</div>
+              <div class="callout__content">
+                You will replay <em>unintentionally</em>, not on purpose. A worker gets restarted mid-run, a deploy
+                runs two versions at once for a few seconds, a cron job overlaps with itself, a message queue
+                redelivers an event already delivered (<a href="sysdesign-message-queue">Lesson 12</a> —
+                at-least-once is unavoidable). Every one of those situations leads to the same thing: one event gets
+                applied twice.<br /><br />
+                This is exactly why <a href="sysdesign-idempotency">Lesson 11</a> had to come before this lesson. The
+                two cheapest ways to be idempotent: store a <strong>checkpoint</strong> (the <code>last_seq</code>
+                already processed, as the lab does), or write the update as <strong>setting a value</strong> instead
+                of <strong>accumulating</strong> (<code>SET balance = &lt;recomputed total&gt;</code> instead of
+                <code>SET balance = balance + x</code>). Accumulation is never idempotent.
+              </div>
+            </div>
+
+            <!-- ================= 14.4 ================= -->
+            <h2>14.4 CQRS: splitting the write path from the read path</h2>
+
+            <p>
+              Once you have an event log and projections, the system naturally splits into two halves with two
+              quite different sets of requirements. CQRS (Command Query Responsibility Segregation) is just the
+              name for acknowledging that split and designing for it properly.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>WRITE path (command)</th>
+                  <th>READ path (query)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>What it does</strong></td>
+                  <td>Validate business rules, produce an event, append it</td>
+                  <td>Read a table already built for the right screen</td>
+                </tr>
+                <tr>
+                  <td><strong>Optimized for</strong></td>
+                  <td>Correctness and order</td>
+                  <td>Read speed — data duplication is perfectly fine</td>
+                </tr>
+                <tr>
+                  <td><strong>How it scales</strong></td>
+                  <td>Hard — order within each aggregate must be preserved</td>
+                  <td>Easy — replicate as many read copies as you want (Lesson 7)</td>
+                </tr>
+                <tr>
+                  <td><strong>Consistency</strong></td>
+                  <td>Strong — enforced by the database</td>
+                  <td><strong>Eventual</strong> — always a beat behind the log</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The last row is the one you pay for. The read model is built <em>after</em> the event has been
+              written, so there is always a window where the log already has the event but the read table does not
+              yet. That window is usually a few milliseconds and nobody notices — except exactly one person: the one
+              who just clicked the button.
+            </p>
+
+            {{SVG:3}}
+
+            <div class="callout callout--warning">
+              <div class="callout__title">🚨 This is Lesson 7's read-your-writes bug, at the architecture level</div>
+              <div class="callout__content">
+                <a href="sysdesign-replication">Lesson 7</a> ran into exactly this phenomenon between a primary and a
+                replica: write, then read immediately, and see stale data. There, a neat fix existed — pin the
+                just-written user's read to the primary for a few hundred milliseconds.<br /><br />
+                With CQRS, <strong>that fix does not exist</strong>, because the read model is not a slow copy of the
+                write table — it has an <em>entirely different structure</em>, and there is no "primary" to pin back
+                to. Three approaches are commonly used instead: (1) the write path always returns the computed
+                result, and the UI uses it without reading again; (2) <strong>optimistic update</strong> — the UI
+                draws the new state itself and syncs later; (3) the write path returns a version number, and the UI
+                waits until the read model reaches that version before reading. What they share: all three must be
+                designed <em>from the start</em> at the UI layer — they cannot be patched in afterward.
+              </div>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 CQRS does not require event sourcing</div>
+              <div class="callout__content">
+                These two concepts get bundled together far too often. You can absolutely do CQRS on an ordinary
+                relational database: the write path works against normalized tables, the read path uses a few
+                denormalized tables kept up to date by triggers or a background job. That is still CQRS, and it is
+                much cheaper.<br /><br />
+                The reverse is true too: you can have event sourcing without CQRS if you only need a single read
+                model. The expensive part is event sourcing, not CQRS — so if your problem is simply "reads are
+                slow", try CQRS first and keep your current way of storing state.
+              </div>
+            </div>
+
+            <!-- ================= 14.5 ================= -->
+            <h2>14.5 Running it for real: snapshots, schema change, and what you lose</h2>
+
+            <p>
+              Section 14.3 said replaying 200,000 events takes 235 ms. But that was replaying
+              <em>the whole system</em> to build a read model — a rare event. The more frequent job is reading the
+              current state of <em>one</em> aggregate to process a command, and once an aggregate accumulates tens
+              of thousands of events, folding it from scratch every time is unacceptable. A snapshot is the answer:
+              store the state at version N ahead of time, then fold only the events after it.
+            </p>
+
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Aggregate</th>
+                  <th>Fold from scratch</th>
+                  <th>Snapshot + tail</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Long</strong> — 100,000 events, snapshot at v90,000</td>
+                  <td>7.398 ms</td>
+                  <td><strong>1.120 ms</strong></td>
+                  <td>Faster by <strong>6.6 times</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Short</strong> — 200 events, snapshot at v180</td>
+                  <td><strong>0.377 ms</strong></td>
+                  <td>0.981 ms</td>
+                  <td><strong>Slower by 2.6 times</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p>
+              The second result is the more memorable one. For a short aggregate, a snapshot <em>makes it
+              slower</em> — because it adds one more round of querying (read the snapshot, then read the tail), and
+              the cost of that round is larger than what it saves. A snapshot is not a mandatory step of event
+              sourcing; it is a conditional optimization, and the condition is that the aggregate has to be long
+              enough. The right approach is to measure the distribution of aggregate length in your own system and
+              set a threshold, instead of turning on snapshots for everything.
+            </p>
+
+            <div class="callout callout--deep">
+              <div class="callout__title">🔬 A snapshot is a cache, and every rule of caching applies</div>
+              <div class="callout__content">
+                A snapshot can be deleted at any time with no data loss — rebuilding it from the log is fine. That
+                means it <strong>is a cache</strong>, and everything from <a href="sysdesign-caching">Lesson 5</a>
+                applies without exception: it needs an invalidation strategy (change the folding rules and every old
+                snapshot becomes garbage), it can drift (a snapshot written from a buggy version of the code carries
+                that bug into every subsequent read), and it costs storage.<br /><br />
+                The most important practical consequence: when you fix the event-folding logic, you must
+                <strong>delete every snapshot</strong> at the same time you deploy. Skip this step and the system
+                will mix state computed under the old rules (from the snapshot) with events folded under the new
+                rules (the tail) — a kind of error that is very hard to spot because it only shows up on aggregates
+                that already have a snapshot.
+              </div>
+            </div>
+
+            <p>
+              The second operational issue is that <strong>event schemas change over time</strong>. Last year's
+              event had an <code>amount</code> field in dong; this year you add <code>currency</code>. The log is
+              immutable so you cannot edit the old events — instead, the reading code has to understand both
+              formats, usually through an <strong>upcasting</strong> layer: read an old-version event and lift it
+              into the new shape right at load time. That layer <em>only ever grows</em> over the years and can
+              never be deleted — it is a real debt, and it needs to be counted into the cost from the moment you
+              decide.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: losing the ability to query freely</div>
+              <div class="callout__content">
+                With a state table, the question "which accounts have a negative balance" is one
+                <code>WHERE balance &lt; 0</code>. With a plain event log, that question has no direct answer — the
+                balance does not exist anywhere until someone folds the log. You can only answer questions you have
+                <strong>already built a projection</strong> for.<br /><br />
+                For whoever operates the system, this is genuinely painful: every question that comes up mid-incident
+                turns into "write a new projection, then wait for the replay". A common way to reduce the pain is to
+                always keep one flat "current state" read model around, close enough to the relational model to
+                query freely — but then you are paying the cost of both models at once, and that is a trade-off
+                worth stating up front, not discovering afterward.
+              </div>
+            </div>
+
+            <h3>Reproduce the measurements yourself</h3>
+
+            {{CODE:reproduce_measurements.sh}}
+
+            <h3>In summary</h3>
+
+            <p>
+              Event sourcing changes the question "what is the current state" into "what happened". That
+              transformation is one-way: from the log you can always compute the state, from the state you cannot
+              reconstruct the log. All the value — full audit trail, rewinding to debug, answering questions nobody
+              thought to ask at design time — sits in the direction that gets lost.
+            </p>
+
+            <p>
+              The price is real too and needs saying in full: every engineer who touches that part has to learn one
+              more model; the upcasting layer only ever grows over the years; and ad-hoc querying — the cheapest
+              thing with a relational table — turns into "write a new projection, then wait for the replay". That is
+              why event sourcing usually only earns its keep for a handful of core aggregates, not the whole system.
+            </p>
+
+            <p>
+              On operations, two numbers are worth carrying with you. Replaying 200,000 events in application code
+              takes <strong>235 ms</strong> — fast enough that "fix the bug and rebuild the read model" is a
+              business-hours task, and that is this model's real superpower. But it is only true when the projection
+              is idempotent: the naive version, run a second time, produces a balance
+              <strong>exactly 2.00 times too high</strong>, successfully, faster than the first run, with no
+              warning at all.
+            </p>
+
+            <p>
+              And a snapshot is not a mandatory step but a conditional optimization: 6.6 times faster with a
+              100,000-event aggregate, but <em>slower</em> by 2.6 times with a 200-event aggregate. It is a cache, so
+              every rule of caching from Lesson 5 applies without exception — including the most annoying one:
+              change the logic and you must wipe every snapshot at the same time you deploy.
+            </p>
+
+            <p>
+              <strong>Lesson 15</strong> steps back to look at the whole picture: after paying for network hops,
+              distributed locks, idempotency, and eventual consistency yourself, you finally have enough evidence to
+              weigh the question every team runs into — whether to split a system into microservices, and what that
+              split actually costs. This time the cost will be <em>measured</em>, not guessed at.
+            </p>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <a href="https://martinfowler.com/eaaDev/EventSourcing.html" target="_blank" rel="noopener noreferrer">
+                    Martin Fowler — Event Sourcing: the original article that shaped the term, the source behind all
+                    of sections 14.1 and 14.2
+                  </a>
+                </li>
+                <li>
+                  <a href="https://martinfowler.com/bliki/CQRS.html" target="_blank" rel="noopener noreferrer">
+                    Martin Fowler — CQRS: the original definition of Command Query Responsibility Segregation, the
+                    source for section 14.4
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://learn.microsoft.com/en-us/azure/architecture/patterns/event-sourcing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Microsoft Azure Architecture Center — Event Sourcing pattern: the official description of
+                    projections, replay, and snapshots, the source for sections 14.3 and 14.5
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Microsoft Azure Architecture Center — CQRS pattern: eventual consistency between the write path
+                    and the read path, the source for the read-your-writes callout in section 14.4
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Optimistic_concurrency_control" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Optimistic concurrency control: the mechanism behind the
+                    <code>UNIQUE(aggregate, version)</code> constraint in section 14.2
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-UNIQUE-CONSTRAINTS"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    PostgreSQL — UNIQUE Constraints: the official docs for the constraint used to block lost updates
+                    in the lab
+                  </a>
+                </li>
+                <li>
+                  <a href="https://en.wikipedia.org/wiki/Domain-driven_design" target="_blank" rel="noopener noreferrer">
+                    Wikipedia — Domain-driven design: the origin of the aggregate concept defined in section 14.1
+                  </a>
+                </li>
+              </ul>
+            </section>
+
+            <div class="article-cta">
+              <h3>Download the lab source</h3>
+              <p>
+                The full event store used in the lab: an append-only log, two kinds of projection (idempotent and
+                not), snapshots, and the two-writers-same-version measurement mode — every number in this lesson
+                comes from this file:
+              </p>
+              <a
+                href="../sysdesign-lab/worker/eventstore.js"
+                download
+                class="btn-facebook"
+                style="background: #0f1626; text-decoration: none; color: #38bdf8; border: 1px solid #38bdf8"
+              >
+                Download eventstore.js (event log, projection, snapshot — 0 dependencies)
+              </a>
+            </div>
+
+            <!-- Related Links Block -->
