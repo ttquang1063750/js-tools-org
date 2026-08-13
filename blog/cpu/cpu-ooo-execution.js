@@ -1,13 +1,36 @@
-// cpu-ooo-execution.js — demo cho Bài 6 (OOO & Tomasulo): chạy bộ mô phỏng
-// Tomasulo THẬT (từ cpu-core.js) trên vài chương trình mẫu, hiển thị bảng
-// lập lịch Issue/Execute/Writeback/Commit + trạng thái thanh ghi cuối cùng.
+// cpu-ooo-execution.js — the demo for Lesson 6 (OOO & Tomasulo): runs the REAL
+// Tomasulo simulator (from cpu-core.js) over a few sample programs and shows the
+// Issue/Execute/Writeback/Commit schedule table plus the final register state.
+//
+// This file is shared by BOTH locales, so every string it writes into the DOM has
+// to follow the page language. Without this, the English page rendered the whole
+// schedule table with Vietnamese headers at runtime.
 import { runTomasulo } from './cpu-core.js';
+
+const STRINGS = {
+  vi: {
+    instruction: 'Lệnh',
+    totalCycles: 'Tổng chu kỳ',
+    warWaw: 'WAR/WAW: MUL R1 / ADD R2 / SUB R1 (đổi tên loại bỏ phụ thuộc giả)',
+    rawChain: 'RAW thật: MUL R1 / ADD R2,R1 / SUB R3,R2 (phụ thuộc dây chuyền, KHÔNG thể loại bỏ)',
+    noConflict: 'Không xung đột: MUL R1 / ADD R4 / SUB R5 (độc lập hoàn toàn)',
+  },
+  en: {
+    instruction: 'Instruction',
+    totalCycles: 'Total cycles',
+    warWaw: 'WAR/WAW: MUL R1 / ADD R2 / SUB R1 (renaming removes the false dependencies)',
+    rawChain: 'Real RAW: MUL R1 / ADD R2,R1 / SUB R3,R2 (a dependency chain that CANNOT be removed)',
+    noConflict: 'No conflict: MUL R1 / ADD R4 / SUB R5 (fully independent)',
+  },
+};
+// <html lang> is set per locale by the page itself, so it is the reliable source.
+const T = STRINGS[document.documentElement.lang === 'en' ? 'en' : 'vi'];
 
 const INITIAL_REGS = [0, 10, 3, 4, 5, 6, 20, 2];
 
 const PROGRAMS = {
   warWaw: {
-    label: 'WAR/WAW: MUL R1 / ADD R2 / SUB R1 (đổi tên loại bỏ phụ thuộc giả)',
+    label: T.warWaw,
     instrs: [
       { op: 'MUL', dest: 1, src1: 2, src2: 3, text: 'MUL R1, R2, R3' },
       { op: 'ADD', dest: 2, src1: 4, src2: 5, text: 'ADD R2, R4, R5' },
@@ -15,7 +38,7 @@ const PROGRAMS = {
     ],
   },
   rawChain: {
-    label: 'RAW thật: MUL R1 / ADD R2,R1 / SUB R3,R2 (phụ thuộc dây chuyền, KHÔNG thể loại bỏ)',
+    label: T.rawChain,
     instrs: [
       { op: 'MUL', dest: 1, src1: 2, src2: 3, text: 'MUL R1, R2, R3' },
       { op: 'ADD', dest: 2, src1: 1, src2: 5, text: 'ADD R2, R1, R5' },
@@ -23,7 +46,7 @@ const PROGRAMS = {
     ],
   },
   noConflict: {
-    label: 'Không xung đột: MUL R1 / ADD R4 / SUB R5 (độc lập hoàn toàn)',
+    label: T.noConflict,
     instrs: [
       { op: 'MUL', dest: 1, src1: 2, src2: 3, text: 'MUL R1, R2, R3' },
       { op: 'ADD', dest: 4, src1: 4, src2: 5, text: 'ADD R4, R4, R5' },
@@ -41,10 +64,10 @@ function renderSchedule(result, instrs) {
     .join('');
   return `
     <table class="tomasulo-table">
-      <thead><tr><th>Lệnh</th><th>Issue</th><th>Exec Start</th><th>Writeback</th><th>Commit</th></tr></thead>
+      <thead><tr><th>${T.instruction}</th><th>Issue</th><th>Exec Start</th><th>Writeback</th><th>Commit</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <div class="tomasulo-stat">Tổng chu kỳ: <strong>${result.totalCycles}</strong> · IPC: <strong>${result.ipc.toFixed(4)}</strong></div>
+    <div class="tomasulo-stat">${T.totalCycles}: <strong>${result.totalCycles}</strong> · IPC: <strong>${result.ipc.toFixed(4)}</strong></div>
   `;
 }
 

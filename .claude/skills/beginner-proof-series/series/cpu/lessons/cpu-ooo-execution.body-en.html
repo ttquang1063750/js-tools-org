@@ -1,0 +1,405 @@
+
+            <h2>Introduction: one core going faster by issuing several instructions at once</h2>
+            <p>
+              <a href="cpu-branch-prediction">Lesson 5</a> kept the pipeline FULL by predicting which way a branch would go. But the scalar pipeline of Lesson 4 still ISSUES exactly 1 instruction per cycle, always in strict program order. A modern high-performance CPU goes further: it issues <strong>several</strong> instructions per cycle (superscalar), and lets a LATER instruction finish BEFORE an earlier one when there is no REAL data dependency between them — this is called <strong>out-of-order execution</strong> (OOO). The price: you must resolve the FALSE data dependencies created by having only a finite set of architectural registers, and you must guarantee the final architectural state is exactly as if everything had run sequentially. This lesson builds the classic algorithm that solves both:
+              <strong>Tomasulo</strong>.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Prerequisites</div>
+              <div class="callout__content">
+                You must have read <a href="cpu-pipeline-hazards">Lesson 4</a> (pipelining, RAW hazards) and
+                <a href="cpu-branch-prediction">Lesson 5</a> (branch prediction). OOO builds DIRECTLY on those two, and needs NO knowledge of caches or virtual memory (those come in Lessons 7–8).
+              </div>
+            </div>
+
+            <h2>1. Instruction-level parallelism (ILP) &amp; superscalar CPUs</h2>
+            <p>
+              <strong>ILP</strong> (instruction-level parallelism) measures how far NEIGHBOURING instructions in a program can run in parallel without changing the result. A <strong>scalar</strong> CPU issues 1 instruction per cycle; a
+              <strong>superscalar</strong> CPU has several functional units (ALU, multiplier, load/store unit) and can issue and execute SEVERAL instructions at once — but how much of that it can actually use depends ENTIRELY on whether the program contains enough INDEPENDENT instructions.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: superscalar does not automatically speed up every program</div>
+              <div class="callout__content">
+                The real performance of a superscalar CPU is BOTTLENECKED by REAL data dependencies (RAW — a later instruction needs an earlier one's result). Even with 8 functional units, a chain of dependent instructions (each needing the one immediately before it) still runs almost SEQUENTIALLY; the hardware cannot parallelise it. Verified in section 4: the same 3 operations written as a real RAW chain take 11 cycles, while the version with only FALSE dependencies (WAR/WAW, which can be removed) takes 9.
+              </div>
+            </div>
+
+            <h2>2. False data dependencies &amp; register renaming</h2>
+            <p>
+              Besides RAW (the REAL hazard from Lesson 4), there are 2 kinds of dependency that exist only because the PROGRAM reused ONE architectural register name for 2 values that are logically UNRELATED:
+            </p>
+            <table class="glossary-table">
+              <thead>
+                <tr>
+                  <th>Kind</th>
+                  <th>What it means</th>
+                  <th>Is it a REAL dependency?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>RAW (Read-After-Write)</td>
+                  <td>A later instruction READS the value an earlier one WROTE</td>
+                  <td>Yes — a real data dependency, it CANNOT be removed</td>
+                </tr>
+                <tr>
+                  <td>WAR (Write-After-Read)</td>
+                  <td>A later instruction OVERWRITES a register whose OLD value an EARLIER one is still reading</td>
+                  <td>No — a FALSE dependency, purely a NAME collision</td>
+                </tr>
+                <tr>
+                  <td>WAW (Write-After-Write)</td>
+                  <td>2 instructions WRITE the same register, and "the later write wins" must be preserved</td>
+                  <td>No — a FALSE dependency, purely a NAME collision</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              <strong>Register renaming</strong> removes WAR/WAW entirely: every time an instruction WRITES to an architectural register it is given a NEW "version" (in Tomasulo, a ROB index — the reorder buffer), and the register alias table (RAT) records "register X currently points at which version". Later instructions reading or writing that register automatically use the CORRECT version — so there is no longer any physical contention between the different "versions" of one register name.
+            </p>
+            {{CODE:register_renaming_concept.txt (RAT — Register Alias Table)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: confusing RAW (unremovable) with WAR/WAW (removable)</div>
+              <div class="callout__content">
+                RAW is a real DATA constraint — if instruction B needs the COMPUTED result of instruction A, no renaming trick lets B run BEFORE A has finished computing it (that would violate the program's logic, not merely a hardware limit). WAR/WAW, by contrast, are only NAME constraints — renaming solves them COMPLETELY without reordering any computation at all. Verified: instr2 (WAR on R2 against the MUL in instr1) starts executing in cycle 3, LONG before instr1 completes in cycle 6 — proof that renaming eliminates the stall entirely.
+              </div>
+            </div>
+
+            <h2>3. The Tomasulo algorithm: reservation stations + CDB + ROB</h2>
+            <p>
+              Tomasulo (IBM 360/91, 1967) was the first OOO algorithm and is still the foundation of modern OOO CPUs (x86, ARM). It has 3 main parts:
+            </p>
+            <ul>
+              <li>
+                <strong>Reservation Station (RS)</strong> — each functional unit has a few "reservation slots" holding instructions that are waiting for operands; as soon as BOTH operands are ready the station starts executing on its own (with no need to wait for earlier instructions it does not depend on).
+              </li>
+              <li>
+                <strong>CDB (Common Data Bus)</strong> — a SHARED data bus that broadcasts results: every reservation station waiting for that value snoops the CDB and updates its operand the moment the value appears. Because it is a SHARED resource, ONLY 1 instruction may write its result per cycle — the LOSER waits another cycle.
+              </li>
+              <li>
+                <strong>ROB (Reorder Buffer)</strong> — a buffer holding EVERY in-flight instruction in strict program order; even though instructions finish COMPUTING out of order, <strong>commit</strong> (officially writing to the architectural registers) always happens from the HEAD of the ROB — guaranteeing the final architectural state is identical to sequential execution.
+              </li>
+            </ul>
+            {{CODE:tomasulo_cycle.js (trích engine dùng chung cpu-core.js)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a full ROB causes a "ROB stall"</div>
+              <div class="callout__content">
+                The ROB has a FINITE CAPACITY. If one instruction gets stuck for a long time (say waiting on slow memory — Lesson 7), it occupies the HEAD of the ROB (because commits must be in order), so EVERY instruction BEHIND it — however long ago it finished computing — cannot commit and must queue up inside the ROB. Once the ROB is full the CPU has to STOP issuing new instructions entirely (a ROB stall) — even with dozens of functional units sitting idle. This is why modern CPUs invest in very large ROBs (hundreds of entries) and still cannot avoid stalling on an extremely slow instruction (such as a cache miss going all the way to DRAM).
+              </div>
+            </div>
+
+            <h2>4. Computing real IPC &amp; how effective the algorithm is</h2>
+            <p>
+              First, the unit of measurement. <strong>IPC</strong> (<em>Instructions Per Cycle</em> — instructions completed per cycle) is simply the <strong>reciprocal of the CPI</strong> that <a href="cpu-pipeline-hazards">Lesson 4</a> used: \(\text{IPC} = 1/\text{CPI}\). Two ways of saying the same thing, differing only in which direction is good — the
+              <em>lower</em> the CPI the better, the <em>cao</em> the IPC the better. On an ideal scalar CPU the maximum IPC is 1; superscalar exists to get past that ceiling. At the 3-instruction scale of the examples below the IPC looks low because pipeline start-up cost dominates — what is worth comparing is the IPC <em>of the versions against each other</em>, not the absolute value.
+            </p>
+            <p>
+              Verified for real with the engine: the 3-instruction program <code>MUL R1,R2,R3</code> / <code>ADD R2,R4,R5</code> (WAR on R2) / <code>SUB R1,R6,R7</code> (WAW on R1) — renaming resolves both false dependencies, and it runs in exactly
+              <strong>9 cycles</strong>, IPC = $3/9 = \mathbf{0.333}$. The final R1 is <strong>18</strong> (from
+              <code>SUB</code>, correct per program order thanks to in-order commit — NOT the 12 from <code>MUL</code> which was overwritten, exactly the WAW meaning of "the later write wins"). Note that <code>ADD</code> (instr2) finishes COMPUTING (writeback in cycle 5) BEFORE <code>MUL</code> (instr1, writeback in cycle 6) — completion is OUT OF ORDER — and yet the commits still follow program order exactly (cycles 7, 8, 9 for instr1, instr2, instr3).
+            </p>
+            {{CODE:tomasulo_schedule_table.txt (bảng lập lịch THẬT, verified bằng engine)}}
+            <p>
+              The control: the SAME 3 operations written as a REAL RAW chain (each instruction using the result of the one before) takes <strong>11 cycles</strong>, an IPC of only $3/11 = \mathbf{0.273}$ — clearly slower, because a real dependency CANNOT be removed by any means, exactly as the pitfall in section 1 said.
+            </p>
+            {{CODE:ipc_comparison.js (đối chứng WAR/WAW vs RAW thật, dùng đúng engine)}}
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ What OOO costs: silicon area &amp; power</div>
+              <div class="callout__content">
+                OOO control logic (the RAT, many reservation stations, the ROB, and a CDB network broadcasting to EVERY station each cycle) is enormously complex next to a simple scalar pipeline — it takes considerable silicon area and power, and not in proportion to the IPC it buys (the returns diminish once the program's available ILP is exhausted — see the pitfall in section 1 again). This is exactly why power-efficient cores (the "LITTLE" cores we will meet again in Lesson 9) usually use a simpler scalar pipeline rather than full OOO.
+              </div>
+            </div>
+
+            <h2>5. Hands-on: a miniature interactive Tomasulo simulator</h2>
+            <p>
+              Pick one of the sample programs below to see the REAL Tomasulo schedule (issue / exec start / writeback / commit for each instruction) — comparing a WAR/WAW program (which renaming solves) directly against a real RAW chain (which it cannot) and a program with no conflicts at all:
+            </p>
+
+            <div class="code-tabs" id="ooo-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🗂️ Tomasulo simulator (RS + CDB + ROB)</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Preview</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="tomasulo-demo-container">
+                  <div class="tomasulo-demo-field">
+                    <label for="ooo-program-select">Sample program</label>
+                    <select id="ooo-program-select">
+                      <option value="warWaw">WAR/WAW: MUL R1 / ADD R2 / SUB R1 (renaming removes the false dependencies)</option>
+                      <option value="rawChain">Real RAW: MUL R1 / ADD R2,R1 / SUB R3,R2 (a dependency chain)</option>
+                      <option value="noConflict">No conflict: MUL R1 / ADD R4 / SUB R5 (fully independent)</option>
+                    </select>
+                  </div>
+                  <div id="ooo-schedule-output"></div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Summary</h2>
+            <ul>
+              <li>
+                ✅ A superscalar CPU issues several instructions per cycle but is bottlenecked by REAL data dependencies (RAW) — verified: the real RAW chain takes 11 cycles against 9 for the WAR/WAW version.
+              </li>
+              <li>
+                ✅ WAR/WAW are FALSE dependencies (purely register-name collisions) — register renaming (the RAT) removes them COMPLETELY, unlike RAW which cannot be removed.
+              </li>
+              <li>
+                ✅ Tomasulo = reservation stations (waiting for operands) + the CDB (broadcast, 1 instruction per cycle) + the ROB (committing in program order despite out-of-order completion).
+              </li>
+              <li>
+                ✅ Verified: the final R1 is 18 (from SUB, the LATER write in the program) — in-order commit preserves the correct WAW meaning even though ADD finished computing before MUL.
+              </li>
+              <li>
+                ✅ Pitfall: a full ROB (usually caused by one instruction stuck at its head) triggers a ROB stall, halting instruction issue completely.
+              </li>
+            </ul>
+
+            <h2>Review quiz</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Question 1</h3>
+              <p class="quiz-question">
+                Why does a superscalar CPU not automatically make EVERY program several times faster?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. A REAL data dependency (RAW) cannot be removed by any hardware technique — instruction B genuinely needs A&#39;s computed result, so it must wait. Functional units sit idle no matter how many there are.'
+                    )
+                  "
+                >
+                  A. Because REAL data dependencies (RAW) between instructions cannot be removed by hardware, forcing sequential execution
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The number of architectural registers affects WAR/WAW (FALSE dependencies, which renaming solves), not RAW.'
+                    )
+                  "
+                >
+                  B. Because there are never enough architectural registers for any program
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The branch predictor (Lesson 5) deals with control hazards, which has nothing to do with the data dependencies limiting ILP here.'
+                    )
+                  "
+                >
+                  C. Because the branch predictor always mispredicts on a superscalar CPU
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 2</h3>
+              <p class="quiz-question">
+                Which kind of dependency does register renaming solve, and which does it NOT solve?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. WAR/WAW are only constraints on register NAMES (two unrelated values forced to share one name), so giving each write a new version removes them entirely. RAW is a real data constraint and survives renaming.'
+                    )
+                  "
+                >
+                  A. It solves WAR/WAW (false dependencies from name collisions) — it does NOT solve RAW (real data dependencies)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Renaming is exactly the mechanism that SOLVES WAR/WAW, not RAW — this has it backwards.'
+                    )
+                  "
+                >
+                  B. It solves RAW — it does NOT solve WAR/WAW
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. RAW is a REAL data dependency — no hardware technique (renaming included) can remove it.'
+                    )
+                  "
+                >
+                  C. It solves both RAW and WAR/WAW
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 3</h3>
+              <p class="quiz-question">
+                Verified: in the WAR/WAW program, ADD (instr2) writes back in cycle 5, BEFORE MUL (instr1, cycle 6) — yet ADD commits in cycle 8, AFTER MUL (cycle 7). Why?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. The ROB lets instructions FINISH COMPUTING (writeback) out of order — which is what makes OOO fast — while commits are taken strictly from the head of the ROB, so program order is preserved. instr1 is at the head, so it commits first.'
+                    )
+                  "
+                >
+                  A. The ROB allows computation (writeback) to finish out of order, but commits always follow program order — instr1 sits at the head of the ROB so it must commit first, even though it finished later
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The CDB only limits HOW MANY broadcasts happen per cycle (1 instruction per cycle); it does not decide commit order.'
+                    )
+                  "
+                >
+                  B. Because the CDB only allows 1 instruction to write its result per cycle, in a fixed order
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. This is NOT an engine bug — it is precisely the CORRECT and INTENDED behaviour of Tomasulo: out-of-order completion with in-order commit.'
+                    )
+                  "
+                >
+                  C. This is a bug in the simulator — in theory both should commit at the same time
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 4</h3>
+              <p class="quiz-question">
+                When does a "ROB stall" happen, and why does it halt the CPU while functional units sit idle?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. Because commits MUST follow program order (taken from the head of the ROB), one stuck instruction at the head blocks every finished instruction behind it. The ROB fills, and issue stops.'
+                    )
+                  "
+                >
+                  A. When one instruction is stuck at the HEAD of the ROB (waiting on slow data), every instruction behind it — however long finished — cannot commit, the ROB fills up, and the CPU must stop issuing new instructions
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The number of reservation stations is not directly related to a ROB stall — running out of stations is a different limit.'
+                    )
+                  "
+                >
+                  B. When the reservation-station count for EVERY kind of functional unit reaches 0
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. A branch mispredict flushes the pipeline (Lesson 5), which is a completely different mechanism from a ROB stall.'
+                    )
+                  "
+                >
+                  C. When the branch predictor mispredicts continuously
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Download the lesson's practice code</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — a miniature computer-architecture library used across all 12 lessons. Lesson 6 has just added <code>runTomasulo()</code> — a cycle-accurate simulation of the Tomasulo algorithm (reservation stations, CDB, ROB, register renaming), plus a self-test that checks every number quoted in this lesson (run
+                <code>node cpu-core.js</code>, nothing to install):
+              </p>
+              <a
+                href="../cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Download cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <strong>The core textbook:</strong>
+                  <a
+                    href="https://www.amazon.com/Computer-Organization-Design-RISC-V-Architecture/dp/0128203315"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Computer Organization and Design, RISC-V Edition (Patterson &amp; Hennessy)</a
+                  >
+                  — Chapter 4 (the advanced sections) covers ILP, superscalar design and OOO techniques.
+                </li>
+                <li>
+                  <strong>The original Tomasulo paper:</strong>
+                  <a href="https://ieeexplore.ieee.org/document/5391329" target="_blank" rel="noopener noreferrer"
+                    >Tomasulo, R. M. (1967) — An Efficient Algorithm for Exploiting Multiple Arithmetic Units</a
+                  >
+                  — originally published in the IBM Journal of Research and Development, designed for the IBM System/360 Model 91.
+                </li>
+                <li>
+                  <strong>An overview of register renaming:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Register_renaming" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Register renaming</a
+                  >
+                  — the mechanism that removes WAR/WAW in modern OOO microarchitectures.
+                </li>
+              </ul>
+            </section>
+
+            

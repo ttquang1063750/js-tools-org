@@ -178,7 +178,10 @@
           <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
           <div class="article-hero__tag article-hero__tag--cpu">Bài 6 · Kiến Trúc Máy Tính</div>
           <h1 class="article-hero__title">Bài 6: Song Song Cấp Lệnh &amp; Thực Thi Ngoài Thứ Tự (Tomasulo)</h1>
-          <div class="article-hero__meta">18 tháng 7, 2026 · Học thuật chuyên sâu</div>
+          <div class="article-hero__meta">
+            18 tháng 7, 2026 · Học thuật chuyên sâu ·
+            <a href="en/cpu-ooo-execution" style="color: #38bdf8">Read in English</a>
+          </div>
         </div>
       </section>
 
@@ -269,15 +272,15 @@
                 <span class="code-filename">register_renaming_concept.txt (RAT — Register Alias Table)</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-c">// RAT[r] = null          -> gia tri DUNG cua thanh ghi r nam trong regFile
-// RAT[r] = robIndex       -> gia tri MOI nhat cua r con dang "bay" trong ROB
-//                            tai vi tri robIndex, CHUA duoc commit
+              <pre><code class="language-c">// RAT[r] = null      -> the CORRECT value of register r lives in regFile
+// RAT[r] = robIndex   -> the NEWEST value of r is still "in flight" in the ROB
+//                        at position robIndex, NOT yet committed
 
-// Khi ISSUE mot lenh ghi vao thanh ghi dest:
-//   RAT[dest] = robIndexMoiVuaCapPhat   // "DOI TEN" - tao PHIEN BAN MOI
-// -> lenh SAU do doc "dest" se lay dung PHIEN BAN MOI nay qua RAT,
-//    con lenh TRUOC do (da doc "dest" luc issue, truoc khi bi doi ten)
-//    van giu nguyen gia tri CU cua no - khong bi anh huong boi lenh ghi de.</code></pre>
+// When ISSUING an instruction that writes to register dest:
+//   RAT[dest] = newlyAllocatedRobIndex   // "RENAME" - create a NEW VERSION
+// -> later instructions reading "dest" get this NEW VERSION through the RAT,
+//    while earlier ones (which read "dest" at issue time, before the rename)
+//    keep their OLD value - untouched by the overwriting instruction.</code></pre>
             </div>
             <div class="callout callout--pitfall">
               <div class="callout__title">⚠️ Cạm bẫy: nhầm RAW (không loại bỏ được) với WAR/WAW (loại bỏ được)</div>
@@ -317,19 +320,19 @@
                 <span class="code-filename">tomasulo_cycle.js (trích engine dùng chung cpu-core.js)</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-javascript">// Moi chu ky, DUNG THU TU: Commit -> Write-result (1 broadcast/chu ky)
-// -> giam remaining cac RS dang thuc thi -> WAITING->EXECUTING khi du toan
-// hang -> Issue 1 lenh moi (doi ten dest qua RAT).
+              <pre><code class="language-javascript">// Every cycle, IN THIS ORDER: Commit -> Write-result (1 broadcast per cycle)
+// -> decrement `remaining` on the executing RSs -> WAITING->EXECUTING once the
+// operands have arrived -> Issue 1 new instruction (renaming dest via the RAT).
 function runTomasulo(instructions, opts) {
-  // ... xem cpu-core.js day du - day la vong lap chinh moi chu ky ...
-  // 1. COMMIT dau ROB neu ready
-  // 2. WRITE-RESULT: chi 1 broadcast/chu ky, uu tien robIndex NHO HON (lenh cu hon)
-  // 3. Giam remaining RS dang EXECUTING
-  // 4. WAITING -> EXECUTING khi Qj/Qk deu null (da nhan du toan hang qua CDB)
-  // 5. ISSUE 1 lenh: RAT[dest] = robIndex moi (DOI TEN)
+  // ... see cpu-core.js for the full version - this is the per-cycle main loop ...
+  // 1. COMMIT the head of the ROB if it is ready
+  // 2. WRITE-RESULT: only 1 broadcast per cycle, LOWER robIndex wins (older first)
+  // 3. Decrement `remaining` on the EXECUTING reservation stations
+  // 4. WAITING -> EXECUTING once Qj and Qk are both null (operands arrived via CDB)
+  // 5. ISSUE 1 instruction: RAT[dest] = the new robIndex (THE RENAME)
 }
-// Verified: chuong trinh MUL R1/ADD R2/SUB R1 (WAR tren R2, WAW tren R1)
-// -> totalCycles=9, ipc=3/9=0.333, R1 cuoi=18 (tu SUB, dung in-order commit)</code></pre>
+// Verified: the program MUL R1 / ADD R2 / SUB R1 (WAR on R2, WAW on R1)
+// -> totalCycles=9, ipc=3/9=0.333, final R1=18 (from SUB, thanks to in-order commit)</code></pre>
             </div>
             <div class="callout callout--pitfall">
               <div class="callout__title">⚠️ Cạm bẫy: ROB đầy gây "ROB Stall"</div>
@@ -344,6 +347,15 @@ function runTomasulo(instructions, opts) {
             </div>
 
             <h2>4. Tính toán IPC thực tế &amp; hiệu quả thuật toán</h2>
+            <p>
+              Trước hết là đơn vị đo. <strong>IPC</strong> (<em>Instructions Per Cycle</em> — số lệnh hoàn tất trên mỗi
+              chu kỳ) chính là <strong>nghịch đảo của CPI</strong> mà <a href="cpu-pipeline-hazards">Bài 4</a> đã dùng:
+              \(\text{IPC} = 1/\text{CPI}\). Hai cách nói cùng một điều, chỉ khác chiều tốt — CPI càng
+              <em>thấp</em> càng tốt, IPC càng <em>cao</em> càng tốt. Với CPU vô hướng lý tưởng, IPC tối đa là 1;
+              superscalar sinh ra để vượt qua mốc đó. Ở quy mô 3 lệnh của các ví dụ dưới đây, IPC còn thấp vì chi phí
+              khởi động pipeline chiếm phần lớn — điều đáng so sánh là IPC <em>giữa các phiên bản với nhau</em>, chứ
+              không phải giá trị tuyệt đối.
+            </p>
             <p>
               Verified thật bằng engine: chương trình 3 lệnh <code>MUL R1,R2,R3</code> / <code>ADD R2,R4,R5</code> (WAR
               trên R2) / <code>SUB R1,R6,R7</code> (WAW trên R1) — đổi tên giải quyết cả 2 phụ thuộc giả, chạy đúng
@@ -360,14 +372,14 @@ function runTomasulo(instructions, opts) {
                 >
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-c">Lenh                Issue  ExecStart  Writeback  Commit
+              <pre><code class="language-c">Instruction         Issue  ExecStart  Writeback  Commit
 MUL R1, R2, R3        1        2          6          7
 ADD R2, R4, R5        2        3          5          8
 SUB R1, R6, R7        3        4          7          9
 
-# ADD (writeback=5) xong TRUOC MUL (writeback=6) - hoan thanh NGOAI thu tu.
-# Nhung commit van DUNG thu tu chuong trinh: 7, 8, 9 (MUL, ADD, SUB).
-# Tong 9 chu ky, IPC = 3/9 = 0.333.</code></pre>
+# ADD (writeback=5) finishes BEFORE MUL (writeback=6) - completion is OUT OF ORDER.
+# But the commits still follow program order: 7, 8, 9 (MUL, ADD, SUB).
+# 9 cycles in total, IPC = 3/9 = 0.333.</code></pre>
             </div>
             <p>
               Đối chứng: CÙNG 3 phép tính đó nhưng viết thành chuỗi RAW THẬT (mỗi lệnh dùng kết quả lệnh ngay trước) —
@@ -379,12 +391,12 @@ SUB R1, R6, R7        3        4          7          9
                 <span class="code-filename">ipc_comparison.js (đối chứng WAR/WAW vs RAW thật, dùng đúng engine)</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-javascript">// Chuong trinh A: MUL R1 / ADD R2 (WAR) / SUB R1 (WAW) -> 9 chu ky, IPC=0.333
-// Chuong trinh B: MUL R1 / ADD R2,R1 (RAW that) / SUB R3,R2 (RAW that)
-//                 -> 11 chu ky, IPC=0.273 (cham hon vi PHU THUOC THAT)
-// Chuong trinh C: MUL R1 / ADD R4 / SUB R5 (khong xung dot gi ca)
-//                 -> CUNG 9 chu ky nhu chuong trinh A - chung minh renaming
-//                    da lam A nhanh NGANG BANG truong hop khong co xung dot!</code></pre>
+              <pre><code class="language-javascript">// Program A: MUL R1 / ADD R2 (WAR) / SUB R1 (WAW) -> 9 cycles, IPC=0.333
+// Program B: MUL R1 / ADD R2,R1 (real RAW) / SUB R3,R2 (real RAW)
+//            -> 11 cycles, IPC=0.273 (slower, because the dependency is REAL)
+// Program C: MUL R1 / ADD R4 / SUB R5 (no conflicts at all)
+//            -> ALSO 9 cycles, same as program A - proof that renaming made A
+//               exactly AS FAST AS having no conflict in the first place!</code></pre>
             </div>
             <div class="callout callout--warning">
               <div class="callout__title">⚠️ Cái giá của OOO: diện tích silicon &amp; năng lượng</div>
@@ -715,6 +727,7 @@ SUB R1, R6, R7        3        4          7          9
             </div>
 
             <div class="article-comments">
+              <h2>Bình luận</h2>
               <div class="giscus"></div>
             </div>
           </div>
