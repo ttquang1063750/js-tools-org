@@ -1138,6 +1138,67 @@ function computeTimeSeconds(flops, flopsPerSecond) {
 // độ rộng vector, vd AVX 8-wide = 8×), và GPU/AMX song song lớn
 // (gpuTFLOPS, kèm `gpuOverheadSeconds` — chi phí cố định để nạp dữ liệu vào
 // GPU/AMX TRƯỚC khi tính, không phụ thuộc kích thước ma trận).
+// Mục 10.4 — MÔ HÌNH ROOFLINE. compareComputeMethods() ở trên tính thời gian
+// CHỈ từ thông lượng tính toán đỉnh, tức ngầm giả định băng thông bộ nhớ là VÔ
+// HẠN. Thực tế không phải: muốn tính thì phải NẠP dữ liệu vào đã. Roofline
+// (Williams, 2009) so hai giới hạn đó với nhau.
+//
+// Cường độ số học (arithmetic intensity) = số FLOP làm được trên mỗi byte đọc
+// từ bộ nhớ. Nhân ma trận N×N ngây thơ đọc 3 ma trận (2 vào, 1 ra), mỗi ma
+// trận N² phần tử × `bytesPerElem`:
+//   AI = (2N³ - N²) / (3N² × bytesPerElem)
+// Với AI cho trước, phần cứng đạt được tối đa:
+//   attainable = min(peakFLOPS, AI × bandwidth)
+// Nếu AI × bandwidth < peakFLOPS thì bài toán bị nghẽn BĂNG THÔNG
+// (memory-bound) — mua card mạnh hơn về FLOPS không giúp gì cả.
+function rooflineAttainable(arithmeticIntensity, peakFLOPS, bandwidthBytesPerSec) {
+  const memoryCeiling = arithmeticIntensity * bandwidthBytesPerSec;
+  const attainable = Math.min(peakFLOPS, memoryCeiling);
+  return {
+    attainable,
+    memoryCeiling,
+    peakFLOPS,
+    bound: memoryCeiling < peakFLOPS ? 'memory' : 'compute',
+    // Tỷ lệ hiệu năng đỉnh thực sự dùng được. < 1 nghĩa là phần cứng đang đói dữ liệu.
+    fractionOfPeak: attainable / peakFLOPS,
+    // Điểm gãy: AI tối thiểu để hết nghẽn băng thông (ridge point).
+    ridgeIntensity: peakFLOPS / bandwidthBytesPerSec,
+  };
+}
+
+// Cường độ số học của nhân ma trận N×N, giả định mỗi ma trận chỉ phải đọc/ghi
+// ĐÚNG MỘT LẦN (3N² phần tử). Đó là trường hợp TỐT NHẤT, chỉ đạt được khi chia
+// khối để tái dùng dữ liệu qua cache (Bài 7); bản ngây thơ đọc lại hàng/cột
+// nhiều lần nên AI thực tế THẤP HƠN con số này. Dùng làm CẬN TRÊN.
+function matmulArithmeticIntensity(n, bytesPerElem = 4) {
+  return matrixMultiplyFlops(n) / (3 * n * n * bytesPerElem);
+}
+
+// Đối chứng: cộng vector (SAXPY) y[i] = a*x[i] + y[i]. Mỗi phần tử tốn 2 FLOP
+// nhưng phải đọc x, đọc y, ghi y = 3 lần chạm bộ nhớ. AI cố định, không tăng
+// theo N — nên nó nghẽn băng thông với MỌI kích thước, không cách nào cứu.
+function vectorAddArithmeticIntensity(bytesPerElem = 4) {
+  return 2 / (3 * bytesPerElem);
+}
+
+// Mục 10.5 — PHÂN KỲ WARP (warp divergence). GPU chạy theo nhóm `warpSize`
+// luồng dùng CHUNG một bộ đếm chương trình. Nếu các luồng trong cùng warp rẽ
+// nhánh khác hướng, phần cứng phải chạy TUẦN TỰ từng nhánh, tắt bớt luồng
+// không thuộc nhánh đang chạy — nên thời gian cộng dồn, còn hiệu suất là tỷ lệ
+// luồng thực sự hoạt động trung bình.
+// `branchTaken` là mảng boolean cho từng luồng trong MỘT warp.
+function warpDivergence(branchTaken, warpSize = 32) {
+  if (branchTaken.length !== warpSize) throw new Error('branchTaken must have exactly warpSize entries');
+  const taken = branchTaken.filter(Boolean).length;
+  const notTaken = warpSize - taken;
+  // Số lượt chạy: 1 nếu cả warp đi cùng hướng, 2 nếu rẽ hai hướng.
+  const passes = taken === 0 || notTaken === 0 ? 1 : 2;
+  // Tổng "khe luồng" phần cứng cấp = passes × warpSize; số khe làm việc thật
+  // = warpSize (mỗi luồng chạy đúng nhánh của nó một lần).
+  const efficiency = warpSize / (passes * warpSize);
+  return { taken, notTaken, passes, efficiency, wastedSlots: passes * warpSize - warpSize };
+}
+
 function compareComputeMethods(n, scalarGFLOPS, simdGFLOPS, gpuTFLOPS, gpuOverheadSeconds = 0) {
   const flops = matrixMultiplyFlops(n);
   const scalarTimeSeconds = computeTimeSeconds(flops, scalarGFLOPS * 1e9);
@@ -1240,6 +1301,10 @@ export {
   compareTransferMethods,
   matrixMultiplyFlops,
   computeTimeSeconds,
+  rooflineAttainable,
+  matmulArithmeticIntensity,
+  vectorAddArithmeticIntensity,
+  warpDivergence,
   compareComputeMethods,
   yieldPoisson,
   yieldMurphy,
@@ -1956,6 +2021,53 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Pitfall: ma tran 4x4 QUA NHO - GPU (co overhead nap du lieu 0,1ms) CHAM HON scalar (khong co overhead)',
       cmpSmall.gpuTimeSeconds > cmpSmall.scalarTimeSeconds
+    );
+
+    // --- Muc 10.4: Roofline - thong luong dinh chi dat duoc neu DU du lieu ---
+    // GPU 10 TFLOPS voi bang thong 600 GB/s: diem gay (ridge) o 16,7 FLOP/byte.
+    const BW = 600e9;
+    const PEAK = 10e12;
+    const ridge = PEAK / BW;
+    checkTrue('Roofline: ridge point = 10e12/600e9 = 16,67 FLOP/byte', Math.abs(ridge - 16.666666666666668) < 1e-9);
+
+    const aiMatmul = matmulArithmeticIntensity(1024, 4);
+    const rMatmul = rooflineAttainable(aiMatmul, PEAK, BW);
+    checkTrue(
+      'Roofline: AI cua matmul 1024 (FP32, chia khoi ly tuong) ~ 170,58 FLOP/byte',
+      Math.abs(aiMatmul - 170.58333333333334) < 1e-9
+    );
+    check('Roofline: matmul nam BEN PHAI ridge -> nghen TINH TOAN, khong phai bang thong', rMatmul.bound, 'compute');
+    checkTrue('Roofline: matmul dat 100% thong luong dinh', Math.abs(rMatmul.fractionOfPeak - 1) < 1e-12);
+
+    // Doi chung tren CUNG phan cung: cong vector co AI co dinh 0,167 - thap hon
+    // ridge gan 100 lan, nen chi dung duoc 1% suc manh cua chinh cai GPU do.
+    const aiVecAdd = vectorAddArithmeticIntensity(4);
+    const rVecAdd = rooflineAttainable(aiVecAdd, PEAK, BW);
+    check('Roofline: cong vector nghen BANG THONG', rVecAdd.bound, 'memory');
+    checkTrue(
+      'Roofline: cong vector chi dat 100 GFLOPS = 1% thong luong dinh cua CUNG GPU do',
+      Math.abs(rVecAdd.attainable - 100e9) < 1
+    );
+    checkTrue(
+      'Ket luan Roofline: cung mot GPU, matmul dung 100% suc con cong vector chi 1% - FLOPS dinh KHONG du de doan hieu nang',
+      rMatmul.fractionOfPeak / rVecAdd.fractionOfPeak === 100
+    );
+
+    // --- Muc 10.5: phan ky warp ---
+    const warpUniform = warpDivergence(new Array(32).fill(true));
+    check('Warp dong nhat (ca 32 luong cung huong): 1 luot chay', warpUniform.passes, 1);
+    checkTrue('Warp dong nhat: hieu suat 100%', warpUniform.efficiency === 1);
+
+    const warpHalf = warpDivergence(Array.from({ length: 32 }, (_, i) => i < 16));
+    check('Warp chia doi 16/16: phai chay 2 luot tuan tu', warpHalf.passes, 2);
+    checkTrue('Warp chia doi: hieu suat tut con 50%', warpHalf.efficiency === 0.5);
+
+    // Con so dang nho nhat cua ca muc: KHONG phai chia deu moi te.
+    const warpOne = warpDivergence(Array.from({ length: 32 }, (_, i) => i === 0));
+    check('CHI MOT luong lac loai trong 32: van phai chay 2 luot', warpOne.passes, 2);
+    checkTrue(
+      'CHI MOT luong lac loai cung lam hieu suat ca warp tut con 50% - y het truong hop chia doi 16/16',
+      warpOne.efficiency === warpHalf.efficiency
     );
   }
 

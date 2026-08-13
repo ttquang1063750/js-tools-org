@@ -1,0 +1,449 @@
+<h2>Introduction: once bandwidth is enough, the next wall is computation</h2>
+            <p>
+              <a href="cpu-apple-silicon-uma">Lesson 9</a> dealt with getting data to the right place as fast as possible (UMA removes the PCIe copy). But having data quickly is not enough — a scalar CPU still has to COMPUTE one element at a time, in order. 3D graphics and deep learning both revolve around ONE core operation: <strong>matrix multiplication</strong>. This lesson compares 3 hardware architectures running that SAME operation at throughputs that differ by a factor of thousands.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Prerequisites</div>
+              <div class="callout__content">
+                It helps to read <a href="cpu-apple-silicon-uma">Lesson 9</a> (Apple Silicon &amp; UMA) — this lesson carries the "dedicated hardware acceleration" story straight on to COMPUTATION rather than bandwidth.
+              </div>
+            </div>
+
+            <h2>1. SIMD against SIMT</h2>
+            <p>
+              <strong>SIMD</strong> (single instruction, multiple data) — modern CPUs have wide vector registers (AVX-256, say, handles 8 32-bit numbers AT ONCE in ONE instruction) — still fundamentally a scalar architecture, just with each instruction "widened" to cover more data. <strong>SIMT</strong> (single instruction, multiple threads) — how a GPU is organised: thousands of small, simple <strong>Shader Core</strong> running the SAME instruction but across thousands of independent data streams in parallel — a FUNDAMENTALLY different thing from SIMD's "widening" of one instruction.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a GPU cannot replace a CPU for every program</div>
+              <div class="callout__content">
+                GPUs are extremely strong on PURELY PARALLEL workloads (each thread working independently, none branching differently) — but VERY weak on complex sequential branching code (nested if/else, loops whose iterations depend on each other): each shader core is far simpler than a CPU core, and when threads in the SAME group (a warp) branch in DIFFERENT directions, the GPU has to run BOTH branches SEQUENTIALLY for that group — losing the parallel advantage entirely.
+              </div>
+            </div>
+
+            <h2>2. NPUs &amp; Apple AMX</h2>
+            <p>
+              <strong>NPU</strong> (neural processing unit) and the <strong>Tensor Core</strong> are DEDICATED hardware built to accelerate exactly ONE operation: matrix multiplication (and its convolution variants) — tens of times faster than the equivalent on an ordinary CPU, because the hardware is designed to do ONE thing rather than to be flexible like a CPU. <strong>Apple AMX</strong> (Apple matrix coprocessor) is a matrix coprocessor HIDDEN inside the Apple Silicon CPU core itself — no data has to move to the GPU (continuing Lesson 9's UMA spirit); the CPU issues AMX instructions directly when running through the Accelerate framework or CoreML.
+            </p>
+            {{CODE:simd_vs_simt.txt (khác biệt tổ chức song song)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: careless quantization collapses model quality</div>
+              <div class="callout__content">
+                To run faster on an NPU or tensor core, AI model weights are usually quantized from FP32 (32-bit floating point) down to INT8 (8-bit integer) — 4 times smaller and considerably faster. But done CARELESSLY (without calibrating the value ranges properly, or ignoring sensitive layers), model accuracy can DROP SEVERELY — quantization is a technique that needs careful measurement, not a switch you flip.
+              </div>
+            </div>
+            {{CODE:accelerator_comparison.txt (so sánh nhanh 3 hướng tăng tốc)}}
+
+            <h2>3. Counting FLOPs and computing throughput</h2>
+            <p>
+              Multiplying two $N \times N$ matrices with the classic sequential algorithm: each of the $N^2$ result elements needs $N$ multiplications + $(N-1)$ additions — total floating-point operations (FLOPs):
+            </p>
+            <p style="text-align: center">$$\text{Total FLOPs} = N^2 \times (2N - 1) = 2N^3 - N^2$$</p>
+            <p>
+              Verified for real: multiplying <strong>1024×1024</strong> matrices takes exactly
+              <strong>2.146.435.072 FLOPs</strong> (~2.15 billion). Compare the time for that SAME operation on 3 architectures — a scalar CPU (4 GFLOPS), a SIMD CPU (32 GFLOPS, equivalent to 8-wide AVX = 8× scalar), and a GPU (10 TFLOPS):
+            </p>
+            {{CODE:flops_compare.js (trích engine dùng chung cpu-core.js)}}
+            <p>
+              SIMD beats scalar by <strong>exactly 8×</strong> — EXACTLY the vector width, not an estimate. The GPU beats scalar by <strong>2500×</strong> — that enormous gap comes from the GPU having thousands of shader cores genuinely working in parallel, quite unlike SIMD merely "widening" one instruction.
+            </p>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Ignoring data-loading overhead when the matrix is too small</div>
+              <div class="callout__content">
+                Before a GPU or AMX unit can compute, the data must be loaded into its dedicated registers or memory — a FIXED cost, independent of matrix size. For a LARGE ENOUGH matrix (1024×1024, say) this is negligible next to the compute time. But verified for real: with a matrix of <strong>4×4, far too small</strong> (just 112 FLOPs), the 0.1 ms loading overhead makes the GPU <strong>SLOWER than</strong> even the plain scalar CPU (despite the scalar CPU being far "weaker" on paper) — too little computation to pay back the startup cost.
+              </div>
+            </div>
+            {{CODE:small_matrix_pitfall.js (verified bằng engine — overhead vượt lợi ích)}}
+
+            <h2>4. The roofline model: 10 TFLOPS only means something if the data keeps up</h2>
+            <p>
+              There is a quiet assumption running through all of section 3 that has to be brought into the open: every time above was computed by dividing FLOPs by PEAK throughput. That silently assumes the hardware
+              <em>always has data on hand to compute with</em> — infinite memory bandwidth. No hardware is like that. To compute you must first load, and for a great many problems it is the loading that decides the time.
+            </p>
+            <p>
+              <strong>The roofline model</strong> (Williams, 2009) weighs those two limits against each other using a single quantity: <strong>arithmetic intensity</strong> — how many operations you get per byte read from memory.
+            </p>
+            <div style="overflow-x: auto">
+              $$\text{AI} = \frac{\text{FLOPs}}{\text{bytes of memory traffic}} \qquad \text{Attainable throughput} = \min(\text{peak FLOPS},\; \text{AI} \times \text{bandwidth})$$
+            </div>
+            <p>
+              Dividing one by the other gives the <strong>ridge point</strong> — the minimum intensity at which bandwidth stops being the bottleneck. For a 10 TFLOPS GPU with 600 GB/s: $10\times10^{12} / 600\times10^{9} = \mathbf{16.67}$ FLOP/byte. Below that you are memory-bound, above it compute-bound.
+            </p>
+
+            {{SVG:1}}
+
+            <p>
+              Put two operations on that same GPU. An $N \times N$ matrix multiply does $2N^3 - N^2$ operations while touching only $3N^2$ elements — the work grows as $N^3$ and the data only as $N^2$, so the bigger it gets the better the deal. Vector addition is the opposite: 2 operations per element, but it must read x, read y and write y — a ratio that is
+              <strong>fixed</strong>, and never improves however large the array grows.
+            </p>
+
+            {{CODE:roofline.js (verified bằng engine — cùng GPU, 100% vs 1%)}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: comparing hardware by peak FLOPS</div>
+              <div class="callout__content">
+                Verified: on the SAME GPU, matrix multiply uses 100% of the available power while vector addition uses just
+                <strong>1%</strong> — a factor of 100 apart, from the identical peak-FLOPS figure printed on the box. For a memory-bound problem, buying a card with twice the FLOPS delivers <strong>exactly 0%</strong> improvement: the flat roof on the right rises, but the problem is sitting on the slope on the left. What you need to buy is bandwidth, or what you need to fix is the algorithm — tiling to reuse data through the cache (Lesson 7) is exactly how you drag AI to the right.
+                <br /><br />
+                This is also why matrix multiplication, rather than any other operation, became the thing every piece of AI hardware races to accelerate: it is one of the few operations whose arithmetic intensity grows with size, so the more FLOPS you pile on, the more there is to use them for.
+              </div>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔍 The AI of 170 is an UPPER BOUND, not something you get for free</div>
+              <div class="callout__content">
+                The formula above assumes each matrix is read EXACTLY ONCE. The naive triple loop does not manage that — it re-reads rows and columns many times over, so its real AI is far lower and the problem can fall back across into memory-bound territory. What lifts it towards the upper bound is <strong>tiling</strong> : load a small block that fits in cache and reuse it exhaustively before discarding it — exactly Lesson 7's temporal locality, and the reason a BLAS library beats a hand-written loop by tens of times at an identical operation count.
+              </div>
+            </div>
+
+            <h2>5. Warp divergence: the price of one stray thread</h2>
+            <p>
+              The pitfall in section 1 said the GPU "has to run both branches sequentially" when threads go different ways. That phenomenon has a name — <strong>warp divergence</strong> — and it is worth putting a number on, because intuition gets it wrong here.
+            </p>
+            <p>
+              A GPU does not schedule threads individually. It groups them — NVIDIA calls the group a <strong>warp</strong> (32 threads), AMD a wavefront (64) — and the whole group SHARES one program counter. The entire warp must execute the same instruction at any instant. So when it meets an <code>if</code> where threads go different ways, the hardware has no option but to run the <code>then</code> branch with the remaining threads DISABLED, then run the
+              <code>else</code> branch with the other group disabled.
+            </p>
+
+            {{CODE:warp_divergence.js (verified bằng engine — 1 luồng cũng đủ)}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: assuming a little divergence costs a little</div>
+              <div class="callout__content">
+                Verified: a warp split evenly 16/16 drops to 50% efficiency. But a warp with
+                <strong>EXACTLY ONE</strong> thread going the other way also drops to <strong>exactly 50%</strong> — identical. The damage is not proportional to the number of stray threads, because what matters is how many PASSES the warp must make, and one divergent thread is already enough to force two. <br /><br />
+                The practical consequence: <code>if (threadId % 2 == 0)</code> ruins EVERY warp, while
+                <code>if (threadId / 32 % 2 == 0)</code> — which splits the threads equally too — leaves no warp divergent at all, because the boundary falls exactly on a warp boundary. Same logical condition, same thread count per branch, twice the performance. That is why GPU programming cares which thread sits in which warp, not only about the algorithm.
+              </div>
+            </div>
+
+            <h2>6. Hands-on: matrix multiply on scalar, SIMD and GPU/AMX</h2>
+            <p>
+              Change the matrix size and the three architectures' figures to watch the times move directly — try dropping N very low (to 4, say) to see the GPU overhead pitfall verified above for yourself:
+            </p>
+
+            <div class="code-tabs" id="hw-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">⚡ Scalar against SIMD against GPU/AMX</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Preview</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="hw-demo-container">
+                  <div class="hw-demo-row">
+                    <div class="hw-demo-field">
+                      <label for="hw-n-input">Matrix size N</label>
+                      <input type="number" id="hw-n-input" value="1024" min="1" />
+                    </div>
+                    <div class="hw-demo-field">
+                      <label for="hw-scalar-input">Scalar (GFLOPS)</label>
+                      <input type="number" id="hw-scalar-input" value="4" step="0.1" min="0.1" />
+                    </div>
+                    <div class="hw-demo-field">
+                      <label for="hw-simd-input">SIMD (GFLOPS)</label>
+                      <input type="number" id="hw-simd-input" value="32" step="0.1" min="0.1" />
+                    </div>
+                    <div class="hw-demo-field">
+                      <label for="hw-gpu-input">GPU/AMX (TFLOPS)</label>
+                      <input type="number" id="hw-gpu-input" value="10" step="0.1" min="0.1" />
+                    </div>
+                    <div class="hw-demo-field">
+                      <label for="hw-overhead-input">GPU overhead (ms)</label>
+                      <input type="number" id="hw-overhead-input" value="0.1" step="0.01" min="0" />
+                    </div>
+                  </div>
+                  <div class="hw-output term-output" id="hw-output">—</div>
+                  <div class="hw-bar-row">
+                    <span class="hw-bar-label">Scalar</span>
+                    <div class="hw-bar-track">
+                      <div class="hw-bar-fill hw-bar-fill--scalar" id="hw-bar-scalar"></div>
+                    </div>
+                  </div>
+                  <div class="hw-bar-row">
+                    <span class="hw-bar-label">SIMD</span>
+                    <div class="hw-bar-track"><div class="hw-bar-fill hw-bar-fill--simd" id="hw-bar-simd"></div></div>
+                  </div>
+                  <div class="hw-bar-row">
+                    <span class="hw-bar-label">GPU/AMX</span>
+                    <div class="hw-bar-track"><div class="hw-bar-fill hw-bar-fill--gpu" id="hw-bar-gpu"></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Summary</h2>
+            <ul>
+              <li>
+                ✅ SIMD "widens" one CPU instruction to cover several data elements at once; SIMT (the GPU) runs thousands of genuinely independent threads — a fundamentally different way of organising parallelism.
+              </li>
+              <li>✅ NPUs, tensor cores and Apple AMX are DEDICATED hardware built purely to accelerate matrix multiplication.</li>
+              <li>
+                ✅ Verified: a 1024×1024 matrix multiply is 2,146,435,072 FLOPs. SIMD beats scalar by exactly 8× (the vector width); the GPU beats scalar by 2500×.
+              </li>
+              <li>
+                ✅ Pitfall: for a matrix that is too small (4×4), the GPU's data-loading overhead makes it SLOWER than the scalar CPU — verified with the engine.
+              </li>
+              <li>✅ Pitfall: GPUs are very weak on complex sequential branching code — they cannot replace a CPU for everything.</li>
+              <li>
+                ✅ Roofline: attainable throughput = $\min(\text{peak FLOPS}, \text{AI} \times \text{bandwidth})$. Verified on the SAME 10 TFLOPS / 600 GB/s GPU: matrix multiply (AI 170) uses 100% of the power, vector addition (AI 0.167) just 1% — peak FLOPS is not enough to predict performance.
+              </li>
+              <li>
+                ✅ Pitfall: for a memory-bound problem, buying hardware with more FLOPS gives exactly 0% improvement. Tiling to reuse the cache (Lesson 7) is what drags AI over to the compute-bound side.
+              </li>
+              <li>
+                ✅ Warp divergence: verified, just ONE thread in 32 going the other way pulls the whole warp down to 50% efficiency — exactly the damage of an even 16/16 split. The cost is not proportional to the number of stray threads.
+              </li>
+            </ul>
+
+            <p>
+              This whole lesson runs in one direction: to go faster, pile on more dedicated hardware — more cores, a separate matrix unit, wider bandwidth. But piling on means the chip grows, and the bigger a chip is the likelier a single speck of dust ruins it, with cost rising far faster than area. That is the economic wall standing behind every technical wall above — Lesson 11 puts a number on that price, and shows why the industry was forced to cut the big chip into small pieces (chiplets).
+            </p>
+
+            <h2>Review quiz</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Question 1</h3>
+              <p class="quiz-question">What is the CORE difference between SIMD (CPU vectors) and SIMT (GPUs)?</p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. SIMD merely widens ONE CPU instruction to cover several data elements at once in a vector register — it is still a single control flow. SIMT genuinely runs thousands of independent threads in parallel across thousands of shader cores, each with its own data.'
+                    )
+                  "
+                >
+                  A. SIMD widens one instruction to cover more data (still one control flow); SIMT runs thousands of genuinely independent threads in parallel
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. SIMD and SIMT are both PARALLEL EXECUTION techniques, not memory-storage techniques — the difference lies in HOW the parallel execution is organised, not in memory.'
+                    )
+                  "
+                >
+                  B. SIMD is for fast memory (SRAM), SIMT for slow memory (DRAM)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. SIMD (on the CPU) and SIMT (on the GPU) are both genuine HARDWARE techniques, not software emulation — both are implemented directly in silicon.'
+                    )
+                  "
+                >
+                  C. SIMD is real hardware, SIMT is only a software emulation
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 2</h3>
+              <p class="quiz-question">
+                Verified: a 1024×1024 matrix multiply on SIMD (32 GFLOPS) beats scalar (4 GFLOPS) by exactly 8×. Where does that 8 come from?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. 8 = 32/4, exactly the GFLOPS ratio between SIMD and scalar — and in this example 32 GFLOPS was chosen to match 8-wide AVX (8 numbers per instruction) = 8× scalar. Time is inversely proportional to throughput, so the speed ratio always equals the throughput ratio.'
+                    )
+                  "
+                >
+                  A. It is exactly the throughput ratio SIMD/scalar = 32/4 = 8, matching the 8-wide AVX vector width
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The matrix size (1024×1024) is IDENTICAL in both timings — it does not affect the RATIO between scalar and SIMD, only the ABSOLUTE value of both.'
+                    )
+                  "
+                >
+                  B. It comes from the specific 1024×1024 size (a different matrix would give a different ratio)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. SIMD has nothing to do with GPUs or shader cores — SIMD widens the VECTOR REGISTERS on the CPU itself, entirely separate from GPU architecture.'
+                    )
+                  "
+                >
+                  C. It comes from SIMD sharing shader cores with the GPU
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 3</h3>
+              <p class="quiz-question">
+                Verified: with a 4×4 matrix (only 112 FLOPs), the GPU (carrying 0.1 ms of loading overhead) is SLOWER than the scalar CPU — despite being far "stronger" on paper. Why?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. The cost of loading data into the GPU is FIXED (0.1 ms) regardless of matrix size. With a 4×4 matrix of only 112 FLOPs the actual compute time on the GPU is essentially zero — but the full 0.1 ms overhead is still paid, pushing the GPU total far past the scalar CPU computing those 112 FLOPs directly.'
+                    )
+                  "
+                >
+                  A. The GPU's loading cost is FIXED regardless of matrix size — with a tiny matrix the actual compute time is not enough to pay it back
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The matrixMultiplyFlops() formula is EXACT at every matrix size, 4×4 included — this is not a computation error but the REAL behaviour of fixed overhead when a GPU is used for something too small.'
+                    )
+                  "
+                >
+                  B. Because the FLOP formula is wrong for small matrices and only holds for large ones
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The GPU (10 TFLOPS) is still far faster than the scalar CPU (4 GFLOPS) in RAW COMPUTE THROUGHPUT — the issue here is the FIXED cost before computing, not the GPU's throughput limit.'
+                    )
+                  "
+                >
+                  C. Because a GPU is really slower than a scalar CPU at EVERY matrix size
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 4</h3>
+              <p class="quiz-question">
+                Why does FP32→INT8 quantization need careful measurement rather than blanket application?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. Quantization lowers the precision of the number representation (from 32-bit floating point to 8-bit integer) — without calibrating the value ranges properly or while ignoring the model's sensitive layers, accumulated error can severely degrade output quality, even though both speed and size improve.'
+                    )
+                  "
+                >
+                  A. Careless quantization can severely damage model accuracy, even as it improves speed and size
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Quantization does NOT increase size — quite the opposite, it REDUCES it (32-bit down to 8-bit, a factor of 4). That is one of quantization's main BENEFITS, not a risk.'
+                    )
+                  "
+                >
+                  B. Because quantization always makes the model 4 times larger
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Quantization does NOT require a discrete GPU — it is a technique for REDUCING THE NUMERIC PRECISION of model weights, applicable when running on a CPU or an NPU/tensor core just as well; no discrete GPU is required.'
+                    )
+                  "
+                >
+                  C. Because quantization only works with a discrete GPU and cannot run on an integrated CPU
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Download the lesson's practice code</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — a miniature computer-architecture library used across all 12 lessons. Lesson 10 has just added <code>matrixMultiplyFlops()</code>, <code>computeTimeSeconds()</code>,
+                <code>compareComputeMethods()</code>, <code>rooflineAttainable()</code>,
+                <code>matmulArithmeticIntensity()</code>, <code>vectorAddArithmeticIntensity()</code>,
+                <code>warpDivergence()</code> — matrix-multiply FLOP counting, compute-time comparison across the 3 architectures, the roofline model (arithmetic intensity against bandwidth) and warp divergence, with a self-test that checks every number quoted in this lesson (run <code>node cpu-core.js</code>, nothing to install):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Download cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <strong>An overview of SIMD/SIMT:</strong>
+                  <a href="https://en.wikipedia.org/wiki/SIMD" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — SIMD</a
+                  >
+                  — including the comparison with SIMT (single instruction, multiple threads) on GPUs.
+                </li>
+                <li>
+                  <strong>Apple AMX &amp; Accelerate:</strong>
+                  <a
+                    href="https://developer.apple.com/documentation/accelerate"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Apple Developer — Accelerate framework</a
+                  >
+                  — the official documentation for hardware-accelerated libraries on Apple Silicon.
+                </li>
+                <li>
+                  <strong>Quantizing AI models:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Quantization_(signal_processing)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Quantization</a
+                  >
+                  — the signal-quantization principles as applied to neural network weights.
+                </li>
+              </ul>
+            </section>

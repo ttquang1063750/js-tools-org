@@ -1,7 +1,27 @@
-// cpu-hardware-acceleration.js — demo cho Bài 10 (GPU/NPU/AMX): so sánh thời
-// gian nhân ma trận N×N trên 3 kiến trúc (scalar/SIMD/GPU) dùng engine THẬT
-// (từ cpu-core.js), bao gồm cả pitfall overhead GPU với ma trận nhỏ.
+// cpu-hardware-acceleration.js - Lesson 10 demo (GPU/NPU/AMX): compares the
+// time of an NxN matrix multiply across 3 architectures (scalar/SIMD/GPU)
+// using the REAL engine from cpu-core.js, including the small-matrix GPU
+// overhead pitfall.
 import { matrixMultiplyFlops, compareComputeMethods } from './cpu-core.js';
+
+// The page exists in both locales; every string this file injects into the DOM
+// has to follow the page, not the author. Without this the English page would
+// show Vietnamese labels and vi-VN digit grouping in the middle of the demo.
+const STRINGS = {
+  vi: {
+    totalFlops: 'Tổng FLOPs',
+    overhead: 'overhead',
+    tooSmall: '⚠️ Ma trận quá nhỏ — overhead GPU khiến nó CHẬM HƠN scalar!',
+    locale: 'vi-VN',
+  },
+  en: {
+    totalFlops: 'Total FLOPs',
+    overhead: 'overhead',
+    tooSmall: '⚠️ Matrix too small — GPU overhead makes it SLOWER than scalar!',
+    locale: 'en-US',
+  },
+};
+const T = STRINGS[document.documentElement.lang === 'en' ? 'en' : 'vi'];
 
 function formatTime(seconds) {
   if (seconds >= 1) return seconds.toFixed(4) + ' s';
@@ -32,11 +52,11 @@ function initComputeDemo() {
     const cmp = compareComputeMethods(n, scalarGFLOPS, simdGFLOPS, gpuTFLOPS, overheadMs / 1000);
 
     output.innerHTML = `
-      <div>Tổng FLOPs: <strong>${flops.toLocaleString('vi-VN')}</strong></div>
+      <div>${T.totalFlops}: <strong>${flops.toLocaleString(T.locale)}</strong></div>
       <div>Scalar (${scalarGFLOPS} GFLOPS): <strong>${formatTime(cmp.scalarTimeSeconds)}</strong></div>
       <div>SIMD (${simdGFLOPS} GFLOPS): <strong>${formatTime(cmp.simdTimeSeconds)}</strong></div>
-      <div>GPU/AMX (${gpuTFLOPS} TFLOPS + ${overheadMs}ms overhead): <strong>${formatTime(cmp.gpuTimeSeconds)}</strong></div>
-      ${cmp.gpuTimeSeconds > cmp.scalarTimeSeconds ? '<div style="color:#f87171">⚠️ Ma trận quá nhỏ — overhead GPU khiến nó CHẬM HƠN scalar!</div>' : ''}
+      <div>GPU/AMX (${gpuTFLOPS} TFLOPS + ${overheadMs}ms ${T.overhead}): <strong>${formatTime(cmp.gpuTimeSeconds)}</strong></div>
+      ${cmp.gpuTimeSeconds > cmp.scalarTimeSeconds ? `<div style="color:#f87171">${T.tooSmall}</div>` : ''}
     `;
 
     const maxTime = Math.max(cmp.scalarTimeSeconds, cmp.simdTimeSeconds, cmp.gpuTimeSeconds);
