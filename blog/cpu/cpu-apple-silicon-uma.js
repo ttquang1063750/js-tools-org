@@ -1,7 +1,27 @@
-// cpu-apple-silicon-uma.js — demo cho Bài 9 (Apple Silicon & UMA): so sánh
-// trực tiếp thời gian truyền một khung hình qua PCIe (sao chép CPU->GPU) vs
-// truy cập trực tiếp trên UMA, dùng engine THẬT (từ cpu-core.js).
+// cpu-apple-silicon-uma.js — Lesson 9's demo (Apple Silicon & UMA): compares the
+// time to move one frame over PCIe (a CPU->GPU copy) against accessing it directly
+// under UMA, using the REAL engine from cpu-core.js.
+//
+// One file serves both locales, so every visible string goes through STRINGS and
+// is picked by <html lang>, which the page itself sets per locale.
 import { frameBytes, compareTransferMethods } from './cpu-core.js';
+
+const IS_EN = document.documentElement.lang === 'en';
+const STRINGS = {
+  vi: {
+    frameSize: 'Dung lượng khung hình',
+    pcie: (gbps) => `PCIe Gen ${gbps} GB/s`,
+    uma: (gbps) => `UMA ${gbps} GB/s`,
+    speedup: 'UMA nhanh hơn',
+  },
+  en: {
+    frameSize: 'Frame size',
+    pcie: (gbps) => `PCIe at ${gbps} GB/s`,
+    uma: (gbps) => `UMA at ${gbps} GB/s`,
+    speedup: 'UMA is faster by',
+  },
+};
+const T = STRINGS[IS_EN ? 'en' : 'vi'];
 
 function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MiB';
@@ -31,10 +51,10 @@ function initBandwidthDemo() {
     const cmp = compareTransferMethods(bytes, pcieGBps, umaGBps);
 
     output.innerHTML = `
-      <div>Dung lượng khung hình: <strong>${formatBytes(bytes)}</strong></div>
-      <div>PCIe Gen ${pcieGBps} GB/s: <strong>${cmp.pcieTimeMs.toFixed(4)} ms</strong></div>
-      <div>UMA ${umaGBps} GB/s: <strong>${cmp.umaTimeMs.toFixed(4)} ms</strong></div>
-      <div>UMA nhanh hơn: <strong>${cmp.speedupFactor.toFixed(2)}x</strong></div>
+      <div>${T.frameSize}: <strong>${formatBytes(bytes)}</strong></div>
+      <div>${T.pcie(pcieGBps)}: <strong>${cmp.pcieTimeMs.toFixed(4)} ms</strong></div>
+      <div>${T.uma(umaGBps)}: <strong>${cmp.umaTimeMs.toFixed(4)} ms</strong></div>
+      <div>${T.speedup}: <strong>${cmp.speedupFactor.toFixed(2)}x</strong></div>
     `;
 
     const maxMs = Math.max(cmp.pcieTimeMs, cmp.umaTimeMs);

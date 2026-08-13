@@ -1,0 +1,478 @@
+            <h2>Opening: when the CPU and GPU stop competing and start sharing</h2>
+            <p>
+              <a href="cpu-cache-memory">Lesson 7</a> and <a href="cpu-virtual-memory-tlb">Lesson 8</a> described the
+              memory hierarchy of a traditional PC: the CPU has its own RAM, the GPU has its own VRAM, and the two are
+              joined by a PCIe bus. Every time the CPU needs the GPU to process data (rendering graphics, training an AI
+              model), that data has to be <strong>COPIED</strong> from RAM into VRAM over PCIe — a step that costs time
+              while computing nothing, merely "moving data from one place to another". Apple Silicon asked the reverse
+              question: if the CPU and GPU sit on ONE piece of silicon, why not have them SHARE a single pool of RAM?
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Prerequisites</div>
+              <div class="callout__content">
+                Worth reading <a href="cpu-cache-memory">Lesson 7</a> (caches) and
+                <a href="cpu-virtual-memory-tlb">Lesson 8</a> (virtual memory) — the UMA in this lesson is a DIFFERENT
+                way of organising the very memory hierarchy already covered, not a separate concept.
+              </div>
+            </div>
+
+            <h2>1. System on a Chip (SoC) vs a traditional motherboard</h2>
+            <p>
+              A traditional PC mounts the CPU, GPU, RAM and drives as SEPARATE COMPONENTS on a motherboard, connected by
+              buses (PCIe, SATA and so on). Apple Silicon (the M series) integrates the CPU, GPU, Neural Engine (NPU) and
+              memory controller onto the SAME piece of silicon — a <strong>SoC</strong> (System on a Chip). The physical
+              distance between blocks becomes extremely short, cutting latency and energy consumption substantially
+              compared with signals travelling long board traces between separate chips.
+            </p>
+            {{CODE:soc_layout.txt (SoC vs bo mạch rời rạc)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: an SoC trades away upgradeability</div>
+              <div class="callout__content">
+                Because the RAM and other components are SOLDERED onto the same package as the CPU/GPU, a user CANNOT
+                upgrade the RAM or replace individual parts when they fail — quite unlike a traditional PC where RAM and
+                the GPU sit in removable slots. This is a DELIBERATE trade-off between performance and power efficiency
+                (SoC) on one side and repairability and upgradeability (discrete architecture) on the other — not an
+                accidental technical limitation.
+              </div>
+            </div>
+
+            <h2>2. Big and little cores (big.LITTLE) &amp; UMA</h2>
+            <p>
+              The Apple M1 has 2 kinds of CPU core: <strong>Firestorm</strong> (high performance, high power draw) and
+              <strong>Icestorm</strong> (power efficient, lower performance) — the operating system AUTOMATICALLY pushes
+              background work (syncing email, virus scanning) onto Icestorm to save battery, and heavy work (compiling
+              code, rendering video) onto Firestorm. More importantly for this lesson: the CPU (both core types) and the
+              GPU all access ONE shared pool of LPDDR5 RAM — that is <strong>UMA</strong> (Unified Memory Architecture).
+            </p>
+            {{CODE:uma_vs_traditional.txt (so đồ 2 mô hình)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: mis-scheduling wastes battery</div>
+              <div class="callout__content">
+                If the operating system's thread scheduler pushes a light background task onto a high-performance
+                Firestorm core BY MISTAKE (instead of an efficient Icestorm one), battery is drained POINTLESSLY — the
+                work still completes correctly, but at far more energy than needed. Getting big.LITTLE scheduling right
+                is a continuous balance between "finish fast" and "finish cheaply", with no fixed formula for every task.
+              </div>
+            </div>
+
+            <h2>3. Working the bandwidth numbers: PCIe vs UMA</h2>
+            <p>
+              Rendering ONE 4K frame (3840×2160 pixels at 32-bit colour — 4 bytes per pixel for R/G/B/Alpha) needs
+              exactly:
+            </p>
+            <p style="text-align: center">
+              $$\text{Frame Bytes} = 3840 \times 2160 \times 4 = 33{,}177{,}600 \text{ bytes}$$
+            </p>
+            <p>
+              Verified for real: a 4K frame weighs exactly <strong>33,177,600 bytes (31.64 MiB)</strong>. Compare the
+              time to move that data over 2 channels — PCIe Gen 4 x16 (about 32 GB/s in practice, requiring a COPY from
+              RAM into VRAM) against UMA on an Apple M1 Max (400 GB/s of RAM bandwidth, with the GPU accessing it
+              DIRECTLY, no copy):
+            </p>
+            {{CODE:bandwidth_compare.js (trích engine dùng chung cpu-core.js)}}
+            <p>
+              For this 4K frame, PCIe takes <strong>1.0368 ms</strong> and UMA only <strong>0.0829 ms</strong> — exactly
+              <strong>12.5 times</strong> faster, matching the bandwidth ratio PRECISELY ($400/32=12.5$), rather than
+              being a vague estimate. At 60fps (a per-frame budget of $1000/60 \approx 16.67$ ms), PCIe consumes
+              <strong>6.22%</strong> of the budget JUST TO COPY data (before the GPU does any actual work), while UMA
+              takes under <strong>0.5%</strong>.
+            </p>
+            {{CODE:frame_budget_60fps.js (tỷ trọng thời gian truyền trên ngân sách khung hình)}}
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Do not compare raw CPU/GPU clock speeds while ignoring memory bandwidth</div>
+              <div class="callout__content">
+                The 12.5x gap above comes ENTIRELY from the memory bandwidth ratio (400 GB/s vs 32 GB/s) — it has NOTHING
+                to do with the clock speed (GHz) of either the CPU or the GPU. A high-clocked GPU that is bottlenecked on
+                data delivery (data-starved) still runs far below its theoretical potential — which is exactly why a
+                "clock speed spec" alone is not enough to compare real performance between two different architectures.
+              </div>
+            </div>
+
+            <h2>4. The architectural price of UMA</h2>
+            <p>
+              The three sections above cover only the upside, and the one pitfall raised so far — the RAM not being
+              upgradeable — is a PACKAGING trade-off, not an architectural one. But UMA has two costs that belong to its
+              design itself, and both of them live inside the very 400 GB/s figure Section 3 just used.
+            </p>
+
+            <h3>4.1 Bandwidth is SHARED, not additive</h3>
+            <p>
+              That 400 GB/s in Section 3 is not "the GPU's bandwidth". It is the bandwidth of the WHOLE pool — the thing
+              the CPU, the GPU and the Neural Engine all draw from, at the same time. When the CPU is working hard, what
+              remains for the GPU shrinks by exactly what the CPU takes:
+            </p>
+            {{CODE:shared_bandwidth.js (cùng khung 4K, GPU bị CPU lấy bớt băng thông)}}
+            <p>
+              That is why Section 3's "32 GB/s vs 400 GB/s" comparison is correct but incomplete. It is correct in that
+              PCIe must COPY while UMA need not — and that copy step genuinely disappears, so the benefit is real. It is
+              incomplete in that 400 GB/s is a SHARED figure: under heavy simultaneous load the GPU's actual share is
+              considerably lower, and the <strong>2.00x slowdown</strong> on the last row above is a measurement, not a
+              guess. A discrete architecture trades away having to copy in exchange for two independent bandwidth pools;
+              UMA trades the other way round.
+            </p>
+
+            <h3>4.2 Sharing memory means keeping caches coherent</h3>
+            <p>
+              Section 2 said the CPU and GPU "read and write it DIRECTLY, with no copy step at all". That sentence skips
+              a question: both of them have their <strong>own caches</strong>
+              (<a href="cpu-cache-memory">Lesson 7</a>). If the CPU writes a value and that value is still sitting in the
+              CPU's cache rather than in RAM, the GPU reading the same address would see STALE data.
+            </p>
+            <p>
+              What prevents that is <strong>cache coherency</strong>: hardware tracks who currently holds a copy of which
+              cache line, and when one side writes, the copies on the other side are invalidated. This is not an optional
+              extra — it is the condition that makes "no copy needed" SAFE rather than merely fast. And it has a price:
+              every write into a shared region can generate extra tracking traffic on chip, and at each CPU↔GPU handover
+              point the software still has to place synchronisation markers to be certain the other side has seen the new
+              data.
+            </p>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: "unified memory" does not mean "no synchronisation"</div>
+              <div class="callout__content">
+                What disappears when moving to UMA is the <em>copy</em> step, NOT the <em>synchronisation</em> step.
+                Beginners often read "zero-copy" as "just write and the other side will see it" — which is wrong. The
+                program still has to state "I have finished writing" before the GPU reads, and in Apple's Metal that is
+                still an explicit set of commands on a command buffer. Omitting the synchronisation markers produces the
+                worst class of bug there is: correct on your machine, randomly wrong on someone else's, because it
+                depends on exactly when a cache happened to be written back.
+              </div>
+            </div>
+
+            <h2>5. Hands-on: comparing PCIe against UMA bandwidth</h2>
+            <p>
+              Change the frame dimensions, the bytes per pixel, and the bandwidth of both channels to watch transfer time
+              respond directly — the coloured bars below visualise the ratio:
+            </p>
+
+            <div class="code-tabs" id="uma-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🖥️ PCIe vs UMA bandwidth comparison</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Preview</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="uma-demo-container">
+                  <div class="uma-demo-row">
+                    <div class="uma-demo-field">
+                      <label for="uma-width-input">Width (px)</label>
+                      <input type="number" id="uma-width-input" value="3840" min="1" />
+                    </div>
+                    <div class="uma-demo-field">
+                      <label for="uma-height-input">Height (px)</label>
+                      <input type="number" id="uma-height-input" value="2160" min="1" />
+                    </div>
+                    <div class="uma-demo-field">
+                      <label for="uma-bpp-input">Bytes/pixel</label>
+                      <input type="number" id="uma-bpp-input" value="4" min="1" max="16" />
+                    </div>
+                    <div class="uma-demo-field">
+                      <label for="uma-pcie-input">PCIe (GB/s)</label>
+                      <input type="number" id="uma-pcie-input" value="32" step="0.1" min="0.1" />
+                    </div>
+                    <div class="uma-demo-field">
+                      <label for="uma-bandwidth-input">UMA (GB/s)</label>
+                      <input type="number" id="uma-bandwidth-input" value="400" step="1" min="0.1" />
+                    </div>
+                  </div>
+                  <div class="uma-output term-output" id="uma-output">—</div>
+                  <div class="uma-bar-row">
+                    <span class="uma-bar-label">PCIe</span>
+                    <div class="uma-bar-track">
+                      <div class="uma-bar-fill uma-bar-fill--pcie" id="uma-bar-pcie"></div>
+                    </div>
+                  </div>
+                  <div class="uma-bar-row">
+                    <span class="uma-bar-label">UMA</span>
+                    <div class="uma-bar-track"><div class="uma-bar-fill uma-bar-fill--uma" id="uma-bar-uma"></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Summary</h2>
+            <ul>
+              <li>
+                ✅ UMA trades away the PCIe copy step in exchange for one shared RAM pool — but that pool's bandwidth is
+                SHARED: verified, if the CPU is consuming 200 GB/s the same 4K frame takes 0.1659 ms instead of 0.0829
+                ms, exactly 2.00 times slower.
+              </li>
+              <li>
+                ✅ "Zero-copy" removes the COPY step, not the SYNCHRONISATION step — cache coherency is what makes the
+                sharing safe, and the program must still place synchronisation markers between CPU and GPU.
+              </li>
+              <li>
+                ✅ An SoC integrates CPU/GPU/RAM onto one piece of silicon, cutting latency and energy — at the cost of
+                losing upgradeability and replaceable parts.
+              </li>
+              <li>✅ big.LITTLE (Firestorm/Icestorm) balances performance against battery through dynamic scheduling.</li>
+              <li>
+                ✅ UMA removes the CPU→GPU copy step of the traditional PC model entirely — CPU and GPU access the same
+                RAM pool DIRECTLY.
+              </li>
+              <li>
+                ✅ Verified: a 4K frame is 33,177,600 bytes; PCIe Gen 4 (32GB/s) takes 1.0368 ms; UMA (400GB/s) takes
+                0.0829 ms — exactly 12.5 times faster, matching the bandwidth ratio.
+              </li>
+              <li>
+                ✅ Pitfall: the performance gap comes from memory BANDWIDTH, not CPU/GPU clock speed — comparing raw
+                clocks ignores the factor that actually decides it.
+              </li>
+            </ul>
+
+            <h2>Review quiz</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Question 1</h3>
+              <p class="quiz-question">
+                Which step does UMA (Unified Memory Architecture) eliminate from the graphics pipeline of a traditional
+                PC?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct! The copy from RAM (CPU) into VRAM (GPU) over PCIe disappears entirely, because both now share one RAM pool — which is where the 12.5x figure in Section 3 comes from.'
+                    )
+                  "
+                >
+                  A. The step copying data from RAM (CPU) into VRAM (GPU) over the PCIe bus — because both now share one
+                  RAM pool
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'No. UMA is a MEMORY architecture and has nothing to do with COMPILING shaders or GPU source code — that is an entirely different stage of the graphics pipeline.'
+                    )
+                  "
+                >
+                  B. The step compiling shaders before the GPU executes them
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'No. UMA has nothing to do with getting a rendered frame onto the screen (display refresh) — this is about MEMORY BANDWIDTH between CPU and GPU, a different matter from scanning an image out to a physical display.'
+                    )
+                  "
+                >
+                  C. The step displaying the rendered frame on the physical screen
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Question 2</h3>
+              <p class="quiz-question">
+                Verified: PCIe Gen 4 (32GB/s) takes 1.0368 ms to move a 4K frame while UMA (400GB/s) takes only 0.0829 ms
+                — exactly 12.5 times faster. Where does that 12.5 come from?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct! Transfer time is inversely proportional to bandwidth, so the ratio is exactly UMA/PCIe = 400/32 = 12.5 — independent of frame size, which cancels out of the ratio.'
+                    )
+                  "
+                >
+                  A. Exactly the bandwidth ratio UMA/PCIe = 400/32 = 12.5 — because transfer time is inversely
+                  proportional to bandwidth
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'No. The frame size (4K, 33,177,600 bytes) is IDENTICAL in both time calculations — it does not affect the RATIO at all, only the ABSOLUTE value of both times.'
+                    )
+                  "
+                >
+                  B. From this specific 4K frame size (with a different frame size, the 12.5x ratio would change)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'No. This example has nothing to do with CPU clock speed — both PCIe and UMA are DATA CHANNELS, and the gap comes from each channel BANDWIDTH (GB/s), not from processing clock rate (GHz).'
+                    )
+                  "
+                >
+                  C. From Apple Silicon's CPU running at a higher clock than a PCIe-based CPU
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Question 3</h3>
+              <p class="quiz-question">
+                What does an SoC (System on a Chip), integrating CPU/GPU/RAM onto one piece of silicon, trade away
+                relative to a traditional PC?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct! The ability to upgrade RAM or replace individual failed components — traded for lower latency and better energy efficiency. A deliberate design choice, not an accident.'
+                    )
+                  "
+                >
+                  A. The ability to upgrade RAM or replace individual components when they fail — traded for lower latency
+                  and better energy efficiency
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'No. An SoC does NOT make the GPU slower — quite the opposite: UMA (part of the SoC design) gives the GPU much faster data access through high RAM bandwidth, with no PCIe copy.'
+                    )
+                  "
+                >
+                  B. GPU performance, which becomes markedly slower than a discrete GPU in a PCIe slot
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'No. An SoC has nothing to do with an operating system ability to multitask — big.LITTLE and UMA concern PERFORMANCE/ENERGY and MEMORY BANDWIDTH, not OS multitasking.'
+                    )
+                  "
+                >
+                  C. The ability to run a multitasking operating system
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Question 4</h3>
+              <p class="quiz-question">
+                Why is "mis-scheduling" (pushing background work onto a high-performance Firestorm core) a genuine
+                pitfall of the big.LITTLE architecture?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct! Firestorm draws considerably more power than Icestorm for the same work, so a scheduling mistake drains the battery pointlessly — the work still completes correctly, just at unnecessary energy cost.'
+                    )
+                  "
+                >
+                  A. Because Firestorm draws considerably more power than Icestorm for the same work — mis-scheduling
+                  drains battery pointlessly
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'No. Mis-scheduling does NOT lose data — this is an ENERGY problem (unnecessary battery drain), not a correctness or data-integrity bug.'
+                    )
+                  "
+                >
+                  B. Because work running on Firestorm can lose data, as that core is unstable
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'No. Icestorm and Firestorm both access the SAME UMA pool — there is no bandwidth difference BETWEEN the two core types, only a difference in processing performance and power draw of the cores themselves.'
+                    )
+                  "
+                >
+                  C. Because Icestorm cannot access the full UMA bandwidth the way Firestorm can
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Download the practice code for this lesson</h3>
+              <p>
+                The <code>CPUJS</code> JavaScript file — a mini computer-architecture library used across all 12
+                lessons. Lesson 9 adds <code>frameBytes()</code>, <code>transferTimeSeconds()</code> and
+                <code>compareTransferMethods()</code> — the frame size model and the PCIe vs UMA transfer time
+                comparison, with a self-test that checks every number quoted in this lesson (run
+                <code>node cpu-core.js</code>; nothing to install):
+              </p>
+              <a
+                href="../cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Download cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <strong>Official specifications:</strong>
+                  <a
+                    href="https://www.apple.com/newsroom/2021/10/introducing-m1-pro-and-m1-max-the-most-powerful-chips-apple-has-ever-made/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Apple Newsroom — Introducing M1 Pro and M1 Max</a
+                  >
+                  — the officially announced 400GB/s unified memory bandwidth (M1 Max).
+                </li>
+                <li>
+                  <strong>Unified Memory Architecture in overview:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Apple_silicon" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Apple silicon</a
+                  >
+                  — the SoC architecture, UMA and the Apple M-series line.
+                </li>
+                <li>
+                  <strong>PCI Express in overview:</strong>
+                  <a href="https://en.wikipedia.org/wiki/PCI_Express" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — PCI Express</a
+                  >
+                  — real-world bandwidth across PCIe generations, including Gen 4 x16.
+                </li>
+              </ul>
+            </section>
