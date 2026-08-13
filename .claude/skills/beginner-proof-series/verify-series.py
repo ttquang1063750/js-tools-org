@@ -102,12 +102,30 @@ def prose(path):
     return re.sub(r'<[^>]+>', ' ', b)
 
 
+# Thu tu trong bon script (next-lesson, build-hub-en, make-task, va day) deu tung
+# coi "file EN ton tai" == "da dich". Voi series cpu, 12 trang EN la stub ~50 tu
+# con nguyen <h1> tieng Viet: checker se lao vao stub roi NEM LOI o cho doc
+# article-hero__meta. Stub phai duoc coi nhu CHUA dich.
+STUB_MAX_WORDS = 150
+
+
+def is_real_translation(path):
+    if not os.path.exists(path):
+        return False
+    src = open(path, encoding='utf-8').read()
+    i, j = src.find('class="article-body"'), src.find('</main>')
+    if i < 0 or j < 0:
+        return True
+    body = re.sub(r'<(script|style|svg|pre)\b.*?</\1>', ' ', src[i:j], flags=re.S)
+    return len(re.sub(r'<[^>]+>', ' ', body).split()) > STUB_MAX_WORDS
+
+
 chrome_seen = {}
 
 for num, slug in order:
     vi_p, en_p = f'{VDIR}/{slug}.html', f'{EDIR}/{slug}.html'
-    if not os.path.exists(en_p):
-        continue  # chua dich — khong phai loi, next-lesson.py se bao
+    if not is_real_translation(en_p):
+        continue  # chua dich (hoac con la stub) — next-lesson.py se bao
     vi, en = open(vi_p, encoding='utf-8').read(), open(en_p, encoding='utf-8').read()
     checks = []
 
@@ -179,7 +197,7 @@ for num, slug in order:
         if not (os.path.exists(p) or os.path.exists(p + '.html')):
             bad_links.append(m.group(1))
     nxt = next((s for n, s in order if n == num + 1), None)
-    next_exists = bool(nxt) and os.path.exists(f'{EDIR}/{nxt}.html')
+    next_exists = bool(nxt) and is_real_translation(f'{EDIR}/{nxt}.html')
     m_next = re.search(r'<(a|span)\b[^>]*\bclass="[^"]*article-related__link--next[^"]*"', en)
     next_tag = m_next.group(1) if m_next else None
     # next_exists=True  -> --next PHAI la <a> song (bai da co ban EN, phai mo khoa)
@@ -254,5 +272,5 @@ if failures:
     print('\nSua roi chay lai. Neu la trang EN thi SUA TEMPLATE roi dung lai,')
     print('dung sua truc tiep HTML — lan dung sau se ghi de len.')
     sys.exit(1)
-print(f'TAT CA DAT — {len([s for _, s in order if os.path.exists(f"{EDIR}/{s}.html")])} bai da dich, khong co bat bien nao bi vi pham.')
+print(f'TAT CA DAT — {len([s for _, s in order if is_real_translation(f"{EDIR}/{s}.html")])} bai da dich, khong co bat bien nao bi vi pham.')
 print('Co the tin trang thai nay va lam bai tiep.')

@@ -21,7 +21,7 @@ python3 $D/next-lesson.py blog/cpu/cpu-programming-series.html
 python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/cpu
 ```
 
-**Tien do: 0/12 bai da co ban EN.** Checker dang **DO** — xem muc "Viec phai sua ngay" ben duoi.
+**Tien do: 1/12 bai da co ban EN.** Checker dang **xanh**.
 
 ## Viec o cap toan site (khong thuoc series nao)
 
@@ -105,40 +105,7 @@ prettier ngat the `<link>` thanh nhieu dong, nen phai khop `<link ...>` voi `re.
 roi moi tach thuoc tinh. Ban dau toi bao oan mot trang thu ba "loi" chinh vi vay.
 Dua vao `verify-series.py`, kem negative-test.
 
-## Viec phai sua ngay (checker dang do)
-
-Chua nen viet bai moi khi phan nay chua sach:
-
-```
-(khong co output)
-```
-
-Chay `verify-series.py` de xem day du.
-
 ## Cac bai con lai
-
-### Bai 1: Cổng Logic đến Đơn Vị ALU
-
-- VI: `blog/cpu/cpu-logic-alu.html`
-- EN can tao: `blog/cpu/en/cpu-logic-alu.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-logic-alu.html`)
-- [ ] co template de dung lai (`cpu-logic-alu.body-en.html` + `.meta-en.json`)
-- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
-- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
 
 ### Bai 2: Kiến Trúc Von Neumann & Tập Lệnh ISA
 
@@ -394,6 +361,10 @@ Chay `verify-series.py` de xem day du.
 - [ ] Da commit, va da ghi vao commit nhung gi co y de lai
 
 ## Cac bai da xong
+
+Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
+
+- [x] Bai 1: Cổng Logic đến Đơn Vị ALU
 
 ## Viec o cap series (lam mot lan)
 

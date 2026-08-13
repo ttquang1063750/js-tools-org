@@ -1,20 +1,31 @@
-// Demo ALU 4-bit của Bài 1 — chỉ là "lớp keo DOM": mọi phép tính số học & cờ
-// trạng thái được ủy thác cho engine dùng chung cpu-core.js (một nguồn sự thật
-// duy nhất, đã verify bằng `node cpu-core.js`). File này KHÔNG tự tính lại ALU
-// để tránh phân kỳ với engine.
+// The 4-bit ALU demo for Lesson 1 — this file is only "DOM glue": every
+// arithmetic result and status flag is delegated to the shared cpu-core.js engine
+// (one single source of truth, verified by `node cpu-core.js`). This file does NOT
+// recompute the ALU itself, so it cannot drift away from the engine.
+//
+// This file is shared by BOTH locales, so the few strings it writes into the DOM
+// have to follow the page language. Without this, the English page showed the
+// simulator labels in Vietnamese at runtime.
 import { aluExecute, toSigned, toBinString, ALU_OPS } from './cpu-core.js';
+
+const STRINGS = {
+  vi: { decimal: 'Thập phân', signed: 'Có dấu' },
+  en: { decimal: 'Decimal', signed: 'signed' },
+};
+// <html lang> is set per locale by the page itself, so it is the reliable source.
+const T = STRINGS[document.documentElement.lang === 'en' ? 'en' : 'vi'];
 
 function initAluDemo() {
   // State
   let valA = 5; // 0101
   let valB = 3; // 0011
-  let opIndex = 0; // 0: ADD, 1: SUB, 2: AND, 3: OR, 4: XOR (khớp ALU_OPS)
+  let opIndex = 0; // 0: ADD, 1: SUB, 2: AND, 3: OR, 4: XOR (matches ALU_OPS)
 
   // DOM
   const switchesA = document.querySelectorAll('#switches-a .bit-switch-btn');
   const switchesB = document.querySelectorAll('#switches-b .bit-switch-btn');
   const selectOp = document.getElementById('sim-opcode');
-  if (!switchesA.length || !selectOp) return; // trang không có demo → bỏ qua
+  if (!switchesA.length || !selectOp) return; // page has no demo -> nothing to do
 
   const labelDecA = document.getElementById('label-dec-a');
   const labelDecB = document.getElementById('label-dec-b');
@@ -56,12 +67,12 @@ function initAluDemo() {
   }
 
   function updateALU() {
-    labelDecA.innerHTML = `Thập phân: <strong>${valA}</strong> (Có dấu: <strong>${toSigned(valA, 4)}</strong>)`;
-    labelDecB.innerHTML = `Thập phân: <strong>${valB}</strong> (Có dấu: <strong>${toSigned(valB, 4)}</strong>)`;
+    labelDecA.innerHTML = `${T.decimal}: <strong>${valA}</strong> (${T.signed}: <strong>${toSigned(valA, 4)}</strong>)`;
+    labelDecB.innerHTML = `${T.decimal}: <strong>${valB}</strong> (${T.signed}: <strong>${toSigned(valB, 4)}</strong>)`;
     dispBinA.textContent = toBinString(valA, 4);
     dispBinB.textContent = toBinString(valB, 4);
 
-    // ── Toàn bộ phép tính & cờ đến từ engine cpu-core.js ──
+    // -- Every computed value and flag comes from the cpu-core.js engine --
     const op = ALU_OPS[opIndex];
     const { result, flags } = aluExecute(valA, valB, op, 4);
 
@@ -73,7 +84,7 @@ function initAluDemo() {
     flagC.className = 'flag-indicator c-flag' + (flags.c ? ' active' : '');
     flagV.className = 'flag-indicator' + (flags.v ? ' active' : '');
 
-    // Tô sáng đường đi trên sơ đồ khối theo loại phép toán.
+    // Highlight the active path in the block diagram for this kind of operation.
     const isArith = op === 'ADD' || op === 'SUB';
     const isLogic = op === 'AND' || op === 'OR' || op === 'XOR';
 
@@ -115,8 +126,8 @@ function initAluDemo() {
   updateALU();
 }
 
-// Module script luôn deferred → chạy sau khi DOM đã parse. Vẫn giữ nhánh
-// DOMContentLoaded phòng trường hợp module được nạp sớm bất thường.
+// Module scripts are always deferred, so the DOM is parsed by now. The
+// DOMContentLoaded branch is kept in case the module is ever loaded early.
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initAluDemo);
 } else {

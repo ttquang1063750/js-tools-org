@@ -170,7 +170,25 @@ def deepen(t):
     """File EN nam sau mot cap thu muc."""
     t = t.replace('href="../../', 'href="../../../').replace('src="../../', 'src="../../../')
     t = t.replace('href="../', 'href="../../').replace('src="../', 'src="../../')
-    return t.replace('../../../../', '../../../')
+    t = t.replace('../../../../', '../../../')
+
+    # Con mot dang KHONG co "../" nen bon dong tren khong cham toi: file dat CANH
+    # bai hoc, vi du <script type="module" src="cpu-logic-alu.js">. Tu trong /en/
+    # no tro toi /en/cpu-logic-alu.js — 404, va trang mat hoan toan phan demo.
+    # Bat duoc nho doc console trinh duyet, khong phai nhin bang mat.
+    #
+    # Chi deepen gia tri co PHAN MO RONG (co dau cham). Link giua cac bai la slug
+    # khong co duoi (href="cpu-programming-series") va PHAI giu nguyen, vi trong
+    # /en/ chung tro dung sang ban EN cua bai kia.
+    def _bare(m):
+        attr, val = m.group(1), m.group(2)
+        if val.startswith(('http:', 'https:', '//', '/', '#', 'mailto:', 'data:', '../')):
+            return m.group(0)
+        if '.' not in val.rsplit('/', 1)[-1]:
+            return m.group(0)          # slug bai hoc, khong phai file
+        return f'{attr}="../{val}"'
+
+    return re.sub(r'\b(href|src)="([^"]+)"', _bare, t)
 
 
 i_head = vi.index('</head>') + len('</head>')
