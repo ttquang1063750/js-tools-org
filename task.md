@@ -21,7 +21,7 @@ python3 $D/next-lesson.py blog/cpu/cpu-programming-series.html
 python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/cpu
 ```
 
-**Tien do: 6/12 bai da co ban EN.** Checker dang **xanh**.
+**Tien do: 7/12 bai da co ban EN.** Checker dang **xanh**.
 
 ## Viec o cap toan site (khong thuoc series nao)
 
@@ -133,29 +133,6 @@ nen tieng Viet BO DAU (`// mot mang bo nho DUY NHAT`) van lot qua. Bai 2 co 4
 khoi code kieu do, da sua tay.
 
 ## Cac bai con lai
-
-### Bai 7: Phân Cấp Bộ Nhớ & Kiến Trúc Cache
-
-- VI: `blog/cpu/cpu-cache-memory.html`
-- EN can tao: `blog/cpu/en/cpu-cache-memory.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [x] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [x] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [x] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [x] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [x] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [x] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [x] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [x] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-cache-memory.html`)
-- [x] co template de dung lai (`cpu-cache-memory.body-en.html` + `.meta-en.json`)
-- [x] 13 bat bien deu dat (`verify-series.py` xanh)
-- [x] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [x] Da commit, va da ghi vao commit nhung gi co y de lai
 
 ### Bai 8: Bộ Nhớ Ảo & Khối TLB
 
@@ -282,6 +259,7 @@ Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
 - [x] Bai 4: Pipeline CPU & Xung Đột Dữ Liệu (Data Hazards)
 - [x] Bai 5: Dự Đoán Nhánh & Lỗ Hổng Bảo Mật Spectre
 - [x] Bai 6: Song Song Cấp Lệnh & Thực Thi Ngoài Thứ Tự (Tomasulo)
+- [x] Bai 7: Phân Cấp Bộ Nhớ & Kiến Trúc Cache
 
 ## Viec o cap series (lam mot lan)
 
