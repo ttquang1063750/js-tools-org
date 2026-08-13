@@ -1,6 +1,9 @@
-// cpu-virtual-memory-tlb.js — demo cho Bài 8 (Bộ nhớ ảo & TLB): dịch địa chỉ
-// ảo tuỳ chỉnh qua TLB + Page Table THẬT (từ cpu-core.js), và máy tính dung
-// lượng Page Table đơn cấp vs 2 cấp.
+// cpu-virtual-memory-tlb.js — Lesson 8's demo (virtual memory & the TLB):
+// translates a chosen virtual address through the REAL TLB + Page Table (from
+// cpu-core.js), plus a single-level vs two-level page table size calculator.
+//
+// One file serves both locales, so every visible string goes through STRINGS and
+// is picked by <html lang>, which the page itself sets per locale.
 import {
   splitVirtualAddress,
   makeTLB,
@@ -8,6 +11,23 @@ import {
   singleLevelPageTableSizeBytes,
   twoLevelPageTableSizeBytes,
 } from './cpu-core.js';
+
+const IS_EN = document.documentElement.lang === 'en';
+const STRINGS = {
+  vi: {
+    notMapped: 'VPN chưa được ánh xạ',
+    tlbMissWalk: 'TLB MISS, tra Page Table',
+    sizes: (one, used, two, ratio) =>
+      `Đơn cấp: ${one} · 2 cấp (${used} trang dùng): ${two} · Tỷ lệ tiết kiệm: ${ratio}x`,
+  },
+  en: {
+    notMapped: 'this VPN is not mapped',
+    tlbMissWalk: 'TLB MISS, page table walk',
+    sizes: (one, used, two, ratio) =>
+      `Single-level: ${one} · Two-level (${used} pages in use): ${two} · Saving: ${ratio}x`,
+  },
+};
+const T = STRINGS[IS_EN ? 'en' : 'vi'];
 
 const PAGE_OFFSET_BITS = 12; // trang 4KB
 const PAGE_TABLE = new Map([
@@ -40,10 +60,10 @@ function initTranslateDemo() {
     const { vpn, offset } = splitVirtualAddress(va, PAGE_OFFSET_BITS);
     const result = translateAddress(va, PAGE_OFFSET_BITS, tlb, PAGE_TABLE);
     if (result.pageFault) {
-      output.textContent = `VA 0x${va.toString(16)} -> VPN=${vpn} -> PAGE FAULT (VPN chưa được ánh xạ)`;
+      output.textContent = `VA 0x${va.toString(16)} -> VPN=${vpn} -> PAGE FAULT (${T.notMapped})`;
       accessLog.push({ pageFault: true, text: `0x${va.toString(16)} (VPN ${vpn}): PAGE FAULT` });
     } else {
-      output.textContent = `VA 0x${va.toString(16)} -> VPN=${vpn}, offset=0x${offset.toString(16)} -> PA=0x${result.physicalAddress.toString(16)} (${result.tlbHit ? 'TLB HIT' : 'TLB MISS, tra Page Table'})`;
+      output.textContent = `VA 0x${va.toString(16)} -> VPN=${vpn}, offset=0x${offset.toString(16)} -> PA=0x${result.physicalAddress.toString(16)} (${result.tlbHit ? 'TLB HIT' : T.tlbMissWalk})`;
       accessLog.push({
         tlbHit: result.tlbHit,
         text: `0x${va.toString(16)} (VPN ${vpn}): ${result.tlbHit ? 'TLB HIT' : 'TLB MISS -> Page Table'} -> PA 0x${result.physicalAddress.toString(16)}`,
@@ -80,12 +100,12 @@ function initPageTableSizeCalc() {
     const pageOffsetBits = parseInt(pageOffsetInput.value, 10);
     const entryBytes = parseInt(entryBytesInput.value, 10);
     const usedPages = parseInt(usedPagesInput.value, 10);
-    const entriesPerTable = Math.pow(2, 10); // 10-bit index/level, kieu x86
+    const entriesPerTable = Math.pow(2, 10); // 10-bit index per level, x86 style
 
     const single = singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes);
     const twoLevel = twoLevelPageTableSizeBytes(usedPages, entriesPerTable, entryBytes);
 
-    output.textContent = `Đơn cấp: ${formatBytes(single)} · 2 cấp (${usedPages} trang dùng): ${formatBytes(twoLevel)} · Tỷ lệ tiết kiệm: ${(single / twoLevel).toFixed(1)}x`;
+    output.textContent = T.sizes(formatBytes(single), usedPages, formatBytes(twoLevel), (single / twoLevel).toFixed(1));
   }
 
   [addressBitsInput, pageOffsetInput, entryBytesInput, usedPagesInput].forEach((el) =>

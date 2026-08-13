@@ -185,7 +185,10 @@
           <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
           <div class="article-hero__tag article-hero__tag--cpu">Bài 8 · Kiến Trúc Máy Tính</div>
           <h1 class="article-hero__title">Bài 8: Bộ Nhớ Ảo &amp; Khối TLB</h1>
-          <div class="article-hero__meta">20 tháng 7, 2026 · Học thuật chuyên sâu</div>
+          <div class="article-hero__meta">
+            20 tháng 7, 2026 · Học thuật chuyên sâu ·
+            <a href="en/cpu-virtual-memory-tlb" style="color: #38bdf8">Read in English</a>
+          </div>
         </div>
       </section>
 
@@ -225,15 +228,16 @@
                 <span class="code-filename">virtual_address_layout.txt (cấu trúc địa chỉ ảo, trang 4KB)</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-c">Dia chi ao (32-bit vi du):
+              <pre><code class="language-text">A virtual address (32-bit example):
 +----------------------------+---------------+
-|   VPN (Virtual Page Number)|   Offset      |
-|          20 bit            |    12 bit     |
+|  VPN (Virtual Page Number) |   Offset      |
+|          20 bits           |    12 bits    |
 +----------------------------+---------------+
-        tra Page Table            byte TRONG trang (khong doi khi dich)
+   looks up the Page Table     byte WITHIN the page (unchanged by translation)
 
-# VPN tra Page Table -> PFN (Physical Frame Number)
-# Dia chi vat ly = (PFN << 12) | Offset  (offset GIU NGUYEN, chi VPN duoc dich)</code></pre>
+# The VPN indexes the Page Table -> PFN (Physical Frame Number)
+# Physical address = (PFN &lt;&lt; 12) | Offset
+#   the offset is carried over UNCHANGED; only the VPN is translated</code></pre>
             </div>
             <div class="callout callout--pitfall">
               <div class="callout__title">⚠️ Cạm bẫy: Thrashing khi thiếu RAM vật lý</div>
@@ -246,7 +250,85 @@
               </div>
             </div>
 
-            <h2>2. Tính toán cấu trúc &amp; dung lượng Page Table</h2>
+            <h2>2. MMU và một mục bảng trang thật sự chứa gì</h2>
+            <p>
+              Mục 1 nói Page Table "ghi nhớ mỗi trang ảo đang trỏ tới trang vật lý nào", nhưng chưa nói AI làm việc tra
+              bảng đó, và một mục trong bảng thật sự chứa gì. Hai câu hỏi này quyết định phần còn lại của bài.
+            </p>
+            <p>
+              Người tra bảng là <strong>MMU</strong> (Memory Management Unit — khối quản lý bộ nhớ): một khối
+              <em>phần cứng</em> nằm trong CPU, không phải một phần của hệ điều hành. Mỗi lần chương trình đọc hay ghi
+              một địa chỉ, MMU chặn địa chỉ ảo đó lại, tra bảng trang, và chỉ nhả ra địa chỉ vật lý tương ứng. Hệ điều
+              hành chỉ <em>dựng</em> bảng trang; MMU là thứ <em>thi hành</em> nó ở mọi lần truy cập, nên chương trình
+              không có cách nào đi đường tắt qua nó.
+            </p>
+            <p>
+              Còn một mục bảng trang — <strong>PTE</strong> (Page Table Entry) — không phải chỉ là số PFN. Đó là lý do
+              Mục 3 sắp tính "mỗi mục 4 byte" chứ không phải 20 bit vừa đủ cho PFN. Bên cạnh PFN, PTE còn mang mấy
+              <strong>bit cờ</strong> mà MMU đọc ở MỖI lần truy cập:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">pte_layout.txt (một mục bảng trang, đơn giản hoá theo x86-64)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-text">One Page Table Entry (PTE), simplified:
++--------------------------+-----+-----+-----+-----+
+|  PFN (physical frame)    |  NX | R/W |  D  |  P  |
++--------------------------+-----+-----+-----+-----+
+                              |     |     |     |
+   no-execute -----------------+    |     |     |
+   writable? (0 = read-only) -------+     |     |
+   dirty: page was written to ------------+     |
+   present: mapping is valid at all ------------+
+
+# The MMU reads these flags on EVERY access, in hardware.
+# P = 0  -> the mapping does not exist -> raise a page fault
+# R/W= 0 -> a write to this page raises a fault (read-only page)
+# NX = 1 -> executing code from this page raises a fault
+# D  = 1 -> the page differs from its copy on disk (see Lesson 7: write-back)</code></pre>
+            </div>
+            <p>Với bốn bit đó, ba điều mà Mục 1 chỉ nói suông giờ có cơ chế cụ thể:</p>
+            <ul>
+              <li>
+                <strong>Page fault được PHÁT HIỆN thế nào.</strong> Không phải bằng cách "tìm không thấy" — mà bằng bit
+                <strong>P</strong> (present). MMU đọc PTE, thấy $P=0$, và lập tức phát một <em>exception</em> giao cho
+                hệ điều hành xử lý (nạp trang từ đĩa vào RAM, cập nhật PTE, rồi cho lệnh gây lỗi chạy lại). Chương trình
+                không hề biết chuyện đó vừa xảy ra — nó chỉ thấy lệnh của mình chậm hơn bình thường vài triệu chu kỳ.
+              </li>
+              <li>
+                <strong>Cô lập được THI HÀNH thế nào.</strong> Mục 1 nói bộ nhớ ảo cho "cô lập an toàn", nhưng bảng
+                trang riêng chỉ là một nửa: nó ngăn tiến trình A <em>chạm tới</em> bộ nhớ của B. Nửa còn lại là bit
+                <strong>R/W</strong> và <strong>NX</strong>, ngăn một tiến trình tự làm hại CHÍNH NÓ — ghi vào vùng chỉ
+                đọc, hay thi hành dữ liệu như thể đó là code. Đây đúng là cơ chế mà
+                <a href="cpu-von-neumann-isa">Bài 2</a> đã hứa khi nói hệ điều hành đánh dấu vùng code là "read-only +
+                non-writable (bit NX/XD) ngay ở tầng phần cứng MMU" — chính bit NX trong PTE này là thứ khiến
+                self-modifying code của Bài 2 không thể xảy ra trên một hệ thống hiện đại.
+              </li>
+              <li>
+                <strong>Vì sao tráo trang ra đĩa đôi khi MIỄN PHÍ.</strong> Bit <strong>D</strong> (dirty) nói trang đã
+                bị GHI kể từ lúc nạp vào hay chưa — đúng ý nghĩa dirty bit của cache ở
+                <a href="cpu-cache-memory">Bài 7</a>, chỉ ở cấp trang thay vì cấp dòng cache. Nếu $D=0$, bản trên đĩa
+                vẫn còn giống y nguyên, nên hệ điều hành chỉ cần THẢ trang khỏi RAM, không phải ghi gì cả. Nếu $D=1$, nó
+                buộc phải ghi trang xuống đĩa trước — chậm hơn hàng nghìn lần. Cùng một thao tác "giải phóng một trang",
+                chi phí chênh nhau hoàn toàn tuỳ đúng một bit.
+              </li>
+            </ul>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Cạm bẫy: nghĩ page fault luôn là lỗi</div>
+              <div class="callout__content">
+                Chữ "fault" nghe như sự cố, nhưng đa số page fault là hoạt động BÌNH THƯỜNG và dự kiến. Khi chạy một
+                chương trình, hệ điều hành thường KHÔNG nạp sẵn toàn bộ file thực thi vào RAM — nó chỉ dựng bảng trang
+                với $P=0$ rồi để chương trình chạy, và mỗi trang được nạp vào đúng lúc lần đầu bị chạm tới (<em
+                  >demand paging</em
+                >). Những page fault đó là cách chương trình được nạp, không phải dấu hiệu hỏng hóc. Chỉ khi trang bị
+                truy cập KHÔNG có quyền hợp lệ — ghi vào trang $R/W=0$, hoặc chạy code ở trang $NX=1$, hoặc chạm địa chỉ
+                chưa bao giờ được cấp phát — thì hệ điều hành mới kết luận đây là lỗi thật và giết tiến trình. Trên
+                Linux thông báo quen thuộc của trường hợp đó là <code>Segmentation fault</code>.
+              </div>
+            </div>
+
+            <h2>3. Tính toán cấu trúc &amp; dung lượng Page Table</h2>
             <p>
               Với địa chỉ ảo $A$ bit và trang $O$ bit ($2^O$ byte/trang), số trang ảo TỐI ĐA có thể có là $2^{A-O}$.
               Page Table <strong>ĐƠN CẤP</strong> ngây thơ nhất cấp phát ĐỦ chỗ cho MỌI trang ảo có thể có — kể cả những
@@ -271,7 +353,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
   return pageTableEntryCount(addressBits, pageOffsetBits) * entryBytes;
 }
 // Verified: singleLevelPageTableSizeBytes(32, 12, 4) = 4.194.304 byte (4MB)
-// Verified: singleLevelPageTableSizeBytes(48, 12, 4) / 1024^3 = 256 (GB - bat kha thi!)</code></pre>
+// Verified: singleLevelPageTableSizeBytes(48, 12, 4) / 1024^3 = 256 (GB - impossible!)</code></pre>
             </div>
             <p>
               Giải pháp thật: Page Table <strong>ĐA CẤP</strong> (kiểu x86 32-bit chia 10-10-12 bit) — bảng cấp 1 LUÔN
@@ -286,13 +368,14 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-javascript">function twoLevelPageTableSizeBytes(numUsedPages, entriesPerTable, entryBytes) {
-  const firstLevelBytes = entriesPerTable * entryBytes;             // LUON cap phat
-  const numSecondLevelTables = Math.ceil(numUsedPages / entriesPerTable); // CHI vung dang dung
+  const firstLevelBytes = entriesPerTable * entryBytes;              // ALWAYS allocated
+  // only the regions actually in use
+  const numSecondLevelTables = Math.ceil(numUsedPages / entriesPerTable);
   const tableBytes = entriesPerTable * entryBytes;
   return firstLevelBytes + numSecondLevelTables * tableBytes;
 }
-// Verified: twoLevelPageTableSizeBytes(512, 1024, 4) = 8192 byte (8KB)
-// So voi don cap 4MB cho CUNG khong gian 32-bit -> re hon 512 lan</code></pre>
+// Verified: twoLevelPageTableSizeBytes(512, 1024, 4) = 8192 bytes (8KB)
+// Against 4MB single-level for the SAME 32-bit space -> 512x cheaper</code></pre>
             </div>
             <div class="callout callout--pitfall">
               <div class="callout__title">⚠️ Cạm bẫy: Page Table đơn cấp lãng phí RAM cho trang chưa dùng</div>
@@ -305,13 +388,44 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
               </div>
             </div>
 
-            <h2>3. Khối tăng tốc dịch địa chỉ TLB</h2>
+            <h2>4. Khối tăng tốc dịch địa chỉ TLB</h2>
             <p>
               Vấn đề: Page Table BẢN THÂN nó cũng nằm trong RAM — nghĩa là MỖI lần CPU cần dịch địa chỉ ảo sang vật lý,
               nó phải tốn THÊM một lần truy cập RAM để đọc Page Table, TRƯỚC KHI truy cập RAM lần THỨ HAI để lấy dữ liệu
               thật sự cần. <strong>TLB</strong> (Translation Lookaside Buffer) giải quyết bằng cách đóng vai trò một
               <strong>cache CHO Page Table</strong>: lưu các cặp (VPN → PFN) đã dịch GẦN ĐÂY, y hệt cấu trúc
               Set-Associative + LRU của Bài 7.
+            </p>
+            <p>
+              Đáng dừng lại ở chỗ TLB miss tốn ĐÚNG bao nhiêu, vì đó là toàn bộ lý do TLB tồn tại. Khi TLB không có bản
+              dịch, MMU phải tự đi tra bảng trang trong RAM — thao tác này có tên riêng:
+              <strong>page table walk</strong> (duyệt bảng trang). Và số lần đi RAM bằng đúng SỐ CẤP của bảng, vì mỗi
+              cấp nằm ở một chỗ khác nhau:
+            </p>
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">page_table_walk.txt (chi phí một lần dịch, đếm theo số lần đi RAM)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-text">TLB HIT  -> 1 RAM access total:
+             (translation comes from the TLB, on-chip)
+             [1] read the data itself
+
+TLB MISS -> 3 RAM accesses total, with the 2-level table of Section 3:
+             [1] read the level-1 table   -> address of the level-2 table
+             [2] read the level-2 table   -> the PFN
+             [3] read the data itself
+
+# So a TLB miss costs 3x the memory traffic of a hit, not 2x - the walk is
+# EXTRA work on top of the access you actually wanted.
+# On x86-64 the page table has FOUR levels, so a miss there costs 5 accesses.</code></pre>
+            </div>
+            <p>
+              Đó là con số đáng nhớ của mục này: bảng 2 cấp làm một lần dịch thất bại tốn
+              <strong>3 lần đi RAM</strong> thay vì 1, và bảng 4 cấp của x86-64 thật tốn <strong>5 lần</strong>. Mục 3
+              đã cho thấy cấu trúc đa cấp là thứ DUY NHẤT khiến bảng trang vừa nổi trong RAM — nhưng cái giá của nó là
+              mỗi lần tra bảng dài thêm theo số cấp. TLB chính là thứ trả lại cái giá đó: chỉ cần bản dịch còn trong
+              TLB, toàn bộ chuỗi duyệt kia được bỏ qua hoàn toàn.
             </p>
             <div class="code-window">
               <div class="code-header">
@@ -321,17 +435,21 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
               <pre><code class="language-javascript">function translateAddress(virtualAddress, pageOffsetBits, tlb, pageTable) {
   const { vpn, offset } = splitVirtualAddress(virtualAddress, pageOffsetBits);
   let pfn = tlb.lookup(vpn);
-  if (pfn !== null) return { physicalAddress: (pfn << pageOffsetBits) | offset, tlbHit: true, pageFault: false };
+  if (pfn !== null) {
+    const physicalAddress = (pfn << pageOffsetBits) | offset;
+    return { physicalAddress, tlbHit: true, pageFault: false };
+  }
   if (pageTable.has(vpn)) {
     pfn = pageTable.get(vpn);
-    tlb.insert(vpn, pfn); // luu lai cho lan sau
-    return { physicalAddress: (pfn << pageOffsetBits) | offset, tlbHit: false, pageFault: false };
+    tlb.insert(vpn, pfn); // remember it for next time
+    const physicalAddress = (pfn << pageOffsetBits) | offset;
+    return { physicalAddress, tlbHit: false, pageFault: false };
   }
-  return { physicalAddress: null, tlbHit: false, pageFault: true }; // VPN chua duoc anh xa
+  return { physicalAddress: null, tlbHit: false, pageFault: true }; // VPN is not mapped
 }
-// Verified: lan dau truy cap 1 VPN -> tlbHit=false (phai tra Page Table)
-// Verified: lan HAI truy cap CUNG VPN -> tlbHit=true (da luu trong TLB)
-// Verified: truy cap VPN chua anh xa -> pageFault=true</code></pre>
+// Verified: first access to a VPN  -> tlbHit=false (the Page Table is consulted)
+// Verified: SECOND access, same VPN -> tlbHit=true  (now cached in the TLB)
+// Verified: access to an unmapped VPN -> pageFault=true</code></pre>
             </div>
             <div class="callout callout--warning">
               <div class="callout__title">⚠️ TLB Flush khi chuyển ngữ cảnh (Context Switch)</div>
@@ -344,7 +462,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
               </div>
             </div>
 
-            <h2>4. Thực hành: Dịch địa chỉ ảo động &amp; mô phỏng TLB</h2>
+            <h2>5. Thực hành: Dịch địa chỉ ảo động &amp; mô phỏng TLB</h2>
             <p>
               Nhập địa chỉ ảo (hex) để dịch qua TLB + Page Table THẬT (3 trang đã ánh xạ sẵn: VPN 5, 6, 9) — thử lại
               CÙNG địa chỉ để thấy TLB chuyển từ MISS sang HIT, hoặc thử VPN khác để thấy Page Fault. Máy tính bên dưới
@@ -412,6 +530,15 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                 Page Table dịch VPN → PFN.
               </li>
               <li>
+                ✅ MMU là khối PHẦN CỨNG trong CPU thi hành bảng trang ở mọi lần truy cập; một PTE không chỉ chứa PFN mà
+                còn các bit P/R-W/NX/D — bit P là cách page fault được phát hiện, R/W và NX là cách cô lập được thi
+                hành, và D quyết định tráo trang ra đĩa có phải ghi hay không.
+              </li>
+              <li>
+                ✅ TLB miss buộc MMU tự duyệt bảng trang (page table walk): bảng 2 cấp tốn 3 lần đi RAM thay vì 1, bảng
+                4 cấp của x86-64 tốn 5 lần — đó là toàn bộ lý do TLB tồn tại.
+              </li>
+              <li>
                 ✅ Verified: Page Table đơn cấp 32-bit tốn 4MB; không gian 48-bit (64-bit thực tế) cần 256GB — bất khả
                 thi, buộc phải dùng cấu trúc đa cấp.
               </li>
@@ -458,7 +585,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Kich thuoc trang (4KB, tuc offsetBits=12) la GIONG NHAU o ca 2 truong hop trong vi du - chi so BIT DIA CHI (32 vs 48) la khac nhau, day chinh la nguyen nhan.'
+                      'Sai. Kích thước trang (4KB, tức offsetBits=12) là GIỐNG NHAU ở cả 2 trường hợp trong ví dụ — chỉ số BIT ĐỊA CHỈ (32 vs 48) là khác nhau, đây chính là nguyên nhân.'
                     )
                   "
                 >
@@ -471,7 +598,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Kich thuoc 1 muc PTE (4-byte) la GIONG NHAU o ca 2 vi du - khong phai nguyen nhan chenh lech, van de la so LUONG muc (trang) tang theo ham mu.'
+                      'Sai. Kích thước 1 mục PTE (4-byte) là GIỐNG NHAU ở cả 2 ví dụ — không phải nguyên nhân chênh lệch, vấn đề là số LƯỢNG mục (trang) tăng theo hàm mũ.'
                     )
                   "
                 >
@@ -506,7 +633,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                     checkQuiz(
                       this,
                       false,
-                      'Sai. PTE 2 cap va don cap deu co kich thuoc BYTE MOI MUC giong nhau trong vi du (4-byte) - khac biet khong nam o kich thuoc tung muc, ma o SO LUONG bang cap 2 duoc cap phat.'
+                      'Sai. PTE 2 cấp và đơn cấp đều có kích thước BYTE MỖI MỤC giống nhau trong ví dụ (4-byte) — khác biệt không nằm ở kích thước từng mục, mà ở SỐ LƯỢNG bảng cấp 2 được cấp phát.'
                     )
                   "
                 >
@@ -519,7 +646,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                     checkQuiz(
                       this,
                       false,
-                      'Sai. TLB la cache cho KET QUA dich dia chi (VPN->PFN da tra cuu), hoan toan tach biet voi cau truc CUA Page Table (may cap). Page Table 2 cap tiet kiem RAM du KHONG co TLB nao ca.'
+                      'Sai. TLB là cache cho KẾT QUẢ dịch địa chỉ (VPN→PFN đã tra cứu), hoàn toàn tách biệt với cấu trúc CỦA Page Table (mấy cấp). Page Table 2 cấp tiết kiệm RAM dù KHÔNG có TLB nào cả.'
                     )
                   "
                 >
@@ -557,7 +684,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Page Table van luu du lieu CHINH XAC (khong co loi) - TLB khong ton tai de sua loi, ma de TRANH mot lan truy cap RAM PHU khi tra cuu Page Table.'
+                      'Sai. Page Table vẫn lưu dữ liệu CHÍNH XÁC (không có lỗi) — TLB không tồn tại để sửa lỗi, mà để TRÁNH một lần truy cập RAM PHỤ khi tra cứu Page Table.'
                     )
                   "
                 >
@@ -570,7 +697,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                     checkQuiz(
                       this,
                       false,
-                      'Sai. TLB la mot cau truc PHAN CUNG rieng biet (mot cache nho, day du lien ket, trong CPU) - khong phai chi la mot tham chieu (alias) toi Page Table, no THAT SU luu ban sao ket qua dich de tranh truy cap RAM.'
+                      'Sai. TLB là một cấu trúc PHẦN CỨNG riêng biệt (một cache nhỏ, đầy đủ liên kết, trong CPU) — không phải chỉ là một tham chiếu (alias) tới Page Table, nó THẬT SỰ lưu bản sao kết quả dịch để tránh truy cập RAM.'
                     )
                   "
                 >
@@ -607,7 +734,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                     checkQuiz(
                       this,
                       false,
-                      'Sai. TLB flush khong lien quan gi den viec giai phong RAM vat ly - do la viec cua bo cap phat bo nho (memory allocator)/OS, hoan toan khac co che voi TLB (chi luu BAN DICH dia chi, khong luu du lieu).'
+                      'Sai. TLB flush không liên quan gì đến việc giải phóng RAM vật lý — đó là việc của bộ cấp phát bộ nhớ (memory allocator)/OS, hoàn toàn khác cơ chế với TLB (chỉ lưu BẢN DỊCH địa chỉ, không lưu dữ liệu).'
                     )
                   "
                 >
@@ -620,7 +747,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
                     checkQuiz(
                       this,
                       false,
-                      'Sai. TLB flush XAY RA o MOI lan context switch, khong chi khi Page Fault - day la 2 su kien khac nhau hoan toan (context switch la doi tien trinh dang chay, Page Fault la truy cap trang chua anh xa).'
+                      'Sai. TLB flush XẢY RA ở MỌI lần context switch, không chỉ khi Page Fault — đây là 2 sự kiện khác nhau hoàn toàn (context switch là đổi tiến trình đang chạy, Page Fault là truy cập trang chưa ánh xạ).'
                     )
                   "
                 >
@@ -696,6 +823,7 @@ function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) 
             </div>
 
             <div class="article-comments">
+              <h2>Bình luận</h2>
               <div class="giscus"></div>
             </div>
           </div>
