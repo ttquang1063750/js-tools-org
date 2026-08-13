@@ -15,6 +15,26 @@ import os
 import re
 import sys
 
+# Mot trang EN co the TON TAI ma van chua duoc dich: dot i18n thang 8/2026 sinh
+# hang loat trang "English translation coming soon" chi ~50 tu, giu nguyen <h1>
+# tieng Viet. Neu chi hoi os.path.exists() thi series cpu bao "12/12 xong" trong
+# khi khong bai nao duoc dich — dung loai nguy hiem nhat: sai mot cach tu tin.
+# Do bang SO TU trong article-body: stub ~50 tu, bai that 1.500-2.400 tu.
+STUB_MAX_WORDS = 150
+
+
+def is_real_translation(path):
+    """True neu file ton tai VA khong phai trang stub 'coming soon'."""
+    if not os.path.exists(path):
+        return False
+    s = open(path, encoding='utf-8').read()
+    i = s.find('class="article-body"')
+    j = s.find('</main>')
+    if i < 0 or j < 0:
+        return True  # khong doc duoc cau truc -> khong tu nhan la stub
+    body = re.sub(r'<(script|style|svg|pre)\b.*?</\1>', ' ', s[i:j], flags=re.S)
+    return len(re.sub(r'<[^>]+>', ' ', body).split()) > STUB_MAX_WORDS
+
 
 def lessons_from_hub(hub_path):
     """Tra ve [(so_bai, slug)] theo thu tu syllabus."""
@@ -71,13 +91,14 @@ def main():
             broken.append((n, vi))
             print(f'  Bai {n:2}  {slug:35} THIEU ban VI — hub tro toi file khong ton tai')
             continue
-        if os.path.exists(en):
+        if is_real_translation(en):
             done += 1
             print(f'  Bai {n:2}  {slug:35} xong (co ca VI va EN)')
         else:
             if nxt is None:
                 nxt = (n, vi, en)
-            print(f'  Bai {n:2}  {slug:35} chua co EN')
+            state = 'la STUB, chua dich' if os.path.exists(en) else 'chua co EN'
+            print(f'  Bai {n:2}  {slug:35} {state}')
 
     print(f'\nda xong {done}/{len(order)}' + (f' ({locked} bai chua viet)' if locked else ''))
     if nxt:

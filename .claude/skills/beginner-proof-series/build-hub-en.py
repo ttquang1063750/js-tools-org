@@ -42,6 +42,23 @@ script_map = json.load(open(f'{SERIES}/hub-script-map.json', encoding='utf-8'))
 lessons = json.load(open(f'{SERIES}/hub-lessons-en.json', encoding='utf-8'))
 
 
+# Giong next-lesson.py: mot trang EN co the TON TAI ma van la stub "coming soon"
+# (~50 tu, con nguyen <h1> tieng Viet). Neu coi stub la "da dich" thi the hub tro
+# toi mot trang trong, VA guard "tieu de hub phai khop <h1>" se bao lech oan.
+STUB_MAX_WORDS = 150
+
+
+def is_real_translation(path):
+    if not os.path.exists(path):
+        return False
+    s = open(path, encoding='utf-8').read()
+    i, j = s.find('class="article-body"'), s.find('</main>')
+    if i < 0 or j < 0:
+        return True
+    body = re.sub(r'<(script|style|svg|pre)\b.*?</\1>', ' ', s[i:j], flags=re.S)
+    return len(re.sub(r'<[^>]+>', ' ', body).split()) > STUB_MAX_WORDS
+
+
 def deepen(t):
     """File EN nam sau mot cap thu muc."""
     t = t.replace('href="../../', 'href="../../../').replace('src="../../', 'src="../../../')
@@ -118,7 +135,7 @@ for L in lessons:
         continue
     n += 1
     en_path = f'{LESSON_DIR}/{L["slug"]}.html'
-    if os.path.exists(en_path):
+    if is_real_translation(en_path):
         href, note = L['slug'], ''
     else:
         # ban EN chua co -> tro ve ban VI, noi ro bang tieng Anh
@@ -134,7 +151,7 @@ for L in lessons:
                 <div class="lesson-arrow">➔</div>
               </a>'''
     )
-n_en = sum(1 for L in lessons if 'slug' in L and os.path.exists(f'{LESSON_DIR}/{L["slug"]}.html'))
+n_en = sum(1 for L in lessons if 'slug' in L and is_real_translation(f'{LESSON_DIR}/{L["slug"]}.html'))
 
 # Tieu de tren hub phai khop tieu de THUC cua trang EN. Trang la nguon dung;
 # hub lech la doc gia bam vao mot cai ten roi den mot trang ten khac.
@@ -142,7 +159,7 @@ for L in lessons:
     if 'slug' not in L:
         continue
     fp = f'{LESSON_DIR}/{L["slug"]}.html'
-    if not os.path.exists(fp):
+    if not is_real_translation(fp):
         continue
     page = open(fp, encoding='utf-8').read()
     h1 = ' '.join(
@@ -209,7 +226,11 @@ for a, b in cfg['hubChromeSubs']:
 assert 'href="en/' not in chrome, 'chrome con link tro vao en/ — se thanh en/en/'
 
 # ---------------------------------------------------------------- 7. tail (comments + footer)
-t = vi.index('<div class="article-comments"')
+# Khong phai hub nao cung co khoi giscus: hub cua series cpu ket thuc thang o
+# </main>. Truoc day dong nay .index() nen no NEM LOI va khong the dung hub do.
+t = vi.find('<div class="article-comments"')
+if t < 0:
+    t = vi.index('</main>')
 tail = deepen(vi[t:]).replace('<h2>Bình luận</h2>', '<h2>Comments</h2>')
 
 # ---------------------------------------------------------------- 8. than bai
@@ -234,7 +255,10 @@ out = head + chrome + body + '\n            ' + tail
 # Bay loi "bo sot mot khoi noi dung": dem cac khoi cau truc o hai ban. Dich thi so
 # tu se khac, nhung SO KHOI phai bang nhau — thieu mot callout la thieu that.
 def shape(s):
-    b = s[s.index('<div class="article-wrap">') : s.index('<div class="article-comments"')]
+    end = s.find('<div class="article-comments"')
+    if end < 0:
+        end = s.index('</main>')
+    b = s[s.index('<div class="article-wrap">') : end]
     b = re.sub(r'<script.*?</script>', '', b, flags=re.S)
     b = re.sub(r'<svg.*?</svg>', '', b, flags=re.S)
     return {
