@@ -183,6 +183,13 @@ for n, slug, title in todo:
         '- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan',
         '- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua',
         '- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)',
+        # Huong NGUOC lai cua o tren, va la blocker so 8 cua SKILL.md. O tren chi
+        # bat duoc thu bai TU HUA; o nay bat thu chu de DOI HOI ma khong loi hua nao
+        # nhac toi — nen khong cross-reference nao trong series phat hien duoc. Da
+        # tra gia that o Bai 7: write-through/write-back/dirty bit = 0 lan xuat hien,
+        # va ca ba bi xep vao "co y de lai" thay vi duoc viet.
+        '- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than',
+        '      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**',
         '- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai',
         '- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung',
         '- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)',

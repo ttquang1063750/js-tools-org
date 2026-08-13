@@ -144,6 +144,8 @@ khoi code kieu do, da sua tay.
 - [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
 - [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
 - [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than
+      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**
 - [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
 - [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
 - [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
@@ -167,6 +169,8 @@ khoi code kieu do, da sua tay.
 - [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
 - [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
 - [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than
+      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**
 - [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
 - [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
 - [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
@@ -190,6 +194,8 @@ khoi code kieu do, da sua tay.
 - [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
 - [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
 - [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than
+      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**
 - [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
 - [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
 - [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
@@ -213,6 +219,8 @@ khoi code kieu do, da sua tay.
 - [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
 - [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
 - [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than
+      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**
 - [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
 - [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
 - [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
@@ -236,6 +244,8 @@ khoi code kieu do, da sua tay.
 - [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
 - [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
 - [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than
+      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**
 - [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
 - [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
 - [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
