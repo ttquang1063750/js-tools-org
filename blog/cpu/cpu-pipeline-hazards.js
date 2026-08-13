@@ -1,8 +1,30 @@
-// Demo Bài 4 — chỉ là "lớp keo DOM": mọi phép tính thời gian/CPI và phát hiện
-// hazard được ủy thác cho engine dùng chung cpu-core.js (một nguồn sự thật
-// duy nhất, đã verify bằng `node cpu-core.js`). File này KHÔNG tự tính lại
-// công thức để tránh phân kỳ với engine.
+// Lesson 4's demo is only "DOM glue": every timing/CPI computation and every
+// hazard detection is delegated to the shared cpu-core.js engine (a single source
+// of truth, verified by running `node cpu-core.js`). This file never recomputes a
+// formula itself, so it cannot drift away from the engine.
+//
+// One file serves both locales, so every visible string goes through STRINGS and
+// is picked by <html lang>, which the page itself sets per locale. NUM_LOCALE
+// matters too: number grouping differs (500.002 in vi-VN vs 500,002 in en-US), so
+// hardcoding one locale prints the wrong format on the other page.
 import { assembleRV32I, decodeRV32I, pipelineTime, pipelineCPI, detectHazards } from './cpu-core.js';
+
+const IS_EN = document.documentElement.lang === 'en';
+const NUM_LOCALE = IS_EN ? 'en-US' : 'vi-VN';
+
+const STRINGS = {
+  vi: {
+    hazardLine: (i, kind, n) => `Lệnh #${i}: hazard ${kind} → ${n} stall`,
+    noHazard: '(không có hazard nào)',
+    totalStalls: (n) => `Tổng số stall: ${n}`,
+  },
+  en: {
+    hazardLine: (i, kind, n) => `Instruction #${i}: ${kind} hazard → ${n} stall(s)`,
+    noHazard: '(no hazards at all)',
+    totalStalls: (n) => `Total stalls: ${n}`,
+  },
+};
+const T_STR = STRINGS[IS_EN ? 'en' : 'vi'];
 
 const SEQUENCES = {
   raw: {
@@ -32,7 +54,7 @@ function initTimingCalculator() {
     const tclk = Math.max(0.01, parseFloat(clockInput.value) || 0.5);
     const t = pipelineTime(n, 5, stalls, tclk);
     const cpi = pipelineCPI(n, stalls);
-    output.innerHTML = `T = (${n} + 5 - 1 + ${stalls}) × ${tclk}ns = <strong>${t.toLocaleString('vi-VN')}ns</strong> &nbsp;·&nbsp; CPI = <strong>${cpi.toFixed(4)}</strong>`;
+    output.innerHTML = `T = (${n} + 5 - 1 + ${stalls}) × ${tclk}ns = <strong>${t.toLocaleString(NUM_LOCALE)}ns</strong> &nbsp;·&nbsp; CPI = <strong>${cpi.toFixed(4)}</strong>`;
   }
 
   [numInput, stallInput, clockInput].forEach((el) => el.addEventListener('input', update));
@@ -51,10 +73,10 @@ function initHazardDemo() {
     const result = detectHazards(instrs, fwdCheckbox.checked);
     const hazardLines = result.hazards.length
       ? result.hazards
-          .map((h) => `Lệnh #${h.index}: hazard ${h.type === 'LOAD_USE' ? 'LOAD-USE' : 'RAW'} → ${h.stalls} stall`)
+          .map((h) => T_STR.hazardLine(h.index, h.type === 'LOAD_USE' ? 'LOAD-USE' : 'RAW', h.stalls))
           .join('<br>')
-      : '(không có hazard nào)';
-    output.innerHTML = `${hazardLines}<br><strong>Tổng số stall: ${result.totalStalls}</strong>`;
+      : T_STR.noHazard;
+    output.innerHTML = `${hazardLines}<br><strong>${T_STR.totalStalls(result.totalStalls)}</strong>`;
   }
 
   seqSelect.addEventListener('change', update);
