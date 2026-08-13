@@ -119,6 +119,28 @@ const GATE_Z = [
   [cx(0), cx(-1)],
 ];
 
+// Mục 12.4 — VÌ SAO NISQ chưa chạy nổi Shor. Cổng lượng tử nào cũng có tỷ lệ
+// lỗi p. Một mạch chạy đúng chỉ khi MỌI cổng đều đúng, nên xác suất cả mạch
+// cho kết quả tin được là (1-p)^numGates — tụt theo hàm mũ, không tuyến tính.
+// Đây là con số biến "máy 100 qubit" thành "chưa dùng được", chứ không phải
+// số qubit.
+function circuitSuccessProbability(gateErrorRate, numGates) {
+  return Math.pow(1 - gateErrorRate, numGates);
+}
+
+// Sửa lỗi lượng tử đổi NHIỀU qubit vật lý lấy MỘT qubit logic đủ sạch. Mã bề
+// mặt (surface code) dùng lưới khoảng cách d, cần ~d² qubit vật lý mỗi qubit
+// logic, và tỷ lệ lỗi logic giảm theo hàm mũ của d — nhưng CHỈ khi tỷ lệ lỗi
+// vật lý đã dưới ngưỡng (~1%). Trên ngưỡng thì thêm qubit làm mọi thứ TỆ hơn.
+function surfaceCodeOverhead(distance) {
+  return { distance, physicalPerLogical: distance * distance };
+}
+
+// Tổng số qubit VẬT LÝ cần cho một thuật toán, khi đã tính chi phí sửa lỗi.
+function physicalQubitsNeeded(logicalQubits, distance) {
+  return logicalQubits * surfaceCodeOverhead(distance).physicalPerLogical;
+}
+
 export {
   cx,
   cAdd,
@@ -132,6 +154,9 @@ export {
   GATE_X,
   GATE_Y,
   GATE_Z,
+  circuitSuccessProbability,
+  surfaceCodeOverhead,
+  physicalQubitsNeeded,
 };
 
 // ---------------------------------------------------------------------------
@@ -225,6 +250,51 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const probs = measureProbabilities(s);
     checkClose('Bell state (dao vai tro qubit): P(00) = 0,5', probs[0], 0.5);
     checkClose('Bell state (dao vai tro qubit): P(11) = 0,5', probs[3], 0.5);
+  }
+
+  // --- Muc 12.4: vi sao NISQ chua chay noi Shor ---
+  {
+    // Ty le loi 0,1%/cong la con so TOT cho phan cung hom nay.
+    const p = 0.001;
+    checkClose(
+      'Mach 100 cong, loi 0,1%/cong: 90,48% kha nang cho ket qua dung',
+      circuitSuccessProbability(p, 100),
+      0.904792,
+      1e-5
+    );
+    checkClose('Mach 1.000 cong: tut con 36,77%', circuitSuccessProbability(p, 1000), 0.367695, 1e-5);
+    checkTrue(
+      'Mach 10.000 cong: con 0,0045% - tuc ket qua gan nhu chac chan la nhieu, du CUNG mot phan cung',
+      circuitSuccessProbability(p, 10000) < 0.0001
+    );
+    checkTrue(
+      'Diem mau chot: so cong tang 100 lan lam xac suat thanh cong tut hon 20.000 lan - hong theo HAM MU, khong tuyen tinh',
+      0.904792 / circuitSuccessProbability(p, 10000) > 20000
+    );
+    // Muon giu 90% thanh cong o 10.000 cong thi phai ha loi xuong 1e-5,
+    // tuc TOT HON 100 LAN so voi phan cung hien tai.
+    checkClose(
+      'Muon 10.000 cong van 90%: ty le loi phai la 0,001% - tot hon 100 lan',
+      circuitSuccessProbability(1e-5, 10000),
+      0.904837,
+      1e-5
+    );
+
+    // Sua loi doi qubit vat ly lay qubit logic.
+    check(
+      'Surface code khoang cach 25: 625 qubit vat ly cho MOT qubit logic',
+      surfaceCodeOverhead(25).physicalPerLogical,
+      625
+    );
+    check(
+      'Pha RSA-2048 can ~4.000 qubit logic -> 2.500.000 qubit VAT LY (surface code d=25)',
+      physicalQubitsNeeded(4000, 25),
+      2500000
+    );
+    checkTrue(
+      'So sanh: phan cung tot nhat hien nay khoang 1.000 qubit vat ly - con thieu hon 3 bac do lon',
+      physicalQubitsNeeded(4000, 25) / 1000 > 1000
+    );
   }
 
   console.log(errors === 0 ? 'SELF-TEST PASS (' + checks + ' checks)' : errors + ' LOI');

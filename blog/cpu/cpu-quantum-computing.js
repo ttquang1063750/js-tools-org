@@ -1,3 +1,11 @@
+// Trang ton tai o ca hai ngon ngu; moi chuoi file nay bom vao DOM phai theo
+// ngon ngu cua TRANG, khong theo tac gia - neu khong ban EN se hien tieng Viet
+// ngay giua phan thuc hanh.
+const STRINGS = {
+  vi: { amplitude: 'biên độ', noGates: '(chưa áp dụng cổng nào)' },
+  en: { amplitude: 'amplitude', noGates: '(no gates applied yet)' },
+};
+const T = STRINGS[document.documentElement.lang === 'en' ? 'en' : 'vi'];
 // cpu-quantum-computing.js — demo cho Bài 12 (Quantum Computing): mạch
 // lượng tử 2-qubit tương tác, dùng engine THẬT (quantum-sim.js, module
 // riêng biệt — KHÔNG dùng cpu-core.js).
@@ -31,7 +39,9 @@ function render() {
   const logEl = document.getElementById('qc-log');
 
   output.innerHTML = labels
-    .map((l, i) => `<div>${l}: biên độ = ${formatAmplitude(state[i])} · P = ${(probs[i] * 100).toFixed(1)}%</div>`)
+    .map(
+      (l, i) => `<div>${l}: ${T.amplitude} = ${formatAmplitude(state[i])} · P = ${(probs[i] * 100).toFixed(1)}%</div>`
+    )
     .join('');
 
   barsEl.innerHTML = labels
@@ -45,7 +55,7 @@ function render() {
     )
     .join('');
 
-  logEl.textContent = gateLog.length ? gateLog.join(' → ') : '(chưa áp dụng cổng nào)';
+  logEl.textContent = gateLog.length ? gateLog.join(' → ') : T.noGates;
 }
 
 function applyGate(name, fn) {
