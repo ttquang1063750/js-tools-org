@@ -1,5 +1,4 @@
-
-            <h2>Introduction: one core going faster by issuing several instructions at once</h2>
+<h2>Introduction: one core going faster by issuing several instructions at once</h2>
             <p>
               <a href="cpu-branch-prediction">Lesson 5</a> kept the pipeline FULL by predicting which way a branch would go. But the scalar pipeline of Lesson 4 still ISSUES exactly 1 instruction per cycle, always in strict program order. A modern high-performance CPU goes further: it issues <strong>several</strong> instructions per cycle (superscalar), and lets a LATER instruction finish BEFORE an earlier one when there is no REAL data dependency between them — this is called <strong>out-of-order execution</strong> (OOO). The price: you must resolve the FALSE data dependencies created by having only a finite set of architectural registers, and you must guarantee the final architectural state is exactly as if everything had run sequentially. This lesson builds the classic algorithm that solves both:
               <strong>Tomasulo</strong>.
@@ -82,6 +81,8 @@
                 <strong>ROB (Reorder Buffer)</strong> — a buffer holding EVERY in-flight instruction in strict program order; even though instructions finish COMPUTING out of order, <strong>commit</strong> (officially writing to the architectural registers) always happens from the HEAD of the ROB — guaranteeing the final architectural state is identical to sequential execution.
               </li>
             </ul>
+
+            {{SVG:1}}
             {{CODE:tomasulo_cycle.js (trích engine dùng chung cpu-core.js)}}
             <div class="callout callout--pitfall">
               <div class="callout__title">⚠️ Pitfall: a full ROB causes a "ROB stall"</div>
@@ -112,7 +113,53 @@
               </div>
             </div>
 
-            <h2>5. Hands-on: a miniature interactive Tomasulo simulator</h2>
+            <h2>5. Why the ROB has to exist: precise exceptions</h2>
+            <p>
+              The ROB has appeared dozens of times so far in the role of "commit in order so the final result is right". But if the final result were all that mattered, a structure this expensive would not be needed — section 2 showed that register renaming on its own preserves data-flow semantics. The real reason the ROB exists lies elsewhere, and it only shows up when something goes wrong midway.
+            </p>
+            <p>
+              Suppose an instruction raises an <strong>exception</strong> : a divide by zero, an overflow, or most commonly of all — touching an address that is not in memory yet (a page fault, Lesson 8). The CPU has to jump into the operating system's handler, deal with it, and then <em>resume</em> the program. To be able to resume, the register state at that moment must be
+              <strong>precise</strong> : exactly as if the program had run sequentially up to that instruction and stopped — not one instruction before it missing, and not one instruction after it applied.
+            </p>
+            <p>
+              But this CPU executes OUT of order. Section 4 measured it: instruction 2 writes back in cycle 5, instruction 1 not until cycle 6. So what does the register state look like if a fault lands in between? Run both kinds of machine on exactly the WAR/WAW program from section 4:
+            </p>
+
+            {{CODE:precise_exception.js (verified bằng engine — có ROB vs không ROB)}}
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ The "no ROB" state is broken in BOTH directions</div>
+              <div class="callout__content">
+                Notice that the two scenarios fail in opposite directions. Case A: an instruction from the <strong>future</strong> has already written (R2 = 11) — the handler sees the result of something that has not happened. Case B: an instruction from the
+                <strong>past</strong> has not taken effect yet (R1 is still 10) — something that did happen has left no result. In both, the register state corresponds to NO point in the sequential program. This is not "slightly wrong": it is meaningless. The operating system has no way to resume from a state like that, so a page fault could never be recovered from — which means virtual memory could not work at all.
+              </div>
+            </div>
+
+            <p>
+              That is exactly the ROB's job: let execution be as disorderly as it likes on the inside, while the
+              <strong>effect</strong> on the architectural registers follows program order absolutely. At every instant there is a clean boundary — everything committed is settled past, everything still in the ROB is computation that does not officially exist yet.
+            </p>
+
+            <div class="callout callout--note">
+              <div class="callout__title">
+                🔍 The same mechanism makes MISPREDICTION survivable — and that is Spectre's way in
+              </div>
+              <div class="callout__content">
+                Lesson 5 built the branch predictor: the CPU guesses which way a branch goes and carries straight on instead of waiting. But guesses are sometimes wrong — and if the instructions on the wrong path had already written to the registers, there would be no way back. The ROB handles this too: instructions on the predicted path enter the ROB and execute normally, but do not commit. Once the misprediction is known, the CPU simply <strong>wipes</strong> (squashes) the part of the ROB after that branch — as if it had never run. In other words, one structure buys both precise exceptions and speculative execution; without a ROB, neither out-of-order execution nor branch prediction would be usable. <br /><br />
+                And this is precisely where Spectre gets in. A squashed instruction leaves no trace in the
+                <em>thanh ghi</em> — but it did manage to change the <em>cache</em>, and the cache is not rolled back. The architectural state is clean; the microarchitectural state is not. Lesson 5 exploits exactly that gap, and Lesson 7 shows why a cache is measurable from the outside.
+              </div>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ The limit of this lesson's model: REGISTER dependencies only</div>
+              <div class="callout__content">
+                The engine here — like most textbook presentations of Tomasulo — only handles dependencies through registers. A real CPU must also handle dependencies through <strong>memory</strong>: if a <code>store</code> does not yet know which address it will write to, may the <code>load</code> behind it go first? If the two addresses turn out to be the same, letting it go first means reading stale data — wrong. This problem is called
+                <strong>memory disambiguation</strong>, and real CPUs solve it with a dedicated queue (the load/store queue) plus a guess-and-roll-back mechanism. This lesson does not model that, so do not conclude that renaming + ROB is all a complete out-of-order CPU needs.
+              </div>
+            </div>
+
+            <h2>6. Hands-on: a miniature interactive Tomasulo simulator</h2>
             <p>
               Pick one of the sample programs below to see the REAL Tomasulo schedule (issue / exec start / writeback / commit for each instruction) — comparing a WAR/WAW program (which renaming solves) directly against a real RAW chain (which it cannot) and a program with no conflicts at all:
             </p>
@@ -155,6 +202,15 @@
               </li>
               <li>
                 ✅ Pitfall: a full ROB (usually caused by one instruction stuck at its head) triggers a ROB stall, halting instruction issue completely.
+              </li>
+              <li>
+                ✅ The real reason a ROB is needed is precise exceptions: verified, when instruction 1 faults, the machine with a ROB keeps R2 = 3 (nothing has committed) while the machine without one already shows R2 = 11 — the value of an instruction that was NOT yet allowed to run.
+              </li>
+              <li>
+                ✅ Verified in the opposite direction: with the fault at instruction 2, the machine without a ROB shows R1 = 10, meaning instruction 1 — which comes BEFORE the fault — has not taken effect. The state matches no point in the program, so it cannot be resumed.
+              </li>
+              <li>
+                ✅ The same mechanism squashes mispredicted branches — so the ROB is a precondition for both out-of-order execution and branch prediction (Lesson 5), and the reason Spectre leaves its trace in the cache rather than in the registers.
               </li>
             </ul>
 
@@ -359,11 +415,12 @@
             <div class="article-cta">
               <h3>Download the lesson's practice code</h3>
               <p>
-                File JavaScript <code>CPUJS</code> — a miniature computer-architecture library used across all 12 lessons. Lesson 6 has just added <code>runTomasulo()</code> — a cycle-accurate simulation of the Tomasulo algorithm (reservation stations, CDB, ROB, register renaming), plus a self-test that checks every number quoted in this lesson (run
+                File JavaScript <code>CPUJS</code> — a miniature computer-architecture library used across all 12 lessons. Lesson 6 has just added <code>runTomasulo()</code>, <code>architecturalStateOnFault()</code>,
+                <code>evalInOrder()</code> — a cycle-accurate simulation of the Tomasulo algorithm (reservation stations, CDB, ROB, register renaming) plus the precise-exception comparison, with a self-test that checks every number quoted in this lesson (run
                 <code>node cpu-core.js</code>, nothing to install):
               </p>
               <a
-                href="../cpu-core.js"
+                href="cpu-core.js"
                 download
                 class="btn-facebook"
                 style="background: var(--demo-accent); text-decoration: none; color: #fff"
@@ -401,5 +458,3 @@
                 </li>
               </ul>
             </section>
-
-            

@@ -33,6 +33,25 @@ import sys
 
 VN = r'[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵĐđ]'
 
+
+def _bare_deepen(t):
+    """Them '../' cho link tuong doi TRAN (khong co '../') tro toi mot FILE.
+
+    Link giua cac bai la slug khong co duoi (href="cpu-programming-series") va
+    PHAI giu nguyen, vi trong /en/ chung tro dung sang ban EN cua bai kia.
+    """
+
+    def _bare(m):
+        attr, val = m.group(1), m.group(2)
+        if val.startswith(('http:', 'https:', '//', '/', '#', 'mailto:', 'data:', '../')):
+            return m.group(0)
+        if '.' not in val.rsplit('/', 1)[-1]:
+            return m.group(0)          # slug bai hoc, khong phai file
+        return f'{attr}="../{val}"'
+
+    return re.sub(r'\b(href|src)="([^"]+)"', _bare, t)
+
+
 if len(sys.argv) != 3:
     raise SystemExit('dung: build-lesson-en.py <thu-muc-series> <slug>')
 SERIES, SLUG = sys.argv[1].rstrip('/'), sys.argv[2]
@@ -156,6 +175,11 @@ def put_svg(m):
 
 body = re.sub(r'\{\{CODE:([^}]+)\}\}', put_code, body)
 body = re.sub(r'\{\{SVG:(\d+)\}\}', put_svg, body)
+# Than bai do nguoi viet, nhung no thuong duoc trich TU ban VI — nen link tai
+# file dat canh bai hoc (href="cpu-core.js") theo ve nguyen xi va tro sai tu
+# trong /en/. Da hai lan phai sua tay sau khi verify bao [links] chet, nen sua
+# ngay o day. _bare bo qua gia tri da co "../" nen chay lai nhieu lan khong sao.
+body = _bare_deepen(body)
 for label, missing in [
     ('khoi code', sorted(set(code_windows) - used_code)),
     ('so do', sorted(map(str, set(range(1, len(svgs) + 1)) - used_svg))),
@@ -180,15 +204,7 @@ def deepen(t):
     # Chi deepen gia tri co PHAN MO RONG (co dau cham). Link giua cac bai la slug
     # khong co duoi (href="cpu-programming-series") va PHAI giu nguyen, vi trong
     # /en/ chung tro dung sang ban EN cua bai kia.
-    def _bare(m):
-        attr, val = m.group(1), m.group(2)
-        if val.startswith(('http:', 'https:', '//', '/', '#', 'mailto:', 'data:', '../')):
-            return m.group(0)
-        if '.' not in val.rsplit('/', 1)[-1]:
-            return m.group(0)          # slug bai hoc, khong phai file
-        return f'{attr}="../{val}"'
-
-    return re.sub(r'\b(href|src)="([^"]+)"', _bare, t)
+    return _bare_deepen(t)
 
 
 i_head = vi.index('</head>') + len('</head>')

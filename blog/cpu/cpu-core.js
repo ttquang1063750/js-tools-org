@@ -716,6 +716,59 @@ function runTomasulo(instructions, opts = {}) {
   return { regFile, trace, totalCycles: cycle, ipc: n / cycle };
 }
 
+// Giá trị ĐÚNG mà mỗi lệnh phải sản xuất, tính theo ĐÚNG thứ tự chương trình.
+// Tomasulo giữ nguyên ngữ nghĩa luồng dữ liệu, nên đây cũng chính là giá trị
+// mà bản thực thi ngoài thứ tự tính ra — chỉ khác THỜI ĐIỂM.
+function evalInOrder(instructions, initialRegs) {
+  const regs = [...initialRegs];
+  const values = [];
+  for (const ins of instructions) {
+    const a = regs[ins.src1];
+    const b = regs[ins.src2];
+    const v = ins.op === 'MUL' ? a * b : ins.op === 'SUB' ? a - b : a + b;
+    values.push(v);
+    regs[ins.dest] = v;
+  }
+  return { regs, values };
+}
+
+// Mục 6.5 — VÌ SAO phải có ROB: NGOẠI LỆ CHÍNH XÁC (precise exception).
+// Đây mới là lý do thật sự ROB tồn tại, chứ không phải chỉ để "ra đúng kết
+// quả cuối". Giả sử lệnh thứ `faultAt` gây lỗi (chia cho 0, page fault,
+// tràn số...). Hệ điều hành phải nhận được một trạng thái thanh ghi ĐÚNG NHƯ
+// THỂ chương trình mới chạy tới đúng lệnh đó và dừng — không hơn một lệnh nào.
+// Chỉ khi đó mới xử lý xong rồi CHẠY TIẾP được.
+//   - Có ROB, commit đúng thứ tự: mọi lệnh SAU lệnh lỗi chưa hề chạm vào
+//     thanh ghi kiến trúc, dù chúng đã tính xong từ lâu. Trạng thái CHÍNH XÁC.
+//   - Không có ROB, ghi thẳng khi tính xong: lệnh sau đã kịp ghi đè thanh ghi
+//     trước khi lỗi được phát hiện. Trạng thái là một mớ KHÔNG tương ứng với
+//     bất kỳ thời điểm nào của chương trình — không thể chạy tiếp.
+function architecturalStateOnFault(instructions, opts = {}) {
+  const { initialRegs = new Array(8).fill(0), faultAt = 0 } = opts;
+  const r = runTomasulo(instructions, opts);
+  const { values } = evalInOrder(instructions, initialRegs);
+
+  // Có ROB: chỉ các lệnh TRƯỚC lệnh lỗi mới được commit.
+  const precise = [...initialRegs];
+  for (let i = 0; i < faultAt; i++) precise[instructions[i].dest] = values[i];
+
+  // Không ROB: mọi lệnh tính xong (writeback) trước hoặc cùng lúc lệnh lỗi
+  // hoàn tất đều đã ghi vào thanh ghi kiến trúc, kể cả lệnh nằm SAU lệnh lỗi.
+  const faultWb = r.trace[faultAt].writeback;
+  // Bản thân lệnh lỗi KHÔNG sản xuất giá trị (nó lỗi), nên loại ra.
+  const done = instructions
+    .map((_, i) => i)
+    .filter((i) => i !== faultAt && r.trace[i].writeback <= faultWb)
+    .sort((a, b) => r.trace[a].writeback - r.trace[b].writeback);
+  const imprecise = [...initialRegs];
+  for (const i of done) imprecise[instructions[i].dest] = values[i];
+
+  // Lệnh nằm SAU lệnh lỗi mà đã kịp làm bẩn trạng thái — đúng thứ khiến
+  // không thể chạy tiếp được.
+  const leakedFromFuture = done.filter((i) => i >= faultAt);
+  return { precise, imprecise, faultWb, committedBeforeFault: faultAt, leakedFromFuture };
+}
+
 // ---------------------------------------------------------------------------
 // Bài 7 — Phân cấp bộ nhớ & Kiến trúc Cache. CPU OOO của Bài 6 vẫn phải CHỜ
 // dữ liệu từ bộ nhớ chính (DRAM) — khoảng cách tốc độ CPU vs DRAM (Memory
@@ -1165,6 +1218,8 @@ export {
   runPredictor,
   effectiveCPI,
   runTomasulo,
+  evalInOrder,
+  architecturalStateOnFault,
   splitAddress,
   makeDirectMappedCache,
   makeWritePolicyCache,
@@ -1588,6 +1643,36 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Nhung in-order commit: instr1 cam ket TRUOC instr2, instr2 TRUOC instr3 - dung thu tu chuong trinh du hoan thanh ngoai thu tu',
       result.trace[0].commit < result.trace[1].commit && result.trace[1].commit < result.trace[2].commit
+    );
+
+    // --- Muc 6.5: NGOAI LE CHINH XAC - ly do that su ROB ton tai ---
+    // Kich ban A: lenh 1 (MUL) gay loi. Lenh 2 (ADD) da tinh xong TU TRUOC
+    // (writeback cycle 5 < cycle 6 cua MUL) du no nam SAU trong chuong trinh.
+    const faultA = architecturalStateOnFault(program, { initialRegs, faultAt: 0 });
+    check('Precise (co ROB), loi o lenh 1: R2 van la gia tri BAN DAU 3 - chua lenh nao commit', faultA.precise[2], 3);
+    check(
+      'Imprecise (khong ROB), loi o lenh 1: R2 da bi ghi thanh 11 boi lenh 2 - mot lenh CHUA duoc phep chay',
+      faultA.imprecise[2],
+      11
+    );
+    checkTrue('Imprecise: co dung 1 lenh tu TUONG LAI da lam ban trang thai', faultA.leakedFromFuture.length === 1);
+
+    // Kich ban B: loi o lenh 2. Lan nay hong theo huong NGUOC LAI - lenh 1
+    // (MUL, writeback cycle 6) van CHUA kip ghi khi loi lo ra o cycle 5.
+    const faultB = architecturalStateOnFault(program, { initialRegs, faultAt: 1 });
+    check(
+      'Precise (co ROB), loi o lenh 2: R1 = 12 - lenh 1 DA commit dung nhu chuong trinh yeu cau',
+      faultB.precise[1],
+      12
+    );
+    check(
+      'Imprecise (khong ROB), loi o lenh 2: R1 van la 10 - lenh 1 nam TRUOC loi ma chua he co hieu luc',
+      faultB.imprecise[1],
+      10
+    );
+    checkTrue(
+      'Ket luan: trang thai imprecise khong khop trang thai precise o CA HAI kich ban - no khong tuong ung voi bat ky thoi diem nao cua chuong trinh, nen khong the chay tiep',
+      faultA.imprecise[2] !== faultA.precise[2] && faultB.imprecise[1] !== faultB.precise[1]
     );
 
     // Doi chung: cung chuong trinh nhung KHONG co WAR/WAW (dest khac nhau
