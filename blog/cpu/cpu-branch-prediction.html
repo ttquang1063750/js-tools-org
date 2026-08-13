@@ -208,7 +208,10 @@
           <a href="cpu-programming-series" class="article-hero__back">← Quay lại Lộ trình Series</a>
           <div class="article-hero__tag article-hero__tag--cpu">Bài 5 · Kiến Trúc Máy Tính</div>
           <h1 class="article-hero__title">Bài 5: Dự Đoán Nhánh &amp; Lỗ Hổng Bảo Mật Spectre</h1>
-          <div class="article-hero__meta">17 tháng 7, 2026 · Học thuật chuyên sâu</div>
+          <div class="article-hero__meta">
+            17 tháng 7, 2026 · Học thuật chuyên sâu ·
+            <a href="en/cpu-branch-prediction" style="color: #38bdf8">Read in English</a>
+          </div>
         </div>
       </section>
 
@@ -258,6 +261,19 @@
 
             <h2>2. Bộ dự đoán nhánh tĩnh &amp; động: FSM 1-bit và 2-bit bão hoà</h2>
             <p>
+              Hai chữ viết tắt sẽ theo suốt mục này. <strong>FSM</strong> là <em>finite state machine</em> — máy trạng
+              thái hữu hạn: một cơ chế chỉ có vài trạng thái xác định, và một quy tắc cố định nói rằng đang ở trạng thái
+              này, gặp sự kiện kia thì chuyển sang trạng thái nào. Đèn giao thông là một FSM ba trạng thái. Bộ dự đoán
+              nhánh dưới đây là FSM với 2 hoặc 4 trạng thái, và "sự kiện" của nó là kết quả thật của lần rẽ nhánh vừa
+              rồi.
+            </p>
+            <p>
+              <strong>BHT</strong> là <em>Branch History Table</em> — bảng lịch sử nhánh: thay vì dùng MỘT bộ dự đoán
+              cho cả chương trình, CPU giữ một bảng tra theo địa chỉ lệnh, để mỗi lệnh rẽ nhánh có bộ dự đoán RIÊNG của
+              nó. Cần thế vì các nhánh khác nhau có thói quen khác nhau: nhánh thoát vòng lặp gần như luôn "nhảy", còn
+              nhánh kiểm tra lỗi gần như luôn "không nhảy" — trộn chúng vào một bộ đếm thì cả hai đều đoán tệ hơn.
+            </p>
+            <p>
               Cách đơn giản nhất — <strong>dự đoán tĩnh</strong> (luôn đoán Không-nhảy, hoặc luôn đoán Nhảy) — chỉ đúng
               khoảng 50% với nhánh ngẫu nhiên. <strong>Dự đoán động</strong> ghi nhớ LỊCH SỬ của chính nhánh đó để đoán
               thông minh hơn, dựa trên tính lặp lại rất cao của nhánh trong vòng lặp thực tế.
@@ -267,16 +283,16 @@
                 <span class="code-filename">branch_predictor_1bit.js (trích engine dùng chung cpu-core.js)</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-javascript">// Bo du doan 1-bit: chi nho KET QUA LAN GAN NHAT, doan y het lan do
+              <pre><code class="language-javascript">// 1-bit predictor: remembers ONLY the MOST RECENT outcome, and predicts the same.
 function makeBranchPredictor1Bit() {
-  let state = 0; // 0 = doan Khong-nhay (N), 1 = doan Nhay (T)
+  let state = 0; // 0 = predict Not-taken (N), 1 = predict Taken (T)
   return {
     predict: () => (state === 1 ? 'T' : 'N'),
     update: (actual) => { state = actual === 'T' ? 1 : 0; },
   };
 }
-// Verified: tren chuoi vong lap long nhau (TTTTN lap 3 lan, 15 nhanh),
-// bo 1-bit chi doan dung 9/15 = 60%</code></pre>
+// Verified on the nested-loop sequence (TTTTN repeated 3 times, 15 branches):
+// the 1-bit predictor gets only 9/15 = 60% right.</code></pre>
             </div>
             <p>
               Bộ dự đoán <strong>2-bit bão hoà</strong> (saturating counter) dùng 4 trạng thái thay vì 2 — một lần đoán
@@ -288,7 +304,9 @@ function makeBranchPredictor1Bit() {
                 <span class="code-filename">branch_predictor_2bit.js (trích engine dùng chung cpu-core.js)</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-javascript">// 0=Rat-khong-nhay 1=Hoi-khong-nhay 2=Hoi-nhay 3=Rat-nhay; doan T khi state>=2
+              <pre><code class="language-javascript">// States: 0=Strongly-not-taken 1=Weakly-not-taken 2=Weakly-taken 3=Strongly-taken.
+// Predict T once state >= 2. One wrong guess only nudges the state one notch, so a
+// single blip does NOT flip the prediction.
 function makeBranchPredictor2Bit() {
   let state = 0;
   return {
@@ -298,13 +316,23 @@ function makeBranchPredictor2Bit() {
     },
   };
 }
-// BHT (Branch History Table): moi DIA CHI lenh re nhanh co MOT bo du doan
-// 2-bit RIENG (lap chi muc theo pc) - cac nhanh khac nhau co xu huong khac nhau
+
+// BHT (Branch History Table): every branch ADDRESS gets its OWN 2-bit predictor,
+// indexed by pc - different branches have different habits.
 function makeBranchHistoryTable() {
   const table = new Map();
-  // ... entryFor(pc) tra ve/tao bo du doan 2-bit rieng cho dia chi pc ...
+  const entryFor = (pc) => {
+    if (!table.has(pc)) table.set(pc, makeBranchPredictor2Bit());
+    return table.get(pc);
+  };
+  return {
+    predict: (pc) => entryFor(pc).predict(),
+    update: (pc, actual) => entryFor(pc).update(actual),
+    size: () => table.size,
+  };
 }
-// Verified: CUNG chuoi 15 nhanh o tren, bo 2-bit dung 10/15 = 66,7% (tot hon 1-bit)</code></pre>
+// Verified on the SAME 15-branch sequence: the 2-bit predictor gets 10/15 = 66.7%
+// right - better than the 1-bit one.</code></pre>
             </div>
             <div class="callout callout--pitfall">
               <div class="callout__title">⚠️ Cạm bẫy chính: bộ 1-bit dao động liên tục ở vòng lặp lồng nhau</div>
@@ -344,7 +372,7 @@ function makeBranchHistoryTable() {
   return cpiIdeal + branchFrequency * mispredictionRate * penaltyCycles;
 }
 // Verified: effectiveCPI(1, 0.2, 0.1, 3) === 1.06
-// Verified: effectiveCPI(1, 0, 0.1, 3) === 1 (khong co nhanh nao -> dung CPI ly tuong)</code></pre>
+// Verified: effectiveCPI(1, 0, 0.1, 3) === 1 (no branches at all -> the ideal CPI)</code></pre>
             </div>
             <div class="callout callout--warning">
               <div class="callout__title">⚠️ Đừng đánh giá thấp nhánh KHÔNG THỂ dự đoán</div>
@@ -359,6 +387,19 @@ function makeBranchHistoryTable() {
             </div>
 
             <h2>4. Thực thi suy đoán (Speculative Execution) &amp; Lỗ hổng Spectre</h2>
+            <div class="callout callout--note">
+              <div class="callout__title">📝 Cần biết trước về cache — chỉ đúng một điều</div>
+              <div class="callout__content">
+                Mục này dùng liên tục từ <strong>cache</strong>, mà cache chỉ được dạy đầy đủ ở
+                <a href="cpu-cache-memory">Bài 7</a>. Để đọc tiếp, bạn chỉ cần đúng một điều: cache là một vùng nhớ rất
+                nhỏ và rất nhanh nằm NGAY TRONG chip, giữ bản sao của những ô nhớ vừa được dùng — để lần sau đọc lại thì
+                không phải ra RAM chậm chạp bên ngoài. <br /><br />
+                Hệ quả duy nhất cần cho mục này:
+                <strong>đọc một địa chỉ ĐÃ nằm trong cache thì nhanh hơn rõ rệt</strong>
+                so với đọc một địa chỉ chưa nằm trong đó. Chênh lệch thời gian ấy đo được — và chính nó là thứ Spectre
+                dùng để nhìn thấy dữ liệu mà lẽ ra nó không được thấy.
+              </div>
+            </div>
             <p>
               Sau khi ĐOÁN hướng nhánh, CPU hiện đại không chỉ nạp lệnh mà còn <strong>chạy trước</strong>
               (speculative execution) các lệnh ở nhánh được đoán — kể cả các lệnh LOAD dữ liệu từ bộ nhớ vào cache. Nếu
@@ -382,16 +423,17 @@ function makeBranchHistoryTable() {
                 >
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-c">// 1. Huan luyen bo du doan: goi ham voi index HOP LE nhieu lan
-//    -> bo du doan "tin tuong" nhanh bounds-check se la TRUE
-// 2. Goi lai voi index NGOAI BIEN (vuot mang that su)
-//    -> CPU DOAN nhanh check van TRUE, THI HANH SUY DOAN doc du lieu
-//       ngoai bien vao thanh ghi, dung no lam chi so doc tiep 1 mang khac
-//    -> gia tri bi mat gio la 1 phan CHI SO dia chi trong cache
-// 3. Khi CPU phat hien doan SAI: KHOI PHUC kien truc (thanh ghi/bo nho)
-//    -> NHUNG cache VAN con dau vet (dia chi vua duoc doc vao cache)
-// 4. Ke tan cong do THOI GIAN truy cap tung dia chi ung vien
-//    -> dia chi nao nhanh (co trong cache) = suy ra dung 1 phan gia tri bi mat</code></pre>
+              <pre><code class="language-text">// 1. Train the predictor: call the function many times with a VALID index
+//    -> the predictor comes to "trust" that the bounds-check branch is TRUE
+// 2. Call it again with an OUT-OF-BOUNDS index (past the real array)
+//    -> the CPU PREDICTS the check is still TRUE and SPECULATIVELY reads the
+//       out-of-bounds data into a register, using it to index a second array
+//    -> the secret value is now part of an ADDRESS that entered the cache
+// 3. When the CPU notices the misprediction it RESTORES architectural state
+//    (registers and memory)
+//    -> BUT the cache still holds the trace (that address is now cached)
+// 4. The attacker TIMES a read of each candidate address
+//    -> whichever address is fast (i.e. cached) reveals part of the secret</code></pre>
             </div>
             <div class="callout callout--pitfall">
               <div class="callout__title">
@@ -521,7 +563,7 @@ function makeBranchHistoryTable() {
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Bo du doan nhanh khong lien quan gi den viec giai quyet xung dot DU LIEU (RAW/load-use) - do la viec cua forwarding/stall o Bai 4. Bo du doan giai quyet xung dot DIEU KHIEN (control hazard).'
+                      'Sai. Bộ dự đoán nhánh không liên quan gì đến việc giải quyết xung đột DỮ LIỆU (RAW/load-use) — đó là việc của forwarding/stall ở Bài 4. Bộ dự đoán giải quyết xung đột ĐIỀU KHIỂN (control hazard).'
                     )
                   "
                 >
@@ -534,7 +576,7 @@ function makeBranchHistoryTable() {
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Bo du doan nhanh hoan toan khong lam thay doi dung luong bo nho co the su dung - day la ky thuat xu ly LUONG LENH, khong phai ky thuat luu tru.'
+                      'Sai. Bộ dự đoán nhánh hoàn toàn không làm thay đổi dung lượng bộ nhớ có thể sử dụng — đây là kỹ thuật xử lý LUỒNG LỆNH, không phải kỹ thuật lưu trữ.'
                     )
                   "
                 >
@@ -572,7 +614,7 @@ function makeBranchHistoryTable() {
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Ca hai bo du doan deu chi dua vao LICH SU CUA CHINH nhanh do (khong dung du lieu cua nhanh khac) - dieu tao khac biet la SO BIT trang thai va co che bao hoa, khong phai viec dung them thong tin tu nhanh khac.'
+                      'Sai. Cả hai bộ dự đoán đều chỉ dựa vào LỊCH SỬ CỦA CHÍNH nhánh đó (không dùng dữ liệu của nhánh khác) — điều tạo khác biệt là SỐ BIT trạng thái và cơ chế bão hoà, không phải việc dùng thêm thông tin từ nhánh khác.'
                     )
                   "
                 >
@@ -585,7 +627,7 @@ function makeBranchHistoryTable() {
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Ca hai bo du doan deu chay TREN CUNG mot chuoi 15 nhanh y het nhau trong phep so sanh nay - khong phai do chuoi nhanh khac nhau, ma do CO CHE trang thai ben trong bo du doan khac nhau.'
+                      'Sai. Cả hai bộ dự đoán đều chạy TRÊN CÙNG một chuỗi 15 nhánh y hệt nhau trong phép so sánh này — không phải do chuỗi nhánh khác nhau, mà do CƠ CHẾ trạng thái bên trong bộ dự đoán khác nhau.'
                     )
                   "
                 >
@@ -622,7 +664,7 @@ function makeBranchHistoryTable() {
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Cong thuc CPI_eff = CPI_ideal + BranchFreq x MispredictRate x Penalty - khi MispredictRate = 0, ca so hang nhan nay bang 0 bat ke BranchFreq (0.2) hay Penalty (3) la gi, KHONG con lai 0.6.'
+                      'Sai. Công thức CPI_eff = CPI_ideal + BranchFreq × MispredictRate × Penalty — khi MispredictRate = 0, cả số hạng nhân này bằng 0 bất kể BranchFreq (0,2) hay Penalty (3) là gì, KHÔNG còn lại 0,6.'
                     )
                   "
                 >
@@ -635,7 +677,7 @@ function makeBranchHistoryTable() {
                     checkQuiz(
                       this,
                       false,
-                      'Sai. CPI hieu dung KHONG BAO GIO thap hon CPI ly tuong - CPI ly tuong (=1) la GIOI HAN DUOI, chi co the CONG THEM chi phi phat vi doan sai, khong the tru bot.'
+                      'Sai. CPI hiệu dụng KHÔNG BAO GIỜ thấp hơn CPI lý tưởng — CPI lý tưởng (=1) là GIỚI HẠN DƯỚI, chỉ có thể CỘNG THÊM chi phí phạt vì đoán sai, không thể trừ bớt.'
                     )
                   "
                 >
@@ -673,7 +715,7 @@ function makeBranchHistoryTable() {
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Neu ket qua KIEN TRUC (gia tri thanh ghi) duoc doc truc tiep, do la mot loi khac han (rd tu suy doan bi commit sai) - Spectre chinh xac la khai thac dau vet GIAN TIEP qua cache SAU KHI ket qua kien truc DA bi huy bo hoan toan.'
+                      'Sai. Nếu kết quả KIẾN TRÚC (giá trị thanh ghi) được đọc trực tiếp, đó là một lỗi khác hẳn (rd từ suy đoán bị commit sai) — Spectre chính xác là khai thác dấu vết GIÁN TIẾP qua cache SAU KHI kết quả kiến trúc ĐÃ bị huỷ bỏ hoàn toàn.'
                     )
                   "
                 >
@@ -686,7 +728,7 @@ function makeBranchHistoryTable() {
                     checkQuiz(
                       this,
                       false,
-                      'Sai. Bo du doan nhanh CHINH LA co che bi loi dung (khong phai bi thay the) - ke tan cong CHU DONG huan luyen bo du doan de ep CPU nan nhan chay suy doan sai huong, chu khong phai vo hieu hoa bo du doan.'
+                      'Sai. Bộ dự đoán nhánh CHÍNH LÀ cơ chế bị lợi dụng (không phải bị thay thế) — kẻ tấn công CHỦ ĐỘNG huấn luyện bộ dự đoán để ép CPU nạn nhân chạy suy đoán sai hướng, chứ không phải vô hiệu hoá bộ dự đoán.'
                     )
                   "
                 >
@@ -759,6 +801,7 @@ function makeBranchHistoryTable() {
             </div>
 
             <div class="article-comments">
+              <h2>Bình luận</h2>
               <div class="giscus"></div>
             </div>
           </div>

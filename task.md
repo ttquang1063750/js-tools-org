@@ -21,7 +21,7 @@ python3 $D/next-lesson.py blog/cpu/cpu-programming-series.html
 python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/cpu
 ```
 
-**Tien do: 4/12 bai da co ban EN.** Checker dang **xanh**.
+**Tien do: 5/12 bai da co ban EN.** Checker dang **xanh**.
 
 ## Viec o cap toan site (khong thuoc series nao)
 
@@ -133,29 +133,6 @@ nen tieng Viet BO DAU (`// mot mang bo nho DUY NHAT`) van lot qua. Bai 2 co 4
 khoi code kieu do, da sua tay.
 
 ## Cac bai con lai
-
-### Bai 5: Dự Đoán Nhánh & Lỗ Hổng Bảo Mật Spectre
-
-- VI: `blog/cpu/cpu-branch-prediction.html`
-- EN can tao: `blog/cpu/en/cpu-branch-prediction.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-branch-prediction.html`)
-- [ ] co template de dung lai (`cpu-branch-prediction.body-en.html` + `.meta-en.json`)
-- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
-- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
 
 ### Bai 6: Song Song Cấp Lệnh & Thực Thi Ngoài Thứ Tự (Tomasulo)
 
@@ -326,6 +303,7 @@ Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
 - [x] Bai 2: Kiến Trúc Von Neumann & Tập Lệnh ISA
 - [x] Bai 3: Hợp Ngữ RISC-V & Đường Đi Của Dữ Liệu (Datapath)
 - [x] Bai 4: Pipeline CPU & Xung Đột Dữ Liệu (Data Hazards)
+- [x] Bai 5: Dự Đoán Nhánh & Lỗ Hổng Bảo Mật Spectre
 
 ## Viec o cap series (lam mot lan)
 

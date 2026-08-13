@@ -1,13 +1,32 @@
-// cpu-branch-prediction.js — demo cho Bài 5 (Dự Đoán Nhánh & Spectre): chạy
-// bộ dự đoán 1-bit và 2-bit THẬT (từ cpu-core.js) trên một chuỗi nhánh do
-// người dùng chọn, hiển thị tỷ lệ đoán đúng + vết trạng thái FSM; và một máy
-// tính CPI hiệu dụng dùng đúng effectiveCPI().
+// cpu-branch-prediction.js — Lesson 5's demo (branch prediction & Spectre): runs
+// the REAL 1-bit and 2-bit predictors (from cpu-core.js) over a branch sequence
+// the reader picks, showing the hit rate plus the FSM state trace; and a
+// effective-CPI calculator using effectiveCPI() itself.
+//
+// One file serves both locales, so every visible string goes through STRINGS and
+// is picked by <html lang>, which the page itself sets per locale.
 import { makeBranchPredictor1Bit, makeBranchPredictor2Bit, runPredictor, effectiveCPI } from './cpu-core.js';
 
-// Các chuỗi nhánh mẫu (mảng 'T'/'N') minh hoạ các cấu trúc điều khiển thường gặp.
+const IS_EN = document.documentElement.lang === 'en';
+const STRINGS = {
+  vi: {
+    nested: 'Vòng lặp lồng nhau (4×T rồi 1×N, lặp 3 lần)',
+    always: 'Vòng lặp đơn (luôn nhảy — 8×T)',
+    alternating: 'Xen kẽ tuyệt đối (T,N,T,N,... — nhánh KHÔNG THỂ đoán đúng)',
+    correct: 'Đúng',
+  },
+  en: {
+    nested: 'Nested loops (4×T then 1×N, repeated 3 times)',
+    always: 'Single loop (always taken — 8×T)',
+    alternating: 'Perfectly alternating (T,N,T,N,... — an UNPREDICTABLE branch)',
+    correct: 'Correct',
+  },
+};
+const T_STR = STRINGS[IS_EN ? 'en' : 'vi'];
+
 const SEQUENCES = {
   nestedLoop: {
-    label: 'Vòng lặp lồng nhau (4×T rồi 1×N, lặp 3 lần)',
+    label: T_STR.nested,
     build() {
       const seq = [];
       for (let outer = 0; outer < 3; outer++) {
@@ -18,13 +37,13 @@ const SEQUENCES = {
     },
   },
   alwaysTaken: {
-    label: 'Vòng lặp đơn (luôn nhảy — 8×T)',
+    label: T_STR.always,
     build() {
       return new Array(8).fill('T');
     },
   },
   alternating: {
-    label: 'Xen kẽ tuyệt đối (T,N,T,N,... — nhánh KHÔNG THỂ đoán đúng)',
+    label: T_STR.alternating,
     build() {
       const seq = [];
       for (let i = 0; i < 10; i++) seq.push(i % 2 === 0 ? 'T' : 'N');
@@ -40,7 +59,7 @@ function renderTrace(containerId, result) {
     .join('');
   el.innerHTML = `
     <div class="bp-trace">${cells}</div>
-    <div class="bp-stat">Đúng: <strong>${result.correct}/${result.total}</strong> (${(result.rate * 100).toFixed(1)}%)</div>
+    <div class="bp-stat">${T_STR.correct}: <strong>${result.correct}/${result.total}</strong> (${(result.rate * 100).toFixed(1)}%)</div>
   `;
 }
 
