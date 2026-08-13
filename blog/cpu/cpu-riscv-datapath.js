@@ -1,32 +1,66 @@
-// Demo Datapath RISC-V của Bài 3 — chỉ là "lớp keo DOM": mọi phép dịch/giải
-// mã/thực thi được ủy thác cho engine dùng chung cpu-core.js (một nguồn sự
-// thật duy nhất, đã verify bằng `node cpu-core.js`). File này KHÔNG tự lắp
-// lại phép mã hoá bit để tránh phân kỳ với engine.
+// Lesson 3's RISC-V datapath demo is only "DOM glue": every assemble, decode and
+// execute step is delegated to the shared cpu-core.js engine (a single source of
+// truth, verified by running `node cpu-core.js`). This file never re-implements
+// the bit encoding, so it cannot drift away from the engine.
+//
+// One file serves both locales, so every visible string goes through STRINGS and
+// is picked by <html lang>, which the page itself sets per locale.
 import { assembleRV32I, decodeRV32I, executeRV32I } from './cpu-core.js';
+
+const SUPPORTED = 'ADD/SUB/AND/OR/XOR/ADDI/ANDI/ORI/XORI/LW/SW';
+
+const STRINGS = {
+  vi: {
+    allZero: '(mọi thanh ghi đều = 0)',
+    emptyLine: 'Dòng lệnh rỗng',
+    badLw: 'Cú pháp LW sai — dùng: LW xd, imm(xs1)',
+    badSw: 'Cú pháp SW sai — dùng: SW xs2, imm(xs1)',
+    unsupported: (m) => `Mnemonic không hỗ trợ: ${m} (chỉ hỗ trợ ${SUPPORTED})`,
+    assembled: (hex) => `Đã dịch (assemble) thành công — mã máy = 0x${hex}. Bấm "Thực thi" để chạy qua datapath.`,
+    assembleError: 'Lỗi dịch lệnh: ',
+    nothingAssembled: 'Chưa có lệnh nào được dịch — bấm "Dịch (Assemble)" trước.',
+    executed: (m) => `Đã thực thi lệnh ${m} qua datapath đơn chu kỳ.`,
+    reset: 'Đã reset.',
+  },
+  en: {
+    allZero: '(every register is 0)',
+    emptyLine: 'The instruction line is empty',
+    badLw: 'Bad LW syntax — use: LW xd, imm(xs1)',
+    badSw: 'Bad SW syntax — use: SW xs2, imm(xs1)',
+    unsupported: (m) => `Unsupported mnemonic: ${m} (only ${SUPPORTED} are supported)`,
+    assembled: (hex) =>
+      `Assembled successfully — machine code = 0x${hex}. Press "Execute" to run it through the datapath.`,
+    assembleError: 'Assembly error: ',
+    nothingAssembled: 'Nothing assembled yet — press "Assemble" first.',
+    executed: (m) => `Executed ${m} through the single-cycle datapath.`,
+    reset: 'Reset done.',
+  },
+};
+const T = STRINGS[document.documentElement.lang === 'en' ? 'en' : 'vi'];
 
 function parseReg(token) {
   return parseInt(token.replace(/^x/i, ''), 10);
 }
 
-// Chuyển 1 dòng Assembly gõ tay (vd "ADD x3, x1, x2" hoặc "LW x5, 8(x2)")
-// thành {mnemonic, args} — bộ phân tích tối giản, chỉ đủ cho 10 mnemonic mà
-// engine hỗ trợ.
+// Turn one hand-typed assembly line ("ADD x3, x1, x2" or "LW x5, 8(x2)") into
+// {mnemonic, args}. A minimal parser — just enough for the 11 mnemonics the
+// engine supports, which is exactly the list in SUPPORTED above.
 function parseAsmLine(line) {
   const clean = line.trim().replace(/,/g, ' ').replace(/\s+/g, ' ');
-  if (!clean) throw new Error('Dòng lệnh rỗng');
+  if (!clean) throw new Error(T.emptyLine);
   const parts = clean.split(' ');
   const mnemonic = parts[0].toUpperCase();
 
   if (mnemonic === 'LW') {
     const rd = parseReg(parts[1]);
     const m = parts[2].match(/(-?\d+)\(x(\d+)\)/i);
-    if (!m) throw new Error('Cú pháp LW sai — dùng: LW xd, imm(xs1)');
+    if (!m) throw new Error(T.badLw);
     return { mnemonic, args: { rd, rs1: parseInt(m[2], 10), imm: parseInt(m[1], 10) } };
   }
   if (mnemonic === 'SW') {
     const rs2 = parseReg(parts[1]);
     const m = parts[2].match(/(-?\d+)\(x(\d+)\)/i);
-    if (!m) throw new Error('Cú pháp SW sai — dùng: SW xs2, imm(xs1)');
+    if (!m) throw new Error(T.badSw);
     return { mnemonic, args: { rs2, rs1: parseInt(m[2], 10), imm: parseInt(m[1], 10) } };
   }
   if (['ADD', 'SUB', 'AND', 'OR', 'XOR'].includes(mnemonic)) {
@@ -35,7 +69,7 @@ function parseAsmLine(line) {
   if (['ADDI', 'ANDI', 'ORI', 'XORI'].includes(mnemonic)) {
     return { mnemonic, args: { rd: parseReg(parts[1]), rs1: parseReg(parts[2]), imm: parseInt(parts[3], 10) } };
   }
-  throw new Error('Mnemonic không hỗ trợ: ' + mnemonic + ' (chỉ hỗ trợ ADD/SUB/AND/OR/XOR/ADDI/ANDI/ORI/XORI/LW/SW)');
+  throw new Error(T.unsupported(mnemonic));
 }
 
 function toBin32(word) {
@@ -53,7 +87,7 @@ function initDatapathDemo() {
   const blockAlu = document.getElementById('datapath-block-alu');
   const blockMem = document.getElementById('datapath-block-mem');
   const blockRegfile = document.getElementById('datapath-block-regfile');
-  if (!asmInput || !assembleBtn) return; // trang không có demo -> bỏ qua
+  if (!asmInput || !assembleBtn) return; // page has no demo -> nothing to wire up
 
   let regs = new Array(32).fill(0);
   let mem = {};
@@ -61,7 +95,7 @@ function initDatapathDemo() {
 
   function renderRegs() {
     const nonZero = regs.map((v, i) => (v !== 0 ? `x${i}=${v}` : null)).filter(Boolean);
-    regsDisplay.textContent = nonZero.length ? nonZero.join('  ') : '(mọi thanh ghi đều = 0)';
+    regsDisplay.textContent = nonZero.length ? nonZero.join('  ') : T.allZero;
   }
 
   function highlightBlocks(decoded) {
@@ -70,7 +104,7 @@ function initDatapathDemo() {
       blockAlu && blockAlu.classList.add('active');
       blockRegfile && blockRegfile.classList.add('active');
     } else if (decoded.type === 'ILOAD' || decoded.type === 'S') {
-      blockAlu && blockAlu.classList.add('active'); // tinh dia chi = base + offset
+      blockAlu && blockAlu.classList.add('active'); // address = base + offset
       blockMem && blockMem.classList.add('active');
       if (decoded.type === 'ILOAD') blockRegfile && blockRegfile.classList.add('active');
     }
@@ -95,22 +129,22 @@ function initDatapathDemo() {
       currentWord = assembleRV32I(mnemonic, args);
       const decoded = decodeRV32I(currentWord);
       renderBits(currentWord, decoded);
-      statusDisplay.textContent = `Đã dịch (assemble) thành công — mã máy = 0x${currentWord.toString(16)}. Bấm "Thực thi" để chạy qua datapath.`;
+      statusDisplay.textContent = T.assembled(currentWord.toString(16));
     } catch (err) {
       currentWord = null;
-      statusDisplay.textContent = 'Lỗi dịch lệnh: ' + err.message;
+      statusDisplay.textContent = T.assembleError + err.message;
     }
   });
 
   executeBtn.addEventListener('click', () => {
     if (currentWord === null) {
-      statusDisplay.textContent = 'Chưa có lệnh nào được dịch — bấm "Dịch (Assemble)" trước.';
+      statusDisplay.textContent = T.nothingAssembled;
       return;
     }
     const decoded = executeRV32I(currentWord, regs, mem);
     highlightBlocks(decoded);
     renderRegs();
-    statusDisplay.textContent = `Đã thực thi lệnh ${decoded.mnemonic} qua datapath đơn chu kỳ.`;
+    statusDisplay.textContent = T.executed(decoded.mnemonic);
   });
 
   resetBtn.addEventListener('click', () => {
@@ -118,7 +152,7 @@ function initDatapathDemo() {
     mem = {};
     currentWord = null;
     bitsDisplay.innerHTML = '—';
-    statusDisplay.textContent = 'Đã reset.';
+    statusDisplay.textContent = T.reset;
     [blockAlu, blockMem, blockRegfile].forEach((b) => b && b.classList.remove('active'));
     renderRegs();
   });
