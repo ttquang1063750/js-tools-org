@@ -1,11 +1,11 @@
-# task.md — Thiết Kế Hệ Thống / System Design
+# task.md — Kiến Trúc Máy Tính / Computer Architecture
 
 > File nay do `make-task.py` sinh ra tu hien trang repo. **Dung tich tay cac o
 > trong muc "May kiem duoc"** — chay lai script la chung tu dong dong bo:
 >
 > ```bash
 > D=.claude/skills/beginner-proof-series
-> python3 $D/make-task.py .claude/skills/beginner-proof-series/series/sysdesign
+> python3 $D/make-task.py .claude/skills/beginner-proof-series/series/cpu
 > ```
 
 ## Bat dau tu day
@@ -17,11 +17,11 @@ Hai lenh cho biet trang thai bat ky luc nao:
 
 ```bash
 D=.claude/skills/beginner-proof-series
-python3 $D/next-lesson.py blog/sysdesign/sysdesign-programming-series.html
-python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/sysdesign
+python3 $D/next-lesson.py blog/cpu/cpu-programming-series.html
+python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/cpu
 ```
 
-**Tien do: 18/18 bai da co ban EN.** Checker dang **xanh**.
+**Tien do: 0/12 bai da co ban EN.** Checker dang **DO** — xem muc "Viec phai sua ngay" ben duoi.
 
 ## Viec o cap toan site (khong thuoc series nao)
 
@@ -40,81 +40,371 @@ Chi ghi khi nguoi dung THUC SU bam nut.
 Da them 4 khang dinh vao `i18n-locale-selftest.mjs` va negative-test: khoi phuc
 hanh vi cu thi truot dung khang dinh do.
 
-### 2. Tao trang stub tieng Anh — CAN XEM LAI CO CON CAN KHONG
+### 2. ~~Tao trang stub tieng Anh~~ — DA XONG
 
-So lieu da dem duoc: **350 trang tieng Viet, chi 35 co ban EN**, va chung chi
-thuoc 2 series — `aie` (21) va `sysdesign` (14). Con **315 trang chua co**, trai
-khap 12+ series (ai, webgl, canvas, electronics, sql, embedded, cpp, vlsi, dsp,
-cpu, js, aisys...).
+298 stub duoi `blog/<series>/en/`, sinh boi
+`.claude/skills/beginner-proof-series/build-stub-en.py` (co `--dry-run`,
+`--vi-only`, va nhan duong dan de gioi han pham vi mot series).
 
-Muc 1 da sua xong loi chuyen ngon ngu, va no KHONG can trang stub — nut doi ngon
-ngu gio hoat dong hai chieu tren ca 390 trang co header. Nen truoc khi sinh 315
-trang, hay xac dinh lai con van de gi that su chua giai quyet.
+Tieu chi chon trang la MAY MOC, khong theo ten file: trang nao co `#langToggle`
+thi can ban EN. 12 trang app nhung (sandbox, visualizer, playground) khong co nut
+nen khong can — dung ten file de doan thi da phan loai sai `canvas-physics-simulation`
+va `vectordb-similarity-metrics`, hai bai hoc that.
 
-Y dinh ban dau: sinh san trang EN co header/footer that, body ghi "coming soon".
+Phat hien them, va la loi that: **91 trang tieng Viet dang khai `<html lang="en">`**
+(tron cac series bash, c, canvas, cpp, js, webgl). `i18n.js` doc chinh thuoc tinh
+do lam `contentLang`, nen neu de nguyen thi sau khi them hreflang chung se hien
+chrome tieng Anh va bam "sang tieng Viet" lai nhay sang stub. Da sua het.
 
-**Hai chot chan bat buoc phai co NGAY tu khi sinh** — 315 trang gan giong het
-nhau la thin content, khong phai vo hai:
+Hai chot chan da co: `noindex, follow` tren ca 298 stub; `sitemap.xml` khong doi
+mot dong. `check-lesson.js` duoc day them ngoai le: trang `noindex` KHONG duoc khai
+JSON-LD (khai `BlogPosting` o trang chua co noi dung la noi voi Google rang da ton
+tai ban tieng Anh day du). Ngoai le nhan dien bang chinh the `noindex`, khong dua
+vao duong dan `/en/` — vi `/en/` con chua ca 40 ban dich THAT.
 
-- `<meta name="robots" content="noindex">` tren moi stub. Go ra khi co noi dung that.
-- **KHONG dua stub vao `sitemap.xml`.** Sitemap la loi moi lap chi muc.
+Hai bai hoc phai tra gia trong lan nay:
+- `deepen()` chi sua duong dan co `../`. Script cung thu muc (`src="<slug>.js"`,
+  `vendor/sql-wasm.js`) bi giu nguyen nen tro vao `en/` va 404 — o CA `<head>` lan
+  cuoi trang. Stub khong co demo nao de chung dieu khien nen bo han la dung.
+- Dung chay `prettier --write` tren 298 trang VI. Lan dau toi lam vay, diff phong
+  len va lan sang toan bo than bai. So theo LOAI loi voi `git show HEAD:<file>` cho
+  thay khac biet duy nhat la lo Prettier — moi loi noi dung deu co san tu truoc.
+  Da hoan nguyen; diff cuoi cung chi con `lang` + 3 dong hreflang moi file.
 
-Van nen co `hreflang` (do chinh la thu lam nut hoat dong hai chieu), nhung di kem
-`noindex` de khong tu nhan "day la ban tieng Anh day du".
+### 3. ~~Nut doi ngon ngu la LINK, khong phai nut JS~~ — DA SUA
 
-Khi lam: dung script sinh hang loat, va chay `check-lesson.js` tren toan bo dau ra
-truoc khi commit. Nho bat bien da co: **so lieu truoc/sau phai so theo LOAI loi va
-so luong, khong so nguyen van** — `check-lesson.js` bao loi kem `[Dong N]`, ma them
-bot dong se lam lech het so dong.
+Loi that su nguoi dung gap KHONG phai localStorage, ma la `build-hub-en.py` dung
+`head.replace(f'"{VI_URL}"', f'"{EN_URL}"')` — mot phep thay CHUNG, nen no ghi de
+luon `hreflang="vi"` thanh URL tieng Anh. Ket qua: `hreflang` vi va en tro CUNG
+mot URL, bam doi ngon ngu thi dieu huong ve chinh trang dang xem.
+`build-lesson-en.py` da sua loi nay tu truoc — hub bi bo sot.
+Bi anh huong: 2 trang hub (aie, sysdesign). Da sua bo dung + dung lai. 40/40 dung.
 
-### 3. Them kiem tra "chuyen ngon ngu hai chieu" vao verify-series.py
+Da doi nut thanh `<a href>` that (y kien cua nguoi dung): tren trang CO ban dich,
+`i18n.js` thay `<button>` bang `<a href>` lay tu `hreflang`. Link thi khong the
+"bam ma khong di dau", chay duoc khi tat JS, va cong cu tim kiem doc duoc.
+Trang CHUA co ban dich van dung nut JS — o do khong ton tai URL nao de tro toi.
+`.btn-lang` phai co `display: inline-block` + `text-decoration: none` cho the `<a>`.
+`i18n-locale-selftest.mjs`: 11 khang dinh, da negative-test (tro href sai locale
+thi truot dung 3 khang dinh).
 
-Sau khi sua xong muc 1, ma hoa no thanh mot check de loi khong quay lai.
+### 4. Con thieu: check hreflang doi xung o CAP FILE
 
-Y tuong: voi moi cap trang VI/EN, xac nhan `hreflang` cua ban nay tro dung ban kia
-VA nguoc lai (hien tai check `hreflang` chi kiem bo ba co du, chua kiem tinh doi
-xung hai chieu giua hai file).
+Muc 3 kiem phia JavaScript. Chua ai kiem cap file VI/EN co tro dung nhau khong —
+va do chinh la cho loi vua roi phat sinh. Bo kiem tam thoi da dung:
 
-**Bat buoc negative-test** truoc khi tin: tiem mot `hreflang` tro sai roi xac nhan
-check bao do. Mot checker chi biet bao "dat" thi te hon la khong co.
+```python
+alts = {h: u for h, u in (
+    (re.search(r'hreflang="([^"]+)"', t).group(1), re.search(r'href="([^"]+)"', t).group(1))
+    for t in re.findall(r'<link\s+rel="alternate"[^>]*>', s, re.S))}
+# SAI neu: thieu vi/en, hoac alts['vi'] == alts['en'], hoac '/en/' in alts['vi']
+```
+
+Luu y da tra gia mot lan: regex `hreflang="..." href="..."` tren MOT dong la sai —
+prettier ngat the `<link>` thanh nhieu dong, nen phai khop `<link ...>` voi `re.S`
+roi moi tach thuoc tinh. Ban dau toi bao oan mot trang thu ba "loi" chinh vi vay.
+Dua vao `verify-series.py`, kem negative-test.
+
+## Viec phai sua ngay (checker dang do)
+
+Chua nen viet bai moi khi phan nay chua sach:
+
+```
+(khong co output)
+```
+
+Chay `verify-series.py` de xem day du.
 
 ## Cac bai con lai
 
-Khong con bai nao. Neu checker xanh, chay `make-task.py --finish` de don file nay.
+### Bai 1: Cổng Logic đến Đơn Vị ALU
+
+- VI: `blog/cpu/cpu-logic-alu.html`
+- EN can tao: `blog/cpu/en/cpu-logic-alu.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-logic-alu.html`)
+- [ ] co template de dung lai (`cpu-logic-alu.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 2: Kiến Trúc Von Neumann & Tập Lệnh ISA
+
+- VI: `blog/cpu/cpu-von-neumann-isa.html`
+- EN can tao: `blog/cpu/en/cpu-von-neumann-isa.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-von-neumann-isa.html`)
+- [ ] co template de dung lai (`cpu-von-neumann-isa.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 3: Hợp Ngữ RISC-V & Đường Đi Của Dữ Liệu (Datapath)
+
+- VI: `blog/cpu/cpu-riscv-datapath.html`
+- EN can tao: `blog/cpu/en/cpu-riscv-datapath.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-riscv-datapath.html`)
+- [ ] co template de dung lai (`cpu-riscv-datapath.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 4: Pipeline CPU & Xung Đột Dữ Liệu (Data Hazards)
+
+- VI: `blog/cpu/cpu-pipeline-hazards.html`
+- EN can tao: `blog/cpu/en/cpu-pipeline-hazards.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-pipeline-hazards.html`)
+- [ ] co template de dung lai (`cpu-pipeline-hazards.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 5: Dự Đoán Nhánh & Lỗ Hổng Bảo Mật Spectre
+
+- VI: `blog/cpu/cpu-branch-prediction.html`
+- EN can tao: `blog/cpu/en/cpu-branch-prediction.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-branch-prediction.html`)
+- [ ] co template de dung lai (`cpu-branch-prediction.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 6: Song Song Cấp Lệnh & Thực Thi Ngoài Thứ Tự (Tomasulo)
+
+- VI: `blog/cpu/cpu-ooo-execution.html`
+- EN can tao: `blog/cpu/en/cpu-ooo-execution.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-ooo-execution.html`)
+- [ ] co template de dung lai (`cpu-ooo-execution.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 7: Phân Cấp Bộ Nhớ & Kiến Trúc Cache
+
+- VI: `blog/cpu/cpu-cache-memory.html`
+- EN can tao: `blog/cpu/en/cpu-cache-memory.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-cache-memory.html`)
+- [ ] co template de dung lai (`cpu-cache-memory.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 8: Bộ Nhớ Ảo & Khối TLB
+
+- VI: `blog/cpu/cpu-virtual-memory-tlb.html`
+- EN can tao: `blog/cpu/en/cpu-virtual-memory-tlb.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-virtual-memory-tlb.html`)
+- [ ] co template de dung lai (`cpu-virtual-memory-tlb.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 9: Apple Silicon & Kiến Trúc Bộ Nhớ Thống Nhất (UMA)
+
+- VI: `blog/cpu/cpu-apple-silicon-uma.html`
+- EN can tao: `blog/cpu/en/cpu-apple-silicon-uma.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-apple-silicon-uma.html`)
+- [ ] co template de dung lai (`cpu-apple-silicon-uma.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 10: Tăng Tốc Phần Cứng: GPU, NPU & AMX
+
+- VI: `blog/cpu/cpu-hardware-acceleration.html`
+- EN can tao: `blog/cpu/en/cpu-hardware-acceleration.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-hardware-acceleration.html`)
+- [ ] co template de dung lai (`cpu-hardware-acceleration.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 11: Điểm Cuối Định Luật Moore & Đóng Gói Chiplet
+
+- VI: `blog/cpu/cpu-moore-law-chiplets.html`
+- EN can tao: `blog/cpu/en/cpu-moore-law-chiplets.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-moore-law-chiplets.html`)
+- [ ] co template de dung lai (`cpu-moore-law-chiplets.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+
+### Bai 12: Kiến Trúc Máy Tính Lượng Tử (Quantum Computing)
+
+- VI: `blog/cpu/cpu-quantum-computing.html`
+- EN can tao: `blog/cpu/en/cpu-quantum-computing.html`
+
+**Chi con nguoi biet** — tich tay khi that su da lam:
+
+- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
+- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
+- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
+- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
+- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
+- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
+- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
+
+**May kiem duoc** — chay `verify-series.py`, dung tich tay:
+
+- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-quantum-computing.html`)
+- [ ] co template de dung lai (`cpu-quantum-computing.body-en.html` + `.meta-en.json`)
+- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
+- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
+- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
 
 ## Cac bai da xong
 
-Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
-
-- [x] Bai 1: Latency, Throughput & Lý Thuyết Hàng Đợi
-- [x] Bai 2: Dựng Lab & Đo Giới Hạn Một Server
-- [x] Bai 3: Scale Ngang & Load Balancing
-- [x] Bai 4: Reverse Proxy & API Gateway
-- [x] Bai 5: Caching: Cache-Aside, TTL & Vô Hiệu Hoá
-- [x] Bai 6: CDN & Edge Caching
-- [x] Bai 7: Replication & Scale Tầng Đọc
-- [x] Bai 8: Sharding & Consistent Hashing
-- [x] Bai 9: CAP & Các Mô Hình Nhất Quán
-- [x] Bai 10: Distributed Lock
-- [x] Bai 11: Idempotency & Retry An Toàn
-- [x] Bai 12: Message Queue & Xử Lý Bất Đồng Bộ
-- [x] Bai 13: Rate Limiting & Backpressure
-- [x] Bai 14: Event Sourcing & CQRS
-- [x] Bai 15: Monolith vs Microservices
-- [x] Bai 16: Observability: Metrics, Logs & Tracing
-- [x] Bai 17: Chế Độ Lỗi & Khả Năng Chống Chịu
-- [x] Bai 18: Capstone: Thiết Kế & Chạy Thật Một Hệ Thống
-
 ## Viec o cap series (lam mot lan)
 
-- [x] Hub co ban tieng Anh (`blog/sysdesign/en/sysdesign-programming-series.html`)
+- [x] Hub co ban tieng Anh (`blog/cpu/en/cpu-programming-series.html`)
 - [x] Hub tieng Viet co `hreflang` va link locale hien thi
 - [ ] Chrome thong nhat giua cac bai EN (checker ep theo `config.json`)
 
 ## Khi xong het
 
 ```bash
-python3 .claude/skills/beginner-proof-series/make-task.py .claude/skills/beginner-proof-series/series/sysdesign --finish
+python3 .claude/skills/beginner-proof-series/make-task.py .claude/skills/beginner-proof-series/series/cpu --finish
 ```
 
 Lenh nay chi chay khi moi bai da co ban EN **va** checker xanh. No don noi

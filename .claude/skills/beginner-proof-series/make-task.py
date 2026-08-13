@@ -65,8 +65,26 @@ for m in re.finditer(r'<(?:a|span)\s+[^>]*?(?:href="\.?/?([a-z0-9-]+)")?[^>]*?cl
         order.append((int(num.group(1)), slug, t))
 order.sort()
 
-done = [(n, s, t) for n, s, t in order if os.path.exists(f'{EDIR}/{s}.html')]
-todo = [(n, s, t) for n, s, t in order if not os.path.exists(f'{EDIR}/{s}.html')]
+# Giong next-lesson.py va build-hub-en.py: mot trang EN co the TON TAI ma van la
+# stub "coming soon" (~50 tu). Neu chi hoi os.path.exists() thi task.md bao
+# "12/12 xong" trong khi khong bai nao duoc dich — day la thu file nay sinh ra de
+# NGUOI KHAC tin, nen no sai thi ca quy trinh ban giao sai theo.
+STUB_MAX_WORDS = 150
+
+
+def is_real_translation(path):
+    if not os.path.exists(path):
+        return False
+    src = open(path, encoding='utf-8').read()
+    i, j = src.find('class="article-body"'), src.find('</main>')
+    if i < 0 or j < 0:
+        return True
+    body = re.sub(r'<(script|style|svg|pre)\b.*?</\1>', ' ', src[i:j], flags=re.S)
+    return len(re.sub(r'<[^>]+>', ' ', body).split()) > STUB_MAX_WORDS
+
+
+done = [(n, s, t) for n, s, t in order if is_real_translation(f'{EDIR}/{s}.html')]
+todo = [(n, s, t) for n, s, t in order if not is_real_translation(f'{EDIR}/{s}.html')]
 
 verify = subprocess.run(
     [sys.executable, f'{HERE}/verify-series.py', SERIES], capture_output=True, text=True
@@ -92,7 +110,7 @@ def machine_state(slug):
     """Nhung gi may kiem duoc cho mot bai."""
     en = f'{EDIR}/{slug}.html'
     return [
-        (f'ban EN ton tai (`{en}`)', os.path.exists(en)),
+        (f'ban EN ton tai va KHONG phai stub (`{en}`)', is_real_translation(en)),
         (f'co template de dung lai (`{slug}.body-en.html` + `.meta-en.json`)',
          os.path.exists(f'{LDIR}/{slug}.body-en.html') and os.path.exists(f'{LDIR}/{slug}.meta-en.json')),
     ]
@@ -194,7 +212,7 @@ if done:
 lines += [
     '## Viec o cap series (lam mot lan)',
     '',
-    f'- {tick(os.path.exists(cfg["hubEn"]))} Hub co ban tieng Anh (`{cfg["hubEn"]}`)',
+    f'- {tick(is_real_translation(cfg["hubEn"]))} Hub co ban tieng Anh (`{cfg["hubEn"]}`)',
     f'- {tick("hreflang" in hub_vi)} Hub tieng Viet co `hreflang` va link locale hien thi',
     '- [ ] Chrome thong nhat giua cac bai EN (checker ep theo `config.json`)',
     '',
