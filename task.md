@@ -21,7 +21,7 @@ python3 $D/next-lesson.py blog/cpu/cpu-programming-series.html
 python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/cpu
 ```
 
-**Tien do: 9/12 bai da co ban EN.** Checker dang **xanh**.
+**Tien do: 12/12 bai da co ban EN.** Checker dang **xanh**.
 
 ## Viec o cap toan site (khong thuoc series nao)
 
@@ -134,80 +134,7 @@ khoi code kieu do, da sua tay.
 
 ## Cac bai con lai
 
-### Bai 10: Tăng Tốc Phần Cứng: GPU, NPU & AMX
-
-- VI: `blog/cpu/cpu-hardware-acceleration.html`
-- EN can tao: `blog/cpu/en/cpu-hardware-acceleration.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than
-      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**
-- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-hardware-acceleration.html`)
-- [ ] co template de dung lai (`cpu-hardware-acceleration.body-en.html` + `.meta-en.json`)
-- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
-- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
-
-### Bai 11: Điểm Cuối Định Luật Moore & Đóng Gói Chiplet
-
-- VI: `blog/cpu/cpu-moore-law-chiplets.html`
-- EN can tao: `blog/cpu/en/cpu-moore-law-chiplets.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than
-      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**
-- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-moore-law-chiplets.html`)
-- [ ] co template de dung lai (`cpu-moore-law-chiplets.body-en.html` + `.meta-en.json`)
-- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
-- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
-
-### Bai 12: Kiến Trúc Máy Tính Lượng Tử (Quantum Computing)
-
-- VI: `blog/cpu/cpu-quantum-computing.html`
-- EN can tao: `blog/cpu/en/cpu-quantum-computing.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [ ] Liet ke 4-5 thuat ngu chu de KHONG THE thieu roi grep dem trong than
-      bai. **0 lan la mot lo hong phai VIET, khong phai de bao cao.**
-- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-quantum-computing.html`)
-- [ ] co template de dung lai (`cpu-quantum-computing.body-en.html` + `.meta-en.json`)
-- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
-- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
+Khong con bai nao. Neu checker xanh, chay `make-task.py --finish` de don file nay.
 
 ## Cac bai da xong
 
@@ -222,6 +149,9 @@ Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
 - [x] Bai 7: Phân Cấp Bộ Nhớ & Kiến Trúc Cache
 - [x] Bai 8: Bộ Nhớ Ảo & Khối TLB
 - [x] Bai 9: Apple Silicon & Kiến Trúc Bộ Nhớ Thống Nhất (UMA)
+- [x] Bai 10: Tăng Tốc Phần Cứng: GPU, NPU & AMX
+- [x] Bai 11: Điểm Cuối Định Luật Moore & Đóng Gói Chiplet
+- [x] Bai 12: Kiến Trúc Máy Tính Lượng Tử (Quantum Computing)
 
 ## Viec o cap series (lam mot lan)
 
