@@ -40,7 +40,11 @@ VN = r'[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếể�
 # giua hai locale ma khong ai bao.
 SVG_RE = (r'<div style="margin: 20px 0; text-align: center">\s*<svg.*?</svg>\s*</div>'
           r'|<figure[^>]*>\s*<svg.*?</svg>\s*(?:<figcaption[^>]*>.*?</figcaption>\s*)?</figure>')
-CODE_RE = r'<span class="code-filename">([^<]*)</span>.*?<pre><code[^>]*>(.*?)</code></pre>'
+# `\s*>` sau ten the, KHONG phai `>`: prettier ngat the co noi dung dai thanh
+# `<span class="code-filename"\n  >ten dai...</span\n>`. Mau mot dong truot dung
+# nhung khoi co tieu de dai nhat, va vi findall chi bo qua trong im lang nen
+# check bao "5/4 khoi" — nhu the ban EN thieu mot khoi, trong khi no co du.
+CODE_RE = r'<span class="code-filename"\s*>([^<]*)</span\s*>.*?<pre><code[^>]*>(.*?)</code></pre>'
 
 if not 2 <= len(sys.argv) <= 3:
     raise SystemExit('dung: verify-series.py <thu-muc-series> [--quiet]')

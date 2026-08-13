@@ -112,7 +112,7 @@ function aluExecute(a, b, op, bits = 4) {
   } else if (op === 'XOR') {
     result = aM ^ bM;
   } else {
-    throw new Error('ALU op khong hop le: ' + op);
+    throw new Error('Invalid ALU op: ' + op);
   }
 
   return {
@@ -150,7 +150,7 @@ function createCpuState(program) {
 function cpuStep(state) {
   const instr = state.ram[state.pc];
   if (!instr || typeof instr.op !== 'string') {
-    throw new Error('Lenh khong hop le: ' + (instr && instr.op));
+    throw new Error('Invalid instruction: ' + (instr && instr.op));
   }
   state.ir = instr;
   state.pc = state.pc + 1;
@@ -186,7 +186,7 @@ function cpuStep(state) {
       state.halted = true;
       break;
     default:
-      throw new Error('Lenh khong hop le: ' + instr.op);
+      throw new Error('Invalid instruction: ' + instr.op);
   }
   return state;
 }
@@ -333,7 +333,7 @@ function decodeRV32I(word) {
     if (imm & 0x800) imm |= 0xfffff000; // mo rong dau (sign-extend) 12-bit
     return { mnemonic: 'SW', type: 'S', rs1, rs2, imm };
   }
-  throw new Error('Opcode khong hop le: 0x' + opcode.toString(16));
+  throw new Error('Invalid opcode: 0x' + opcode.toString(16));
 }
 
 // Bộ thực thi đơn chu kỳ (Mục 3.3): decode MỘT lệnh 32-bit rồi thực thi ngay
@@ -602,7 +602,7 @@ function runTomasulo(instructions, opts = {}) {
     if (op === 'ADD') return a + b;
     if (op === 'SUB') return a - b;
     if (op === 'MUL') return a * b;
-    throw new Error('Toan tu Tomasulo khong hop le: ' + op);
+    throw new Error('Invalid Tomasulo op: ' + op);
   }
 
   while (committed < n) {

@@ -79,3 +79,31 @@ Luu y da tra gia mot lan: regex `hreflang="..." href="..."` tren MOT dong la sai
 prettier ngat the `<link>` thanh nhieu dong, nen phai khop `<link ...>` voi `re.S`
 roi moi tach thuoc tinh. Ban dau toi bao oan mot trang thu ba "loi" chinh vi vay.
 Dua vao `verify-series.py`, kem negative-test.
+
+### 5. Comment tieng Viet trong cac file .js dung chung cua series cpu
+
+Quy tac cua skill: comment trong code LUON tieng Anh, ke ca o bai tieng Viet, vi
+mot khoi code phuc vu ca hai locale. Series cpu dang vi pham o cac file .js dat
+canh bai hoc (dung chung, khong nhan doi theo locale):
+
+    cpu-core.js                  281 dong  (thu vien dung chung ca 12 bai)
+    quantum-sim.js                38 dong
+    cpu-riscv-datapath.js          8 dong
+    cpu-branch-prediction.js       5 dong
+    cpu-pipeline-hazards.js        4 dong
+    ... 7 file con lai, 2-3 dong moi file
+
+Da sua trong Bai 2: toan bo thong bao loi `throw new Error(...)` cua cpu-core.js
+(5 cho) chuyen sang tieng Anh, va cpu-von-neumann-isa.js duoc them bang STRINGS
+{vi,en} chon theo `<html lang>` giong cach cpu-logic-alu.js da lam — truoc do
+demo tren trang tieng Anh hien nguyen chu Viet.
+
+CON LAI la 281 dong comment cua cpu-core.js: co tinh de lai, vi no thuoc ca 12
+bai chu khong rieng bai nao, va sua trong mot commit "Bai 2" se lam diff mat
+trong tam. Nen lam thanh MOT commit rieng cho toan series.
+
+Luu y: `verify-series.py` KHONG bat duoc loi nay — check `code-en` chi doc cac
+khoi code trong HTML, khong doc file .js dat canh. Va no dua vao DAU TIENG VIET,
+nen tieng Viet BO DAU (`// mot mang bo nho DUY NHAT`) van lot qua. Bai 2 co 4
+khoi code kieu do, da sua tay.
+

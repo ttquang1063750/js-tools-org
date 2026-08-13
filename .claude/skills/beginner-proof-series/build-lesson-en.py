@@ -57,7 +57,7 @@ def collect_code(src):
     out, seen = {}, {}
     for m in re.finditer(
         r'<div class="code-window">\s*<div class="code-header">.*?'
-        r'<span class="code-filename">([^<]*)</span>.*?</div>\s*'
+        r'<span class="code-filename"\s*>([^<]*)</span\s*>.*?</div>\s*'
         r'<pre><code[^>]*>.*?</code></pre>\s*</div>',
         src,
         re.S,
@@ -135,7 +135,7 @@ def translate_code_title(block):
             )
         return m.group(0)
 
-    return re.sub(r'<span class="code-filename">([^<]*)</span>', sub, block)
+    return re.sub(r'<span class="code-filename"\s*>([^<]*)</span\s*>', sub, block)
 
 
 def put_code(m):

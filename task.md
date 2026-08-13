@@ -21,7 +21,7 @@ python3 $D/next-lesson.py blog/cpu/cpu-programming-series.html
 python3 $D/verify-series.py .claude/skills/beginner-proof-series/series/cpu
 ```
 
-**Tien do: 1/12 bai da co ban EN.** Checker dang **xanh**.
+**Tien do: 2/12 bai da co ban EN.** Checker dang **xanh**.
 
 ## Viec o cap toan site (khong thuoc series nao)
 
@@ -105,30 +105,34 @@ prettier ngat the `<link>` thanh nhieu dong, nen phai khop `<link ...>` voi `re.
 roi moi tach thuoc tinh. Ban dau toi bao oan mot trang thu ba "loi" chinh vi vay.
 Dua vao `verify-series.py`, kem negative-test.
 
+### 5. Comment tieng Viet trong cac file .js dung chung cua series cpu
+
+Quy tac cua skill: comment trong code LUON tieng Anh, ke ca o bai tieng Viet, vi
+mot khoi code phuc vu ca hai locale. Series cpu dang vi pham o cac file .js dat
+canh bai hoc (dung chung, khong nhan doi theo locale):
+
+    cpu-core.js                  281 dong  (thu vien dung chung ca 12 bai)
+    quantum-sim.js                38 dong
+    cpu-riscv-datapath.js          8 dong
+    cpu-branch-prediction.js       5 dong
+    cpu-pipeline-hazards.js        4 dong
+    ... 7 file con lai, 2-3 dong moi file
+
+Da sua trong Bai 2: toan bo thong bao loi `throw new Error(...)` cua cpu-core.js
+(5 cho) chuyen sang tieng Anh, va cpu-von-neumann-isa.js duoc them bang STRINGS
+{vi,en} chon theo `<html lang>` giong cach cpu-logic-alu.js da lam — truoc do
+demo tren trang tieng Anh hien nguyen chu Viet.
+
+CON LAI la 281 dong comment cua cpu-core.js: co tinh de lai, vi no thuoc ca 12
+bai chu khong rieng bai nao, va sua trong mot commit "Bai 2" se lam diff mat
+trong tam. Nen lam thanh MOT commit rieng cho toan series.
+
+Luu y: `verify-series.py` KHONG bat duoc loi nay — check `code-en` chi doc cac
+khoi code trong HTML, khong doc file .js dat canh. Va no dua vao DAU TIENG VIET,
+nen tieng Viet BO DAU (`// mot mang bo nho DUY NHAT`) van lot qua. Bai 2 co 4
+khoi code kieu do, da sua tay.
+
 ## Cac bai con lai
-
-### Bai 2: Kiến Trúc Von Neumann & Tập Lệnh ISA
-
-- VI: `blog/cpu/cpu-von-neumann-isa.html`
-- EN can tao: `blog/cpu/en/cpu-von-neumann-isa.html`
-
-**Chi con nguoi biet** — tich tay khi that su da lam:
-
-- [ ] Doc HET bai tu dau den cuoi, khong nhay, voi tam the nguoi moi hoan toan
-- [ ] Ghi ra danh sach phat hien kem vi tri, TRUOC khi sua
-- [ ] Doi chieu muc tom tat voi noi dung that (bai co hua gi ma khong giao?)
-- [ ] Kiem cac khang dinh chay duoc: chay code, doi chieu output in trong bai
-- [ ] Sua ban tieng Viet o do sau da thong nhat voi nguoi dung
-- [ ] Dich sang tieng Anh (viet `.body-en.html`, khong sua HTML truc tiep)
-- [ ] Bao lai nguoi dung: tim thay gi, sua gi, co y de lai gi
-
-**May kiem duoc** — chay `verify-series.py`, dung tich tay:
-
-- [ ] ban EN ton tai va KHONG phai stub (`blog/cpu/en/cpu-von-neumann-isa.html`)
-- [ ] co template de dung lai (`cpu-von-neumann-isa.body-en.html` + `.meta-en.json`)
-- [ ] 13 bat bien deu dat (`verify-series.py` xanh)
-- [ ] Hub da dung lai (`build-hub-en.py`) — the bai phai tro sang ban EN
-- [ ] Da commit, va da ghi vao commit nhung gi co y de lai
 
 ### Bai 3: Hợp Ngữ RISC-V & Đường Đi Của Dữ Liệu (Datapath)
 
@@ -365,6 +369,7 @@ Dua vao `verify-series.py`, kem negative-test.
 Khong can doc lai nhung bai nay — `verify-series.py` giu chung dung.
 
 - [x] Bai 1: Cổng Logic đến Đơn Vị ALU
+- [x] Bai 2: Kiến Trúc Von Neumann & Tập Lệnh ISA
 
 ## Viec o cap series (lam mot lan)
 
