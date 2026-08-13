@@ -1247,6 +1247,43 @@ function diesPerWafer(waferDiameterMm, dieAreaMm2) {
 // Chi phí trung bình cho MỖI die ĐẠT CHUẨN (Mục 11.4): chi phí 1 wafer chia
 // cho số die THẬT SỰ dùng được (số die cắt được × tỷ lệ Yield). `yieldFn`
 // là yieldPoisson hoặc yieldMurphy (hoặc hàm tương thích tuỳ chỉnh).
+// Mục 11.5 — CHI PHÍ THẬT của chiplet: silicon KHÔNG phải toàn bộ hoá đơn.
+// costPerGoodDie() chỉ đếm tiền silicon. Nhưng chiplet phải trả thêm những
+// khoản mà die nguyên khối không có: đế interposer, nhiều bước đóng gói hơn,
+// và phải TEST từng die trước khi ghép (ghép nhầm một die hỏng vào gói là hỏng
+// cả gói — gọi là bài toán "known-good die"). Bỏ qua các khoản này là lý do
+// một con chip nhỏ vẫn làm nguyên khối dù công thức yield "khuyên" chia nhỏ.
+function chipletPackagedCost(opts) {
+  const {
+    waferCostUsd,
+    waferDiameterMm,
+    defectDensity,
+    dieAreaMm2,
+    numDies = 1,
+    yieldFn,
+    interposerCostUsd = 0, // đế nối, chỉ chiplet mới cần
+    perDieTestUsd = 0, // test từng die trước khi ghép
+    assemblyPerDieUsd = 0, // gắn mỗi die lên đế
+    packageYield = 1, // xác suất cả gói ghép thành công
+  } = opts;
+  const siliconPerDie = costPerGoodDie(waferCostUsd, dieAreaMm2, waferDiameterMm, defectDensity, yieldFn);
+  const silicon = siliconPerDie * numDies;
+  const packaging = interposerCostUsd + (perDieTestUsd + assemblyPerDieUsd) * numDies;
+  // Gói hỏng lúc lắp ráp thì MẤT TRẮNG toàn bộ silicon đã tốt bên trong.
+  const total = (silicon + packaging) / packageYield;
+  return { silicon, packaging, total, packagingShare: packaging / (silicon + packaging) };
+}
+
+// Mục 11.2 — cái giá HIỆU NĂNG của việc cắt nhỏ. Truy cập vượt ranh giới die
+// phải đi qua đế nối nên chậm hơn hẳn truy cập nội bộ. Nếu tỷ lệ `crossFraction`
+// số lần truy cập rơi sang die khác, độ trễ TRUNG BÌNH bị kéo lên:
+//   avg = (1 - f) × localNs + f × remoteNs
+// Đây chính là NUMA ở quy mô một con chip.
+function crossDieLatency(localNs, remoteNs, crossFraction) {
+  const avg = (1 - crossFraction) * localNs + crossFraction * remoteNs;
+  return { avg, slowdown: avg / localNs, localNs, remoteNs, crossFraction };
+}
+
 function costPerGoodDie(waferCostUsd, dieAreaMm2, waferDiameterMm, defectDensity, yieldFn) {
   const n = diesPerWafer(waferDiameterMm, dieAreaMm2);
   const y = yieldFn(dieAreaMm2, defectDensity);
@@ -1310,6 +1347,8 @@ export {
   yieldMurphy,
   diesPerWafer,
   costPerGoodDie,
+  chipletPackagedCost,
+  crossDieLatency,
 };
 
 // ---------------------------------------------------------------------------
@@ -2117,6 +2156,64 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(
       'Pitfall/dong luc kinh te: chiplet RE HON nguyen khoi ~43% cho CUNG mot luong logic - dong luc that su nganh ban dan chuyen sang chiplet',
       costChipletTotal4 < costMono && 1 - costChipletTotal4 / costMono > 0.4
+    );
+
+    // --- Muc 11.5: con so 43% CHI dem tien silicon ---
+    // Chiplet phai tra them: de interposer, test tung die truoc khi ghep, va
+    // ghep hong ca goi thi mat trang toan bo silicon tot ben trong.
+    const pkgBase = {
+      waferCostUsd: waferCost,
+      waferDiameterMm: waferDiameter,
+      defectDensity,
+      yieldFn: yieldMurphy,
+      perDieTestUsd: 1,
+      assemblyPerDieUsd: 2,
+    };
+    const monoPkg = chipletPackagedCost({ ...pkgBase, dieAreaMm2: 600, numDies: 1, packageYield: 0.99 });
+    const chipPkg = chipletPackagedCost({
+      ...pkgBase,
+      dieAreaMm2: 150,
+      numDies: 4,
+      interposerCostUsd: 15,
+      packageYield: 0.97,
+    });
+    checkTrue('Tinh du dong goi: nguyen khoi ~201,51 USD', Math.abs(monoPkg.total - 201.51) < 0.1);
+    checkTrue('Tinh du dong goi: chiplet ~142,79 USD', Math.abs(chipPkg.total - 142.79) < 0.1);
+    checkTrue(
+      'Loi that su la ~29%, KHONG phai 43% - con so 43% chi dem tien silicon, bo qua de noi + test + rui ro ghep hong',
+      Math.abs((1 - chipPkg.total / monoPkg.total) * 100 - 29) < 1
+    );
+    checkTrue('Dong goi chiem ~19,5% hoa don cua chiplet, so voi 1,5% cua nguyen khoi', chipPkg.packagingShare > 0.15);
+
+    // Va day la ly do chip NHO van lam nguyen khoi: chia nho mot con chip da
+    // co yield cao san thi phan tiet kiem silicon khong bu noi tien dong goi.
+    const smallMono = chipletPackagedCost({ ...pkgBase, dieAreaMm2: 100, numDies: 1, packageYield: 0.99 });
+    const smallChiplet = chipletPackagedCost({
+      ...pkgBase,
+      dieAreaMm2: 25,
+      numDies: 4,
+      interposerCostUsd: 15,
+      packageYield: 0.97,
+    });
+    checkTrue(
+      'DAO CHIEU: voi chip nho 100mm2, chiplet DAT HON HON GAP DOI nguyen khoi (43,53 vs 20,46 USD) - chiplet khong phai luon luon dung',
+      smallChiplet.total > smallMono.total * 2
+    );
+
+    // --- Muc 11.2: cai gia HIEU NANG cua viec cat nho ---
+    const lat = crossDieLatency(1, 4, 0.3);
+    checkTrue(
+      'Do tre trung binh khi 30% truy cap vuot die (noi bo 1ns, xuyen die 4ns) = 1,9ns',
+      Math.abs(lat.avg - 1.9) < 1e-9
+    );
+    checkTrue(
+      'Tuc cham di 1,9 lan so voi die nguyen khoi - cai gia phai tra cho phan tiet kiem chi phi',
+      Math.abs(lat.slowdown - 1.9) < 1e-9
+    );
+    const latLow = crossDieLatency(1, 4, 0.05);
+    checkTrue(
+      'Neu chia khoi luong tot de chi 5% truy cap vuot die thi chi cham 1,15 lan - chia o DAU quan trong hon chia BAO NHIEU',
+      Math.abs(latLow.slowdown - 1.15) < 1e-9
     );
   }
 

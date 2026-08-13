@@ -1,0 +1,482 @@
+<h2>Introduction: when transistors cannot get any smaller</h2>
+            <p>
+              For 5 decades, <strong>Moore's law</strong> (transistor count per die doubling every ~2 years) was the hidden engine behind EVERY earlier lesson in this series — deeper pipelines (<a
+                href="cpu-pipeline-hazards"
+                >Lesson 4</a
+              >), bigger caches (<a href="cpu-cache-memory">Lesson 7</a>), more elaborate out-of-order machinery (<a href="cpu-ooo-execution"
+                >Lesson 6</a
+              >) all needed MORE transistors to build. But shrinking transistors is now hitting genuine PHYSICAL limits — and the chip industry found its way out not by shrinking further, but by ASSEMBLING differently.
+            </p>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Background</div>
+              <div class="callout__content">
+                This lesson needs no specific knowledge from earlier ones, but reading <a href="cpu-apple-silicon-uma">Lesson 9</a>
+                (Apple Silicon &amp; UMA) helps explain WHY modern chip makers (Apple M-Ultra, AMD Ryzen, Intel Meteor Lake) all adopted chiplets — this is the next step of the SoC integration trend covered there.
+              </div>
+            </div>
+
+            <h2>1. Silicon's physical limits &amp; the end of Moore's law</h2>
+            <p>
+              Once the transistor gate shrinks below 3nm, electrons start "tunnelling through" the thin insulating layer via
+              <strong>quantum tunnelling</strong> — this leakage current is NOT a design flaw but an unavoidable physical consequence of distances approaching atomic scale. At the same time, packing transistors more densely concentrates heat to the point where the whole die CANNOT be switched on at full clock at once without burning the chip — the phenomenon of <strong>Dark Silicon</strong> (the silicon that must stay off, or run slow, to keep temperatures safe).
+            </p>
+            {{CODE:moore_scaling_limit.txt (xu hướng thu nhỏ node vs giới hạn vật lý)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: "Moore's law is over" ≠ "CPUs stop getting faster"</div>
+              <div class="callout__content">
+                The rate of transistor SHRINKING has slowed markedly — but real CPU performance still rises every year; the driver has simply MOVED from "more transistors in the same design" to microarchitectural optimisation: smarter pipelines (Lessons 4–6), better caches and memory hierarchy (Lessons 7–8), dedicated acceleration (Lesson 10), AND — this lesson's subject — packaging things differently (chiplets) instead of relying on shrinking alone.
+              </div>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">
+                🔍 What died before Moore's law was Dennard scaling — and that is the root cause
+              </div>
+              <div class="callout__content">
+                The two laws are often conflated, but they describe different quantities — and the one that died first is the more important one.
+                <ul>
+                  <li>
+                    <strong>Moore's law</strong> (1965) is about <strong>quantity</strong>: transistors per die doubling every ~2 years. It has slowed, but it still breathes.
+                  </li>
+                  <li>
+                    <strong>Dennard scaling</strong> (1974) is about <strong>power</strong>: as transistors shrink, voltage and current fall with them, so <em>power density stays constant</em>. That is what allowed clock speeds to rise year after year without the chip burning up.
+                  </li>
+                </ul>
+                Dennard scaling <strong>broke down around 2006</strong> — voltage cannot drop further because a transistor needs a minimum to switch reliably. From then on, more transistors meant more power in the same area. That is why CPU clocks have sat around 3–5 GHz for nearly two decades, why the industry turned to <strong>more cores</strong> rather than faster ones, and the direct cause of the dark silicon described above. Put simply: Moore gives us more transistors, while Dennard — now dead — no longer lets us switch them all on at once.
+              </div>
+            </div>
+
+            <h2>2. The chiplet design trend</h2>
+            <p>
+              Instead of fabricating ONE enormous die holding everything (CPU, I/O, cache), a
+              <strong>Chiplet</strong> design splits it into SEVERAL smaller dies, each with its own role (CPU cores, the I/O controller, a large cache…) — then assembles them on an <strong>interposer</strong> (an intermediate connecting substrate). AMD Ryzen, Intel Meteor Lake and Apple M-Ultra all use this strategy.
+            </p>
+            {{CODE:monolithic_vs_chiplet.txt (sơ đồ 2 chiến lược thiết kế)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: chiplets are not "free" — the latency of talking between dies</div>
+              <div class="callout__content">
+                Communication BETWEEN chiplets (across the interposer) is ALWAYS slower than communication WITHIN a single monolithic die, because it has to cross an extra physical connection layer. For workloads that exchange data back and forth BETWEEN chiplets a great deal (a CPU chiplet constantly querying a cache chiplet, say), this latency overhead can eat significantly into the cheaper manufacturing cost — a chiplet design has to think hard about WHICH roles to separate and which to keep together on one die.
+              </div>
+            </div>
+
+            <p>
+              That "can eat significantly" deserves a number, because it is the counterweight to all the cost savings section 4 is about to compute. If a local access costs 1 ns and one crossing to another die costs 4 ns, the average latency depends only on the <em>fraction</em> of accesses that leave the die:
+            </p>
+            <div style="overflow-x: auto">
+              $$T_{\text{average}} = (1 - f)\,T_{\text{local}} + f\,T_{\text{cross-die}}$$
+            </div>
+
+            {{CODE:cross_die_latency.js (verified bằng engine — chia ở ĐÂU mới là vấn đề)}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: a chiplet package is NUMA shrunk down into a single chip</div>
+              <div class="callout__content">
+                Verified: on the same machine, a workload that sends 30% of its accesses across a die runs
+                <strong>1.9× slower</strong>, while partitioning it so only 5% cross costs just <strong>1.15×</strong>. Identical hardware — only the placement of the boundary changed. Chiplet design is therefore not the problem of "how many pieces" but of "where to cut so that the least data has to cross the cut". <br /><br />
+                This is precisely <strong>NUMA</strong> (non-uniform memory access) — a phenomenon long familiar at multi-socket server scale, now appearing inside a single chip. And it is why a modern operating system has to know which chiplet sits near which memory in order to place threads correctly: put them wrong and you lose exactly the performance the yield savings paid for.
+              </div>
+            </div>
+
+            <h2>3. 3D IC packaging &amp; TSV interconnects</h2>
+            <p>
+              Beyond assembling SIDEWAYS (chiplets next to each other on an interposer), 3D IC technology STACKS silicon VERTICALLY, connecting the layers with <strong>TSV</strong> (through-silicon vias — conducting holes bored through the silicon). Real examples: AMD's 3D V-Cache (an extra SRAM cache layer stacked directly ON TOP of the CPU die) and HBM (high bandwidth memory) stacked right beside the GPU — maximising both capacity AND interconnect bandwidth within the same board area.
+            </p>
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ The cooling problem for the bottom silicon layers</div>
+              <div class="callout__content">
+                When several silicon layers are stacked, the LOWER ones are sealed in by the layers ABOVE — heat generated below escapes far less easily than in a traditional flat (2D) design. This, not electrical connection, is 3D IC's BIGGEST engineering challenge (TSVs solved that part well) — many 3D IC designs have to lower the clock of the bottom layers to avoid overheating, trading away part of the theoretical performance.
+              </div>
+            </div>
+
+            <h2>4. Computing yield rate &amp; manufacturing cost</h2>
+            <p>
+              A round silicon wafer is cut into many square dies — but NOT every die comes out defect-free.
+              <strong>Yield</strong> (the proportion that pass) falls as die area GROWS, because a larger die is likelier to catch at least 1 random defect on the wafer surface. The <strong>Poisson</strong> model (simple, somewhat pessimistic) and the <strong>Murphy</strong> one (more realistic) both express this relationship:
+            </p>
+            <p style="text-align: center">
+              $$Y_{Poisson} = e^{-A \times D} \qquad\qquad Y_{Murphy} = \left(\frac{1 - e^{-A \times D}}{A \times
+              D}\right)^2$$
+            </p>
+            <p>
+              where $A$ = die area (mm²) and $D$ = defect density (defects/mm²). Verified for real: a 300mm wafer (the industry standard) at a defect density of 0.001 defects/mm² — a monolithic die of <strong>600mm²</strong> yields only
+              <strong>90 die/wafer</strong>, with a Murphy yield of just <strong>56,55%</strong>. Split into
+              <strong>4 chiplet 150mm²</strong> (the SAME total logic as the big die) yields
+              <strong>416 die/wafer</strong> — nearly 5 times as many — with yield leaping to <strong>86,23%</strong>.
+            </p>
+            {{CODE:yield_cost.js (trích engine dùng chung cpu-core.js)}}
+            <p>
+              At a wafer price of 10,000 USD (an illustrative figure): the cost of ONE good monolithic die is ~
+              <strong>196,49 USD</strong>. The cost of getting all 4 good chiplets (exactly 1 finished product, the same total logic as the big die) is only ~<strong>111,51 USD</strong> — <strong>43% cheaper</strong>. That is the powerful economic force pushing the chip industry towards chiplets.
+            </p>
+            {{CODE:cost_comparison.js (verified bằng engine — chi phí thực tế)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: ignoring packaging &amp; test costs</div>
+              <div class="callout__content">
+                The 43% saving above counts ONLY raw die fabrication (wafer + yield) — it does NOT yet count the cost of packaging the chiplets onto an interposer (considerably more complex than packaging a single die) or of testing EACH chiplet individually BEFORE assembly (to avoid putting one faulty chiplet into the final product and wasting all the good ones with it). A true total-cost calculation MUST add both — and with an over-fragmented chiplet design (too many small pieces), packaging and test costs can consume the entire yield saving.
+              </div>
+            </div>
+
+            <h2>5. The full bill: why small chips stay monolithic</h2>
+            <p>
+              The "43% cheaper" figure just computed needs one thing spelled out: it counts only <strong>the silicon</strong>. But chiplets pay costs a monolithic die simply does not have:
+            </p>
+            <ul>
+              <li>
+                <strong>The interposer</strong> — itself another piece of silicon, which has to be manufactured and has a price of its own.
+              </li>
+              <li>
+                <strong>Testing each die before assembly</strong> — this is the <em>known-good die</em>problem: put one bad die into the package and the whole package is ruined, taking every good die already in it down with it. So each piece must be tested separately first, and every test costs money.
+              </li>
+              <li>
+                <strong>Assembly risk</strong> — the multi-piece assembly step has its own failure rate, and a failed package means writing off all the good silicon inside it.
+              </li>
+            </ul>
+            <p>Put all three into the same 600mm² problem from section 4:</p>
+
+            {{CODE:packaged_cost.js (verified bằng engine — hoá đơn đầy đủ)}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: treating chiplets as the right answer for every chip</div>
+              <div class="callout__content">
+                Verified, and this is the lesson's most memorable reversal: for a 600mm² chip, chiplets really are cheaper (29% once everything is counted, not 43%). But for a
+                <strong>100mm²</strong>chip, the chiplet version costs <strong>more than twice as much</strong> — 43.53 USD against 20.46 USD.
+                <br /><br />
+                The reason lies in Murphy's formula being non-linear: a 100mm² die already has a very high yield, so splitting it saves almost no silicon at all — while the interposer and the testing still have to be paid in full. Chiplets only win when the silicon saved is large enough to cover the packaging, which means when the die is big enough for yield to already be bad. That is the answer to the natural question "so why not split everything up?": below a certain size, splitting loses money.
+              </div>
+            </div>
+
+            <h2>6. Hands-on: a yield &amp; wafer-cost calculator</h2>
+            <p>
+              Change the die area, defect density, wafer size and number of chiplets needed to watch yield and cost move directly — try raising the monolithic die area to see how fast yield collapses:
+            </p>
+
+            <div class="code-tabs" id="yc-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🏭 Yield &amp; wafer cost calculator</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Preview</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="yc-demo-container">
+                  <div class="yc-demo-row">
+                    <div class="yc-demo-field">
+                      <label for="yc-wafer-diameter-input">Wafer diameter (mm)</label>
+                      <input type="number" id="yc-wafer-diameter-input" value="300" min="50" />
+                    </div>
+                    <div class="yc-demo-field">
+                      <label for="yc-wafer-cost-input">Wafer price (USD)</label>
+                      <input type="number" id="yc-wafer-cost-input" value="10000" min="1" />
+                    </div>
+                    <div class="yc-demo-field">
+                      <label for="yc-defect-density-input">Defect density (defects/mm²)</label>
+                      <input type="number" id="yc-defect-density-input" value="0.001" step="0.0001" min="0" />
+                    </div>
+                  </div>
+                  <div class="yc-demo-row">
+                    <div class="yc-demo-field">
+                      <label for="yc-mono-area-input">Monolithic die (mm²)</label>
+                      <input type="number" id="yc-mono-area-input" value="600" min="1" />
+                    </div>
+                    <div class="yc-demo-field">
+                      <label for="yc-chiplet-area-input">Area of 1 chiplet (mm²)</label>
+                      <input type="number" id="yc-chiplet-area-input" value="150" min="1" />
+                    </div>
+                    <div class="yc-demo-field">
+                      <label for="yc-num-chiplets-input">Chiplets needed per product</label>
+                      <input type="number" id="yc-num-chiplets-input" value="4" min="1" />
+                    </div>
+                  </div>
+                  <div class="yc-output term-output" id="yc-output">—</div>
+                  <div class="yc-bar-row">
+                    <span class="yc-bar-label">Monolithic</span>
+                    <div class="yc-bar-track"><div class="yc-bar-fill yc-bar-fill--mono" id="yc-bar-mono"></div></div>
+                  </div>
+                  <div class="yc-bar-row">
+                    <span class="yc-bar-label">Chiplet</span>
+                    <div class="yc-bar-track">
+                      <div class="yc-bar-fill yc-bar-fill--chiplet" id="yc-bar-chiplet"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Summary</h2>
+            <ul>
+              <li>
+                ✅ Moore's law slowed because of genuine physical limits (quantum tunnelling below 3nm, dark silicon) — but CPU performance still rises through microarchitecture and packaging, not shrinking alone.
+              </li>
+              <li>
+                ✅ Chiplets split a big die into several small ones on an interposer — a defective die ruins ONLY itself, rather than the whole system as in a monolithic design.
+              </li>
+              <li>
+                ✅ 3D IC + TSVs stack silicon vertically for more capacity and bandwidth — at the cost of cooling the lower layers.
+              </li>
+              <li>
+                ✅ Verified: a 600mm² die gives only 90 per wafer at 56.55% yield; a 150mm² chiplet gives 416 per wafer at 86.23%. Monolithic cost ~196.49 USD against 4 chiplets ~111.51 USD — 43% cheaper.
+              </li>
+              <li>✅ Pitfall: that saving does not yet include packaging or per-chiplet testing.</li>
+              <li>
+                ✅ Dennard scaling (power density) broke around 2006, BEFORE Moore's law — that is the real reason clocks stalled, the industry moved to many cores, and dark silicon appeared.
+              </li>
+              <li>
+                ✅ Verified: a chiplet package is NUMA in miniature — 30% of accesses crossing a die costs 1.9×, while partitioning down to 5% costs only 1.15×. Same hardware, different boundary placement.
+              </li>
+              <li>
+                ✅ Verified: the real chiplet saving is 29%, not 43% — the 43% counts silicon only, ignoring the interposer, per-die testing (known-good die) and assembly risk; packaging is 19.5% of the chiplet bill.
+              </li>
+              <li>
+                ✅ Verified, and a reversal: for a 100mm² chip, chiplets cost MORE THAN TWICE as much as monolithic (43.53 against 20.46 USD). Chiplets only win when the die is big enough that yield is already bad.
+              </li>
+            </ul>
+
+            <p>
+              This whole lesson is the story of wringing out what silicon has left: when you cannot shrink it, cut it up; when you cannot cut it up further, stack it. But every one of those keeps one founding assumption — that the unit of computation is a bit, holding only 0 or 1. The very quantum tunnelling that is ruining transistors in section 1 is what another approach to computing takes as its raw material rather than treating as a defect. Lesson 12 closes the series with that approach.
+            </p>
+
+            <h2>Review quiz</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Question 1</h3>
+              <p class="quiz-question">
+                Does "Moore's law is over" mean CPUs will stop getting faster year on year?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. The rate of transistor SHRINKING is slowing, but real CPU performance still rises steadily — the driver has moved from transistor count to microarchitectural optimisation (smarter pipelines, better cache hierarchies, dedicated accelerators) and to packaging design (chiplets).'
+                    )
+                  "
+                >
+                  A. No — performance still rises; the driver has simply moved from shrinking transistors to microarchitecture and packaging (chiplets)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. This is exactly the lesson's pitfall — CPU performance still rises year on year; the source of the gain has changed, it has not stopped.'
+                    )
+                  "
+                >
+                  B. Yes — CPUs will stop gaining performance entirely from now on
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Moore's law is directly about SHRINKING TRANSISTORS and silicon's physical limits — it has nothing to do with RAM capacity.'
+                    )
+                  "
+                >
+                  C. Yes — but it only affects RAM capacity, not the CPU
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 2</h3>
+              <p class="quiz-question">
+                Verified: a 600mm² die has a Murphy yield of just 56.55%, while a 150mm² chiplet (4 times smaller) reaches 86.23%. Why such a large gap?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. The yield formula (Poisson and Murphy alike) is exponential in die area × defect density. The bigger the die, the higher the probability of CATCHING at least 1 defect, and a single defect fails the whole die.'
+                    )
+                  "
+                >
+                  A. Yield falls exponentially with die area — a larger die is likelier to catch at least 1 random defect on the wafer
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Both cases use the SAME defect density (0.001 defects/mm²) in this example — the difference is not the defect density but the DIE AREA.'
+                    )
+                  "
+                >
+                  B. Because chiplets are made on a far more advanced process than monolithic dies
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The 300mm wafer is IDENTICAL in both cases here — the difference is not wafer size but DIE AREA (600mm² against 150mm²).'
+                    )
+                  "
+                >
+                  C. Because chiplets use much smaller wafers than monolithic dies
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 3</h3>
+              <p class="quiz-question">
+                Verified: 4 good chiplets (~111.51 USD) cost less than 1 good monolithic die (~196.49 USD) even though 4 good chiplets are needed per product. Why is it still cheaper?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. The smaller chiplet gives far more dies per wafer (416 against 90, nearly 5 times as many) AND a far higher yield (86.23% against 56.55%) — together those two factors more than cover needing 4 chiplets per product.'
+                    )
+                  "
+                >
+                  A. Chiplets give far more dies per wafer AND a far higher yield — together those outweigh needing 4 of them
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Both cases use the SAME wafer price (10,000 USD) in this example — it is not that chiplet wafers are cheaper, but the NUMBER of dies obtained and the yield.'
+                    )
+                  "
+                >
+                  B. Because a wafer used for chiplets is much cheaper than one used for monolithic dies
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. This example does NOT yet include packaging or test costs (that is exactly section 4's pitfall) — adding them shrinks the saving, but does not reverse it at this die size.'
+                    )
+                  "
+                >
+                  C. Because this calculation already includes packaging and test costs, showing chiplets always win outright
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 4</h3>
+              <p class="quiz-question">
+                Why does a chiplet design not always beat monolithic outright?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. Communication BETWEEN chiplets (across the interposer) is always slower than WITHIN a single die — if the workload exchanges data constantly, that latency eats into the manufacturing saving, and packaging and test costs are on top of it.'
+                    )
+                  "
+                >
+                  A. Because latency BETWEEN chiplets is higher than within one die, and packaging/test costs are not counted in the fabrication saving
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Chiplets do NOT have a lower yield than monolithic — quite the opposite: a smaller die ALWAYS yields BETTER than a large one, exactly as verified in section 4 (86.23% against 56.55%).'
+                    )
+                  "
+                >
+                  B. Because chiplets always have a much lower yield than monolithic
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. TSVs are the technology for 3D ICs (VERTICAL stacking) — chiplets assembled SIDEWAYS on an interposer do not require TSVs, so this is not why chiplets fail to win outright.'
+                    )
+                  "
+                >
+                  C. Because chiplets are incompatible with TSV technology
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Download the lesson's practice code</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — a miniature computer-architecture library used across all 12 lessons. Lesson 11 has just added <code>yieldPoisson()</code>, <code>yieldMurphy()</code>, <code>diesPerWafer()</code>,
+                <code>costPerGoodDie()</code>, <code>chipletPackagedCost()</code>, <code>crossDieLatency()</code> — yield and wafer-cost models, monolithic against chiplet including the full packaged bill and cross-die latency, with a self-test that checks every number quoted in this lesson (run <code>node cpu-core.js</code>, nothing to install):
+              </p>
+              <a
+                href="cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Download cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <strong>Physical limits &amp; Moore's law:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Moore%27s_law" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Moore's law</a
+                  >
+                  — the history, the current physical limits and the debate over the law's "end".
+                </li>
+                <li>
+                  <strong>Semiconductor yield models:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Semiconductor_device_fabrication"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Semiconductor device fabrication</a
+                  >
+                  — the wafer fabrication process and the yield models (Poisson, Murphy and variants).
+                </li>
+                <li>
+                  <strong>Chiplet design &amp; TSVs:</strong>
+                  <a href="https://en.wikipedia.org/wiki/Chiplet" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — Chiplet</a
+                  >
+                  — an overview of the chiplet trend and modern 3D IC packaging.
+                </li>
+              </ul>
+            </section>
