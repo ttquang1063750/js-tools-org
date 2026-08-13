@@ -1,5 +1,4 @@
-
-            <h2>Introduction: a very fast CPU is useless if it waits forever on memory</h2>
+<h2>Introduction: a very fast CPU is useless if it waits forever on memory</h2>
             <p>
               <a href="cpu-ooo-execution">Lesson 6</a> built a highly sophisticated out-of-order CPU — but however many reservation stations it has, every <code>LW</code>/<code>SW</code> instruction (Lesson 3) still has to reach main memory (DRAM) in the end. The problem: DRAM is hundreds of times SLOWER than the CPU — this is the <strong>Memory Wall</strong> . The answer is not to make DRAM faster (physics will not allow that cheaply) but to insert a small, extremely fast, extremely expensive layer of SRAM between the CPU and DRAM — called a <strong>Cache</strong>.
             </p>
@@ -30,7 +29,13 @@
 
             <h2>1. The memory wall &amp; the principle of locality</h2>
             <p>
-              CPU speed has risen faster than DRAM speed for decades — that gap is the memory wall. A cache "hides" DRAM latency by exploiting 2 statistical rules that hold ALMOST ALWAYS for real programs:
+              CPU speed has risen faster than DRAM speed for decades — that gap is the memory wall. Before looking at how a cache works, look at the whole picture: a computer's memory is not ONE thing but a stack of tiers, each trading capacity for speed along exactly the SRAM/DRAM line drawn above:
+            </p>
+
+            {{SVG:1}}
+
+            <p>
+              A cache "hides" DRAM latency by exploiting 2 statistical rules that hold ALMOST ALWAYS for real programs:
             </p>
             <ul>
               <li>
@@ -53,6 +58,9 @@
               A memory address is split into 3 parts for the cache lookup: <strong>Offset</strong> (the lowest bits, selecting a byte WITHIN the cache line), <strong>Index</strong> (selecting the LINE or set in the cache), and the
               <strong>Tag</strong> (everything left, used to CONFIRM this really is the data you wanted rather than other data sharing the same index).
             </p>
+
+            {{SVG:2}}
+
             {{CODE:split_address.js (trích engine dùng chung cpu-core.js)}}
             <p>
               <strong>Direct-Mapped</strong>: each index maps to EXACTLY 1 cache line — simple and extremely fast to look up, but 2 addresses with different tags sharing an index will keep evicting each other even while other lines sit empty (a<strong>Conflict Miss</strong>). <strong>Set-Associative N-way</strong>: each index maps to a SET of N lines — addresses sharing an index but differing in tag no longer fight over one slot, and
@@ -89,9 +97,81 @@
 
             {{CODE:locality_demo.js (verified bằng engine — duyệt hàng vs duyệt cột)}}
 
-            <h2>4. Hands-on: an L1 cache simulator</h2>
+            <h2>4. When the CPU WRITES: write-through &amp; write-back</h2>
+            <p>
+              Everything so far has been about READING. But real programs write too — every
+              <code>sw</code> (store word) instruction is a write. And this question has no obvious answer: when the CPU writes to an address that IS already in the cache, does the DRAM underneath get updated right away?
+            </p>
+            <p>Two choices, and they split every cache design in existence down the middle:</p>
+            <ul>
+              <li>
+                <strong>Write-Through</strong> — write to the cache AND straight down to DRAM immediately. DRAM is always correct, the design is simple, nothing extra to track. In exchange: EVERY store costs a trip to DRAM.
+              </li>
+              <li>
+                <strong>Write-Back</strong> — write only to the cache, and set a marker bit on that line called the
+                <strong>dirty bit</strong> (meaning "this line has been modified, DRAM is now stale"). Only when that line is EVICTED (or at the very end) does the write actually go down to DRAM. Writing 100 times to the same variable costs EXACTLY 1 trip to DRAM.
+              </li>
+            </ul>
+            <p>
+              There is a follow-up question: what if the write MISSES (the address is not in the cache yet)?
+              <strong>Write-Allocate</strong> loads the line into the cache first and then writes (a good fit for write-back, since the following writes will hit); <strong>No-Write-Allocate</strong> writes straight to DRAM and loads nothing (a good fit for write-through, since loading the line would not save a single write anyway). That is why these two pairs almost always travel together.
+            </p>
+            <p>
+              This is the easiest place in the lesson to get wrong, so measure rather than believe. The scenario: accumulate into ONE variable 10 times — each round a read then a write to the same address, 20 accesses in total:
+            </p>
+
+            {{CODE:write_policy_demo.js (verified bằng engine — through vs back)}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: write policy does NOT change the hit rate — do not measure the wrong axis</div>
+              <div class="callout__content">
+                Look closely at the two result lines: both are <strong>19 hit / 1 miss</strong>. Identical. If you judge write-back by hit rate you will conclude it improves nothing — and throw away a design that cuts DRAM traffic by a factor of <strong>10</strong>. Write policy does not live on the hit/miss axis; it lives on the axis of
+                <strong>how many bytes actually have to travel down to DRAM</strong>. Pick the wrong metric and the right design looks useless.
+              </div>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔍 The real price of write-back: DRAM is sometimes WRONG</div>
+              <div class="callout__content">
+                Write-back is faster precisely because it lets DRAM fall behind the cache for a while. On a single-core CPU running one program nobody can tell. But add a second core — with its own L1 cache — and that core reads DRAM and sees the <em>old value</em>. Add a network card that reads memory on its own (DMA) and it transmits stale data. This is the root of <strong>cache coherence</strong> , and the reason multi-core CPUs need an entire protocol (MESI) just so the caches can talk to each other. This lesson stops at one core — but it is worth knowing that price exists, rather than treating write-back as a free lunch.
+              </div>
+            </div>
+
+            <h2>5. Not every miss is the same: the 3C taxonomy</h2>
+            <p>
+              We have now met two scenarios that both fail badly: the column walk missing 100%, and two contending addresses also missing 100%. But those are two DIFFERENT diseases with two different cures. Collapsing them into a single "miss rate" throws away exactly the information you need to fix them. The standard classification (Hill, 1989) splits misses into three kinds — known as the <strong>3C</strong>:
+            </p>
+            <ul>
+              <li>
+                <strong>Compulsory</strong> — the FIRST time the program touches a block. No cache avoids these, not even an infinite one: data that has never been loaded must be loaded. Reduced by larger cache lines or by prefetching (loading before the data is needed).
+              </li>
+              <li>
+                <strong>Capacity</strong> — the block WAS in the cache but got evicted because the working set is simply larger than the cache. Cured by a BIGGER cache, and by nothing else.
+              </li>
+              <li>
+                <strong>Conflict</strong> — the cache still has free room, but the block was evicted because it contended for that exact set with another block. Cured by raising ASSOCIATIVITY — precisely the effect measured in section 2.
+              </li>
+            </ul>
+            <p>
+              You measure this by comparing the real cache against two imaginary ones: an infinite cache (leaving only compulsory misses) and a fully-associative cache of the same capacity (compulsory + capacity). Whatever is left over is conflict:
+            </p>
+
+            {{CODE:three_c_demo.js (verified bằng engine — cùng miss rate, khác chẩn đoán)}}
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: the same miss rate, two opposite cures</div>
+              <div class="callout__content">
+                Both scenarios produce a very high miss rate on the SAME cache. Looking at that number alone, the natural reflex is "raise associativity to 2-way". For the conflict trace that is right — all 18 conflict misses vanish. For the column walk it is <strong>completely useless</strong>: 0 conflict misses, 48 capacity misses, and no number of ways will save it. What actually saves it is back in section 1 — change the traversal order to recover spatial locality, and misses drop from 64 to 16. That is exactly why the 3C taxonomy exists: it tells you whether to fix the HARDWARE or the SOFTWARE.
+              </div>
+            </div>
+
+            <h2>6. Hands-on: an L1 cache simulator</h2>
             <p>
               The address splitter below computes tag/index/offset directly from any hex address you type. The hit/miss simulator runs the 4 scenarios verified above — switch between direct-mapped and set-associative to watch the conflict misses disappear for yourself:
+            </p>
+            <p>
+              Three things worth trying rather than just looking at: (1) keep the address <code>0x1234</code> and change the offset bits from 4 down to 2 — how do index and tag shift, and why does a smaller cache line make the tag longer? (2) run the COLUMN scenario and read the hit/miss trace: not a single H, exactly as the 3C taxonomy said, because these are capacity misses. (3) switch between the last two conflict scenarios and compare traces: the point where <code>M M M M…</code> turns into
+              <code>M M H H H…</code> is the moment the second way starts holding both addresses at once.
             </p>
 
             <div class="code-tabs" id="cache-demo-tab">
@@ -151,7 +231,17 @@
               </li>
               <li>✅ Verified: 2-level $AMAT$ (2% L1 miss, L2 hit=10, 25% local L2, DRAM penalty=200) = 2.2 cycles.</li>
               <li>✅ Pitfall: the local miss rate (25%) and the global one (0.5%) are two entirely different numbers — do not confuse them.</li>
+              <li>
+                ✅ Write policy: verified on the same access trace, write-through goes down to DRAM 10 times while write-back goes once — at an IDENTICAL hit rate (19/20). Judging write-back by hit rate is measuring the wrong axis.
+              </li>
+              <li>
+                ✅ The 3C taxonomy: verified, the conflict trace is 2 compulsory + 18 conflict (2-way wipes them out), while the column walk is 16 compulsory + 48 capacity + 0 conflict — the same high miss rate, two opposite cures.
+              </li>
             </ul>
+
+            <p>
+              One link has stayed hidden through this whole lesson. The cache looks up by index and tag cut out of an address — but <em>which</em>address? Your program only knows the <strong>virtual</strong> address the operating system handed it, while DRAM only understands <strong>physical</strong> addresses. Who translates between them, when, and if the translation itself needs a table that lives in memory, does that not cost another trip to DRAM on every single access? That is exactly the problem Lesson 8 solves, with a second cache dedicated to caching address translation — the TLB.
+            </p>
 
             <h2>Review quiz</h2>
 
@@ -351,11 +441,111 @@
               <div class="quiz-feedback"></div>
             </div>
 
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 5</h3>
+              <p class="quiz-question">
+                Verified: on the same trace of 10 read-then-write rounds against ONE variable, write-through goes down to DRAM 10 times and write-back once — yet both score 19 hits / 1 miss. What is the right conclusion?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. Write policy does not sit on the hit/miss axis — it decides HOW MANY writes actually have to go down to DRAM. Write-back collapses many stores to the same line into EXACTLY 1 write when that line is evicted (thanks to the dirty bit), so the hit rate is identical while DRAM traffic falls by a factor of 10. Judging write-back by hit rate is picking the wrong metric.'
+                    )
+                  "
+                >
+                  A. Write policy affects DRAM write traffic, not the hit rate — so it must be measured by the number of DRAM writes
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The identical hit rate (19/20 on both) is precisely the EVIDENCE that write-back is not useless — it improves something ELSE: the number of writes down to DRAM, from 10 to 1. Concluding &quot;it improves nothing&quot; comes from measuring with the wrong instrument.'
+                    )
+                  "
+                >
+                  B. Write-back improves nothing over write-through, since both have the same hit rate
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Write-back is not free: DRAM lags behind the cache for a while, which is why multi-core CPUs need a whole cache-coherence protocol (MESI) so the caches do not read each other&#39;s stale data. Every line also costs an extra dirty bit.'
+                    )
+                  "
+                >
+                  C. Write-back is better in every respect and carries no price at all
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 6</h3>
+              <p class="quiz-question">
+                Verified: the COLUMN walk misses 64/64, and the 3C breakdown is 16 compulsory + 48 capacity +
+                <strong>0 conflict</strong>. So how much would upgrading the cache from direct-mapped to 8-way improve it?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. 0 conflict misses means NO miss here is caused by set contention — raising associativity only cures conflict misses, so here it cures nothing. The real problem is capacity: the working set is larger than the cache. The two genuine fixes are a bigger cache, or — far cheaper — switching to a row-major traversal to recover spatial locality, taking misses from 64 down to 16.'
+                    )
+                  "
+                >
+                  A. Almost nothing — 0 conflict misses means there is nothing for associativity to cure; the fix is a bigger cache or a different traversal order
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. That is exactly the conclusion the 3C taxonomy exists to prevent: 8-way only erases CONFLICT misses, and here conflict = 0. The conflict trace in section 2 is the case 2-way rescues (all 18 conflict misses vanish).'
+                    )
+                  "
+                >
+                  B. Misses would drop sharply, since more ways always hold more data
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The 16 compulsory misses are unavoidable on any cache, since that is the FIRST touch of each block — but the remaining 48 are capacity misses, entirely avoidable with a bigger cache or a different traversal. It is not &quot;nothing can be done&quot;.'
+                    )
+                  "
+                >
+                  C. Nothing would improve, and nothing else can be done either, because every miss is compulsory
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
             <div class="article-cta">
               <h3>Download the lesson's practice code</h3>
               <p>
                 File JavaScript <code>CPUJS</code> — a miniature computer-architecture library used across all 12 lessons. Lesson 7 has just added <code>splitAddress()</code>, <code>makeDirectMappedCache()</code>,
-                <code>makeSetAssociativeCache()</code>, <code>amat()</code>, <code>amatTwoLevel()</code> — address splitting, direct-mapped and set-associative cache simulation (with LRU), and the multi-level AMAT formulas, plus a self-test that checks every number quoted in this lesson (run <code>node cpu-core.js</code>, nothing to install):
+                <code>makeSetAssociativeCache()</code>, <code>amat()</code>, <code>amatTwoLevel()</code>,
+                <code>makeWritePolicyCache()</code>, <code>runWriteTrace()</code>, <code>classifyMisses()</code> — address splitting, direct-mapped and set-associative cache simulation (with LRU), the multi-level AMAT formulas, write-through/write-back policy with a dirty bit, and the 3C breakdown, plus a self-test that checks every number quoted in this lesson (run <code>node cpu-core.js</code>, nothing to install):
               </p>
               <a
                 href="../cpu-core.js"
@@ -397,7 +587,22 @@
                   >
                   — the theoretical foundation of every cache and memory-hierarchy design.
                 </li>
+                <li>
+                  <strong>The 3C taxonomy (source):</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Cache_performance_measurement_and_metric"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Cache performance measurement and metric</a
+                  >
+                  — how compulsory/capacity/conflict are measured against an infinite cache and a fully-associative one, exactly the method section 5 uses.
+                </li>
+                <li>
+                  <strong>Write policy &amp; cache coherence:</strong>
+                  <a href="https://en.wikipedia.org/wiki/MESI_protocol" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — MESI protocol</a
+                  >
+                  — the price of write-back once there are several cores: the protocol that stops each core's private L1 from reading the others' stale data.
+                </li>
               </ul>
             </section>
-
-            

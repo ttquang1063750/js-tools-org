@@ -804,6 +804,118 @@ function runCacheTrace(cache, addresses) {
   return { hits, misses, total: addresses.length, missRate: misses / addresses.length, trace };
 }
 
+// Cache có CHÍNH SÁCH GHI (Mục 7.4). Hai cache ở trên chỉ mô phỏng ĐỌC —
+// nhưng một nửa việc cache phải làm là xử lý lệnh ghi (`sw`). Khi CPU ghi vào
+// một địa chỉ ĐANG nằm trong cache, có 2 lựa chọn:
+//   - write-through: ghi cache VÀ ghi thẳng xuống DRAM ngay. Đơn giản, bộ nhớ
+//     luôn đúng, nhưng MỌI lệnh ghi đều tốn một lần đi xuống DRAM.
+//   - write-back: chỉ ghi vào cache, bật cờ `dirty`. Chỉ khi dòng đó bị THAY
+//     THẾ mới ghi xuống DRAM (write-back). Ghi nhiều lần vào cùng 1 dòng chỉ
+//     tốn ĐÚNG 1 lần xuống DRAM — đổi lại cần thêm 1 bit dirty mỗi dòng và
+//     DRAM có lúc "lạc hậu" so với cache.
+// Khi GHI mà MISS, lại có 2 lựa chọn nữa: write-allocate (nạp dòng lên cache
+// rồi ghi — hợp với write-back) hoặc no-write-allocate (ghi thẳng xuống DRAM,
+// không nạp — hợp với write-through).
+// Trả về `memWrites`: số lần THẬT SỰ phải ghi xuống DRAM — đây là con số mà
+// chính sách ghi ảnh hưởng tới, không phải hit rate.
+function makeWritePolicyCache(numSets, ways, offsetBits, options) {
+  const opt = options || {};
+  const writeBack = opt.writePolicy === 'back';
+  // write-back mặc định đi kèm write-allocate, write-through đi kèm no-allocate
+  const writeAllocate = opt.writeAllocate === undefined ? writeBack : opt.writeAllocate;
+  const indexBits = Math.log2(numSets);
+  if (!Number.isInteger(indexBits)) throw new Error('numSets phai la luy thua cua 2');
+  const sets = new Array(numSets).fill(null).map(() => []);
+  let clock = 0;
+  let memWrites = 0;
+
+  function evict(set) {
+    let lruIdx = 0;
+    for (let i = 1; i < set.length; i++) if (set[i].lastUsed < set[lruIdx].lastUsed) lruIdx = i;
+    // Đây chính là lúc write-back phải trả nợ: dòng bị đá ra mà đang dirty thì
+    // BÂY GIỜ mới ghi xuống DRAM.
+    if (set[lruIdx].dirty) memWrites++;
+    set.splice(lruIdx, 1);
+  }
+
+  return {
+    // `isWrite = false` -> lệnh đọc (lw), `true` -> lệnh ghi (sw)
+    access(address, isWrite) {
+      const { tag, index } = splitAddress(address, offsetBits, indexBits);
+      const set = sets[index];
+      const entry = set.find((e) => e.tag === tag);
+      clock++;
+      if (entry) {
+        entry.lastUsed = clock;
+        if (isWrite) {
+          if (writeBack) entry.dirty = true;
+          else memWrites++; // write-through: ghi cache xong ghi luôn xuống DRAM
+        }
+        return 'HIT';
+      }
+      // MISS
+      if (isWrite && !writeAllocate) {
+        memWrites++; // no-write-allocate: ghi thẳng xuống DRAM, không nạp dòng
+        return 'MISS';
+      }
+      if (set.length >= ways) evict(set);
+      set.push({ tag, lastUsed: clock, dirty: isWrite && writeBack });
+      if (isWrite && !writeBack) memWrites++;
+      return 'MISS';
+    },
+    // Cuối chương trình, mọi dòng còn dirty vẫn phải được ghi xuống DRAM
+    // (flush) — không tính vào đây thì write-back trông rẻ hơn thực tế.
+    flush() {
+      for (const set of sets)
+        for (const e of set)
+          if (e.dirty) {
+            memWrites++;
+            e.dirty = false;
+          }
+      return memWrites;
+    },
+    get memWrites() {
+      return memWrites;
+    },
+  };
+}
+
+// Chạy chuỗi truy cập CÓ ĐỌC CÓ GHI qua một cache write-policy. Mỗi phần tử
+// là { address, isWrite }. Trả thêm `memWrites` sau khi flush.
+function runWriteTrace(cache, accesses) {
+  let hits = 0;
+  for (const a of accesses) if (cache.access(a.address, a.isWrite) === 'HIT') hits++;
+  cache.flush();
+  return { hits, misses: accesses.length - hits, total: accesses.length, memWrites: cache.memWrites };
+}
+
+// Phân loại 3C (Mục 7.5) — không phải mọi miss đều giống nhau, và mỗi loại có
+// một cách chữa KHÁC nhau, nên gộp chung là bỏ lỡ thông tin:
+//   - Compulsory (bắt buộc): lần ĐẦU TIÊN chạm tới một block. Cache nào cũng
+//     dính, kể cả cache vô hạn. Chữa bằng dòng cache to hơn / prefetch.
+//   - Capacity (dung lượng): block ĐÃ từng nằm trong cache nhưng bị đá ra vì
+//     cache quá NHỎ so với tập dữ liệu. Chữa bằng cache to hơn.
+//   - Conflict (xung đột): cache còn thừa chỗ, nhưng block bị đá ra vì tranh
+//     đúng cái set đó. Chữa bằng tăng associativity — đây chính là hiện tượng
+//     Mục 7.2 đã đo (20/20 miss xuống còn 2/20).
+// Đo theo cách chuẩn của Hill: so cache thật với cache fully-associative CÙNG
+// dung lượng, và với cache vô hạn.
+function classifyMisses(addresses, numSets, ways, offsetBits) {
+  const totalLines = numSets * ways;
+  const real = runCacheTrace(makeSetAssociativeCache(numSets, ways, offsetBits), addresses).misses;
+  // fully-associative cùng dung lượng = 1 set chứa toàn bộ số dòng
+  const fullyAssoc = runCacheTrace(makeSetAssociativeCache(1, totalLines, offsetBits), addresses).misses;
+  // cache vô hạn: chỉ còn lại đúng các miss bắt buộc
+  const blockOf = (a) => a >> offsetBits;
+  const compulsory = new Set(addresses.map(blockOf)).size;
+  return {
+    total: real,
+    compulsory,
+    capacity: fullyAssoc - compulsory,
+    conflict: real - fullyAssoc,
+  };
+}
+
 // AMAT (Average Memory Access Time) 1 cấp cache (Mục 7.3):
 // $AMAT = T_{Hit} + \text{MissRate} \times T_{MissPenalty}$
 function amat(hitTime, missRate, missPenalty) {
@@ -1055,6 +1167,9 @@ export {
   runTomasulo,
   splitAddress,
   makeDirectMappedCache,
+  makeWritePolicyCache,
+  runWriteTrace,
+  classifyMisses,
   makeSetAssociativeCache,
   runCacheTrace,
   amat,
@@ -1565,6 +1680,43 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       'Pitfall Local vs Global miss rate: global L2 miss rate (tren TONG truy cap) = missRateL1*missRateL2Local = 0,02*0,25 = 0,005 - KHAC han 0,25 cuc bo',
       Math.abs(0.02 * 0.25 - 0.005) < 1e-9
     );
+
+    // --- Muc 7.4: chinh sach ghi (write-through vs write-back) ---
+    // Kich ban: cong don vao MOT bien (doc roi ghi cung dia chi) 10 lan.
+    const rmwAccesses = [];
+    for (let i = 0; i < 10; i++) {
+      rmwAccesses.push({ address: 0, isWrite: false });
+      rmwAccesses.push({ address: 0, isWrite: true });
+    }
+    const wtResult = runWriteTrace(makeWritePolicyCache(4, 2, 4, { writePolicy: 'through' }), rmwAccesses);
+    const wbResult = runWriteTrace(makeWritePolicyCache(4, 2, 4, { writePolicy: 'back' }), rmwAccesses);
+    check('write-through: 10 lenh ghi -> 10 lan ghi xuong DRAM', wtResult.memWrites, 10);
+    check('write-back: 10 lenh ghi vao CUNG mot dong -> chi 1 lan ghi xuong DRAM (luc flush)', wbResult.memWrites, 1);
+    checkTrue(
+      'Diem mau chot: hai chinh sach ghi co CUNG hit rate (19/20) - chung khac nhau o LUU LUONG DRAM, khong phai o hit rate',
+      wtResult.hits === 19 && wbResult.hits === 19
+    );
+
+    // --- Muc 7.5: phan loai 3C (compulsory / capacity / conflict) ---
+    // Chuoi conflict cua Muc 7.2, do lai bang 3C: gan nhu TOAN BO la conflict,
+    // va tang associativity len 2-way xoa sach chung.
+    const conflictSeq = [];
+    for (let i = 0; i < 10; i++) {
+      conflictSeq.push(0);
+      conflictSeq.push(numSets * lineSize);
+    }
+    const c3dm = classifyMisses(conflictSeq, numSets, 1, offsetBits);
+    const c3sa = classifyMisses(conflictSeq, numSets, 2, offsetBits);
+    check('3C chuoi conflict tren Direct-Mapped: 20 miss = 2 compulsory + 0 capacity + 18 conflict', c3dm.conflict, 18);
+    checkTrue('3C: tong 3 loai = tong so miss', c3dm.compulsory + c3dm.capacity + c3dm.conflict === c3dm.total);
+    check('3C cung chuoi do tren 2-way: conflict miss bien mat hoan toan (con 0)', c3sa.conflict, 0);
+    check('3C cung chuoi do tren 2-way: chi con 2 compulsory miss khong the tranh', c3sa.total, 2);
+    // Cung mot ty le miss cao, nhung CHAN DOAN khac han: duyet theo cot 100%
+    // miss lai KHONG phai conflict ma la capacity - chua bang cache to hon,
+    // khong phai bang tang associativity. Do chinh la ly do phai phan loai 3C.
+    const c3col = classifyMisses(colMajorAddrs, numSets, 1, offsetBits);
+    check('3C duyet theo COT: 64 miss = 16 compulsory + 48 capacity + 0 conflict', c3col.capacity, 48);
+    check('3C duyet theo COT: 0 conflict miss - tang associativity se KHONG cuu duoc', c3col.conflict, 0);
   }
 
   // --- Bài 8: Bộ nhớ ảo - dịch dia chi qua TLB + Page Table, dung luong Page Table ---
