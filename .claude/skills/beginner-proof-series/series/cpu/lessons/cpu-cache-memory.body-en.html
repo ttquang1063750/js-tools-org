@@ -1,0 +1,403 @@
+
+            <h2>Introduction: a very fast CPU is useless if it waits forever on memory</h2>
+            <p>
+              <a href="cpu-ooo-execution">Lesson 6</a> built a highly sophisticated out-of-order CPU — but however many reservation stations it has, every <code>LW</code>/<code>SW</code> instruction (Lesson 3) still has to reach main memory (DRAM) in the end. The problem: DRAM is hundreds of times SLOWER than the CPU — this is the <strong>Memory Wall</strong> . The answer is not to make DRAM faster (physics will not allow that cheaply) but to insert a small, extremely fast, extremely expensive layer of SRAM between the CPU and DRAM — called a <strong>Cache</strong>.
+            </p>
+            <div class="callout callout--note">
+              <div class="callout__title">🔍 How SRAM and DRAM differ — and why that difference creates the cache</div>
+              <div class="callout__content">
+                This whole lesson rests on there being two kinds of memory with two very different prices, so it is worth stating clearly up front.
+                <ul>
+                  <li>
+                    <strong>DRAM</strong> (<em>dynamic RAM</em>) stores each bit in <strong>a single capacitor</strong>. A capacitor is tiny, so an enormous number of bits fit in one area — that is why your machine's RAM is measured in gigabytes. But capacitors <em>leak charge</em>, so they must be refreshed constantly (that is where "dynamic" comes from), and reading one is a relatively slow process.
+                  </li>
+                  <li>
+                    <strong>SRAM</strong> (<em>static RAM</em>) stores each bit in
+                    <strong>roughly 6 transistors</strong> latched against each other. No refresh is needed ("static"), and reading is nearly instant. In exchange it costs many times the area for the same bit — so it is far more expensive, and cannot be built large.
+                  </li>
+                </ul>
+                That is the entire idea of a cache: we <em>cannot</em> build all of main memory from SRAM (too expensive, too large), and we cannot live with DRAM's speed either. So we take a <em>small</em> amount of SRAM and try to guess which part of DRAM deserves to sit in it — and the two rules in section 1 are the basis for that guess.
+              </div>
+            </div>
+            <hr />
+
+            <div class="callout callout--note">
+              <div class="callout__title">📚 Prerequisites</div>
+              <div class="callout__content">
+                It helps to read <a href="cpu-riscv-datapath">Lesson 3</a> (memory access with <code>LW</code>/<code>SW</code> in the datapath — the cache in this lesson is exactly the hidden layer between the CPU and main memory that Lesson 3's datapath treated as instantaneous).
+              </div>
+            </div>
+
+            <h2>1. The memory wall &amp; the principle of locality</h2>
+            <p>
+              CPU speed has risen faster than DRAM speed for decades — that gap is the memory wall. A cache "hides" DRAM latency by exploiting 2 statistical rules that hold ALMOST ALWAYS for real programs:
+            </p>
+            <ul>
+              <li>
+                <strong>Temporal Locality</strong> — an address just accessed tends to be accessed AGAIN in the near future (a loop counter, for instance).
+              </li>
+              <li>
+                <strong>Spatial Locality</strong> — if address X was just accessed, addresses NEAR X (in the same cache line) tend to be accessed SOON (walking an array in order, for instance).
+              </li>
+            </ul>
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: walking a 2D array the wrong way destroys spatial locality</div>
+              <div class="callout__content">
+                A 2D array is stored row by row (row-major, the C/JS convention) — walking BY ROW touches elements that are ADJACENT in memory, extracting the most from spatial locality. Walking BY COLUMN jumps FAR each time (exactly one row's length) — so almost EVERY access lands in a DIFFERENT cache line, destroying spatial locality entirely. Verified for real: an 8×8 array of 4-byte elements on a cache of 4 lines × 16 bytes — walking BY ROW gives only
+                <strong>16/64 miss (25%)</strong>, while walking BY COLUMN <strong>MISSES EVERY TIME, 64/64 (100%)</strong> — 4 times worse, even though exactly the same elements were accessed.
+              </div>
+            </div>
+
+            <h2>2. Cache mapping: direct-mapped &amp; set-associative</h2>
+            <p>
+              A memory address is split into 3 parts for the cache lookup: <strong>Offset</strong> (the lowest bits, selecting a byte WITHIN the cache line), <strong>Index</strong> (selecting the LINE or set in the cache), and the
+              <strong>Tag</strong> (everything left, used to CONFIRM this really is the data you wanted rather than other data sharing the same index).
+            </p>
+            {{CODE:split_address.js (trích engine dùng chung cpu-core.js)}}
+            <p>
+              <strong>Direct-Mapped</strong>: each index maps to EXACTLY 1 cache line — simple and extremely fast to look up, but 2 addresses with different tags sharing an index will keep evicting each other even while other lines sit empty (a<strong>Conflict Miss</strong>). <strong>Set-Associative N-way</strong>: each index maps to a SET of N lines — addresses sharing an index but differing in tag no longer fight over one slot, and
+              <strong>LRU</strong> (least recently used) decides which line is replaced once the set is full.
+            </p>
+            {{CODE:conflict_miss_demo.js (verified bằng engine — Direct-Mapped vs 2-way)}}
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Pitfall: set-associativity is not "free"</div>
+              <div class="callout__content">
+                More "ways" means fewer conflict misses, but every access must compare the tag against ALL N lines in the set IN PARALLEL (an N-way comparator) — costing considerably more silicon area and power than direct-mapped, which compares just 1 tag. This is why an L1 cache (which must be extremely fast, so few ways — typically 4–8) differs so much from an L3 cache (accepting more latency to buy higher associativity and fewer misses — typically 16 ways or more).
+              </div>
+            </div>
+
+            <h2>3. The cache performance metric: AMAT</h2>
+            <p>The average memory access time with 1 level of cache:</p>
+            <p style="text-align: center">$$AMAT = T_{Hit} + \text{MissRate} \times T_{MissPenalty}$$</p>
+            <p>
+              With a 2-level L1+L2 system the formula extends — <code>missRateL2Local</code> is the LOCAL miss rate of L2 (counted only over the accesses where L1 ALREADY missed, not over all program accesses):
+            </p>
+            <p style="text-align: center">
+              $$AMAT = T_{HitL1} + \text{MissRateL1} \times (T_{HitL2} + \text{MissRateL2}_{local} \times
+              T_{MissPenalty\_DRAM})$$
+            </p>
+            <p>
+              Verified for real (the classic Patterson &amp; Hennessy example): $T_{HitL1}=1$, MissRateL1=2%, $T_{HitL2}=10$, LOCAL MissRateL2=25%, DRAM penalty=200 cycles → $AMAT = 1 + 0.02 \times (10 + 0.25 \times 200) = \mathbf{2.2}$ cycles.
+            </p>
+            {{CODE:amat.js (trích engine dùng chung cpu-core.js)}}
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Local miss rate ≠ global miss rate</div>
+              <div class="callout__content">
+                The LOCAL MissRateL2 (25% above) is measured only over the accesses where L1 ALREADY MISSED — not over ALL program accesses. L2's GLOBAL miss rate (the share of program accesses that must reach DRAM) = MissRateL1 × MissRateL2Local = $0.02 \times 0.25 = 0.005$ (0.5%) — a COMPLETELY different number from 25%. Confusing these two when reporting multi-level memory performance is an extremely common mistake.
+              </div>
+            </div>
+
+            {{CODE:locality_demo.js (verified bằng engine — duyệt hàng vs duyệt cột)}}
+
+            <h2>4. Hands-on: an L1 cache simulator</h2>
+            <p>
+              The address splitter below computes tag/index/offset directly from any hex address you type. The hit/miss simulator runs the 4 scenarios verified above — switch between direct-mapped and set-associative to watch the conflict misses disappear for yourself:
+            </p>
+
+            <div class="code-tabs" id="cache-demo-tab">
+              <div class="code-tabs__nav">
+                <span class="code-tabs__title">🗄️ Address splitter &amp; cache hit/miss simulator</span>
+                <div class="code-tabs__btns">
+                  <button class="code-tabs__tab is-active" type="button" data-tab="preview">Preview</button>
+                </div>
+              </div>
+              <div class="code-tabs__panel is-active" data-panel="preview">
+                <div class="cache-demo-container">
+                  <div>
+                    <p style="margin: 0 0 8px; font-weight: 700; font-size: 14px">Tag / index / offset splitter</p>
+                    <div class="cache-demo-row">
+                      <div class="cache-demo-field">
+                        <label for="cache-addr-input">Address (hex)</label>
+                        <input type="text" id="cache-addr-input" value="1234" />
+                      </div>
+                      <div class="cache-demo-field">
+                        <label for="cache-offset-bits-input">Offset bits</label>
+                        <input type="number" id="cache-offset-bits-input" value="4" min="0" max="16" />
+                      </div>
+                      <div class="cache-demo-field">
+                        <label for="cache-index-bits-input">Index bits</label>
+                        <input type="number" id="cache-index-bits-input" value="2" min="0" max="16" />
+                      </div>
+                    </div>
+                    <div class="cache-split-output term-output" id="cache-split-output">—</div>
+                  </div>
+                  <div>
+                    <p style="margin: 0 0 8px; font-weight: 700; font-size: 14px">Hit/miss simulation</p>
+                    <div class="cache-demo-field">
+                      <label for="cache-scenario-select">Scenario</label>
+                      <select id="cache-scenario-select">
+                        <option value="rowMajor">Walk the 8×8 array BY ROW (row-major) — direct-mapped</option>
+                        <option value="colMajor">Walk the 8×8 array BY COLUMN (column-major) — direct-mapped</option>
+                        <option value="conflictDM">Conflict Miss — Direct-Mapped</option>
+                        <option value="conflict2Way">The SAME trace — 2-way set-associative</option>
+                      </select>
+                    </div>
+                    <div id="cache-trace-output"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2>Summary</h2>
+            <ul>
+              <li>
+                ✅ A cache hides the memory wall by exploiting temporal and spatial locality — it does not make DRAM faster, it reduces how often you must REACH DRAM at all.
+              </li>
+              <li>
+                ✅ Verified: walking BY ROW (good locality) misses only 25%; BY COLUMN (locality lost) misses 100% — 4 times worse for the same elements.
+              </li>
+              <li>
+                ✅ Direct-mapped is simple but prone to conflict misses (verified: 100% miss with 2 addresses sharing an index); 2-way set-associative all but eliminates it (verified: only 10% miss).
+              </li>
+              <li>✅ Verified: 2-level $AMAT$ (2% L1 miss, L2 hit=10, 25% local L2, DRAM penalty=200) = 2.2 cycles.</li>
+              <li>✅ Pitfall: the local miss rate (25%) and the global one (0.5%) are two entirely different numbers — do not confuse them.</li>
+            </ul>
+
+            <h2>Review quiz</h2>
+
+            <div class="quiz-container">
+              <h3 class="quiz-title">Question 1</h3>
+              <p class="quiz-question">
+                Verified: walking the 8×8 array BY ROW misses only 25%, BY COLUMN misses 100%. Why such a large gap for the same number of elements?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. Walking by row touches elements that are ADJACENT in memory (row-major) — each 16-byte cache line holds 4 elements, so 3 of the next 4 accesses are already in the cache (hits). Walking by column jumps exactly one row&#39;s length each time and always lands in a DIFFERENT cache line, destroying spatial locality completely.'
+                    )
+                  "
+                >
+                  A. Walking by row exploits spatial locality (adjacent elements in memory); walking by column jumps far each time, destroying spatial locality entirely
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Both scenarios use the SAME cache (4 lines, 16 bytes per line) — the cache size does not change, only the ORDER in which addresses are accessed.'
+                    )
+                  "
+                >
+                  B. Because the cache used for the column walk is smaller than the one used for the row walk
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Both scenarios use a direct-mapped cache, not set-associative — the mapping does not change, only the access order does.'
+                    )
+                  "
+                >
+                  C. Because the column walk uses set-associative while the row walk uses direct-mapped
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 2</h3>
+              <p class="quiz-question">
+                Verified: 2 addresses sharing an index but with different tags, alternating 20 times — direct-mapped misses 100% (20/20), 2-way set-associative only 10% (2/20). Why?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. Direct-mapped has only 1 line per index, so 2 addresses with the same index MUST fight over it, each access evicting the other (a continuous conflict miss). A 2-way set-associative cache has 2 lines in the same set, so both addresses are held AT ONCE — only the first 2 accesses miss (compulsory misses) and everything after that hits.'
+                    )
+                  "
+                >
+                  A. Direct-mapped has only 1 line per index, so the 2 addresses contend and evict each other constantly; 2-way has 2 lines per set, so it holds both at once
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Both caches in the example have small TOTAL capacity (4 sets) — 2-way still has only 4 sets × 2 ways = 8 lines, not much more. What matters is the ORGANISATION (how many ways per set), not the total capacity.'
+                    )
+                  "
+                >
+                  B. The set-associative cache has far more total capacity than the direct-mapped one in this example
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Both addresses are already in the cache after a few iterations — the issue is the MAPPING SCHEME (direct-mapped against set-associative), not whether the cache was warmed up.'lam nong\\' truoc.'
+                    )
+                  "
+                >
+                  C. Because the set-associative cache was warmed up before measuring and the direct-mapped one was not
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 3</h3>
+              <p class="quiz-question">
+                Verified: $AMAT = 1 + 0.02 \times (10 + 0.25 \times 200) = 2.2$ cycles. The 25% in that formula is the LOCAL MissRateL2. What is L2's GLOBAL miss rate (over all program accesses)?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. L2&#39;s global miss rate = MissRateL1 × MissRateL2Local = 0.02 × 0.25 = 0.005 (0.5%) — because L2 is only reached WHEN L1 has missed (2% of accesses), and of those L2 misses a further 25%. That is an entirely different number from the local 25%.'
+                    )
+                  "
+                >
+                  A. 0.5% (= MissRateL1 × MissRateL2Local = 0.02 × 0.25) — because L2 is only reached once L1 has missed
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. 25% IS L2&#39;s LOCAL miss rate (counted only over the accesses where L1 missed), NOT the global rate over all program accesses — treating the two as one is exactly this lesson&#39;s pitfall.'
+                    )
+                  "
+                >
+                  B. 25% — identical to the local miss rate, since that is L2's real miss rate
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. The global miss rate MUST be lower than the local one, because it is measured over a larger denominator (all program accesses rather than just the L1 misses).'loc\\' qua ty le L1 miss truoc) - 27% (cong hai ty le lai) khong dung voi dinh nghia toan hoc cua Miss Rate toan cuc, phai la PHEP NHAN chu khong phai phep cong.'
+                    )
+                  "
+                >
+                  C. 27% (= 2% + 25%, adding the two miss rates)
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="quiz-container" style="margin-top: 20px">
+              <h3 class="quiz-title">Question 4</h3>
+              <p class="quiz-question">
+                Why does an L1 cache usually use fewer "ways" (say 4–8) while an L3 cache may use 16 or more?
+              </p>
+              <div class="quiz-options">
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      true,
+                      'Correct. On every access the cache must compare the tag against ALL N lines in the set IN PARALLEL — more ways means more comparators, more silicon area and power, and a SLOWER access. L1 needs maximum SPEED (few ways), while L3 accepts more latency to buy high associativity (fewer conflict misses across a large capacity).'
+                    )
+                  "
+                >
+                  A. Because comparing tags across more ways costs more time and power — L1 needs maximum speed so it uses few ways, while L3 accepts more latency to reduce conflict misses
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Both L1 and L3 are SRAM (not DRAM) — the memory technology is not what differs between cache levels here; the trade-off is SPEED against ASSOCIATIVITY.'
+                    )
+                  "
+                >
+                  B. Because L1 uses a completely different memory technology (DRAM) from L3 (SRAM)
+                </button>
+                <button
+                  class="quiz-option"
+                  type="button"
+                  onclick="
+                    checkQuiz(
+                      this,
+                      false,
+                      'Wrong. Direct-mapped (1 way) does NOT eliminate conflict misses — quite the opposite, it is the mapping MOST prone to them, exactly as question 2 just demonstrated.'
+                    )
+                  "
+                >
+                  C. Because L1 uses direct mapping to eliminate conflict misses entirely, so it needs no extra ways
+                </button>
+              </div>
+              <div class="quiz-feedback"></div>
+            </div>
+
+            <div class="article-cta">
+              <h3>Download the lesson's practice code</h3>
+              <p>
+                File JavaScript <code>CPUJS</code> — a miniature computer-architecture library used across all 12 lessons. Lesson 7 has just added <code>splitAddress()</code>, <code>makeDirectMappedCache()</code>,
+                <code>makeSetAssociativeCache()</code>, <code>amat()</code>, <code>amatTwoLevel()</code> — address splitting, direct-mapped and set-associative cache simulation (with LRU), and the multi-level AMAT formulas, plus a self-test that checks every number quoted in this lesson (run <code>node cpu-core.js</code>, nothing to install):
+              </p>
+              <a
+                href="../cpu-core.js"
+                download
+                class="btn-facebook"
+                style="background: var(--demo-accent); text-decoration: none; color: #fff"
+              >
+                Download cpu-core.js
+              </a>
+            </div>
+
+            <section class="article-refs">
+              <h2>📖 References</h2>
+              <ul>
+                <li>
+                  <strong>The core textbook:</strong>
+                  <a
+                    href="https://www.amazon.com/Computer-Organization-Design-RISC-V-Architecture/dp/0128203315"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Computer Organization and Design, RISC-V Edition (Patterson &amp; Hennessy)</a
+                  >
+                  — Chapter 5 covers the principle of locality, cache structure and multi-level AMAT in full.
+                </li>
+                <li>
+                  <strong>An overview of CPU caches:</strong>
+                  <a href="https://en.wikipedia.org/wiki/CPU_cache" target="_blank" rel="noopener noreferrer"
+                    >Wikipedia — CPU cache</a
+                  >
+                  — structure, replacement policies (LRU, FIFO, random) and the real cache levels in modern CPUs.
+                </li>
+                <li>
+                  <strong>Locality of reference:</strong>
+                  <a
+                    href="https://en.wikipedia.org/wiki/Locality_of_reference"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Wikipedia — Locality of reference</a
+                  >
+                  — the theoretical foundation of every cache and memory-hierarchy design.
+                </li>
+              </ul>
+            </section>
+
+            

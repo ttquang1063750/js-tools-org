@@ -1,6 +1,33 @@
-// cpu-cache-memory.js — demo cho Bài 7 (Cache & Phân cấp bộ nhớ): tách địa
-// chỉ tag/index/offset trực tiếp, và chạy các chuỗi địa chỉ mẫu qua cache
-// direct-mapped / set-associative THẬT (từ cpu-core.js) để xem Hit/Miss.
+// cpu-cache-memory.js — the demo for Lesson 7 (caches & the memory hierarchy):
+// splits an address into tag/index/offset directly, and runs sample address
+// traces through REAL direct-mapped / set-associative caches (from cpu-core.js)
+// to show the hits and misses.
+//
+// This file is shared by BOTH locales, so every string it writes into the DOM has
+// to follow the page language — otherwise the English page shows the scenario
+// list and the results in Vietnamese at runtime.
+const STRINGS = {
+  vi: {
+    miss: 'Miss',
+    rate: 'tỷ lệ',
+    address: 'Địa chỉ',
+    rowMajor: 'Duyệt mảng 8×8 theo HÀNG (row-major, spatial locality tốt) — Direct-Mapped',
+    colMajor: 'Duyệt mảng 8×8 theo CỘT (column-major, spatial locality mất) — Direct-Mapped',
+    conflict: 'Conflict Miss: 2 địa chỉ trùng index, khác tag — Direct-Mapped (đá nhau liên tục)',
+    conflict2w: 'CÙNG 2 địa chỉ đó — Set-Associative 2-way (giữ được cả hai)',
+  },
+  en: {
+    miss: 'Miss',
+    rate: 'rate',
+    address: 'Address',
+    rowMajor: 'Walking the 8×8 array BY ROW (row-major, good spatial locality) — direct-mapped',
+    colMajor: 'Walking the 8×8 array BY COLUMN (column-major, locality lost) — direct-mapped',
+    conflict: 'Conflict miss: 2 addresses, same index, different tags — direct-mapped (evicting each other)',
+    conflict2w: 'The SAME 2 addresses — 2-way set-associative (both fit)',
+  },
+};
+// <html lang> is set per locale by the page itself, so it is the reliable source.
+const T = STRINGS[document.documentElement.lang === 'en' ? 'en' : 'vi'];
 import { splitAddress, makeDirectMappedCache, makeSetAssociativeCache, runCacheTrace } from './cpu-core.js';
 
 const R = 8;
@@ -25,22 +52,22 @@ for (let i = 0; i < 10; i++) {
 
 const SCENARIOS = {
   rowMajor: {
-    label: 'Duyệt mảng 8×8 theo HÀNG (row-major, spatial locality tốt) — Direct-Mapped',
+    label: T.rowMajor,
     build: () => makeDirectMappedCache(NUM_SETS, OFFSET_BITS),
     addrs: rowMajorAddrs,
   },
   colMajor: {
-    label: 'Duyệt mảng 8×8 theo CỘT (column-major, spatial locality mất) — Direct-Mapped',
+    label: T.colMajor,
     build: () => makeDirectMappedCache(NUM_SETS, OFFSET_BITS),
     addrs: colMajorAddrs,
   },
   conflictDM: {
-    label: 'Conflict Miss: 2 địa chỉ trùng index, khác tag — Direct-Mapped (đá nhau liên tục)',
+    label: T.conflict,
     build: () => makeDirectMappedCache(NUM_SETS, OFFSET_BITS),
     addrs: conflictAddrs,
   },
   conflict2Way: {
-    label: 'CÙNG 2 địa chỉ đó — Set-Associative 2-way (giữ được cả hai)',
+    label: T.conflict2w,
     build: () => makeSetAssociativeCache(NUM_SETS, 2, OFFSET_BITS),
     addrs: conflictAddrs,
   },
@@ -55,7 +82,7 @@ function renderTrace(result) {
     .join('');
   return `
     <div class="cache-trace">${cells}</div>
-    <div class="cache-stat">Miss: <strong>${result.misses}/${result.total}</strong> (tỷ lệ ${(result.missRate * 100).toFixed(1)}%)</div>
+    <div class="cache-stat">${T.miss}: <strong>${result.misses}/${result.total}</strong> (${T.rate} ${(result.missRate * 100).toFixed(1)}%)</div>
   `;
 }
 
@@ -87,7 +114,7 @@ function initAddressSplitter() {
     const offsetBits = parseInt(offsetBitsInput.value, 10);
     const indexBits = parseInt(indexBitsInput.value, 10);
     const { tag, index, offset } = splitAddress(address, offsetBits, indexBits);
-    output.textContent = `Địa chỉ 0x${address.toString(16)} -> Tag=0x${tag.toString(16)} · Index=0x${index.toString(16)} · Offset=0x${offset.toString(16)}`;
+    output.textContent = `${T.address} 0x${address.toString(16)} -> Tag=0x${tag.toString(16)} · Index=0x${index.toString(16)} · Offset=0x${offset.toString(16)}`;
   }
 
   [addrInput, offsetBitsInput, indexBitsInput].forEach((el) => el.addEventListener('input', run));
