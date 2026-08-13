@@ -1,28 +1,28 @@
-// cpu-core.js — "CPUJS": thư viện kiến trúc máy tính tối giản, tự viết hoàn
-// toàn, xây dần qua từng bài của Series 15 (Kiến Trúc Máy Tính: Từ Logic Đến
-// Lượng Tử). Cùng kỷ luật "verify bằng số thật trước khi viết bài học" như
-// dsp-core.js (Series 14), vmcu.js (Series 13) và ai-neuro.js (Series 12) —
-// mọi hàm dưới đây đều có self-test ở cuối file, chạy bằng `node cpu-core.js`.
+// cpu-core.js - "CPUJS": a minimal, entirely hand-written computer-architecture
+// library, built up lesson by lesson through Series 15 (Computer Architecture:
+// From Logic to Quantum). Same discipline as dsp-core.js (Series 14), vmcu.js
+// (Series 13) and ai-neuro.js (Series 12) - verify with real numbers before
+// writing: every function below has a self-test at the end of the file, run
 //
-// Nguyên tắc: MỌI con số xuất hiện trong bài học (kết quả ALU, cờ trạng thái,
-// độ trễ pipeline, AMAT, xác suất lượng tử...) phải được sinh ra và kiểm chứng
-// bởi engine này TRƯỚC, rồi mới chép vào prose/quiz — không bịa số bằng tay.
+// The rule: EVERY number appearing in a lesson (ALU results, status flags,
+// pipeline latency, AMAT, quantum probabilities...) must be produced and checked
+// by this engine FIRST, then copied into the prose or quiz - never invented.
 //
-// Bài 1 — Cổng logic đến ALU. Build-out: half/full adder, ripple-carry adder,
-// ALU 4-bit (ADD/SUB/AND/OR/XOR) + 4 cờ trạng thái Zero/Sign/Carry/Overflow.
+// Lesson 1 - From logic gates to the ALU. Build-out: half/full adder, a
+// ripple-carry adder, a 4-bit ALU (ADD/SUB/AND/OR/XOR) + the 4 status flags.
 
 // ---------------------------------------------------------------------------
-// Tiện ích biểu diễn số nhị phân N-bit (mặc định 4-bit cho demo Bài 1).
+// Helpers for N-bit binary representation (4-bit by default for the Lesson 1 demo).
 // ---------------------------------------------------------------------------
 
-// Chuỗi nhị phân N-bit của một giá trị (lấy đúng N bit thấp) — vd
+// The N-bit binary string of a value (taking exactly the low N bits) - e.g.
 // toBinString(5, 4) === "0101".
 function toBinString(value, bits = 4) {
   return (value & ((1 << bits) - 1)).toString(2).padStart(bits, '0');
 }
 
-// Diễn giải N-bit theo số bù 2 (two's complement): bit cao nhất là bit dấu.
-// vd toSigned(0b1001, 4) === -7 (không phải 9).
+// Interpret N bits as two's complement: the top bit is the sign bit.
+// e.g. toSigned(0b1001, 4) === -7 (not 9).
 function toSigned(value, bits = 4) {
   const half = 1 << (bits - 1);
   const masked = value & ((1 << bits) - 1);
@@ -30,25 +30,25 @@ function toSigned(value, bits = 4) {
 }
 
 // ---------------------------------------------------------------------------
-// Cổng cộng — viên gạch số học của mọi CPU (Bài 1 Mục 2).
+// Adders - the arithmetic building block of every CPU (Lesson 1, section 2).
 // ---------------------------------------------------------------------------
 
-// Mạch cộng bán phần: 2 bit vào, cho tổng (XOR) và bit nhớ (AND). KHÔNG có
-// carry-in nên không ghép chuỗi được — chỉ dùng cho bit thấp nhất.
+// Half adder: 2 input bits, giving a sum (XOR) and a carry (AND). It has NO
+// carry-in so it cannot be chained - only usable for the lowest bit.
 function halfAdder(a, b) {
   return { sum: a ^ b, carry: a & b };
 }
 
-// Mạch cộng toàn phần: 3 bit vào (a, b, carry-in), cho tổng và carry-out.
-// Ghép nối tiếp N bộ này thành bộ cộng N-bit (ripple carry).
+// Full adder: 3 input bits (a, b, carry-in), giving a sum and a carry-out.
+// Chaining N of these in series makes an N-bit ripple-carry adder.
 function fullAdder(a, b, cin) {
   const sum = a ^ b ^ cin;
   const cout = (a & b) | (cin & (a ^ b));
   return { sum, cout };
 }
 
-// Bộ cộng ripple-carry N-bit: ghép N full adder, bit nhớ truyền từ thấp lên
-// cao. Trả về kết quả N-bit (đã cắt) và carry-out cuối cùng (tràn không dấu).
+// N-bit ripple-carry adder: N full adders chained, the carry rippling from low
+// to high. Returns the truncated N-bit result and the final carry-out (unsigned overflow).
 function rippleCarryAdd(a, b, cin = 0, bits = 4) {
   let carry = cin;
   let result = 0;
@@ -63,18 +63,18 @@ function rippleCarryAdd(a, b, cin = 0, bits = 4) {
 }
 
 // ---------------------------------------------------------------------------
-// ALU N-bit (Bài 1 Mục 3) — nhận 2 toán hạng + mã phép toán, trả kết quả và 4
-// cờ trạng thái. Đây là khối "ra quyết định" mà mọi lệnh rẽ nhánh dựa vào.
+// N-bit ALU (Lesson 1, section 3) - takes 2 operands + an opcode, returns the
+// result and 4 status flags. This is the "decision" block every branch relies on.
 // ---------------------------------------------------------------------------
 
 const ALU_OPS = ['ADD', 'SUB', 'AND', 'OR', 'XOR'];
 
-// Thực thi một phép ALU trên số N-bit (mặc định 4-bit). Cờ:
-//   Z (Zero)     : kết quả = 0.
-//   S (Sign)     : bit cao nhất của kết quả = 1 (âm trong hệ bù 2).
-//   C (Carry)    : tràn KHÔNG dấu — ADD sinh carry-out, SUB sinh mượn (borrow).
-//   V (Overflow) : tràn CÓ dấu (bù 2) — kết quả sai dấu lý thuyết.
-// Với AND/OR/XOR (phép luận lý) thì C và V luôn = false.
+// Execute one ALU operation on N-bit numbers (4-bit by default). Flags:
+//   Z (Zero)     : the result is 0.
+//   S (Sign)     : the top bit of the result is 1 (negative in two's complement).
+//   C (Carry)    : UNSIGNED overflow - ADD produces a carry-out, SUB a borrow.
+//   V (Overflow) : SIGNED (two's complement) overflow - the result has the wrong sign.
+// For the logical operations AND/OR/XOR, C and V are always false.
 function aluExecute(a, b, op, bits = 4) {
   // Luu y: "1 << 32" trong JS KHONG cho 2^32 - toan tu dich bit chi dung 32-bit
   // va so bit dich duoc lay MOD 32, nen "1 << 32" === "1 << 0" === 1 (bug that
@@ -90,21 +90,21 @@ function aluExecute(a, b, op, bits = 4) {
   if (op === 'ADD') {
     const rc = rippleCarryAdd(aM, bM, 0, bits);
     result = rc.result;
-    carry = rc.cout === 1; // carry-out = tràn không dấu
+    carry = rc.cout === 1; // carry-out = unsigned overflow
     const sA = aM & signBit;
     const sB = bM & signBit;
     const sR = result & signBit;
-    overflow = sA === sB && sA !== sR; // cùng dấu vào, khác dấu ra
+    overflow = sA === sB && sA !== sR; // same input signs, different output sign
   } else if (op === 'SUB') {
-    // A - B = A + (~B + 1) trong hệ bù 2.
+    // A - B = A + (~B + 1) in two's complement.
     const negB = (~bM + 1) & mask;
     const rc = rippleCarryAdd(aM, negB, 0, bits);
     result = rc.result;
-    carry = aM < bM; // mượn: A nhỏ hơn B (theo không dấu)
+    carry = aM < bM; // borrow: A is less than B (unsigned)
     const sA = aM & signBit;
     const sB = bM & signBit;
     const sR = result & signBit;
-    overflow = sA !== sB && sA !== sR; // khác dấu vào, kết quả khác dấu A
+    overflow = sA !== sB && sA !== sR; // different input signs, result differs from A's
   } else if (op === 'AND') {
     result = aM & bM;
   } else if (op === 'OR') {
@@ -127,26 +127,26 @@ function aluExecute(a, b, op, bits = 4) {
 }
 
 // ---------------------------------------------------------------------------
-// Bài 2 — Kiến trúc Von Neumann & Tập lệnh ISA. Toy CPU: chu kỳ Fetch-Decode-
-// Execute chạy trên MỘT bộ nhớ RAM chung (`ram`) chứa CẢ lệnh lẫn dữ liệu —
-// đúng tinh thần Von Neumann Mục 2.1 (đối lập Harvard là 2 bus/2 bộ nhớ tách
-// biệt). ALU (Bài 1) được TÁI DÙNG trực tiếp cho ADD/SUB, không viết lại.
+// Lesson 2 - The Von Neumann architecture & the ISA. A toy CPU: the fetch-
+// decode-execute cycle running on ONE shared RAM (`ram`) holding BOTH code and
+// data - the Von Neumann principle of section 2.1 (as opposed to Harvard, with
+// 2 separate buses and memories). Lesson 1's ALU is REUSED directly for ADD/SUB.
 // ---------------------------------------------------------------------------
 
-// Khởi tạo trạng thái CPU: RAM là bản sao của `program` (mảng lệnh — địa chỉ
-// thấp), 4 thanh ghi đa dụng R0-R3, thanh ghi đếm chương trình PC (Program
-// Counter) và thanh ghi lệnh IR (Instruction Register — lệnh vừa fetch).
+// Initialise the CPU state: RAM is a copy of `program` (the instruction array at
+// low addresses), 4 general-purpose registers R0-R3, the program counter PC, and
+// the instruction register IR (holding the instruction just fetched).
 function createCpuState(program) {
   return { ram: [...program], regs: [0, 0, 0, 0], pc: 0, ir: null, halted: false, flags: null };
 }
 
-// Chạy ĐÚNG một chu kỳ Fetch-Decode-Execute (Mục 2.2):
-//   FETCH   : đọc lệnh tại RAM[PC] vào IR.
-//   (PC tăng lên 1 NGAY SAU fetch — TRƯỚC KHI lệnh được decode/execute; đây
-//    chính là pitfall Mục 2.2: với lệnh JMP/BEQ, PC vừa tăng bị GHI ĐÈ ở
-//    bước execute, nếu quên thứ tự này sẽ tính sai địa chỉ đích nhảy.)
-//   DECODE  : switch theo `op` để biết cần thanh ghi/địa chỉ nào.
-//   EXECUTE : cập nhật thanh ghi/RAM/PC tương ứng.
+// Run EXACTLY one fetch-decode-execute cycle (section 2.2):
+//   FETCH   : read the instruction at RAM[PC] into IR.
+//   (PC increments by 1 RIGHT AFTER the fetch - BEFORE the instruction is decoded
+//    or executed; this is the section 2.2 pitfall: for JMP/BEQ the freshly
+//    incremented PC is OVERWRITTEN at execute, and forgetting this order gives
+//   DECODE  : switch on `op` to find which registers or addresses are needed.
+//   EXECUTE : update the registers, RAM or PC accordingly.
 function cpuStep(state) {
   const instr = state.ram[state.pc];
   if (!instr || typeof instr.op !== 'string') {
@@ -177,7 +177,7 @@ function cpuStep(state) {
       state.regs[instr.rd] = state.ram[instr.addr];
       break;
     case 'JMP':
-      state.pc = instr.addr; // GHI ĐÈ PC vừa tăng ở bước fetch — nhảy TUYỆT ĐỐI
+      state.pc = instr.addr; // OVERWRITE the PC incremented at fetch - an ABSOLUTE jump
       break;
     case 'BEQ':
       if (state.regs[instr.rs1] === state.regs[instr.rs2]) state.pc = instr.addr;
@@ -191,8 +191,8 @@ function cpuStep(state) {
   return state;
 }
 
-// Chạy trọn 1 chương trình tới khi HALT (hoặc chạm maxSteps — chống vòng lặp
-// vô hạn khi chương trình lỗi). Trả về trạng thái cuối + số chu kỳ đã chạy.
+// Run a whole program until HALT (or until maxSteps, guarding against an infinite
+// loop in a faulty program). Returns the final state and the cycle count.
 function runProgram(program, maxSteps = 1000) {
   const state = createCpuState(program);
   let steps = 0;
@@ -204,21 +204,21 @@ function runProgram(program, maxSteps = 1000) {
 }
 
 // ---------------------------------------------------------------------------
-// Bài 3 — Hợp ngữ RISC-V (RV32I) & Đường đi dữ liệu đơn chu kỳ. Toy CPU của
-// Bài 2 dùng tập lệnh MINI tự bịa (object {op,...}) — bài này thay bằng tập
-// lệnh THẬT (RV32I), mã hoá đúng chuẩn thành số 32-bit, y hệt mọi chip RISC-V
-// thật ngoài đời (Mục 3.1-3.2). Bộ thực thi (Mục 3.3) TÁI DÙNG trực tiếp
-// aluExecute() của Bài 1 cho mọi phép ADD/SUB/AND/OR/XOR.
+// Lesson 3 - RISC-V assembly (RV32I) & the single-cycle datapath. The Lesson 2
+// toy CPU used a MADE-UP mini instruction set (objects {op,...}) - this lesson
+// replaces it with the REAL RV32I set, encoded to standard 32-bit words exactly
+// as any real RISC-V chip does (sections 3.1-3.2). The executor (section 3.3)
+// REUSES Lesson 1's aluExecute() directly for every ADD/SUB/AND/OR/XOR.
 // ---------------------------------------------------------------------------
 
-// 4 opcode 7-bit chuẩn RV32I dùng trong bài (giá trị THẬT theo đặc tả RISC-V,
-// không phải tự đặt): R-type (ADD/SUB/AND/OR/XOR), I-type ALU (ADDI/ANDI/
+// The 4 standard 7-bit RV32I opcodes used here (REAL values from the RISC-V spec,
+// not invented): R-type (ADD/SUB/AND/OR/XOR), I-type ALU (ADDI/ANDI/
 // ORI/XORI), I-type LOAD (LW), S-type (SW).
 const RV32I_OPCODE = { R: 0b0110011, I_ALU: 0b0010011, I_LOAD: 0b0000011, S: 0b0100011 };
 
-// Bảng tra mnemonic -> {type, funct3, funct7} — funct3/funct7 là "mã phụ"
-// phân biệt các lệnh CÙNG opcode (vd ADD và SUB cùng opcode R nhưng khác
-// funct7: 0000000 vs 0100000 — bit thứ 30 của funct7 chính là "cờ trừ").
+// Lookup table mnemonic -> {type, funct3, funct7} - funct3 and funct7 are the
+// "sub-codes" distinguishing instructions that SHARE an opcode (ADD and SUB share
+// the R opcode but differ in funct7: 0000000 against 0100000 - bit 30 is the "subtract flag").
 const RV32I_MNEMONIC = {
   ADD: { type: 'R', funct3: 0b000, funct7: 0b0000000 },
   SUB: { type: 'R', funct3: 0b000, funct7: 0b0100000 },
@@ -233,8 +233,8 @@ const RV32I_MNEMONIC = {
   SW: { type: 'S', funct3: 0b010 },
 };
 
-// Mnemonic ALU tương ứng gọi vào aluExecute() (Bài 1) — ADDI/ANDI/ORI/XORI chỉ
-// là ADD/AND/OR/XOR với toán hạng thứ 2 là HẰNG SỐ (immediate) thay vì thanh ghi.
+// The matching ALU mnemonic passed to aluExecute() (Lesson 1) - ADDI/ANDI/ORI/XORI
+// are just ADD/AND/OR/XOR with an IMMEDIATE as the second operand instead of a register.
 const RV32I_ALU_OP = {
   ADD: 'ADD',
   SUB: 'SUB',
@@ -247,10 +247,10 @@ const RV32I_ALU_OP = {
   XORI: 'XOR',
 };
 
-// Dịch (assemble) MỘT lệnh Assembly sang số máy 32-bit (Mục 3.2). `args` tuỳ
-// theo dạng: R-type {rd,rs1,rs2}; I-type ALU {rd,rs1,imm}; LW {rd,rs1,imm}
-// (rs1=thanh ghi gốc, imm=độ lệch); SW {rs1,rs2,imm} (rs1=gốc, rs2=thanh ghi
-// nguồn cần lưu — đúng cú pháp thật `sw rs2, imm(rs1)`).
+// Assemble ONE assembly instruction into a 32-bit machine word (section 3.2).
+// `args` depends on the form: R-type {rd,rs1,rs2}; I-type ALU {rd,rs1,imm}; LW
+// {rd,rs1,imm} (rs1=base register, imm=offset); SW {rs1,rs2,imm} (rs1=base,
+// rs2=source register to store - matching the real syntax `sw rs2, imm(rs1)`).
 function assembleRV32I(mnemonic, args) {
   const info = RV32I_MNEMONIC[mnemonic];
   if (!info) throw new Error('Mnemonic RV32I khong ho tro: ' + mnemonic);
@@ -301,9 +301,9 @@ function assembleRV32I(mnemonic, args) {
   throw new Error('Dang lenh khong ho tro: ' + info.type);
 }
 
-// Giải mã (decode) một số máy 32-bit ngược lại thành mnemonic + toán hạng
-// (Mục 3.2, chiều ngược của assembleRV32I — "khứ hồi": assemble rồi decode
-// phải cho lại ĐÚNG input ban đầu).
+// Decode a 32-bit machine word back into a mnemonic plus operands (section 3.2,
+// the inverse of assembleRV32I - a "round trip": assemble then decode must give
+// back EXACTLY the original input).
 function decodeRV32I(word) {
   const opcode = word & 0x7f;
   const rd = (word >>> 7) & 0x1f;
@@ -336,10 +336,10 @@ function decodeRV32I(word) {
   throw new Error('Invalid opcode: 0x' + opcode.toString(16));
 }
 
-// Bộ thực thi đơn chu kỳ (Mục 3.3): decode MỘT lệnh 32-bit rồi thực thi ngay
-// trong CÙNG một chu kỳ xung nhịp — TÁI DÙNG aluExecute() của Bài 1 cho mọi
-// phép ADD/SUB/AND/OR/XOR (kể cả dạng immediate). x0 LUÔN đọc là 0 (thanh ghi
-// cứng, mọi lệnh ghi vào x0 đều bị bỏ qua — quy ước RISC-V thật).
+// Single-cycle executor (section 3.3): decode ONE 32-bit instruction and execute
+// it in the SAME clock cycle - REUSING Lesson 1's aluExecute() for every
+// ADD/SUB/AND/OR/XOR (immediate forms included). x0 ALWAYS reads as 0 (a hard-
+// wired register; writes to x0 are discarded - the real RISC-V convention).
 function executeRV32I(word, regs, mem) {
   const d = decodeRV32I(word);
   if (d.type === 'R') {
@@ -357,9 +357,9 @@ function executeRV32I(word, regs, mem) {
   return d;
 }
 
-// Chạy trọn một chương trình RV32I THẲNG (chưa có lệnh nhảy — datapath đơn
-// chu kỳ Mục 3.3 chỉ xử lý luồng tuần tự) trên 32 thanh ghi x0-x31 + bộ nhớ
-// dữ liệu dạng object thưa (địa chỉ -> giá trị).
+// Run a STRAIGHT-LINE RV32I program (no jumps yet - the single-cycle datapath of
+// section 3.3 only handles sequential flow) over 32 registers x0-x31 plus a
+// sparse data memory as an object (address -> value).
 function runRV32IProgram(words) {
   const regs = new Array(32).fill(0);
   const mem = {};
@@ -369,41 +369,41 @@ function runRV32IProgram(words) {
 }
 
 // ---------------------------------------------------------------------------
-// Bài 4 — Pipeline CPU & Xung đột dữ liệu (Data Hazards). Datapath đơn chu kỳ
-// của Bài 3 ép MỌI lệnh chạy trong 1 chu kỳ dài bằng lệnh CHẬM NHẤT (LW) —
-// pipeline 5 giai đoạn (IF-ID-EX-MEM-WB) sửa điều này bằng cách CHỒNG LẤP
-// nhiều lệnh, đổi lại phải xử lý xung đột dữ liệu giữa các lệnh đang chồng
-// lấp (Mục 4.3). Build-out: công thức thời gian/CPI (Mục 4.2) + bộ phát hiện
-// hazard RAW/load-use TÁI DÙNG decodeRV32I() của Bài 3 (Mục 4.3-4.4).
+// Lesson 4 - CPU pipelining & data hazards. The single-cycle datapath of Lesson 3
+// forces EVERY instruction into one cycle as long as the SLOWEST one (LW) - a
+// 5-stage pipeline (IF-ID-EX-MEM-WB) fixes that by OVERLAPPING instructions, at
+// the cost of having to handle data hazards between the overlapping instructions
+// (section 4.3). Build-out: the time/CPI formulas (section 4.2) plus a RAW and
+// load-use hazard detector REUSING Lesson 3's decodeRV32I() (sections 4.3-4.4).
 // ---------------------------------------------------------------------------
 
-// Thời gian chạy $N$ lệnh trên pipeline $S$ giai đoạn, có $stallCycles$ chu kỳ
-// "bong bóng" (bubble) chèn thêm do hazard (Mục 4.2):
-// $T = (N + S - 1 + \text{stallCycles}) \times t_{clk}$ — số hạng $(S-1)$ là
-// độ trễ "làm đầy" pipeline lúc khởi động (những lệnh đầu tiên chưa kịp
-// chồng lấp hết các giai đoạn).
+// Time to run $N$ instructions on an $S$-stage pipeline with $stallCycles$ bubble
+// cycles inserted for hazards (section 4.2):
+// $T = (N + S - 1 + \text{stallCycles}) \times t_{clk}$ - the $(S-1)$ term is the
+// fill latency at start-up (the first instructions have not yet overlapped all
+// the stages).
 function pipelineTime(numInstructions, numStages, stallCycles, clockPeriodNs) {
   return (numInstructions + numStages - 1 + stallCycles) * clockPeriodNs;
 }
 
-// CPI (Cycles Per Instruction) hiệu dụng khi có stall: pipeline lý tưởng
-// (không stall) có CPI = 1 (đúng NGHĨA của pipeline — thông lượng 1 lệnh/chu
-// kỳ ở trạng thái ổn định); mỗi stall cộng thêm ĐÚNG 1 chu kỳ "lãng phí"
-// không hoàn thành lệnh nào, nên CPI = (N + stallCycles) / N.
+// Effective CPI (cycles per instruction) with stalls: an ideal pipeline (no
+// stalls) has CPI = 1, which is the whole POINT of pipelining - a throughput of
+// 1 instruction per cycle in steady state. Each stall adds EXACTLY 1 wasted cycle
+// that completes no instruction, so CPI = (N + stallCycles) / N.
 function pipelineCPI(numInstructions, stallCycles) {
   return (numInstructions + stallCycles) / numInstructions;
 }
 
-// Phát hiện xung đột dữ liệu RAW (Read-After-Write) giữa các lệnh LIỀN KỀ
-// trong 1 dãy đã decode (tái dùng decodeRV32I() của Bài 3) — đúng khoảng cách
-// mà pipeline 5 giai đoạn CHỒNG LẤP (lệnh sau bắt đầu ID ngay khi lệnh trước
-// đang ở EX). Trả về tổng số stall cần chèn + danh sách từng hazard:
-//   - RAW thường (ALU→ALU): forwarding (chuyển thẳng kết quả EX sang EX kế
-//     tiếp) giải quyết HOÀN TOÀN, 0 stall; KHÔNG forwarding cần đúng 2 stall
-//     (chờ tới khi WB xong mới đọc được thanh ghi).
-//   - Load-use (LW→dùng ngay): dữ liệu LW chỉ sẵn sàng ở giai đoạn MEM (chậm
-//     hơn ALU 1 giai đoạn) — forwarding vẫn KHÔNG kịp, luôn cần ĐÚNG 1 stall
-//     dù bật hay tắt forwarding (Mục 4.3, pitfall chính của bài).
+// Detect RAW (read-after-write) hazards between ADJACENT instructions in a decoded
+// sequence (reusing Lesson 3's decodeRV32I()) - exactly the distance a 5-stage
+// pipeline OVERLAPS (the next instruction starts ID while the previous is in EX).
+// Returns the total stalls to insert plus a list of each hazard:
+//   - Ordinary RAW (ALU->ALU): forwarding (routing the EX result straight into
+//     the next EX) solves it COMPLETELY, 0 stalls; WITHOUT forwarding it needs
+//     exactly 2 stalls (waiting for WB before the register can be read).
+//   - Load-use (LW then immediate use): the loaded data is only ready at MEM, one
+//     stage later than the ALU - forwarding still cannot arrive in time, so it
+//     always costs EXACTLY 1 stall either way (section 4.3, the lesson's main pitfall).
 function detectHazards(instrs, forwardingEnabled) {
   let totalStalls = 0;
   const hazards = [];
@@ -429,19 +429,19 @@ function detectHazards(instrs, forwardingEnabled) {
 }
 
 // ---------------------------------------------------------------------------
-// Bài 5 — Dự đoán nhánh (Branch Prediction) & Spectre. Pipeline của Bài 4 nạp
-// lệnh TIẾP THEO trước khi biết lệnh rẽ nhánh (BEQ/BNE) đi hướng nào — CPU
-// phải ĐOÁN (Mục 5.1). Build-out: bộ dự đoán 1-bit (Mục 5.2, minh hoạ pitfall
-// dao động ở vòng lặp lồng nhau) và 2-bit bão hoà (saturating counter FSM +
-// BHT — Branch History Table) chính xác hơn hẳn, cùng công thức CPI hiệu dụng
-// (Mục 5.3).
+// Lesson 5 - Branch prediction & Spectre. Lesson 4's pipeline fetches the NEXT
+// instruction before it knows which way a branch (BEQ/BNE) goes - so the CPU has
+// to GUESS (section 5.1). Build-out: a 1-bit predictor (section 5.2, illustrating
+// the oscillation pitfall in nested loops) and a far more accurate 2-bit
+// saturating counter FSM plus a branch history table, with the effective-CPI
+// formula (section 5.3).
 // ---------------------------------------------------------------------------
 
-// Bộ dự đoán nhánh 1-bit: chỉ nhớ kết quả LẦN GẦN NHẤT, đoán y hệt lần đó.
-// State: 0 = đoán Không-nhảy (N), 1 = đoán Nhảy (T). Pitfall Mục 5.2: ở vòng
-// lặp lồng nhau (vd 4 lần T rồi 1 lần N lặp lại), bộ nhớ 1-bit "quên" ngay
-// sau lần N đầu tiên -> đoán sai NGAY lần T kế tiếp -> 2 lần đoán sai liên
-// tiếp mỗi vòng lặp ngoài (thoát vòng trong + quay lại vòng trong).
+// 1-bit branch predictor: remembers only the MOST RECENT outcome and predicts the
+// same. State: 0 = predict not-taken (N), 1 = predict taken (T). Section 5.2
+// pitfall: in a nested loop (4 T then 1 N, repeating) the 1-bit memory "forgets"
+// right after the first N, so it mispredicts the very next T - 2 consecutive
+// mispredictions per outer iteration (leaving the inner loop and re-entering it).
 function makeBranchPredictor1Bit() {
   let state = 0; // khoi tao: doan Khong-nhay
   return {
@@ -457,11 +457,11 @@ function makeBranchPredictor1Bit() {
   };
 }
 
-// Bộ dự đoán nhánh 2-bit bão hoà (saturating counter FSM, Mục 5.2): 4 trạng
-// thái 0=Rất-không-nhảy(SNT) 1=Hơi-không-nhảy(WNT) 2=Hơi-nhảy(WT)
-// 3=Rất-nhảy(ST). Đoán "Nhảy" khi state>=2. Khác 1-bit: một lần đoán sai đơn
-// lẻ (T xen giữa chuỗi N, hoặc ngược lại) chỉ đẩy state qua MỘT nấc bão hoà
-// liền kề chứ KHÔNG lật ngay dự đoán — chống dao động ở vòng lặp lồng nhau.
+// 2-bit saturating branch predictor (a counter FSM, section 5.2): 4 states,
+// 0=strongly not taken (SNT), 1=weakly not taken (WNT), 2=weakly taken (WT),
+// 3=strongly taken (ST). Predicts taken when state>=2. Unlike the 1-bit version, a
+// single stray outcome (one T among a run of N, or vice versa) only nudges the
+// state ONE step and does NOT flip the prediction - damping nested-loop oscillation.
 function makeBranchPredictor2Bit() {
   let state = 0; // khoi tao: Rat-khong-nhay
   return {
@@ -477,11 +477,11 @@ function makeBranchPredictor2Bit() {
   };
 }
 
-// Bảng lịch sử nhánh BHT (Branch History Table, Mục 5.2): mỗi ĐỊA CHỈ lệnh
-// rẽ nhánh có một bộ dự đoán 2-bit RIÊNG (lập chỉ mục theo `pc`), vì các
-// nhánh khác nhau trong cùng chương trình có xu hướng khác nhau hoàn toàn —
-// gộp chung một bộ dự đoán duy nhất sẽ trộn lẫn lịch sử của các nhánh không
-// liên quan.
+// Branch history table (section 5.2): each branch ADDRESS gets its OWN 2-bit
+// predictor (indexed by `pc`), because different branches in the same program
+// behave completely differently - lumping them into one predictor would mix the
+// histories of unrelated branches together.
+//
 function makeBranchHistoryTable() {
   const table = new Map();
   function entryFor(pc) {
@@ -505,9 +505,9 @@ function makeBranchHistoryTable() {
   };
 }
 
-// Chạy MỘT bộ dự đoán qua chuỗi kết quả nhánh thực tế `seq` (mảng 'T'/'N'),
-// trả về số lần đoán đúng/tổng/tỷ lệ + vết chạy chi tiết từng bước (dùng cho
-// demo trực quan hoá).
+// Run ONE predictor over a real branch outcome sequence `seq` (an array of 'T'/'N'),
+// returning the hit count, total and rate plus a step-by-step trace (used by the
+// visualisation demo).
 function runPredictor(predictor, seq) {
   let correct = 0;
   const trace = [];
@@ -521,41 +521,41 @@ function runPredictor(predictor, seq) {
   return { correct, total: seq.length, rate: seq.length === 0 ? 0 : correct / seq.length, trace };
 }
 
-// CPI hiệu dụng (Mục 5.3) khi có xung đột điều khiển:
+// Effective CPI (section 5.3) in the presence of control hazards:
 // $CPI_{eff} = CPI_{ideal} + \text{BranchFreq} \times \text{MispredictRate} \times \text{PenaltyCycles}$
-// — mỗi lần đoán sai buộc pipeline phải XẢ (flush) các lệnh đã nạp nhầm và
-// nạp lại đúng hướng, tốn `penaltyCycles` chu kỳ lãng phí; tần suất xảy ra
-// điều này là (tỷ lệ lệnh rẽ nhánh) × (tỷ lệ đoán sai của chính bộ dự đoán).
+// - every misprediction forces the pipeline to FLUSH the wrongly fetched
+// instructions and refetch along the right path, wasting `penaltyCycles`; how
+// often that happens is (branch frequency) x (the predictor's own miss rate).
 function effectiveCPI(cpiIdeal, branchFrequency, mispredictionRate, penaltyCycles) {
   return cpiIdeal + branchFrequency * mispredictionRate * penaltyCycles;
 }
 
 // ---------------------------------------------------------------------------
-// Bài 6 — Song song cấp lệnh (ILP) & Thực thi ngoài thứ tự (Out-of-Order,
-// Tomasulo). Pipeline vô hướng (Bài 4-5) phát đúng 1 lệnh/chu kỳ theo ĐÚNG
-// thứ tự chương trình — CPU superscalar hiện đại phát NHIỀU lệnh, và cho
-// phép lệnh SAU chạy xong TRƯỚC lệnh trước nếu không phụ thuộc dữ liệu THẬT
-// (Mục 6.1). Cái giá: xuất hiện phụ thuộc dữ liệu GIẢ (WAR/WAW) do số thanh
-// ghi kiến trúc hữu hạn bị tái sử dụng — giải quyết bằng ĐỔI TÊN THANH GHI
-// (register renaming, Mục 6.2) trong thuật toán Tomasulo (Mục 6.3): trạm đặt
-// chỗ (Reservation Station) + bus dữ liệu chung (CDB) + bộ đệm sắp xếp lại
-// (ROB) cam kết kết quả ĐÚNG thứ tự chương trình dù thực thi ngoài thứ tự.
+// Lesson 6 - Instruction-level parallelism (ILP) & out-of-order execution
+// (Tomasulo). The scalar pipeline of Lessons 4-5 issues exactly 1 instruction per
+// cycle in STRICT program order - a modern superscalar CPU issues SEVERAL, and
+// lets a LATER instruction finish BEFORE an earlier one when there is no TRUE
+// data dependency (section 6.1). The price: FALSE dependencies (WAR/WAW) appear
+// because the finite set of architectural registers gets reused - solved by
+// REGISTER RENAMING (section 6.2) inside the Tomasulo algorithm (section 6.3):
+// reservation stations + a common data bus (CDB) + a reorder buffer (ROB) that
+// commits results in EXACT program order despite out-of-order execution.
 // ---------------------------------------------------------------------------
 
-// Mô phỏng CHU KỲ-CHÍNH-XÁC thuật toán Tomasulo trên một đoạn chương trình
-// ngắn (mảng {op:'ADD'|'SUB'|'MUL', dest, src1, src2} — chỉ số thanh ghi).
-// Mỗi chu kỳ thực hiện đúng thứ tự sau (mô phỏng đúng ràng buộc phần cứng):
-//   1. COMMIT   : đầu ROB (in-order) nếu đã sẵn kết quả -> ghi vào regFile.
-//   2. WRITE-RESULT (CDB): CHỈ 1 broadcast/chu kỳ (bus dùng chung là tài
-//      nguyên hữu hạn) — nếu nhiều RS xong cùng lúc, RS có robIndex NHỎ HƠN
-//      (lệnh CŨ hơn trong chương trình) được ưu tiên; RS thua phải đợi thêm.
-//   3. Giảm `remaining` của các RS đang thực thi.
-//   4. Chuyển RS từ WAITING sang EXECUTING nếu cả 2 toán hạng đã sẵn sàng.
-//   5. ISSUE 1 lệnh mới (nếu còn RS + ROB trống): tra RAT (Register Alias
-//      Table) để lấy giá trị toán hạng NGAY (nếu đã có trong regFile) hoặc
-//      gắn thẻ ROB cần đợi — rồi ĐỔI TÊN đích (RAT[dest] = robIndex MỚI),
-//      đây chính là bước loại bỏ WAR/WAW: lệnh sau ghi vào "phiên bản mới"
-//      của thanh ghi, không đụng tới phiên bản CŨ mà lệnh trước đang dùng.
+// A CYCLE-ACCURATE simulation of the Tomasulo algorithm over a short program
+// (an array of {op:'ADD'|'SUB'|'MUL', dest, src1, src2} - register indices).
+// Each cycle runs in exactly this order, mirroring the hardware constraints:
+//   1. COMMIT   : the ROB head (in order), if its result is ready -> write regFile.
+//   2. WRITE-RESULT (CDB): only 1 broadcast per cycle (the shared bus is a finite
+//      resource) - if several stations finish together, the one with the SMALLER
+//      robIndex (the OLDER instruction) wins; the loser waits another cycle.
+//   3. Decrement `remaining` on the stations currently executing.
+//   4. Move stations from WAITING to EXECUTING once both operands are ready.
+//   5. ISSUE 1 new instruction (if a station and a ROB slot are free): consult the
+//      register alias table to take the operand value IMMEDIATELY (if already in
+//      regFile) or tag the ROB entry to wait for - then RENAME the destination
+//      (RAT[dest] = the NEW robIndex). This is the step that eliminates WAR/WAW:
+//      the later instruction writes a "new version" of the register, never touching
 function runTomasulo(instructions, opts = {}) {
   const {
     numAddRS = 3,
@@ -716,9 +716,9 @@ function runTomasulo(instructions, opts = {}) {
   return { regFile, trace, totalCycles: cycle, ipc: n / cycle };
 }
 
-// Giá trị ĐÚNG mà mỗi lệnh phải sản xuất, tính theo ĐÚNG thứ tự chương trình.
-// Tomasulo giữ nguyên ngữ nghĩa luồng dữ liệu, nên đây cũng chính là giá trị
-// mà bản thực thi ngoài thứ tự tính ra — chỉ khác THỜI ĐIỂM.
+// The CORRECT value each instruction must produce, computed in strict program order.
+// Tomasulo preserves data-flow semantics, so these are also the values the
+// out-of-order machine computes - only the TIMING differs.
 function evalInOrder(instructions, initialRegs) {
   const regs = [...initialRegs];
   const values = [];
@@ -732,30 +732,30 @@ function evalInOrder(instructions, initialRegs) {
   return { regs, values };
 }
 
-// Mục 6.5 — VÌ SAO phải có ROB: NGOẠI LỆ CHÍNH XÁC (precise exception).
-// Đây mới là lý do thật sự ROB tồn tại, chứ không phải chỉ để "ra đúng kết
-// quả cuối". Giả sử lệnh thứ `faultAt` gây lỗi (chia cho 0, page fault,
-// tràn số...). Hệ điều hành phải nhận được một trạng thái thanh ghi ĐÚNG NHƯ
-// THỂ chương trình mới chạy tới đúng lệnh đó và dừng — không hơn một lệnh nào.
-// Chỉ khi đó mới xử lý xong rồi CHẠY TIẾP được.
-//   - Có ROB, commit đúng thứ tự: mọi lệnh SAU lệnh lỗi chưa hề chạm vào
-//     thanh ghi kiến trúc, dù chúng đã tính xong từ lâu. Trạng thái CHÍNH XÁC.
-//   - Không có ROB, ghi thẳng khi tính xong: lệnh sau đã kịp ghi đè thanh ghi
-//     trước khi lỗi được phát hiện. Trạng thái là một mớ KHÔNG tương ứng với
-//     bất kỳ thời điểm nào của chương trình — không thể chạy tiếp.
+// Section 6.5 - WHY a ROB is needed: PRECISE EXCEPTIONS.
+// This is the real reason the ROB exists, not merely to "get the final result
+// right". Suppose instruction `faultAt` raises a fault (divide by zero, a page
+// fault, overflow...). The operating system must receive a register state exactly
+// AS IF the program had run up to that instruction and stopped - not one more.
+// Only then can it handle the fault and RESUME.
+//   - With a ROB committing in order: every instruction AFTER the faulting one has
+//     not touched the architectural registers, however long ago it finished. PRECISE.
+//   - Without one, writing as soon as a result is ready: a later instruction has
+//     already overwritten a register before the fault surfaced. The state matches NO
+//     point in the program at all - it cannot be resumed.
 function architecturalStateOnFault(instructions, opts = {}) {
   const { initialRegs = new Array(8).fill(0), faultAt = 0 } = opts;
   const r = runTomasulo(instructions, opts);
   const { values } = evalInOrder(instructions, initialRegs);
 
-  // Có ROB: chỉ các lệnh TRƯỚC lệnh lỗi mới được commit.
+  // With a ROB: only instructions BEFORE the faulting one have committed.
   const precise = [...initialRegs];
   for (let i = 0; i < faultAt; i++) precise[instructions[i].dest] = values[i];
 
-  // Không ROB: mọi lệnh tính xong (writeback) trước hoặc cùng lúc lệnh lỗi
-  // hoàn tất đều đã ghi vào thanh ghi kiến trúc, kể cả lệnh nằm SAU lệnh lỗi.
+  // Without one: every instruction whose writeback lands at or before the faulting
+  // one has already written the architectural registers - including later ones.
   const faultWb = r.trace[faultAt].writeback;
-  // Bản thân lệnh lỗi KHÔNG sản xuất giá trị (nó lỗi), nên loại ra.
+  // The faulting instruction itself produces no value, so exclude it.
   const done = instructions
     .map((_, i) => i)
     .filter((i) => i !== faultAt && r.trace[i].writeback <= faultWb)
@@ -763,26 +763,26 @@ function architecturalStateOnFault(instructions, opts = {}) {
   const imprecise = [...initialRegs];
   for (const i of done) imprecise[instructions[i].dest] = values[i];
 
-  // Lệnh nằm SAU lệnh lỗi mà đã kịp làm bẩn trạng thái — đúng thứ khiến
-  // không thể chạy tiếp được.
+  // Instructions AFTER the fault that already dirtied the state - exactly what
+  // makes resuming impossible.
   const leakedFromFuture = done.filter((i) => i >= faultAt);
   return { precise, imprecise, faultWb, committedBeforeFault: faultAt, leakedFromFuture };
 }
 
 // ---------------------------------------------------------------------------
-// Bài 7 — Phân cấp bộ nhớ & Kiến trúc Cache. CPU OOO của Bài 6 vẫn phải CHỜ
-// dữ liệu từ bộ nhớ chính (DRAM) — khoảng cách tốc độ CPU vs DRAM (Memory
-// Wall) được che giấu bằng bộ nhớ đệm SRAM cực nhanh (Cache), dựa trên
-// nguyên lý cục bộ THỜI GIAN (temporal locality — vừa dùng sẽ dùng lại) và
-// KHÔNG GIAN (spatial locality — dùng địa chỉ X thì địa chỉ GẦN X cũng sắp
-// được dùng). Build-out: tách địa chỉ tag/index/offset (Mục 7.2), cache
-// direct-mapped & set-associative (LRU, Mục 7.2), và AMAT nhiều cấp (Mục 7.3).
+// Lesson 7 - The memory hierarchy & cache architecture. Lesson 6's out-of-order
+// CPU still has to WAIT for data from main memory (DRAM) - the CPU/DRAM speed gap
+// (the memory wall) is hidden behind a very fast SRAM cache, resting on temporal
+// locality (what was just used will be used again) and spatial locality (if
+// address X was used, addresses NEAR X will be too). Build-out: address splitting
+// into tag/index/offset (section 7.2), direct-mapped and set-associative caches
+// with LRU (section 7.2), and multi-level AMAT (section 7.3).
 // ---------------------------------------------------------------------------
 
-// Tách một địa chỉ 32-bit thành (tag, index, offset) theo đúng cấu trúc phần
-// cứng thật: offset (bit thấp nhất) chọn byte TRONG dòng cache, index chọn
-// DÒNG (set) trong cache, tag là phần còn lại dùng để SO KHỚP xem dòng đó có
-// đúng là dữ liệu đang cần hay không (Mục 7.2).
+// Split a 32-bit address into (tag, index, offset) exactly as the real hardware
+// does: the offset (lowest bits) picks the byte WITHIN a cache line, the index
+// picks the LINE (set) in the cache, and the tag is whatever remains, used to
+// CONFIRM the line really holds the data wanted (section 7.2).
 function splitAddress(address, offsetBits, indexBits) {
   const offset = address & ((1 << offsetBits) - 1);
   const index = (address >>> offsetBits) & ((1 << indexBits) - 1);
@@ -790,10 +790,10 @@ function splitAddress(address, offsetBits, indexBits) {
   return { tag, index, offset };
 }
 
-// Cache Direct-Mapped: mỗi địa chỉ CHỈ ánh xạ vào ĐÚNG 1 dòng cache (theo
-// index) — đơn giản, nhanh, nhưng dễ bị Conflict Miss: 2 địa chỉ khác tag
-// nhưng CÙNG index sẽ liên tục "đá" nhau ra khỏi dòng duy nhất đó dù cache
-// còn thừa chỗ ở dòng khác (Mục 7.2, pitfall Set-Associative giải quyết).
+// Direct-mapped cache: each address maps to EXACTLY 1 cache line (by index) -
+// simple and fast, but prone to conflict misses: 2 addresses with different tags
+// but the SAME index keep evicting each other from that single line even while
+// other lines sit empty (section 7.2, the pitfall set-associativity solves).
 function makeDirectMappedCache(numSets, offsetBits) {
   const indexBits = Math.log2(numSets);
   if (!Number.isInteger(indexBits)) throw new Error('numSets phai la luy thua cua 2');
@@ -810,11 +810,11 @@ function makeDirectMappedCache(numSets, offsetBits) {
   };
 }
 
-// Cache Set-Associative N-way + LRU (Least Recently Used, Mục 7.2): mỗi
-// index ứng với một TẬP (set) chứa `ways` dòng — địa chỉ trùng index nhưng
-// khác tag KHÔNG còn phải tranh 1 dòng duy nhất, giảm hẳn Conflict Miss so
-// với Direct-Mapped (đổi lại: phần cứng phức tạp hơn, tốn năng lượng hơn để
-// so khớp `ways` tag song song mỗi lần truy cập — pitfall Mục 7.2).
+// N-way set-associative cache with LRU (least recently used, section 7.2): each
+// index maps to a SET holding `ways` lines - addresses sharing an index but with
+// different tags no longer fight over one line, cutting conflict misses sharply
+// against direct-mapped (in exchange: more complex hardware and more power to
+// compare `ways` tags in parallel on every access - the section 7.2 pitfall).
 function makeSetAssociativeCache(numSets, ways, offsetBits) {
   const indexBits = Math.log2(numSets);
   if (!Number.isInteger(indexBits)) throw new Error('numSets phai la luy thua cua 2');
@@ -842,8 +842,8 @@ function makeSetAssociativeCache(numSets, ways, offsetBits) {
   };
 }
 
-// Chạy một chuỗi địa chỉ qua MỘT cache, trả về số Hit/Miss + vết chi tiết
-// từng truy cập (dùng cho demo trực quan hoá Hit/Miss).
+// Run a sequence of addresses through ONE cache, returning hit/miss counts plus a
+// per-access trace (used by the hit/miss visualisation demo).
 function runCacheTrace(cache, addresses) {
   let hits = 0;
   let misses = 0;
@@ -857,24 +857,24 @@ function runCacheTrace(cache, addresses) {
   return { hits, misses, total: addresses.length, missRate: misses / addresses.length, trace };
 }
 
-// Cache có CHÍNH SÁCH GHI (Mục 7.4). Hai cache ở trên chỉ mô phỏng ĐỌC —
-// nhưng một nửa việc cache phải làm là xử lý lệnh ghi (`sw`). Khi CPU ghi vào
-// một địa chỉ ĐANG nằm trong cache, có 2 lựa chọn:
-//   - write-through: ghi cache VÀ ghi thẳng xuống DRAM ngay. Đơn giản, bộ nhớ
-//     luôn đúng, nhưng MỌI lệnh ghi đều tốn một lần đi xuống DRAM.
-//   - write-back: chỉ ghi vào cache, bật cờ `dirty`. Chỉ khi dòng đó bị THAY
-//     THẾ mới ghi xuống DRAM (write-back). Ghi nhiều lần vào cùng 1 dòng chỉ
-//     tốn ĐÚNG 1 lần xuống DRAM — đổi lại cần thêm 1 bit dirty mỗi dòng và
-//     DRAM có lúc "lạc hậu" so với cache.
-// Khi GHI mà MISS, lại có 2 lựa chọn nữa: write-allocate (nạp dòng lên cache
-// rồi ghi — hợp với write-back) hoặc no-write-allocate (ghi thẳng xuống DRAM,
-// không nạp — hợp với write-through).
-// Trả về `memWrites`: số lần THẬT SỰ phải ghi xuống DRAM — đây là con số mà
-// chính sách ghi ảnh hưởng tới, không phải hit rate.
+// A cache with a WRITE POLICY (section 7.4). The two caches above simulate reads
+// only - but half of a cache's job is handling stores (`sw`). When the CPU writes
+// to an address ALREADY in the cache there are 2 choices:
+//   - write-through: write the cache AND go straight down to DRAM. Simple, memory
+//     is always correct, but EVERY store costs a trip to DRAM.
+//   - write-back: write the cache only and set the `dirty` flag. The line goes down
+//     to DRAM only when EVICTED. Writing to the same line many times costs
+//     EXACTLY 1 trip - in exchange for 1 extra dirty bit per line and DRAM being
+//     temporarily stale relative to the cache.
+// On a write MISS there are 2 further choices: write-allocate (load the line then
+// write - a good fit for write-back) or no-write-allocate (write straight to DRAM
+// without loading - a good fit for write-through).
+// Returns `memWrites`: how many writes ACTUALLY reach DRAM - that is the number
+// the write policy affects, not the hit rate.
 function makeWritePolicyCache(numSets, ways, offsetBits, options) {
   const opt = options || {};
   const writeBack = opt.writePolicy === 'back';
-  // write-back mặc định đi kèm write-allocate, write-through đi kèm no-allocate
+  // write-back pairs with write-allocate by default, write-through with no-allocate
   const writeAllocate = opt.writeAllocate === undefined ? writeBack : opt.writeAllocate;
   const indexBits = Math.log2(numSets);
   if (!Number.isInteger(indexBits)) throw new Error('numSets phai la luy thua cua 2');
@@ -885,14 +885,14 @@ function makeWritePolicyCache(numSets, ways, offsetBits, options) {
   function evict(set) {
     let lruIdx = 0;
     for (let i = 1; i < set.length; i++) if (set[i].lastUsed < set[lruIdx].lastUsed) lruIdx = i;
-    // Đây chính là lúc write-back phải trả nợ: dòng bị đá ra mà đang dirty thì
-    // BÂY GIỜ mới ghi xuống DRAM.
+    // This is where write-back settles its debt: an evicted line that is dirty gets
+    // written down to DRAM NOW.
     if (set[lruIdx].dirty) memWrites++;
     set.splice(lruIdx, 1);
   }
 
   return {
-    // `isWrite = false` -> lệnh đọc (lw), `true` -> lệnh ghi (sw)
+    // `isWrite = false` -> a load (lw), `true` -> a store (sw)
     access(address, isWrite) {
       const { tag, index } = splitAddress(address, offsetBits, indexBits);
       const set = sets[index];
@@ -902,13 +902,13 @@ function makeWritePolicyCache(numSets, ways, offsetBits, options) {
         entry.lastUsed = clock;
         if (isWrite) {
           if (writeBack) entry.dirty = true;
-          else memWrites++; // write-through: ghi cache xong ghi luôn xuống DRAM
+          else memWrites++; // write-through: write the cache, then DRAM immediately
         }
         return 'HIT';
       }
       // MISS
       if (isWrite && !writeAllocate) {
-        memWrites++; // no-write-allocate: ghi thẳng xuống DRAM, không nạp dòng
+        memWrites++; // no-write-allocate: straight to DRAM, no line loaded
         return 'MISS';
       }
       if (set.length >= ways) evict(set);
@@ -916,8 +916,8 @@ function makeWritePolicyCache(numSets, ways, offsetBits, options) {
       if (isWrite && !writeBack) memWrites++;
       return 'MISS';
     },
-    // Cuối chương trình, mọi dòng còn dirty vẫn phải được ghi xuống DRAM
-    // (flush) — không tính vào đây thì write-back trông rẻ hơn thực tế.
+    // At the end of the program every still-dirty line must be written down to DRAM
+    // (a flush) - without counting it, write-back would look cheaper than it is.
     flush() {
       for (const set of sets)
         for (const e of set)
@@ -933,8 +933,8 @@ function makeWritePolicyCache(numSets, ways, offsetBits, options) {
   };
 }
 
-// Chạy chuỗi truy cập CÓ ĐỌC CÓ GHI qua một cache write-policy. Mỗi phần tử
-// là { address, isWrite }. Trả thêm `memWrites` sau khi flush.
+// Run a mixed read/write access sequence through a write-policy cache. Each entry
+// is { address, isWrite }. Also returns `memWrites` after the flush.
 function runWriteTrace(cache, accesses) {
   let hits = 0;
   for (const a of accesses) if (cache.access(a.address, a.isWrite) === 'HIT') hits++;
@@ -942,23 +942,23 @@ function runWriteTrace(cache, accesses) {
   return { hits, misses: accesses.length - hits, total: accesses.length, memWrites: cache.memWrites };
 }
 
-// Phân loại 3C (Mục 7.5) — không phải mọi miss đều giống nhau, và mỗi loại có
-// một cách chữa KHÁC nhau, nên gộp chung là bỏ lỡ thông tin:
-//   - Compulsory (bắt buộc): lần ĐẦU TIÊN chạm tới một block. Cache nào cũng
-//     dính, kể cả cache vô hạn. Chữa bằng dòng cache to hơn / prefetch.
-//   - Capacity (dung lượng): block ĐÃ từng nằm trong cache nhưng bị đá ra vì
-//     cache quá NHỎ so với tập dữ liệu. Chữa bằng cache to hơn.
-//   - Conflict (xung đột): cache còn thừa chỗ, nhưng block bị đá ra vì tranh
-//     đúng cái set đó. Chữa bằng tăng associativity — đây chính là hiện tượng
-//     Mục 7.2 đã đo (20/20 miss xuống còn 2/20).
-// Đo theo cách chuẩn của Hill: so cache thật với cache fully-associative CÙNG
-// dung lượng, và với cache vô hạn.
+// The 3C taxonomy (section 7.5) - not every miss is alike, and each kind has a
+// DIFFERENT cure, so lumping them together loses the information:
+//   - Compulsory: the FIRST touch of a block. Every cache suffers these, even an
+//     infinite one. Reduced by larger cache lines or prefetching.
+//   - Capacity: the block WAS in the cache but was evicted because the cache is too
+//     SMALL for the working set. Cured by a bigger cache.
+//   - Conflict: the cache still has room, but the block was evicted through
+//     contention for one set. Cured by raising associativity - exactly the effect
+//     measured in section 7.2 (20/20 misses down to 2/20).
+// Measured Hill's standard way: compare the real cache against a fully-associative
+// one of the SAME capacity, and against an infinite one.
 function classifyMisses(addresses, numSets, ways, offsetBits) {
   const totalLines = numSets * ways;
   const real = runCacheTrace(makeSetAssociativeCache(numSets, ways, offsetBits), addresses).misses;
-  // fully-associative cùng dung lượng = 1 set chứa toàn bộ số dòng
+  // fully-associative at the same capacity = 1 set holding every line
   const fullyAssoc = runCacheTrace(makeSetAssociativeCache(1, totalLines, offsetBits), addresses).misses;
-  // cache vô hạn: chỉ còn lại đúng các miss bắt buộc
+  // an infinite cache: only the compulsory misses remain
   const blockOf = (a) => a >> offsetBits;
   const compulsory = new Set(addresses.map(blockOf)).size;
   return {
@@ -969,43 +969,43 @@ function classifyMisses(addresses, numSets, ways, offsetBits) {
   };
 }
 
-// AMAT (Average Memory Access Time) 1 cấp cache (Mục 7.3):
+// AMAT (average memory access time) with 1 cache level (section 7.3):
 // $AMAT = T_{Hit} + \text{MissRate} \times T_{MissPenalty}$
 function amat(hitTime, missRate, missPenalty) {
   return hitTime + missRate * missPenalty;
 }
 
-// AMAT 2 cấp cache L1+L2 (Mục 7.3): `missRateL2Local` là tỷ lệ miss CỤC BỘ
-// của L2 — CHỈ tính trên số lần L1 đã miss (không phải trên tổng số truy
-// cập chương trình) — pitfall Mục 7.3: nhầm miss rate cục bộ (local, đúng
-// công thức này) với miss rate toàn cục (global = missRateL1 × missRateL2Local,
-// tức tỷ lệ trên TỔNG số truy cập chương trình, một con số khác hẳn).
+// AMAT with 2 levels, L1+L2 (section 7.3): `missRateL2Local` is L2's LOCAL miss
+// rate - counted ONLY over the accesses where L1 already missed, not over all
+// program accesses. Section 7.3 pitfall: confusing the local miss rate (which this
+// formula wants) with the global one (= missRateL1 x missRateL2Local, the share of
+// ALL program accesses, an entirely different number).
 function amatTwoLevel(hitTimeL1, missRateL1, hitTimeL2, missRateL2Local, missPenaltyMem) {
   return hitTimeL1 + missRateL1 * (hitTimeL2 + missRateL2Local * missPenaltyMem);
 }
 
 // ---------------------------------------------------------------------------
-// Bài 8 — Bộ nhớ ảo (Virtual Memory) & Khối TLB. Cache (Bài 7) tăng tốc truy
-// cập bộ nhớ VẬT LÝ — bài này thêm một tầng gián tiếp NGAY TRƯỚC đó: mỗi
-// tiến trình thấy một không gian địa chỉ ẢO riêng, được dịch sang địa chỉ
-// VẬT LÝ qua Page Table (Mục 8.1). Vì Page Table cũng nằm trong RAM (tra
-// cứu nó cũng tốn 1 lần truy cập bộ nhớ!), TLB (Translation Lookaside
-// Buffer, Mục 8.3) đóng vai trò CACHE cho chính Page Table.
+// Lesson 8 - Virtual memory & the TLB. Lesson 7's cache speeds up PHYSICAL memory
+// access - this lesson adds a layer of indirection RIGHT BEFORE it: each process
+// sees its own VIRTUAL address space, translated to PHYSICAL addresses through a
+// page table (section 8.1). Because the page table itself lives in RAM (looking it
+// up costs a memory access of its own!), the TLB (translation lookaside buffer,
+// section 8.3) acts as a CACHE for the page table.
 // ---------------------------------------------------------------------------
 
-// Tách địa chỉ ẢO thành VPN (Virtual Page Number) + offset trong trang
-// (Mục 8.1) — cấu trúc y hệt splitAddress() của Bài 7 nhưng không có "index"
-// riêng vì Page Table tra cứu bằng TOÀN BỘ VPN (không chia set như cache).
+// Split a VIRTUAL address into a VPN (virtual page number) plus the offset within
+// the page (section 8.1) - the same shape as Lesson 7's splitAddress() but with no
+// separate "index", because the page table is looked up by the WHOLE VPN (it has
 function splitVirtualAddress(virtualAddress, pageOffsetBits) {
   const offset = virtualAddress & ((1 << pageOffsetBits) - 1);
   const vpn = virtualAddress >>> pageOffsetBits;
   return { vpn, offset };
 }
 
-// TLB (Translation Lookaside Buffer, Mục 8.3): bảng nhỏ, đầy đủ liên kết
-// (fully-associative) + LRU, lưu các cặp (VPN -> PFN) đã dịch GẦN ĐÂY nhất —
-// đúng vai trò MỘT CACHE cho Page Table, giúp tránh phải truy cập RAM lần
-// thứ 2 (đọc Page Table) chỉ để biết địa chỉ vật lý của lần truy cập THỨ NHẤT.
+// The TLB (translation lookaside buffer, section 8.3): a small fully-associative
+// table with LRU, holding the most RECENTLY translated (VPN -> PFN) pairs - acting
+// as A CACHE for the page table, avoiding an extra RAM access on every
+// access just to learn the physical address of the FIRST one.
 function makeTLB(capacity) {
   const entries = []; // {vpn, pfn, lastUsed}
   let clock = 0;
@@ -1035,10 +1035,10 @@ function makeTLB(capacity) {
   };
 }
 
-// Dịch một địa chỉ ảo sang địa chỉ vật lý (Mục 8.1 + 8.3): thử TLB TRƯỚC
-// (nhanh); nếu TLB miss thì tra Page Table (chậm hơn — mô phỏng 1 lần truy
-// cập RAM phụ); nếu VPN không có trong Page Table => Page Fault (trang chưa
-// được ánh xạ/chưa nạp — Mục 8.1).
+// Translate a virtual address to a physical one (sections 8.1 and 8.3): try the
+// TLB FIRST (fast); on a TLB miss consult the page table (slower - modelled as an
+// extra RAM access); if the VPN is absent from the page table it is a page fault
+// (the page is unmapped or not loaded - section 8.1).
 function translateAddress(virtualAddress, pageOffsetBits, tlb, pageTable) {
   const { vpn, offset } = splitVirtualAddress(virtualAddress, pageOffsetBits);
   let pfn = tlb.lookup(vpn);
@@ -1053,23 +1053,23 @@ function translateAddress(virtualAddress, pageOffsetBits, tlb, pageTable) {
   return { physicalAddress: null, tlbHit: false, pageFault: true };
 }
 
-// Số trang ẢO tối đa trong không gian địa chỉ `addressBits`-bit với trang
-// `pageOffsetBits`-bit (Mục 8.2): $2^{addressBits - pageOffsetBits}$.
+// The maximum number of VIRTUAL pages in an `addressBits`-bit address space with
+// `pageOffsetBits`-bit pages (section 8.2): $2^{addressBits - pageOffsetBits}$.
 function pageTableEntryCount(addressBits, pageOffsetBits) {
   return Math.pow(2, addressBits - pageOffsetBits);
 }
 
-// Dung lượng Page Table ĐƠN CẤP (Mục 8.2): một mảng PHẲNG có ĐỦ chỗ cho MỌI
-// trang ảo CÓ THỂ có, kể cả những trang KHÔNG BAO GIỜ được dùng — đây chính
-// là pitfall Mục 8.2 (lãng phí RAM khổng lồ với không gian địa chỉ 64-bit).
+// The size of a SINGLE-LEVEL page table (section 8.2): a FLAT array with room for
+// EVERY possible virtual page, including those NEVER used - which is exactly the
+// section 8.2 pitfall (enormous RAM waste in a 64-bit address space).
 function singleLevelPageTableSizeBytes(addressBits, pageOffsetBits, entryBytes) {
   return pageTableEntryCount(addressBits, pageOffsetBits) * entryBytes;
 }
 
-// Dung lượng Page Table 2 CẤP (Mục 8.2, kiểu x86 32-bit 10-10-12): bảng cấp
-// 1 LUÔN được cấp phát đủ (nhỏ, cố định); bảng cấp 2 chỉ cấp phát cho những
-// VÙNG THẬT SỰ có trang đang dùng — tiết kiệm RAM cực lớn so với đơn cấp khi
-// chương trình chỉ dùng một phần nhỏ không gian địa chỉ (thực tế phổ biến).
+// The size of a TWO-LEVEL page table (section 8.2, the 32-bit x86 10-10-12 style):
+// the level-1 table is ALWAYS allocated in full (small and fixed); level-2 tables
+// are allocated only for REGIONS actually in use - saving enormous amounts of RAM
+// when a program uses only a small part of the space, as is usually the case.
 function twoLevelPageTableSizeBytes(numUsedPages, entriesPerTable, entryBytes) {
   const firstLevelBytes = entriesPerTable * entryBytes;
   const numSecondLevelTables = Math.ceil(numUsedPages / entriesPerTable);
@@ -1078,31 +1078,31 @@ function twoLevelPageTableSizeBytes(numUsedPages, entriesPerTable, entryBytes) {
 }
 
 // ---------------------------------------------------------------------------
-// Bài 9 — Apple Silicon & Kiến trúc Bộ nhớ Thống nhất (UMA). Bài 7-8 giả định
-// CPU và GPU có bộ nhớ RIÊNG (mô hình PC truyền thống) — mọi lần CPU cần GPU
-// xử lý dữ liệu (vd render khung hình), dữ liệu phải được SAO CHÉP qua bus
-// PCIe (chậm hơn hẳn RAM nội bộ). Apple Silicon dùng UMA: CPU và GPU chia
-// sẻ CHUNG một bể RAM băng thông cực lớn — loại bỏ HOÀN TOÀN bước sao chép.
-// Build-out: mô hình băng thông (bytes/khung hình, thời gian truyền PCIe
-// sao chép vs UMA truy cập trực tiếp, Mục 9.4).
+// Lesson 9 - Apple Silicon & unified memory architecture (UMA). Lessons 7-8 assume
+// the CPU and GPU have SEPARATE memory (the traditional PC model) - so whenever
+// the CPU needs the GPU to process data (rendering a frame, say), it must be
+// COPIED across the PCIe bus (far slower than local RAM). Apple Silicon uses UMA:
+// CPU and GPU SHARE one very high-bandwidth RAM pool, removing the copy entirely.
+// Build-out: a bandwidth model (bytes per frame, PCIe copy time against direct UMA
+// access, section 9.4).
 // ---------------------------------------------------------------------------
 
-// Dung lượng byte của MỘT khung hình (Mục 9.4): width × height × số byte/pixel
-// (vd 32-bit màu = 4 byte/pixel, gồm R/G/B/Alpha).
+// The byte size of ONE frame (section 9.4): width x height x bytes per pixel
+// (32-bit colour = 4 bytes per pixel, covering R/G/B/alpha).
 function frameBytes(width, height, bytesPerPixel) {
   return width * height * bytesPerPixel;
 }
 
-// Thời gian truyền `bytes` byte qua một kênh có băng thông `bandwidthGBps`
-// GB/s (Mục 9.4): $t = \text{bytes} / (\text{bandwidthGBps} \times 10^9)$.
+// The time to move `bytes` bytes over a channel of `bandwidthGBps` GB/s
+// (section 9.4): $t = \text{bytes} / (\text{bandwidthGBps} \times 10^9)$.
 function transferTimeSeconds(bytes, bandwidthGBps) {
   return bytes / (bandwidthGBps * 1e9);
 }
 
-// So sánh trực tiếp 2 luồng truyền dữ liệu cho CÙNG một khung hình (Mục 9.4):
-// PCIe Gen 4 x16 (sao chép CPU->GPU qua bus rời rạc, mô hình PC truyền
-// thống) vs UMA (Apple Silicon — GPU truy cập TRỰC TIẾP cùng bể RAM, không
-// cần sao chép, chỉ còn giới hạn bởi băng thông RAM nội bộ).
+// A direct comparison of 2 data paths for the SAME frame (section 9.4): PCIe Gen 4
+// x16 (a CPU->GPU copy over a discrete bus, the traditional PC model) against UMA
+// (Apple Silicon - the GPU accesses the SAME RAM pool DIRECTLY, with no copy at
+// all, bounded only by local RAM bandwidth).
 function compareTransferMethods(bytes, pcieGBps, umaGBps) {
   const pcieTimeMs = transferTimeSeconds(bytes, pcieGBps) * 1000;
   const umaTimeMs = transferTimeSeconds(bytes, umaGBps) * 1000;
@@ -1110,47 +1110,47 @@ function compareTransferMethods(bytes, pcieGBps, umaGBps) {
 }
 
 // ---------------------------------------------------------------------------
-// Bài 10 — Tăng tốc phần cứng: GPU, NPU & AMX. Bài 9 giải quyết bức tường
-// BĂNG THÔNG (đưa dữ liệu tới đúng chỗ nhanh nhất có thể) — bài này giải
-// quyết bức tường TÍNH TOÁN: nhân ma trận N×N là phép toán lõi của đồ hoạ
-// VÀ deep learning, và 3 kiến trúc (CPU vô hướng, CPU SIMD, GPU/AMX song
-// song) xử lý CÙNG phép toán đó với thông lượng khác nhau hàng nghìn lần.
-// Build-out: đếm FLOPs nhân ma trận N×N, so tuần tự vs SIMD vs song song
-// (Mục 10.4).
+// Lesson 10 - Hardware acceleration: GPU, NPU & AMX. Lesson 9 dealt with the
+// BANDWIDTH wall (getting data where it is needed as fast as possible) - this
+// lesson deals with the COMPUTE wall: NxN matrix multiply is the core operation of
+// both graphics AND deep learning, and 3 architectures (scalar CPU, SIMD CPU,
+// parallel GPU/AMX) run it at throughputs differing by a factor of thousands.
+// Build-out: counting matrix-multiply FLOPs and comparing sequential against SIMD
+// against parallel (section 10.4).
 // ---------------------------------------------------------------------------
 
-// Số phép tính dấu phẩy động (FLOPs) để nhân 2 ma trận N×N theo thuật toán
-// TUẦN TỰ kinh điển $O(N^3)$ (Mục 10.4): mỗi trong $N^2$ phần tử kết quả cần
-// đúng $N$ phép nhân + $(N-1)$ phép cộng = $2N-1$ FLOPs, nhân với $N^2$ phần
-// tử: $N^2 \times (2N-1) = 2N^3 - N^2$.
+// The floating-point operation count for multiplying two NxN matrices with the
+// classic $O(N^3)$ SEQUENTIAL algorithm (section 10.4): each of the $N^2$ result
+// elements needs exactly $N$ multiplications + $(N-1)$ additions = $2N-1$ FLOPs,
+// so in total $N^2 \times (2N-1) = 2N^3 - N^2$.
 function matrixMultiplyFlops(n) {
   return 2 * Math.pow(n, 3) - Math.pow(n, 2);
 }
 
-// Thời gian tính `flops` phép tính ở thông lượng `flopsPerSecond` (Mục 10.4):
+// The time to perform `flops` operations at `flopsPerSecond` throughput (section 10.4):
 // $t = \text{flops} / \text{flopsPerSecond}$.
 function computeTimeSeconds(flops, flopsPerSecond) {
   return flops / flopsPerSecond;
 }
 
-// So sánh 3 kiến trúc tính CÙNG phép nhân ma trận N×N (Mục 10.4): CPU vô
-// hướng tuần tự (scalarGFLOPS), CPU SIMD (simdGFLOPS — thường = scalar ×
-// độ rộng vector, vd AVX 8-wide = 8×), và GPU/AMX song song lớn
-// (gpuTFLOPS, kèm `gpuOverheadSeconds` — chi phí cố định để nạp dữ liệu vào
-// GPU/AMX TRƯỚC khi tính, không phụ thuộc kích thước ma trận).
-// Mục 10.4 — MÔ HÌNH ROOFLINE. compareComputeMethods() ở trên tính thời gian
-// CHỈ từ thông lượng tính toán đỉnh, tức ngầm giả định băng thông bộ nhớ là VÔ
-// HẠN. Thực tế không phải: muốn tính thì phải NẠP dữ liệu vào đã. Roofline
-// (Williams, 2009) so hai giới hạn đó với nhau.
+// Compare 3 architectures on the SAME NxN matrix multiply (section 10.4): a
+// sequential scalar CPU (scalarGFLOPS), a SIMD CPU (simdGFLOPS - usually scalar x
+// the vector width, so 8-wide AVX = 8x), and a massively parallel GPU/AMX
+// (gpuTFLOPS, with `gpuOverheadSeconds` - the fixed cost of loading data into the
+// GPU/AMX BEFORE computing, independent of matrix size).
+// Section 10.4 - THE ROOFLINE MODEL. compareComputeMethods() above derives its
+// times from PEAK compute throughput alone, silently assuming INFINITE memory
+// bandwidth. Reality differs: to compute you must first LOAD. Roofline
+// (Williams, 2009) weighs those two limits against each other.
 //
-// Cường độ số học (arithmetic intensity) = số FLOP làm được trên mỗi byte đọc
-// từ bộ nhớ. Nhân ma trận N×N ngây thơ đọc 3 ma trận (2 vào, 1 ra), mỗi ma
-// trận N² phần tử × `bytesPerElem`:
+// Arithmetic intensity = how many FLOPs you get per byte read from memory. A
+// naive NxN matrix multiply touches 3 matrices (2 in, 1 out), each of N^2 elements
+// x `bytesPerElem`:
 //   AI = (2N³ - N²) / (3N² × bytesPerElem)
-// Với AI cho trước, phần cứng đạt được tối đa:
+// For a given AI, the hardware can attain at most:
 //   attainable = min(peakFLOPS, AI × bandwidth)
-// Nếu AI × bandwidth < peakFLOPS thì bài toán bị nghẽn BĂNG THÔNG
-// (memory-bound) — mua card mạnh hơn về FLOPS không giúp gì cả.
+// If AI x bandwidth < peakFLOPS the problem is MEMORY-BOUND - buying a card with
+// more FLOPS will not help at all.
 function rooflineAttainable(arithmeticIntensity, peakFLOPS, bandwidthBytesPerSec) {
   const memoryCeiling = arithmeticIntensity * bandwidthBytesPerSec;
   const attainable = Math.min(peakFLOPS, memoryCeiling);
@@ -1159,42 +1159,42 @@ function rooflineAttainable(arithmeticIntensity, peakFLOPS, bandwidthBytesPerSec
     memoryCeiling,
     peakFLOPS,
     bound: memoryCeiling < peakFLOPS ? 'memory' : 'compute',
-    // Tỷ lệ hiệu năng đỉnh thực sự dùng được. < 1 nghĩa là phần cứng đang đói dữ liệu.
+    // The fraction of peak actually usable. Below 1 means the hardware is data-starved.
     fractionOfPeak: attainable / peakFLOPS,
-    // Điểm gãy: AI tối thiểu để hết nghẽn băng thông (ridge point).
+    // The ridge point: the minimum AI at which bandwidth stops being the bottleneck.
     ridgeIntensity: peakFLOPS / bandwidthBytesPerSec,
   };
 }
 
-// Cường độ số học của nhân ma trận N×N, giả định mỗi ma trận chỉ phải đọc/ghi
-// ĐÚNG MỘT LẦN (3N² phần tử). Đó là trường hợp TỐT NHẤT, chỉ đạt được khi chia
-// khối để tái dùng dữ liệu qua cache (Bài 7); bản ngây thơ đọc lại hàng/cột
-// nhiều lần nên AI thực tế THẤP HƠN con số này. Dùng làm CẬN TRÊN.
+// The arithmetic intensity of an NxN matrix multiply, assuming each matrix is read
+// or written EXACTLY ONCE (3N^2 elements). That is the BEST case, reachable only
+// with tiling to reuse data through the cache (Lesson 7); the naive version
+// re-reads rows and columns many times, so its real AI is LOWER. Use as an UPPER BOUND.
 function matmulArithmeticIntensity(n, bytesPerElem = 4) {
   return matrixMultiplyFlops(n) / (3 * n * n * bytesPerElem);
 }
 
-// Đối chứng: cộng vector (SAXPY) y[i] = a*x[i] + y[i]. Mỗi phần tử tốn 2 FLOP
-// nhưng phải đọc x, đọc y, ghi y = 3 lần chạm bộ nhớ. AI cố định, không tăng
-// theo N — nên nó nghẽn băng thông với MỌI kích thước, không cách nào cứu.
+// The contrast case: vector add (SAXPY) y[i] = a*x[i] + y[i]. Each element costs 2
+// FLOPs but must read x, read y and write y = 3 memory touches. The AI is fixed and
+// does not grow with N - so it is memory-bound at EVERY size, beyond rescue.
 function vectorAddArithmeticIntensity(bytesPerElem = 4) {
   return 2 / (3 * bytesPerElem);
 }
 
-// Mục 10.5 — PHÂN KỲ WARP (warp divergence). GPU chạy theo nhóm `warpSize`
-// luồng dùng CHUNG một bộ đếm chương trình. Nếu các luồng trong cùng warp rẽ
-// nhánh khác hướng, phần cứng phải chạy TUẦN TỰ từng nhánh, tắt bớt luồng
-// không thuộc nhánh đang chạy — nên thời gian cộng dồn, còn hiệu suất là tỷ lệ
-// luồng thực sự hoạt động trung bình.
-// `branchTaken` là mảng boolean cho từng luồng trong MỘT warp.
+// Section 10.5 - WARP DIVERGENCE. A GPU runs threads in groups of `warpSize`
+// threads SHARING one program counter. If threads in the same warp branch in
+// different directions the hardware must run each branch SEQUENTIALLY, disabling
+// the threads not on the current one - so the times add up, and efficiency is the
+// average fraction of threads actually doing work.
+// `branchTaken` is a boolean array, one entry per thread in ONE warp.
 function warpDivergence(branchTaken, warpSize = 32) {
   if (branchTaken.length !== warpSize) throw new Error('branchTaken must have exactly warpSize entries');
   const taken = branchTaken.filter(Boolean).length;
   const notTaken = warpSize - taken;
-  // Số lượt chạy: 1 nếu cả warp đi cùng hướng, 2 nếu rẽ hai hướng.
+  // Passes: 1 if the whole warp goes the same way, 2 if it splits.
   const passes = taken === 0 || notTaken === 0 ? 1 : 2;
-  // Tổng "khe luồng" phần cứng cấp = passes × warpSize; số khe làm việc thật
-  // = warpSize (mỗi luồng chạy đúng nhánh của nó một lần).
+  // Total thread slots the hardware provides = passes x warpSize; slots doing real
+  // work = warpSize (each thread runs its own branch exactly once).
   const efficiency = warpSize / (passes * warpSize);
   return { taken, notTaken, passes, efficiency, wastedSlots: passes * warpSize - warpSize };
 }
@@ -1208,51 +1208,51 @@ function compareComputeMethods(n, scalarGFLOPS, simdGFLOPS, gpuTFLOPS, gpuOverhe
 }
 
 // ---------------------------------------------------------------------------
-// Bài 11 — Điểm cuối Định luật Moore & Đóng gói Chiplet. Thu nhỏ transistor
-// (Định luật Moore) đang chạm giới hạn vật lý (hiệu ứng đường hầm lượng tử
-// dưới 3nm, giới hạn nhiệt Dark Silicon) — ngành công nghiệp chip chuyển
-// sang CHIA NHỎ một die lớn thành nhiều "chiplet" nhỏ hơn ghép trên
-// interposer. Build-out: mô hình hiệu suất chế tạo (Yield) Poisson/Murphy
-// và chi phí wafer, so sánh die nguyên khối (monolithic) lớn vs nhiều
-// chiplet nhỏ (Mục 11.4).
+// Lesson 11 - The end of Moore's law & chiplet packaging. Shrinking transistors
+// is hitting physical limits (quantum tunnelling below 3nm, the thermal limit of
+// dark silicon) - so the chip industry moved to SPLITTING one large die into
+// several smaller "chiplets" assembled on an interposer. Build-out: the Poisson
+// and Murphy yield models plus wafer cost, comparing one large monolithic die
+// against several small chiplets (section 11.4).
+//
 // ---------------------------------------------------------------------------
 
-// Mô hình Yield POISSON (đơn giản nhất, Mục 11.4): xác suất một die diện
-// tích `area` (mm²) hoàn toàn KHÔNG dính lỗi nào, với mật độ lỗi
-// `defectDensity` (lỗi/mm²) phân bố ngẫu nhiên đều: $Y = e^{-A \times D}$.
-// Mô hình này đơn giản nhưng bi quan quá mức với die LỚN.
+// The POISSON yield model (the simplest, section 11.4): the probability that a die
+// of `area` mm^2 catches NO defect at all, given a uniformly random defect density
+// `defectDensity` (defects/mm^2): $Y = e^{-A \times D}$.
+// Simple, but excessively pessimistic for LARGE dies.
 function yieldPoisson(area, defectDensity) {
   return Math.exp(-area * defectDensity);
 }
 
-// Mô hình Yield MURPHY (thực tế hơn Poisson, Mục 11.4): giả định mật độ lỗi
-// dao động theo phân bố (không đều tuyệt đối như Poisson), cho kết quả gần
-// với số liệu thực tế ngành bán dẫn hơn: $Y = \left(\dfrac{1 - e^{-x}}{x}\right)^2$
-// với $x = A \times D$.
+// The MURPHY yield model (more realistic than Poisson, section 11.4): it assumes
+// the defect density varies rather than being perfectly uniform, giving results
+// closer to real semiconductor data: $Y = \left(\dfrac{1 - e^{-x}}{x}\right)^2$
+// with $x = A \times D$.
 function yieldMurphy(area, defectDensity) {
   const x = area * defectDensity;
   if (x === 0) return 1;
   return Math.pow((1 - Math.exp(-x)) / x, 2);
 }
 
-// Số die CÓ THỂ cắt được từ một wafer tròn đường kính `waferDiameterMm`
-// (Mục 11.4): diện tích wafer chia cho diện tích 1 die, TRỪ ĐI phần hao hụt
-// ở rìa wafer (các die bị cắt cụt không dùng được, xấp xỉ theo chu vi wafer).
+// How many dies can be cut from a round wafer of diameter `waferDiameterMm`
+// (section 11.4): the wafer area divided by the die area, MINUS the loss at the
+// wafer edge (dies cut short and unusable, approximated by the circumference).
 function diesPerWafer(waferDiameterMm, dieAreaMm2) {
   const waferArea = Math.PI * Math.pow(waferDiameterMm / 2, 2);
   const edgeLoss = (Math.PI * waferDiameterMm) / Math.sqrt(2 * dieAreaMm2);
   return Math.floor(waferArea / dieAreaMm2 - edgeLoss);
 }
 
-// Chi phí trung bình cho MỖI die ĐẠT CHUẨN (Mục 11.4): chi phí 1 wafer chia
-// cho số die THẬT SỰ dùng được (số die cắt được × tỷ lệ Yield). `yieldFn`
-// là yieldPoisson hoặc yieldMurphy (hoặc hàm tương thích tuỳ chỉnh).
-// Mục 11.5 — CHI PHÍ THẬT của chiplet: silicon KHÔNG phải toàn bộ hoá đơn.
-// costPerGoodDie() chỉ đếm tiền silicon. Nhưng chiplet phải trả thêm những
-// khoản mà die nguyên khối không có: đế interposer, nhiều bước đóng gói hơn,
-// và phải TEST từng die trước khi ghép (ghép nhầm một die hỏng vào gói là hỏng
-// cả gói — gọi là bài toán "known-good die"). Bỏ qua các khoản này là lý do
-// một con chip nhỏ vẫn làm nguyên khối dù công thức yield "khuyên" chia nhỏ.
+// The average cost per GOOD die (section 11.4): the wafer cost divided by the
+// number of ACTUALLY usable dies (dies cut x yield). `yieldFn` is yieldPoisson or
+// yieldMurphy (or any compatible custom function).
+// Section 11.5 - the REAL cost of chiplets: silicon is NOT the whole bill.
+// costPerGoodDie() counts silicon only. But chiplets also pay for things a
+// monolithic die never does: the interposer, extra packaging steps, and TESTING
+// each die before assembly (putting one bad die into a package ruins the whole
+// package - the "known-good die" problem). Ignoring these is why a small chip
+// stays monolithic even though the yield formula seems to recommend splitting it.
 function chipletPackagedCost(opts) {
   const {
     waferCostUsd,
@@ -1261,24 +1261,24 @@ function chipletPackagedCost(opts) {
     dieAreaMm2,
     numDies = 1,
     yieldFn,
-    interposerCostUsd = 0, // đế nối, chỉ chiplet mới cần
-    perDieTestUsd = 0, // test từng die trước khi ghép
-    assemblyPerDieUsd = 0, // gắn mỗi die lên đế
-    packageYield = 1, // xác suất cả gói ghép thành công
+    interposerCostUsd = 0, // the substrate, needed only by chiplets
+    perDieTestUsd = 0, // testing each die before assembly
+    assemblyPerDieUsd = 0, // mounting each die on the substrate
+    packageYield = 1, // probability the whole package assembles successfully
   } = opts;
   const siliconPerDie = costPerGoodDie(waferCostUsd, dieAreaMm2, waferDiameterMm, defectDensity, yieldFn);
   const silicon = siliconPerDie * numDies;
   const packaging = interposerCostUsd + (perDieTestUsd + assemblyPerDieUsd) * numDies;
-  // Gói hỏng lúc lắp ráp thì MẤT TRẮNG toàn bộ silicon đã tốt bên trong.
+  // A package that fails at assembly writes off ALL the good silicon inside it.
   const total = (silicon + packaging) / packageYield;
   return { silicon, packaging, total, packagingShare: packaging / (silicon + packaging) };
 }
 
-// Mục 11.2 — cái giá HIỆU NĂNG của việc cắt nhỏ. Truy cập vượt ranh giới die
-// phải đi qua đế nối nên chậm hơn hẳn truy cập nội bộ. Nếu tỷ lệ `crossFraction`
-// số lần truy cập rơi sang die khác, độ trễ TRUNG BÌNH bị kéo lên:
+// Section 11.2 - the PERFORMANCE price of splitting. An access crossing a die
+// boundary must traverse the substrate, so it is far slower than a local one. If a
+// fraction `crossFraction` of accesses land on another die, the AVERAGE latency rises:
 //   avg = (1 - f) × localNs + f × remoteNs
-// Đây chính là NUMA ở quy mô một con chip.
+// This is NUMA at the scale of a single chip.
 function crossDieLatency(localNs, remoteNs, crossFraction) {
   const avg = (1 - crossFraction) * localNs + crossFraction * remoteNs;
   return { avg, slowdown: avg / localNs, localNs, remoteNs, crossFraction };
@@ -1352,9 +1352,9 @@ export {
 };
 
 // ---------------------------------------------------------------------------
-// Self-test — chạy bằng `node cpu-core.js`. Kiểm tra `typeof process` trước vì
-// `process` không tồn tại trong trình duyệt (thiếu bước này gây ReferenceError
-// ngay khi trang import module) — tiền lệ dsp-core.js/vmcu.js/ai-neuro.js.
+// Self-test - run with `node cpu-core.js`. Check `typeof process` first, because
+// `process` does not exist in a browser (omitting this raises a ReferenceError the
+// moment a page imports the module) - as in dsp-core.js/vmcu.js/ai-neuro.js.
 // ---------------------------------------------------------------------------
 if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
   let errors = 0;
@@ -1374,14 +1374,14 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     }
   }
 
-  // --- Tiện ích biểu diễn số ---
+  // --- Number representation helpers ---
   check('toBinString(5, 4) = 0101', toBinString(5, 4), '0101');
   check('toBinString(9, 4) = 1001', toBinString(9, 4), '1001');
   check('toSigned(9, 4) = -7 (bu 2: 1001)', toSigned(9, 4), -7);
   check('toSigned(7, 4) = 7 (bit dau = 0)', toSigned(7, 4), 7);
   check('toSigned(8, 4) = -8 (so am nho nhat 4-bit)', toSigned(8, 4), -8);
 
-  // --- Half adder: đúng bảng chân trị (2^2 = 4 tổ hợp) ---
+  // --- Half adder: the exact truth table (2^2 = 4 combinations) ---
   check('halfAdder(0,0) sum', halfAdder(0, 0).sum, 0);
   check('halfAdder(0,0) carry', halfAdder(0, 0).carry, 0);
   check('halfAdder(1,0) sum', halfAdder(1, 0).sum, 1);
@@ -1389,7 +1389,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   check('halfAdder(1,1) sum = 0 (1+1 = 10, tong bit = 0)', halfAdder(1, 1).sum, 0);
   check('halfAdder(1,1) carry = 1 (co nho)', halfAdder(1, 1).carry, 1);
 
-  // --- Full adder: đúng cả 8 tổ hợp so với phép cộng số học thật ---
+  // --- Full adder: all 8 combinations against real arithmetic ---
   for (let a = 0; a < 2; a++) {
     for (let b = 0; b < 2; b++) {
       for (let cin = 0; cin < 2; cin++) {
@@ -1401,7 +1401,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     }
   }
 
-  // --- Ripple-carry adder 4-bit: khớp phép cộng JS trên toàn bộ 256 tổ hợp ---
+  // --- 4-bit ripple-carry adder: matches JS addition across all 256 combinations ---
   {
     let ok = true;
     for (let a = 0; a < 16; a++) {
@@ -1414,7 +1414,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue('rippleCarryAdd 4-bit khop (a+b)&0xF va carry tren ca 256 to hop', ok);
   }
 
-  // --- ALU: verify SỐ THẬT dùng cho quiz Câu 1 (5 + 4 tren 4-bit) ---
+  // --- ALU: verify the REAL numbers used in quiz question 1 (5 + 4 on 4 bits) ---
   {
     const r = aluExecute(5, 4, 'ADD');
     check('ALU 5+4: ket qua = 9 (1001)', r.result, 9);
@@ -1425,7 +1425,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue('ALU 5+4: V = 1 (+5 + +4 = +9 vuot [-8,7], tran co dau)', r.flags.v === true);
   }
 
-  // --- ALU ADD: cờ Carry vs Overflow khớp định nghĩa tham chiếu trên 256 tổ hợp ---
+  // --- ALU ADD: carry against overflow matches the reference across 256 combinations ---
   {
     let ok = true;
     for (let a = 0; a < 16; a++) {
@@ -1443,7 +1443,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue('ALU ADD: co C/V va ket qua khop dinh nghia tham chieu (256 to hop)', ok);
   }
 
-  // --- ALU SUB: kết quả + cờ khớp tham chiếu bù 2 trên 256 tổ hợp ---
+  // --- ALU SUB: result and flags match the two's complement reference, 256 combinations ---
   {
     let ok = true;
     for (let a = 0; a < 16; a++) {
@@ -1460,7 +1460,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue('ALU SUB: ket qua bu 2, co muon (C) va tran co dau (V) khop tham chieu (256 to hop)', ok);
   }
 
-  // --- ALU phép luận lý AND/OR/XOR: đúng bitwise, C và V luôn = false ---
+  // --- ALU logical AND/OR/XOR: correct bitwise, with C and V always false ---
   {
     const rAnd = aluExecute(0b1100, 0b1010, 'AND');
     check('ALU AND 1100 & 1010 = 1000', rAnd.result, 0b1000);
@@ -1475,7 +1475,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue('ALU XOR cua 2 gia tri bang nhau => co Zero bat', aluExecute(0b1010, 0b1010, 'XOR').flags.z === true);
   }
 
-  // --- Bài 2: Toy CPU fetch-decode-execute (Von Neumann: RAM chung cho lệnh & dữ liệu) ---
+  // --- Lesson 2: toy CPU fetch-decode-execute (Von Neumann: one RAM for code & data) ---
   {
     // Chuong trinh tuyen tinh: 5+3, luu ket qua vao RAM[10] (dung ALU cua Bai 1)
     const prog1 = [
@@ -1526,12 +1526,12 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       selfModifyThrew = true;
     }
     checkTrue(
-      'Pitfall self-modifying code: STORE ghi de len vung LỆNH khiến fetch kế tiếp đọc phải rác, ném lỗi (verified thật, không phải suy diễn)',
+      'Pitfall self-modifying code: STORE ghi de len vung LENH khien fetch ke tiep doc phai rac, nem loi (verified that, khong phai suy dien)',
       selfModifyThrew
     );
   }
 
-  // --- Bài 3: RV32I assembler/decoder + đường đi dữ liệu đơn chu kỳ ---
+  // --- Lesson 3: RV32I assembler/decoder + the single-cycle datapath ---
   {
     // Khop CHINH XAC voi ma may that (verified bang tinh tay theo dac ta RISC-V)
     check(
@@ -1561,7 +1561,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     ]) {
       const word = assembleRV32I(mnemonic, args);
       const decoded = decodeRV32I(word);
-      checkTrue(`RV32I khứ hồi ${mnemonic}: decode(assemble(...)) khớp mnemonic`, decoded.mnemonic === mnemonic);
+      checkTrue(`RV32I khu hoi ${mnemonic}: decode(assemble(...)) khop mnemonic`, decoded.mnemonic === mnemonic);
     }
 
     // Datapath don chu ky: chuong trinh THAT (5+3)-2, luu vao mem[100], doc lai
@@ -1586,7 +1586,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     check('RV32I x0 la hang so cung: ghi 42 vao x0 van doc ra 0', regsX0[0], 0);
   }
 
-  // --- Bài 4: Pipeline 5 giai đoạn — thời gian/CPI + hazard RAW/load-use ---
+  // --- Lesson 4: the 5-stage pipeline - time/CPI + RAW and load-use hazards ---
   {
     // Muc 4.2: 1 trieu lenh, pipeline 5 giai doan, xung nhip 2GHz (0,5ns/chu ky)
     check(
@@ -1646,7 +1646,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     );
   }
 
-  // --- Bài 5: Bộ dự đoán nhánh 1-bit/2-bit + BHT + CPI hiệu dụng ---
+  // --- Lesson 5: 1-bit and 2-bit branch predictors + BHT + effective CPI ---
   {
     // Chuoi vong lap long nhau: vong ngoai 3 lan, vong trong 4 lan T roi 1 N
     // (TTTTN lap lai 3 lan) - dung de minh hoa pitfall dao dong cua bo 1-bit
@@ -1709,7 +1709,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue('effectiveCPI khong co nhanh nao (branchFreq=0) = dung CPI ly tuong', effectiveCPI(1, 0, 0.1, 3) === 1);
   }
 
-  // --- Bài 6: Tomasulo OOO — dang RS/CDB/ROB, doi ten thanh ghi loai bo WAR/WAW ---
+  // --- Lesson 6: out-of-order Tomasulo - RS/CDB/ROB, renaming removes WAR/WAW ---
   {
     // Vi du kinh dien: instr1 MUL ghi R1 (do lau), instr2 ADD ghi R2 (WAR -
     // doc R2 ma instr1 KHONG doc, chi la trung dich voi mot lenh SAU doc R2...
@@ -1796,7 +1796,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     );
   }
 
-  // --- Bài 7: Cache tag/index/offset, direct-mapped/set-assoc, AMAT ---
+  // --- Lesson 7: cache tag/index/offset, direct-mapped and set-associative, AMAT ---
   {
     // splitAddress: dia chi 0x1234 (4660) voi offsetBits=4, indexBits=2
     // -> offset = 4 bit thap = 0x4, index = 2 bit tiep = binary cua (4660>>4)&0b11
@@ -1908,7 +1908,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     check('3C duyet theo COT: 0 conflict miss - tang associativity se KHONG cuu duoc', c3col.conflict, 0);
   }
 
-  // --- Bài 8: Bộ nhớ ảo - dịch dia chi qua TLB + Page Table, dung luong Page Table ---
+  // --- Lesson 8: virtual memory - translation via TLB + page table, page table size ---
   {
     const pageOffsetBits = 12; // trang 4KB
     const pageTable = new Map([
@@ -1975,7 +1975,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     );
   }
 
-  // --- Bài 9: Apple Silicon & UMA - dung luong khung hinh + so sanh bang thong ---
+  // --- Lesson 9: Apple Silicon & UMA - frame size + bandwidth comparison ---
   {
     // Khung hinh 4K (3840x2160), 32-bit mau (4 byte/pixel) = 33.177.600 byte
     check(
@@ -2017,7 +2017,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     );
   }
 
-  // --- Bài 10: Tang toc phan cung - dem FLOPs nhan ma tran + tuan tu vs SIMD vs GPU ---
+  // --- Lesson 10: hardware acceleration - matrix FLOPs + sequential/SIMD/GPU ---
   {
     // Nhan ma tran 1024x1024: N^2*(2N-1) = 2N^3 - N^2 = 2.146.435.072 FLOPs
     check(
@@ -2110,7 +2110,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     );
   }
 
-  // --- Bài 11: Yield Poisson/Murphy + chi phi wafer - monolithic vs chiplet ---
+  // --- Lesson 11: Poisson/Murphy yield + wafer cost - monolithic against chiplet ---
   {
     // Wafer 300mm (chuan cong nghiep), gia wafer 10.000 USD (minh hoa), mat
     // do loi 0,001 loi/mm^2 (= 0,1 loi/cm^2, gia tri sach giao khoa pho bien)

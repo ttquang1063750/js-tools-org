@@ -169,13 +169,18 @@ for num, slug in order:
 
     # --- hreflang / urls
     want = {('vi', f'{base_url}/{slug}'), ('en', f'{base_url}/en/{slug}'), ('x-default', f'{base_url}/{slug}')}
-    # Prettier ngat thẻ <link> dai thanh nhieu dong, nen KHONG duoc doi hreflang va
-    # href nam sat nhau tren cung mot dong — truoc day slug dai hon la check nay do.
-    hl_re = r'hreflang="([^"]+)"\s+href="([^"]+)"|href="([^"]+)"\s+hreflang="([^"]+)"'
+    # Khop CA THE <link rel="alternate" ...> roi moi tach tung thuoc tinh.
+    # KHONG duoc doi hreflang va href nam sat nhau: prettier ngat the dai thanh
+    # nhieu dong (truoc day slug dai hon la check nay do), va thu tu thuoc tinh
+    # la tuy y trong HTML — mot trang hop le viet <link hreflang="vi"
+    # rel="alternate" href="..."> tung bi bao oan la sai.
     def hreflangs(doc):
         out = set()
-        for a, b, c, d in re.findall(hl_re, doc):
-            out.add((a, b) if a else (d, c))
+        for tag in re.findall(r'<link\b[^>]*\brel="alternate"[^>]*>', doc):
+            hl = re.search(r'hreflang="([^"]+)"', tag)
+            hr = re.search(r'href="([^"]+)"', tag)
+            if hl and hr:
+                out.add((hl.group(1), hr.group(1)))
         return out
     ok_hl = all(hreflangs(s) == want for s in (vi, en))
     checks.append(('hreflang', ok_hl, 'bo ba thieu hoac tro sai'))

@@ -1,13 +1,13 @@
-// quantum-sim.js — "QuantumJS": mô phỏng mạch lượng tử tối giản cho Bài 12
-// (Kiến Trúc Máy Tính Lượng Tử). Đây là MODULE RIÊNG BIỆT, KHÔNG mở rộng
-// cpu-core.js — vì tính toán lượng tử dùng mô hình toán học HOÀN TOÀN khác
-// (vector trạng thái phức, ma trận unita) so với logic nhị phân cổ điển
-// xuyên suốt Bài 1-11. Cùng kỷ luật "verify bằng số thật trước khi viết bài
-// học" như cpu-core.js — self-test ở cuối file, chạy bằng `node quantum-sim.js`.
+// quantum-sim.js - "QuantumJS": a minimal quantum circuit simulator for
+// Lesson 12 (quantum computing architecture). This is a SEPARATE MODULE and
+// does NOT extend cpu-core.js, because quantum computation uses a COMPLETELY
+// different mathematical model (complex state vectors, unitary matrices) from
+// the classical binary logic running through Lessons 1-11. Same discipline as
+// self-test at the end of the file runs with `node quantum-sim.js`.
 
 // ---------------------------------------------------------------------------
-// Số phức tối giản: {re, im}. Biên độ lượng tử (amplitude) LUÔN là số phức
-// — ngay cả với mạch 1-2 qubit đơn giản, cổng Pauli-Y đã cần phần ảo.
+// Minimal complex number: {re, im}. A quantum amplitude is ALWAYS complex -
+// even in a simple 1-2 qubit circuit, the Pauli-Y gate needs the imaginary part.
 // ---------------------------------------------------------------------------
 function cx(re, im = 0) {
   return { re, im };
@@ -18,16 +18,16 @@ function cAdd(a, b) {
 function cMul(a, b) {
   return cx(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
 }
-// Bình phương độ lớn (magnitude squared) — CHÍNH LÀ xác suất đo được trạng
-// thái đó (định đề đo lường Born rule): $P = |\alpha|^2 = \alpha \cdot \alpha^*$.
+// Magnitude squared - which IS the probability of measuring that state
+// (the Born rule): $P = |\alpha|^2 = \alpha \cdot \alpha^*$.
 function cAbs2(a) {
   return a.re * a.re + a.im * a.im;
 }
 
 // ---------------------------------------------------------------------------
-// Vector trạng thái N-qubit: mảng $2^N$ biên độ phức, chỉ số nhị phân của
-// mảng ứng với trạng thái cơ sở (basis state) — vd với 2 qubit: index 0=|00⟩,
-// 1=|01⟩, 2=|10⟩, 3=|11⟩. Khởi tạo luôn ở |00...0⟩ (biên độ 1 tại index 0).
+// N-qubit state vector: an array of $2^N$ complex amplitudes, where the
+// array index in binary is the basis state - for 2 qubits: index 0=|00>,
+// 1=|01>, 2=|10>, 3=|11>. Always initialised to |00...0> (amplitude 1 at index 0).
 // ---------------------------------------------------------------------------
 function makeZeroState(numQubits) {
   const size = Math.pow(2, numQubits);
@@ -36,11 +36,11 @@ function makeZeroState(numQubits) {
   return state;
 }
 
-// Áp dụng MỘT cổng lượng tử 1-qubit (ma trận unita 2×2 số phức) lên qubit
-// `qubitIndex` của hệ `numQubits` qubit. Mỗi cặp trạng thái cơ sở CHỈ khác
-// nhau ở đúng 1 bit (qubit đang tác động) được biến đổi tuyến tính CÙNG
-// nhau theo ma trận — đây chính là "song song lượng tử" hoạt động trên toàn
-// bộ vector trạng thái CÙNG một lúc.
+// Apply ONE 1-qubit gate (a complex 2x2 unitary matrix) to qubit
+// `qubitIndex` of a `numQubits` system. Each pair of basis states differing in
+// exactly 1 bit (the qubit being acted on) is transformed linearly TOGETHER by
+// the matrix - this is "quantum parallelism" operating on the entire state
+// vector AT ONCE.
 function applySingleQubitGate(state, matrix, qubitIndex, numQubits) {
   const size = state.length;
   const newState = new Array(size).fill(null).map(() => cx(0, 0));
@@ -58,10 +58,10 @@ function applySingleQubitGate(state, matrix, qubitIndex, numQubits) {
   return newState;
 }
 
-// Cổng CNOT (Controlled-NOT, Mục 12.2): nếu qubit điều khiển (`controlIndex`)
-// = |1⟩ thì LẬT (X) qubit đích (`targetIndex`), ngược lại giữ nguyên. Đây là
-// cổng 2-qubit TẠO RA vướng víu lượng tử (entanglement) khi kết hợp với
-// Hadamard (Mục 12.5 — mạch Bell kinh điển).
+// CNOT gate (controlled-NOT, section 12.2): if the control qubit (`controlIndex`)
+// is |1> then FLIP (X) the target qubit (`targetIndex`), otherwise leave it. This
+// is the 2-qubit gate that CREATES entanglement when combined with
+// Hadamard (section 12.5 - the classic Bell circuit).
 function applyCNOT(state, controlIndex, targetIndex, numQubits) {
   const size = state.length;
   const newState = state.slice();
@@ -81,62 +81,62 @@ function applyCNOT(state, controlIndex, targetIndex, numQubits) {
   return newState;
 }
 
-// Xác suất đo được MỖI trạng thái cơ sở (Born rule, Mục 12.4): $P_k =
-// |\alpha_k|^2$. Hành động "đo" (measurement) làm SỤP ĐỔ (collapse) trạng
-// thái chồng chập về MỘT trong các trạng thái cơ sở, với xác suất đúng
-// bằng $P_k$ — sau khi đo, mọi thông tin chồng chập trước đó biến mất
-// (Mục 12.4, pitfall trung tâm của cơ học lượng tử).
+// Probability of measuring EACH basis state (Born rule, section 12.4): $P_k =
+// |\alpha_k|^2$. The act of measurement COLLAPSES the superposed state to ONE
+// of the basis states, with probability exactly $P_k$ - and afterwards all the
+// prior superposition information is gone (section 12.4, the central pitfall of
+// quantum mechanics).
 function measureProbabilities(state) {
   return state.map(cAbs2);
 }
 
 // ---------------------------------------------------------------------------
-// Thư viện cổng lượng tử chuẩn (Mục 12.2): Hadamard (tạo chồng chập đều),
-// Pauli X/Y/Z (tương tự phép quay 180° quanh 3 trục của quả cầu Bloch).
+// The standard gate library (section 12.2): Hadamard (creates an even
+// superposition), Pauli X/Y/Z (180 degree rotations about the 3 Bloch axes).
 // ---------------------------------------------------------------------------
 const SQRT1_2 = 1 / Math.sqrt(2);
 
-// Hadamard: biến |0⟩ thành CHỒNG CHẬP đều (|0⟩+|1⟩)/√2 — nền tảng của MỌI
-// thuật toán lượng tử cần khai thác song song (Shor, Grover, Mục 12.3).
+// Hadamard: turns |0> into the even SUPERPOSITION (|0>+|1>)/sqrt2 - the basis of
+// EVERY quantum algorithm exploiting parallelism (Shor, Grover, section 12.3).
 const GATE_H = [
   [cx(SQRT1_2), cx(SQRT1_2)],
   [cx(SQRT1_2), cx(-SQRT1_2)],
 ];
-// Pauli-X: "NOT lượng tử" — lật |0⟩↔|1⟩.
+// Pauli-X: the "quantum NOT" - flips |0> and |1>.
 const GATE_X = [
   [cx(0), cx(1)],
   [cx(1), cx(0)],
 ];
-// Pauli-Y: lật CẢ trạng thái LẪN pha (phần ảo) — hiếm dùng trực tiếp trong
-// mạch cơ bản nhưng là 1 trong 3 phép quay Bloch chuẩn.
+// Pauli-Y: flips BOTH the state AND the phase (imaginary part) - rarely used
+// directly in basic circuits but one of the 3 standard Bloch rotations.
 const GATE_Y = [
   [cx(0), cx(0, -1)],
   [cx(0, 1), cx(0)],
 ];
-// Pauli-Z: giữ nguyên |0⟩, đảo PHA (không đảo xác suất) của |1⟩ thành -|1⟩.
+// Pauli-Z: leaves |0> alone and inverts the PHASE (not the probability) of |1>.
 const GATE_Z = [
   [cx(1), cx(0)],
   [cx(0), cx(-1)],
 ];
 
-// Mục 12.4 — VÌ SAO NISQ chưa chạy nổi Shor. Cổng lượng tử nào cũng có tỷ lệ
-// lỗi p. Một mạch chạy đúng chỉ khi MỌI cổng đều đúng, nên xác suất cả mạch
-// cho kết quả tin được là (1-p)^numGates — tụt theo hàm mũ, không tuyến tính.
-// Đây là con số biến "máy 100 qubit" thành "chưa dùng được", chứ không phải
-// số qubit.
+// Section 12.4 - WHY NISQ cannot run Shor yet. Every quantum gate carries an
+// error rate p. A circuit is only correct if EVERY gate is, so the probability
+// of a trustworthy result is (1-p)^numGates - falling exponentially, not
+// linearly. This is the number that makes a "100-qubit machine" unusable, not
+// the qubit count.
 function circuitSuccessProbability(gateErrorRate, numGates) {
   return Math.pow(1 - gateErrorRate, numGates);
 }
 
-// Sửa lỗi lượng tử đổi NHIỀU qubit vật lý lấy MỘT qubit logic đủ sạch. Mã bề
-// mặt (surface code) dùng lưới khoảng cách d, cần ~d² qubit vật lý mỗi qubit
-// logic, và tỷ lệ lỗi logic giảm theo hàm mũ của d — nhưng CHỈ khi tỷ lệ lỗi
-// vật lý đã dưới ngưỡng (~1%). Trên ngưỡng thì thêm qubit làm mọi thứ TỆ hơn.
+// Error correction trades MANY physical qubits for ONE clean logical qubit. The
+// surface code uses a lattice of distance d, needing ~d^2 physical qubits per
+// logical qubit, and the logical error rate falls exponentially in d - but ONLY
+// once the physical error rate is below threshold (~1%). Above it, adding qubits
 function surfaceCodeOverhead(distance) {
   return { distance, physicalPerLogical: distance * distance };
 }
 
-// Tổng số qubit VẬT LÝ cần cho một thuật toán, khi đã tính chi phí sửa lỗi.
+// Total PHYSICAL qubits an algorithm needs once error correction is counted.
 function physicalQubitsNeeded(logicalQubits, distance) {
   return logicalQubits * surfaceCodeOverhead(distance).physicalPerLogical;
 }
@@ -160,7 +160,7 @@ export {
 };
 
 // ---------------------------------------------------------------------------
-// Self-test — chạy bằng `node quantum-sim.js`.
+// Self-test - run with `node quantum-sim.js`.
 // ---------------------------------------------------------------------------
 if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
   let errors = 0;
@@ -183,7 +183,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     checkTrue(name + ' (got=' + got + ', ky vong=' + exp + ')', Math.abs(got - exp) < tol);
   }
 
-  // --- Trạng thái ban đầu |0⟩: xac suat do duoc 0 = 100%, 1 = 0% ---
+  // --- Initial state |0>: P(measure 0) = 100%, P(measure 1) = 0% ---
   {
     const s = makeZeroState(1);
     const probs = measureProbabilities(s);
@@ -220,7 +220,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   }
 
   // --- Mach Bell kinh dien: H tren qubit 0, roi CNOT(0,1) tren |00> ---
-  // Day la vi du VUONG VIU LUONG TU chuan (Mục 12.2, 12.5): 2 qubit sau
+  // This is the standard ENTANGLEMENT example (sections 12.2, 12.5): 2 qubits
   // mach nay KHONG THE mo ta doc lap tung qubit rieng le nua.
   {
     let s = makeZeroState(2);

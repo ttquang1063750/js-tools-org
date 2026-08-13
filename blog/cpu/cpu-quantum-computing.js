@@ -6,9 +6,9 @@ const STRINGS = {
   en: { amplitude: 'amplitude', noGates: '(no gates applied yet)' },
 };
 const T = STRINGS[document.documentElement.lang === 'en' ? 'en' : 'vi'];
-// cpu-quantum-computing.js — demo cho Bài 12 (Quantum Computing): mạch
-// lượng tử 2-qubit tương tác, dùng engine THẬT (quantum-sim.js, module
-// riêng biệt — KHÔNG dùng cpu-core.js).
+// cpu-quantum-computing.js - Lesson 12 demo (quantum computing): an
+// interactive 2-qubit quantum circuit, using the REAL engine (quantum-sim.js,
+// a separate module - it does NOT use cpu-core.js).
 import {
   makeZeroState,
   applySingleQubitGate,
