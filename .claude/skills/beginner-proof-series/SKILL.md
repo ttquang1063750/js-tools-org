@@ -3,8 +3,10 @@ name: beginner-proof-series
 description: >-
   Review an existing js-tools.org blog series with fresh beginner eyes and fix
   what blocks a newcomer: jargon introduced without explanation, code dropped
-  with no lead-in, missing transitions between sections, and steps that assume
-  knowledge the series has not taught yet. Also knows this repo's locale layout —
+  with no lead-in, missing transitions between sections, steps that assume
+  knowledge the series has not taught yet, and parts of the topic the lesson
+  never covers at all — a gap in the material is a defect to write, not merely
+  to report. Also knows this repo's locale layout —
   Vietnamese at the root, English added under `/en/` — and how to measure whether
   a `data-lang-content` block is a real translation or an empty shell before
   touching it. Keeps every lesson complete in both locales: fix the Vietnamese,
@@ -27,9 +29,21 @@ gets used three paragraphs before it is defined, a code block appears with no
 sentence saying why we are about to read it, section 4 assumes something section
 7 teaches.
 
-This skill is the fix pass. It does **not** re-plan the syllabus (that is
-`design-new-series`) and it does **not** add new measurements or lab work. It
-makes the existing material land.
+This skill is the fix pass. The one thing it does **not** do is re-plan the
+syllabus — which lessons exist, in what order, is `design-new-series`' job.
+
+Everything else needed to make a lesson land is in scope, **including writing
+content that was never there**. A lesson whose topic demands a subsection it
+does not have is not "complete but dense" — it is incomplete, and the reader
+pays for it exactly like they pay for an undefined term. If a cache lesson never
+mentions write policy, if a term is used five times and defined nowhere, if a
+topic that is inherently spatial has no diagram at all, then the fix is to write
+the missing part, verify it, and translate it — not to file it under "out of
+scope" because it makes the diff larger.
+
+The ceiling is quality, not diff size. Do not invent a budget the user did not
+set. If the addition is large enough to change what the lesson is about, say so
+and confirm; below that, write it.
 
 ## Before touching anything
 
@@ -46,6 +60,13 @@ makes the existing material land.
    - _deep_ — may reorder sections and rewrite one when it assumes untaught
      knowledge. Lessons get noticeably longer.
    - _report only_ — list findings with locations, change nothing.
+
+   These levels govern **how much you may rearrange what is already there**. None
+   of them caps what you may *add*: filling a genuine content gap is in scope at
+   every level except _report only_, because a missing subsection is a defect, not
+   a preference. When you offer these choices, describe them that way — do not
+   phrase an option as "fix defects, do not write new sections", which is a limit
+   this skill does not impose and the user did not ask for.
 4. **Never assume the locale layout.** See "Locale layout for this repo" below.
    Getting this wrong breaks links that are already shared and indexed.
 5. **Find where to resume** — see below. A series takes many sessions, so
@@ -222,7 +243,7 @@ string), and they stop if any diagram label or code placeholder is unaccounted
 for. `build-hub-en.py` also compares structural block counts against the
 Vietnamese hub, which is how a dropped 298-word section was caught.
 
-## The seven things that block a beginner
+## The eight things that block a beginner
 
 Work through a lesson looking for these specifically. They are ordered by how
 often they are the real problem.
@@ -250,6 +271,12 @@ often they are the real problem.
 7. **Command that cannot be run as written.** Missing install step, missing
    working directory, an API key or model name that does not exist, a
    copy-pasteable block that fails on first try. Verify anything cheap to verify.
+8. **A part of the topic that is simply absent.** The hardest to see, because
+   there is nothing on the page to react to — you have to notice a hole rather
+   than a flaw. Write down what the lesson covers, then what the topic covers, and
+   diff the two: the reader who trusts this lesson walks away believing the topic
+   ends where the lesson does. Write the missing part. It is the only item here
+   that makes the lesson longer by design, and usually the most valuable.
 
 ## Per-lesson workflow
 
@@ -481,8 +508,15 @@ lessons link back to the Vietnamese hub; say so rather than leaving it silent.
   previous section.
 - Do not soften a correct technical claim to make it easier. Explain it instead.
 - Do not touch measured numbers, benchmark tables or lab output. If a number
-  looks wrong, report it — do not silently adjust it.
+  looks wrong, report it — do not silently adjust it. (This is the one thing you
+  report instead of fixing, because the number came from a run you did not make.
+  It is not a licence to report every other gap instead of closing it.)
 - Do not batch lessons. One lesson, one commit, one report.
+- Do not downgrade a gap to a note in the report because closing it means writing
+  something new. "Deliberately left alone" is for things that are **fine as they
+  are** or that belong to another lesson — not for work you decided was too big.
+  If you catch yourself writing "adding one is content design, out of scope", that
+  is the signal you are about to skip the most valuable part of the pass.
 
 ## When the lesson promises something it never delivers
 
@@ -490,6 +524,15 @@ Check the summary's "what you achieved" bullets against what the lesson actually
 teaches, and check the title against the body. A lesson that tells the reader they
 learned something it never covered is worse than a lesson that simply omits it —
 the reader concludes they failed to understand.
+
+Then check the harder direction: what the topic **requires** that nothing in the
+lesson promises, so no cross-reference catches it. Ask what a reader who finished
+this lesson still cannot do, and what an expert would immediately notice is
+absent. A cache lesson that only ever reads and never writes, a lesson using a
+term whose definition lives only inside a quiz answer, a spatial topic carried
+entirely by prose — no bullet anywhere claims these, which is exactly why they
+survive. Grep is good at this: pick the four or five terms the topic cannot be
+complete without and count them in the body. Zero hits is the finding.
 
 When you find a gap, the title and the series' cross-references are the spec, not
 the body. Search the whole series for the missing topic before deciding: if the
