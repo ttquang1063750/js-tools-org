@@ -73,26 +73,22 @@ Commit: `2745e04`, `07062f5`, và bản viết lại monolith
 
 ### Part 1 — còn 3 mục
 
-- [ ] **Mục 4 — Thiết kế cơ sở dữ liệu.** Đây là phần chủ dự án chỉ ra còn
-      thiếu, và nó **quyết định chất lượng mục ACID ngay sau đó**. Phải có:
-  - Rút thực thể từ luồng nghiệp vụ: `User`, `RefreshToken`, `Video`,
-    `MediaAsset`, `Job`, `CreditLedger`, `ApiKey`
-  - **Sơ đồ ERD** (SVG inline) — quan hệ, khoá ngoại, lực lượng
-  - Quyết định đắt nhất: **ví credit là sổ cái append-only, KHÔNG phải cột
-    `balance`** — vì sao cộng dồn giao dịch an toàn hơn cập nhật một con số, và
-    cái giá phải trả (đọc chậm hơn, cần snapshot). Chính lựa chọn này làm mục
-    ACID có sức nặng
-  - `Job` có vòng đời trạng thái → mô hình hoá transition sao cho không rơi vào
-    trạng thái không hợp lệ
-  - Kiểu dữ liệu: `uuid` vs `bigint`, `timestamptz`, enum vs check constraint
-  - Index đặt theo **truy vấn thật sẽ chạy**, không rải bừa
-  - Ràng buộc ở tầng DB vs tầng ứng dụng — cái nào nên nằm đâu
-- [ ] **Mục 5 — TypeORM & migration.** Dịch thiết kế trên thành entity,
+- [x] **Mục 5 — Thiết kế cơ sở dữ liệu** (đã viết, đánh số 5 vì có thêm mục
+      "Yêu cầu tiên quyết" ở đầu). Gồm 4 mục con: - 5.1 Đi từ luồng nghiệp vụ tới thực thể — gạch chân danh từ trong câu
+      chuyện người dùng, ra đúng 6 bảng, kèm **ERD SVG** (đã kiểm 0 nhãn
+      tràn/chồng) - 5.2 Vì sao credit là sổ cái append-only, không phải cột `balance` — 3 câu
+      hỏi mà cột số không trả lời được; hệ quả bất ngờ: hoàn tiền không cần
+      logic riêng, chỉ là thêm một dòng ngược dấu; cái giá (`SUM` chậm dần) và
+      đường ra (snapshot) — nói rõ loạt bài KHÔNG làm snapshot vì là tối ưu sớm - 5.3 Vòng đời job — máy trạng thái, chuyển hợp lệ/không hợp lệ, và cạm bẫy
+      job kẹt `processing` vĩnh viễn (lý do `started_at` phải có từ thiết kế) - 5.4 Kiểu dữ liệu & ràng buộc — uuid vs số tự tăng, `timestamptz`, số
+      nguyên cho tiền, enum Postgres; callout "ràng buộc ở DB hay app" kết bằng
+      câu dẫn thẳng sang ACID: hai request đồng thời cùng lọt qua kiểm tra
+- [ ] **Mục 6 — TypeORM & migration.** Dịch thiết kế trên thành entity,
       migration, seed. Code listing đầy đủ, có kiểu, không `any`.
-- [ ] **Mục 6 — ACID trong thực tế.** Tái hiện **double-spend**: hai request
+- [ ] **Mục 7 — ACID trong thực tế.** Tái hiện **double-spend**: hai request
       đồng thời cùng trừ credit → số dư âm. Rồi vá bằng `SELECT FOR UPDATE`, so
       sánh các isolation level, optimistic vs pessimistic. Phần này chỉ đắt được
-      vì mục 4 đã chọn mô hình sổ cái.
+      vì mục 5 đã chọn mô hình sổ cái.
 
 ### Part 2 — Cổng vào, nginx & streaming
 
