@@ -200,25 +200,42 @@ làm nguyên tử / gộp thành một lời gọi. Part 3 nên nối tiếp m�
 Callout đóng bài nối 4 công cụ về một câu hỏi duy nhất: *việc này chạy ở đâu để
 không chặn event loop*.
 
-### Part 4 — Tách microservice & vận hành
+### Part 4 — Tách microservice & vận hành ✅ ĐÃ VIẾT XONG — LOẠT BÀI HOÀN TẤT
 
-- [ ] Tách `auth-svc` / `media-svc` khỏi monolith — nhấn mạnh: ranh giới module
-      KHÔNG đổi, chỉ đường truyền đổi
-- [ ] gRPC: proto, codegen, unary + server streaming, deadline, error model
-- [ ] **Transaction vỡ khi qua ranh giới service** — nối thẳng về phần ACID ở
-      Part 1: cùng một nghiệp vụ, giờ không còn transaction nào ôm được cả hai
-      thao tác
-- [ ] **Outbox pattern** — đảm bảo "ghi DB xong thì message chắc chắn được gửi"
-- [ ] Idempotency khi retry qua mạng
-- [ ] Cái giá phải trả: correlation ID, tracing, debug khó hơn hẳn
-- [ ] Cache-aside, chống stampede
-- [ ] Observability, graceful shutdown toàn hệ, đo tải
+`blog/build/nestjs-media-platform/part-4.html` — 2.704 từ (chưa tính code),
+20 khối code, 2 sơ đồ SVG, 8 mục H2. `check-lesson.js` xanh 11/11.
 
-**CỐ Ý KHÔNG đưa vào:** service discovery, circuit breaker, service mesh. Với 3
-service trong một `docker-compose`, chúng là giải pháp cho vấn đề chưa tồn tại —
-sẽ thành lý thuyết suông, đúng thứ loạt bài này đang tránh.
+- [x] Mục 1 mở bằng **khi nào KHÔNG tách**: lý do thật duy nhất của dự án này là
+      hai loại việc cần cách nhân bản khác nhau; kèm callout liệt kê thẳng cái giá
+- [x] Ranh giới module không đổi, chỉ đường truyền đổi (SVG trước/sau)
+- [x] gRPC: `.proto` là hợp đồng viết ra được; số thứ tự trường quan trọng hơn
+      tên; `reserved`; ts-proto sinh kiểu cho cả hai đầu; server streaming cho
+      tiến độ; deadline phải TRỪ ĐI thời gian đã tiêu rồi truyền tiếp
+- [x] **Transaction vỡ** — 3 kiểu hỏng cụ thể, đảo thứ tự không cứu được; vì sao
+      KHÔNG dùng 2PC; outbox pattern + `skip_locked` cho nhiều relay song song
+- [x] Outbox chỉ đảm bảo "ít nhất một lần" → bắt buộc đi cặp với idempotency của
+      Part 3 (unique index trên `job_id`)
+- [x] Cache-aside + dồn toa: `inFlight` (giống `refreshing` của Part 2) + TTL
+      ngẫu nhiên; cảnh báo phải xoá cache khi số dư đổi
+- [x] Correlation ID qua `AsyncLocalStorage` + gRPC metadata; 3 thứ nên đo
+      (phân vị chứ không trung bình, độ sâu hàng đợi, tỷ lệ lỗi từng lời gọi)
+- [x] Mục 7 "cố ý không làm": service discovery, circuit breaker, service mesh,
+      event sourcing — mỗi cái kèm lý do
+- [x] Mục 8 tổng kết: **cùng một bài toán quay lại 5 lần** qua cả 4 part, 3 loại
+      lời giải (khoá lại / làm nguyên tử / gộp thành một); 3 hướng đi tiếp
 
-### Part 5 — chỉ tạo NẾU cần
+## Còn lại — khi chủ dự án quyết định xuất bản
+
+Cả 4 part đã viết xong và commit local. Chưa xuất hiện ở bất kỳ đâu ngoài chính
+4 file HTML. Khi muốn công khai, thêm vào **4 chỗ**:
+
+1. `blog/index.html` — card trong lưới, tag class `--build`
+2. `index.html` (gốc) — `a.learn-card`
+3. `sitemap.xml` — 4 URL
+4. `blog/search-index.json` — 4 entry theo schema 7 khoá chuẩn
+
+Lý do hoãn vẫn giữ nguyên: site mới ~2,5 tháng tuổi, đang cần giảm nhịp xuất bản.
+Part 5 — chỉ tạo NẾU cần
 
 Được phép tách nếu Part 3 hoặc Part 4 phình quá dài. Chỗ cắt tự nhiên đã chọn:
 sau phần realtime (hết Part 3), vì lúc đó sản phẩm đã chạy trọn vòng
