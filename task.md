@@ -195,6 +195,16 @@ là thông tin cho người đọc chứ không phải lời tự bào chữa.
    (`TS2322`, `TS2375`, `TS18046`, `TS4111`) là output thật của `tsc` trên file
    cố ý viết sai. Giữ kỷ luật này cho phần ACID: con số double-spend phải từ một
    lần chạy thật, hoặc nói rõ là minh hoạ.
+6. **Prism không có sẵn TypeScript.** `blog/prism.js` chỉ vendor: bash, shell,
+   sql, json, yaml, python, wgsl, cpp, javascript, c, markup. Khối
+   `language-typescript` sẽ hiện ra KHÔNG MÀU mà không báo lỗi gì — chỉ phát
+   hiện khi nhìn bằng mắt. Đã thêm component TypeScript chính thức của Prism vào
+   cuối `blog/prism.js` (mở rộng từ grammar javascript có sẵn, kèm `decorator`
+   cho `@Module()` và alias `ts`). Đã kiểm hồi quy: cpu-cache-memory (js 273
+   token) và sql-window-functions (sql 1.458 token) vẫn tô bình thường, 0 lỗi
+   console.
+   **Còn thiếu cho các part sau:** `protobuf` (Part 4, file .proto) và
+   `nginx` (Part 2). Kiểm trước khi dùng `language-<tên>` mới.
 
 ## Bối cảnh SEO (nếu ai đó hỏi vì sao chưa đăng)
 
