@@ -33,6 +33,13 @@ lặp lại việc đã làm.
       nguyên hình thức "chữ + code listing + tên file" như quyết định gốc,
       chỉ khác là giờ nội dung code trong đó đã được xác nhận **thật sự ráp
       lại chạy được**, không còn là listing chưa kiểm.
+- [ ] **Frontend CHƯA được rà lỗi runtime — chỉ mới liệt kê cấu trúc và phát
+      hiện 5 lỗi tích hợp frontend↔backend bằng cách đọc chéo (chưa dựng
+      project React thật để chạy).** Phiên rà lỗi 15/08/2026 chỉ tập trung
+      100% vào backend (NestJS) — chưa hề chạy thử frontend. Khi kiểm chéo
+      để viết mục cấu trúc bên dưới, phát hiện thêm 5 lỗi thật (V–Z), xem
+      bảng ở mục "## Cấu trúc frontend" bên dưới. Đây là việc còn mở, giống
+      hệt các lỗi A–U ở backend nhưng **chưa sửa vào HTML**.
 
 ## Đang làm gì
 
@@ -299,6 +306,50 @@ sạch, `node dist/src/main.js` boot đủ mọi module, `POST /auth/login` tr�
 **Commit:** `29b80d2` — `fix(blog): NestJS series — vá 21 lỗi runtime tìm được
 khi làm theo bài như người đọc thật`. Chỉ commit local, chưa push (đúng ràng
 buộc vận hành ở trên).
+
+## Cấu trúc frontend
+
+Khác với backend (`src/{auth,media,job,billing}` — có hẳn mục "2. Cấu trúc
+thư mục" riêng ở Part 1), **frontend không có mục cấu trúc thư mục riêng
+trong bài** — chỉ có lệnh khởi tạo (`npm create vite@latest media-forge-web
+-- --template react-ts`) và 5 file rải rác qua Part 2 mục 8 + Part 3 mục 7.
+Ráp lại, cây thư mục frontend là:
+
+```
+media-forge-web/            # du an Vite rieng, KHONG chung repo voi backend
+└── src/
+    ├── lib/
+    │   ├── api.ts           # Part 2 §8.1 — wrapper fetch() + gop refresh vao 1 promise
+    │   └── upload.ts        # Part 2 §8.2 — uploadWithProgress() qua XMLHttpRequest
+    ├── components/
+    │   ├── VideoPlayer.tsx  # Part 2 §8.2 — phat video qua signed URL
+    │   └── JobList.tsx      # Part 3 §7   — danh sach tien do, dung useJobProgress
+    └── hooks/
+        └── useJobProgress.ts # Part 3 §7  — socket.io-client + reconnect-backfill
+```
+
+**Chưa dựng project React thật để chạy** (khác với backend đã dựng NestJS
+thật trong scratchpad) — chỉ đọc chéo frontend với backend đã sửa để lập cây
+trên. Việc đọc chéo này tự nó lộ ra **5 lỗi tích hợp frontend↔backend thật**,
+đều là cùng một dạng với lỗi E ở backend (frontend gọi một thứ mà backend
+không có), nhưng **CHƯA sửa vào HTML** — mới chỉ phát hiện:
+
+| # | Chỗ phát hiện | Lỗi |
+|---|---|---|
+| V | Part 2 §7.1 vs §7.2 | `stream.controller.ts`'s `/media/:id/play` bắt buộc `JwtAuthGuard` (cần header `Authorization`) — nhưng đây CHÍNH LÀ route mà signed-URL sinh ra để dùng khi **không gửi được header** (thẻ `<video>`). Route hiện tại không đọc `u`/`e`/`s` từ query, không gọi `SignedUrlService.verify()` ở đâu cả — một request từ `<video src>` sẽ luôn nhận 401. |
+| W | Part 2 §7.2 | Frontend gọi `GET /media/:assetId/signed-url` (`VideoPlayer.tsx`) nhưng backend **không có controller route nào** cho đường dẫn này — chỉ có `SignedUrlService.sign()`, chưa từng được gắn vào một `@Get()` nào. |
+| X | Part 3 §7 | Backend (`ProgressGateway.emitProgress`) chỉ bao giờ phát sự kiện `'job:progress'` (kể cả lúc 100%) — không có nơi nào phát `'job:done'`. `useJobProgress.ts` lại cần đúng sự kiện `'job:done'` để chuyển `status` sang `'completed'`; thiếu nó thì trạng thái kẹt ở `'processing'` mãi mãi dù job đã xong thật. |
+| Y | Part 3 §6 + §7 | Frontend gọi `GET /jobs/active` ở cả `connect`-handler lẫn `useJobProgress.ts` để đồng bộ lại sau khi mất kết nối — route này **chưa từng được định nghĩa** ở backend phần nào. |
+| Z | Part 3 §7 | `JobState.videoTitle` được `JobList.tsx` hiển thị trực tiếp, nhưng không entity nào (`Video`, `Job`) có cột `title`/`videoTitle` — trường này sẽ luôn là `undefined` khi render. |
+
+Ngoài ra `signed-url.service.ts` (Part 2 §7.2) cũng bị thiếu class wrapper +
+constructor + nguồn của `this.secret` — cùng một khuôn "đưa ra như đoạn rời,
+chưa từng ráp thành class" đã sửa nhiều lần ở backend (xem lỗi E).
+
+**Chưa quyết định sửa hay chưa** — đang chờ chủ dự án xác nhận có muốn sửa
+tiếp theo đúng độ sâu đã làm với backend (dựng thật project React trong
+scratchpad, chạy thử signed-URL + WebSocket + reconnect thật) hay chỉ ghi
+nhận rồi để đó.
 
 ## Còn lại — khi chủ dự án quyết định xuất bản
 
