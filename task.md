@@ -152,6 +152,29 @@ sau phần realtime (hết Part 3), vì lúc đó sản phẩm đã chạy trọ
 upload → transcode → xem tiến độ. Nếu tách, dời phần cache + vận hành sang
 Part 5 và để Part 4 thuần về tách service.
 
+## Giọng văn — lỗi đã mắc, đừng lặp lại
+
+Chủ dự án bắt được một tật lặp đi lặp lại: **giải thích lý do biên tập cho người
+đọc** thay vì viết như một blog thật. Ví dụ nguyên văn bị chê:
+
+> "Chỉ cài thứ dùng ngay trong bài này. Gói cho auth, hàng đợi, WebSocket để các
+> part sau cài, tránh một danh sách dài mà chưa biết dùng làm gì"
+
+Nghe như đang biện minh với người ra đề, không phải viết cho người đọc. Các biến
+thể cùng tật đã sửa: "để không cài theo quán tính", "Không thêm bảng nào chỉ vì
+chắc sau này cần", "Loạt bài này KHÔNG làm snapshot", "Phần này thường bị bỏ qua
+trong bài hướng dẫn", "Nhắc lại từ mục 1", "Sở dĩ chọn đúng sản phẩm này".
+
+**Quy tắc:** nói về HỆ THỐNG và CODE, không nói về cách bài viết được lắp ráp.
+
+- ❌ "Chỉ cài thứ dùng trong bài này, tránh danh sách dài"
+- ✅ "Part 1 cần ba nhóm gói:"
+- ❌ "Loạt bài này không làm snapshot vì đó là tối ưu hoá sớm"
+- ✅ "Ở quy mô đang xây thì chưa cần tới snapshot"
+
+Được phép giữ: câu chỉ đường thật sự cần thiết ("Part 2 sẽ dùng cái này"), vì đó
+là thông tin cho người đọc chứ không phải lời tự bào chữa.
+
 ## Gotcha đã gặp — đừng vấp lại
 
 1. **Trang nằm sâu 3 cấp** (`blog/build/<dự-án>/`) chứ không phải 2 như các
