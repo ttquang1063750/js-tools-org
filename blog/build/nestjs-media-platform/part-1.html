@@ -397,7 +397,7 @@ cd media-forge</code></pre>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-bash"># Cấu hình &amp; kiểm tra biến môi trường
-npm i @nestjs/config joi
+npm i @nestjs/config zod
 
 # Cơ sở dữ liệu
 npm i @nestjs/typeorm typeorm pg
@@ -410,9 +410,9 @@ npm i class-validator class-transformer</code></pre>
             <ul>
               <li><code>@nestjs/config</code> — đọc <code>.env</code> và cung cấp qua DI</li>
               <li>
-                <code>joi</code> — kiểm tra biến môi trường <strong>lúc khởi động</strong>. Thiếu
-                <code>DATABASE_URL</code> thì app dừng ngay với thông báo rõ, thay vì chạy được rồi mới sập lúc truy vấn
-                đầu tiên
+                <code>zod</code> — kiểm tra biến môi trường <strong>lúc khởi động</strong>, và sinh luôn kiểu TypeScript
+                từ chính schema đó. Thiếu <code>DATABASE_URL</code> thì app dừng ngay với thông báo rõ, thay vì chạy
+                được rồi mới sập lúc truy vấn đầu tiên
               </li>
               <li><code>typeorm</code> + <code>pg</code> — ORM và driver PostgreSQL</li>
               <li>
@@ -493,9 +493,49 @@ echo ".env" &gt;&gt; .gitignore</code></pre>
             </div>
 
             <p>
-              Giờ khai báo cấu hình, kèm <strong>kiểm tra bằng joi</strong>. Đây là chỗ quyết định app sập sớm hay sập
-              muộn:
+              Giờ khai báo schema cấu hình. Đây là chỗ quyết định app sập sớm hay sập muộn — và cũng là nơi kiểu dữ liệu
+              của cấu hình được sinh ra:
             </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/config/configuration.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { z } from 'zod';
+
+const configSchema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  PORT: z.coerce.number().int().positive().default(3000),
+  DATABASE_URL: z.string().url().startsWith('postgres://'),
+});
+
+// Kieu SINH RA tu schema — khong viet tay, nen khong the lech nhau.
+export type AppConfig = z.infer&lt;typeof configSchema&gt;;
+
+export function validateEnv(raw: Record&lt;string, unknown&gt;): AppConfig {
+  const result = configSchema.safeParse(raw);
+
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) =&gt; `  ${issue.path.join('.')}: ${issue.message}`)
+      .join('\n');
+    throw new Error(`Bien moi truong khong hop le:\n${issues}`);
+  }
+
+  return result.data;
+}</code></pre>
+            </div>
+
+            <p>
+              Đọc dòng <code>export type AppConfig = z.infer&lt;typeof configSchema&gt;</code> cho kỹ, vì nó là điểm
+              chính. Kiểu <code>AppConfig</code> không được viết tay — nó được <em>suy ra</em> từ schema. Thêm một biến
+              môi trường vào schema thì kiểu tự có thêm trường đó; đổi <code>z.coerce.number()</code> thành
+              <code>z.string()</code> thì mọi chỗ đang dùng nó như số lập tức báo lỗi biên dịch. Một nguồn sự thật,
+              không có bản sao nào để trôi khỏi bản gốc.
+            </p>
+
+            <p>Nối schema vào <code>ConfigModule</code>:</p>
 
             <div class="code-window">
               <div class="code-header">
@@ -504,78 +544,36 @@ echo ".env" &gt;&gt; .gitignore</code></pre>
               </div>
               <pre><code class="language-typescript">import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import * as Joi from 'joi';
+import { validateEnv } from './configuration';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      // Dừng ngay lúc khởi động nếu thiếu hoặc sai biến — không để app
-      // chạy được rồi mới sập ở truy vấn đầu tiên.
-      validationSchema: Joi.object({
-        NODE_ENV: Joi.string()
-          .valid('development', 'production', 'test')
-          .default('development'),
-        PORT: Joi.number().port().default(3000),
-        DATABASE_URL: Joi.string().uri({ scheme: ['postgres'] }).required(),
-      }),
-      validationOptions: { abortEarly: false },
+      // Chay luc khoi dong. Nem loi o day thi app dung han, khong the
+      // chay duoc roi moi sap o truy van dau tien.
+      validate: validateEnv,
     }),
   ],
 })
 export class AppConfigModule {}</code></pre>
             </div>
 
-            <p>
-              joi mới chỉ chặn giá trị sai lúc khởi động. Để phần còn lại của ứng dụng đọc cấu hình
-              <strong>có kiểu</strong> thay vì bốc <code>process.env</code> khắp nơi, thêm một tầng mỏng:
-            </p>
-
-            <div class="code-window">
-              <div class="code-header">
-                <span class="code-filename">src/config/configuration.ts</span>
-                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+            <div class="callout callout--tip">
+              <div class="callout__title">
+                💡 Vì sao <code>validate</code> chứ không phải <code>validationSchema</code>
               </div>
-              <pre><code class="language-typescript">export interface AppConfig {
-  readonly nodeEnv: 'development' | 'production' | 'test';
-  readonly port: number;
-  readonly databaseUrl: string;
-}
-
-// joi da kiem tra o config.module.ts truoc khi ham nay chay, nen o day
-// khong can kiem tra lai — chi doc va dat ten cho tu te.
-export default (): AppConfig =&gt; ({
-  nodeEnv: process.env['NODE_ENV'] as AppConfig['nodeEnv'],
-  port: Number(process.env['PORT']),
-  databaseUrl: process.env['DATABASE_URL'] as string,
-});</code></pre>
+              <div class="callout__content">
+                Tuỳ chọn <code>validationSchema</code> của <code>@nestjs/config</code> mong đợi một schema có phương
+                thức <code>.validate()</code> — đúng hình dạng của joi, không phải zod. Còn <code>validate</code> nhận
+                một <em>hàm bất kỳ</em>, nên zod vào vừa vặn. <br /><br />
+                Giá trị hàm đó trả về chính là cấu hình mà <code>ConfigService</code> phục vụ về sau. Nghĩa là
+                <code>z.coerce.number()</code> không chỉ kiểm tra — nó còn <strong>chuyển đổi</strong>: biến môi trường
+                đọc ra luôn là chuỗi, nhưng thứ đi vào ứng dụng đã là số thật.
+              </div>
             </div>
 
-            <p>
-              Chú ý <code>process.env['NODE_ENV']</code> viết bằng ngoặc vuông chứ không phải dấu chấm — đó là yêu cầu
-              của cờ <code>noPropertyAccessFromIndexSignature</code> bật ở mục 5. Cũng chính vì kiểu dữ liệu của
-              <code>process.env</code> là <code>Record&lt;string, string | undefined&gt;</code> mà tầng này tồn tại: gói
-              phần xấu xí vào một chỗ, phần còn lại của ứng dụng dùng kiểu sạch.
-            </p>
-
-            <p>Nạp nó vào <code>ConfigModule.forRoot</code> bằng tuỳ chọn <code>load</code>:</p>
-
-            <div class="code-window">
-              <div class="code-header">
-                <span class="code-filename">src/config/config.module.ts — thêm dòng load</span>
-                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
-              </div>
-              <pre><code class="language-typescript">import configuration from './configuration';
-
-ConfigModule.forRoot({
-  isGlobal: true,
-  load: [configuration],
-  validationSchema: Joi.object({ /* ... nhu tren ... */ }),
-  validationOptions: { abortEarly: false },
-});</code></pre>
-            </div>
-
-            <p>Từ giờ mọi nơi trong ứng dụng đọc cấu hình như sau, và trình biên dịch biết kiểu:</p>
+            <p>Mọi nơi trong ứng dụng đọc cấu hình như sau, và trình biên dịch biết kiểu:</p>
 
             <div class="code-window">
               <div class="code-header">
@@ -584,8 +582,8 @@ ConfigModule.forRoot({
               </div>
               <pre><code class="language-typescript">constructor(private readonly config: ConfigService&lt;AppConfig, true&gt;) {}
 
-// port co kieu number, khong phai string | undefined
-const port = this.config.get('port', { infer: true });</code></pre>
+// PORT co kieu number — z.coerce da doi chuoi thanh so tu luc khoi dong
+const port = this.config.get('PORT', { infer: true });</code></pre>
             </div>
 
             <div class="callout callout--tip">
@@ -595,17 +593,18 @@ const port = this.config.get('port', { infer: true });</code></pre>
               <div class="callout__content">
                 Nó bật chế độ <em>WasValidated</em>: <code>ConfigService</code> tin rằng cấu hình đã qua kiểm tra, nên
                 <code>get()</code> trả về <code>number</code> thay vì <code>number | undefined</code>. Bỏ nó đi thì mọi
-                chỗ đọc cấu hình đều phải xử lý <code>undefined</code> một cách thừa thãi, vì joi đã chặn từ lúc khởi
+                chỗ đọc cấu hình đều phải xử lý <code>undefined</code> một cách thừa thãi, dù schema đã chặn từ lúc khởi
                 động.
               </div>
             </div>
 
             <div class="callout callout--tip">
-              <div class="callout__title">💡 <code>abortEarly: false</code> — chi tiết nhỏ, khác biệt lớn</div>
+              <div class="callout__title">💡 Báo hết lỗi một lần, không nhỏ giọt</div>
               <div class="callout__content">
-                Mặc định joi dừng ở lỗi <em>đầu tiên</em>. Khi thiếu bốn biến môi trường, bạn sẽ sửa một cái, chạy lại,
-                thấy lỗi tiếp theo, sửa, chạy lại — bốn vòng. Với <code>abortEarly: false</code>, nó liệt kê hết trong
-                một lần. Người dựng dự án lần đầu sẽ cảm ơn dòng này.
+                <code>safeParse</code> gom <em>toàn bộ</em> lỗi vào <code>error.issues</code> chứ không dừng ở cái đầu
+                tiên. Thiếu bốn biến môi trường thì nhận được cả bốn dòng trong một lần chạy, thay vì sửa một cái, chạy
+                lại, thấy lỗi tiếp theo — bốn vòng. Người dựng dự án lần đầu sẽ cảm ơn vòng lặp <code>.map()</code> ở
+                trên, vì nếu ném thẳng <code>result.error</code> thì thứ hiện ra là một cục JSON khó đọc.
               </div>
             </div>
 
@@ -1245,7 +1244,9 @@ export class Job {
                 sự thật duy nhất — thêm trạng thái mới thì cả database lẫn kiểu TypeScript cùng cập nhật, không thể lệch
                 nhau. <br /><br />
                 Viết tay <code>type JobStatus = 'queued' | 'processing' | ...</code> song song với mảng là mở đường cho
-                hai danh sách trôi khỏi nhau sau vài tháng.
+                hai danh sách trôi khỏi nhau sau vài tháng. Đây cũng chính là lý do ở mục 4 kiểu
+                <code>AppConfig</code> được suy ra từ schema zod thay vì gõ lại thành một <code>interface</code> riêng —
+                cùng một nguyên tắc, hai chỗ khác nhau trong dự án.
               </div>
             </div>
 
@@ -1277,8 +1278,8 @@ import { sharedOptions } from './database/typeorm.options';
       inject: [ConfigService],
       useFactory: (config: ConfigService&lt;AppConfig, true&gt;) =&gt; ({
         ...sharedOptions,
-        url: config.get('databaseUrl', { infer: true }),
-        logging: config.get('nodeEnv', { infer: true }) === 'development',
+        url: config.get('DATABASE_URL', { infer: true }),
+        logging: config.get('NODE_ENV', { infer: true }) === 'development',
       }),
     }),
   ],

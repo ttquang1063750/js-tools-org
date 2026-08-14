@@ -61,7 +61,7 @@ chỉ cần thêm thư mục dưới `build/`.
 - [x] **Thêm mục 4 "Khởi tạo dự án"** — chủ dự án chỉ ra bài thiếu hẳn phần
       quan trọng nhất của thể loại này: NGƯỜI ĐỌC GÕ GÌ ĐỂ BẮT ĐẦU. Trước đó bài
       chỉ mô tả, không làm theo được. Đã bổ sung 5 mục con: `nest new`, cài gói
-      (kèm vai trò từng gói), dọn file mặc định, tạo cây thư mục, biến môi trường + kiểm bằng joi, dựng Postgres bằng Docker có healthcheck.
+      (kèm vai trò từng gói), dọn file mặc định, tạo cây thư mục, biến môi trường + kiểm bằng zod, dựng Postgres bằng Docker có healthcheck.
       **Bài học rút ra cho các mục còn lại: mỗi mục phải là MỘT HÀNH ĐỘNG
       (gõ lệnh → tạo file → viết gì trong đó → chạy thấy gì), không phải một mô
       tả.**
@@ -108,10 +108,20 @@ Commit: `2745e04`, `07062f5`, và bản viết lại monolith
       là dòng SẮP thêm) → bảng so sánh 3 cách (bi quan / SERIALIZABLE / lạc quan)
       và lý do chọn.
 
+- [x] **joi → zod** — chủ dự án hỏi cái nào mạnh hơn; tôi chỉ ra bài đang tự
+      mâu thuẫn: callout `as const` ở mục 7.2 dạy "một nguồn sự thật", nhưng mục 4
+      lại có schema joi và `interface AppConfig` viết tay chạy song song — đúng thứ
+      nó vừa phê phán. Đổi sang zod: `AppConfig = z.infer<typeof configSchema>`,
+      xoá interface viết tay và mọi `as string`. Dùng `validate:` chứ không
+      `validationSchema:` (tuỳ chọn đó đòi schema hình dạng joi có `.validate()`).
+      Khoá cấu hình theo đó thành CHỮ HOA (`config.get('PORT')`), đã sửa luôn
+      `forRootAsync` ở mục 7. Callout `abortEarly: false` thay bằng callout
+      `safeParse` gom hết lỗi. Nối chéo hai chỗ lại ở callout `as const`.
+
 - [x] **Sửa mâu thuẫn ConfigModule vs `process.env`** — chủ dự án chỉ ra: dựng
-      `AppConfigModule` có joi ở mục 4 nhưng mục 7 lại đọc thẳng `process.env`,
-      vậy validate để làm gì. Đã sửa cả hai phía: - Thêm `src/config/configuration.ts` — factory trả `AppConfig` có kiểu,
-      nạp bằng `load:`; dùng `ConfigService<AppConfig, true>` (chế độ
+      `AppConfigModule` có zod ở mục 4 nhưng mục 7 lại đọc thẳng `process.env`,
+      vậy validate để làm gì. Đã sửa cả hai phía: - Thêm `src/config/configuration.ts` — schema zod, `AppConfig = z.infer<...>`,
+      nạp bằng `validate:`; dùng `ConfigService<AppConfig, true>` (chế độ
       WasValidated → `get()` trả `number` chứ không `number | undefined`) - Tách `typeorm.options.ts` (phần dùng chung, `satisfies`) khỏi
       `data-source.ts` (chỉ cho CLI) - `app.module.ts` chuyển sang `TypeOrmModule.forRootAsync` + `useFactory`
       inject `ConfigService` - **Nói rõ ràng buộc thật thay vì giấu:** TypeORM CLI chạy ngoài container
