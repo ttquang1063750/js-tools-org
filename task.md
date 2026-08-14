@@ -99,10 +99,21 @@ Commit: `2745e04`, `07062f5`, và bản viết lại monolith
       Pitfall: `synchronize: true` xoá dữ liệu khi đổi tên cột; migration phải
       commit và không được sửa cái đã chạy. Tip: `as const` cho `JOB_STATUSES`
       làm một nguồn sự thật cho cả enum Postgres lẫn kiểu TS.
-- [ ] **Mục 8 — ACID trong thực tế.** Tái hiện **double-spend**: hai request
-      đồng thời cùng trừ credit → số dư âm. Rồi vá bằng `SELECT FOR UPDATE`, so
-      sánh các isolation level, optimistic vs pessimistic. Phần này chỉ đắt được
-      vì mục 5 đã chọn mô hình sổ cái.
+- [x] **Mục 8 — ACID trong thực tế** (đã viết). Cấu trúc: viết bản `charge()`
+      tự nhiên (đọc → kiểm tra → ghi) → tái hiện lỗi bằng `xargs -P 10` bắn 10
+      request đồng thời → số dư ÂM → sơ đồ timeline cửa sổ nguy hiểm → callout
+      "bọc transaction cũng chưa đủ" (vấn đề ở chữ I chứ không phải A) → vá bằng
+      `SELECT ... FOR UPDATE` trên dòng `users` (giải thích vì sao khoá `users`
+      chứ không khoá `credit_entries`: FOR UPDATE khoá dòng ĐANG có, mà vấn đề
+      là dòng SẮP thêm) → bảng so sánh 3 cách (bi quan / SERIALIZABLE / lạc quan)
+      và lý do chọn.
+
+**PART 1 ĐÃ VIẾT XONG.** 10 mục H2, 18 mục H3, 4.037 từ (không kể code),
+33 khối code, 3 sơ đồ SVG. Đo trên trình duyệt: typescript 1.092 token, 0 nhãn
+SVG tràn/chồng, 0 lỗi console, không tràn ngang, check-lesson.js xanh.
+
+Việc còn lại trước khi đăng: chủ dự án đọc duyệt, rồi mới thêm vào 4 chỗ
+(`blog/index.html`, `index.html` gốc, `sitemap.xml`, `blog/search-index.json`).
 
 ### Part 2 — Cổng vào, nginx & streaming
 
