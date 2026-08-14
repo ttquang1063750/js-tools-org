@@ -187,8 +187,8 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   {
     const s = makeZeroState(1);
     const probs = measureProbabilities(s);
-    checkClose('Trang thai |0> ban dau: P(0) = 1', probs[0], 1);
-    checkClose('Trang thai |0> ban dau: P(1) = 0', probs[1], 0);
+    checkClose('Initial state |0>: P(0) = 1', probs[0], 1);
+    checkClose('Initial state |0>: P(1) = 0', probs[1], 0);
   }
 
   // --- Hadamard tren |0>: chong chap DEU, P(0)=P(1)=0,5 ---
@@ -196,9 +196,9 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     let s = makeZeroState(1);
     s = applySingleQubitGate(s, GATE_H, 0, 1);
     const probs = measureProbabilities(s);
-    checkClose('H|0>: P(0) = 0,5 (chong chap deu)', probs[0], 0.5);
-    checkClose('H|0>: P(1) = 0,5 (chong chap deu)', probs[1], 0.5);
-    checkClose('H|0>: tong xac suat = 1 (dinh luat bao toan, |alpha|^2+|beta|^2=1)', probs[0] + probs[1], 1);
+    checkClose('H|0>: P(0) = 0.5 (an even superposition)', probs[0], 0.5);
+    checkClose('H|0>: P(1) = 0.5 (an even superposition)', probs[1], 0.5);
+    checkClose('H|0>: total probability = 1 (conservation, |alpha|^2+|beta|^2=1)', probs[0] + probs[1], 1);
   }
 
   // --- Pauli-X tren |0>: lat hoan toan thanh |1>, P(1)=1 ---
@@ -206,8 +206,8 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     let s = makeZeroState(1);
     s = applySingleQubitGate(s, GATE_X, 0, 1);
     const probs = measureProbabilities(s);
-    checkClose('X|0>: P(0) = 0 (lat hoan toan)', probs[0], 0);
-    checkClose('X|0>: P(1) = 1 (lat hoan toan)', probs[1], 1);
+    checkClose('X|0>: P(0) = 0 (a complete flip)', probs[0], 0);
+    checkClose('X|0>: P(1) = 1 (a complete flip)', probs[1], 1);
   }
 
   // --- Pauli-Z tren |1> (= X|0>): giu nguyen xac suat nhung dao PHA ---
@@ -215,8 +215,8 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     let s = makeZeroState(1);
     s = applySingleQubitGate(s, GATE_X, 0, 1); // -> |1>
     s = applySingleQubitGate(s, GATE_Z, 0, 1); // -> -|1>
-    checkClose('Z(X|0>): bien do cua |1> = -1 (dao pha, KHONG doi xac suat)', s[1].re, -1);
-    checkClose('Z(X|0>): P(1) van = 1 (Z khong lam doi xac suat do)', measureProbabilities(s)[1], 1);
+    checkClose('Z(X|0>): the amplitude of |1> = -1 (a phase flip, NOT a probability change)', s[1].re, -1);
+    checkClose('Z(X|0>): P(1) is still 1 (Z does not change measurement probabilities)', measureProbabilities(s)[1], 1);
   }
 
   // --- Mach Bell kinh dien: H tren qubit 0, roi CNOT(0,1) tren |00> ---
@@ -228,16 +228,16 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     s = applyCNOT(s, 0, 1, 2);
     const probs = measureProbabilities(s); // [P(00), P(01), P(10), P(11)]
     checkClose('Bell state: P(00) = 0,5', probs[0], 0.5);
-    checkClose('Bell state: P(01) = 0 (khong bao gio do duoc trang thai nay)', probs[1], 0);
-    checkClose('Bell state: P(10) = 0 (khong bao gio do duoc trang thai nay)', probs[2], 0);
+    checkClose('Bell state: P(01) = 0 (this state can never be measured)', probs[1], 0);
+    checkClose('Bell state: P(10) = 0 (this state can never be measured)', probs[2], 0);
     checkClose('Bell state: P(11) = 0,5', probs[3], 0.5);
     checkClose(
-      'Bell state: tong xac suat = 1',
+      'Bell state: total probability = 1',
       probs.reduce((a, b) => a + b, 0),
       1
     );
     checkTrue(
-      'Vuong viu luong tu: chi 2 trong 4 trang thai co the xay ra (00 hoac 11) - do 2 qubit lien ket voi nhau',
+      'Entanglement: only 2 of the 4 states can occur (00 or 11) - because the 2 qubits are linked',
       probs[1] === 0 && probs[2] === 0
     );
   }
@@ -248,8 +248,8 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     s = applySingleQubitGate(s, GATE_H, 1, 2); // H tren qubit 1 thay vi qubit 0
     s = applyCNOT(s, 1, 0, 2); // dieu khien=1, dich=0
     const probs = measureProbabilities(s);
-    checkClose('Bell state (dao vai tro qubit): P(00) = 0,5', probs[0], 0.5);
-    checkClose('Bell state (dao vai tro qubit): P(11) = 0,5', probs[3], 0.5);
+    checkClose('Bell state (roles reversed): P(00) = 0.5', probs[0], 0.5);
+    checkClose('Bell state (roles reversed): P(11) = 0.5', probs[3], 0.5);
   }
 
   // --- Muc 12.4: vi sao NISQ chua chay noi Shor ---
@@ -257,24 +257,24 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     // Ty le loi 0,1%/cong la con so TOT cho phan cung hom nay.
     const p = 0.001;
     checkClose(
-      'Mach 100 cong, loi 0,1%/cong: 90,48% kha nang cho ket qua dung',
+      'A 100-gate circuit at 0.1% error per gate: 90.48% chance of a correct result',
       circuitSuccessProbability(p, 100),
       0.904792,
       1e-5
     );
-    checkClose('Mach 1.000 cong: tut con 36,77%', circuitSuccessProbability(p, 1000), 0.367695, 1e-5);
+    checkClose('A 1,000-gate circuit: down to 36.77%', circuitSuccessProbability(p, 1000), 0.367695, 1e-5);
     checkTrue(
-      'Mach 10.000 cong: con 0,0045% - tuc ket qua gan nhu chac chan la nhieu, du CUNG mot phan cung',
+      'A 10,000-gate circuit: 0.0045% - the result is almost certainly noise, on the SAME hardware',
       circuitSuccessProbability(p, 10000) < 0.0001
     );
     checkTrue(
-      'Diem mau chot: so cong tang 100 lan lam xac suat thanh cong tut hon 20.000 lan - hong theo HAM MU, khong tuyen tinh',
+      'The key point: 100 times more gates cuts the success probability by more than 20,000 times - it degrades EXPONENTIALLY, not linearly',
       0.904792 / circuitSuccessProbability(p, 10000) > 20000
     );
     // Muon giu 90% thanh cong o 10.000 cong thi phai ha loi xuong 1e-5,
     // tuc TOT HON 100 LAN so voi phan cung hien tai.
     checkClose(
-      'Muon 10.000 cong van 90%: ty le loi phai la 0,001% - tot hon 100 lan',
+      'To keep 90% at 10,000 gates the error rate must reach 0.001% - 100 times better',
       circuitSuccessProbability(1e-5, 10000),
       0.904837,
       1e-5
@@ -282,17 +282,17 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
 
     // Sua loi doi qubit vat ly lay qubit logic.
     check(
-      'Surface code khoang cach 25: 625 qubit vat ly cho MOT qubit logic',
+      'Surface code at distance 25: 625 physical qubits for ONE logical qubit',
       surfaceCodeOverhead(25).physicalPerLogical,
       625
     );
     check(
-      'Pha RSA-2048 can ~4.000 qubit logic -> 2.500.000 qubit VAT LY (surface code d=25)',
+      'Breaking RSA-2048 needs ~4,000 logical qubits -> 2,500,000 PHYSICAL qubits (surface code d=25)',
       physicalQubitsNeeded(4000, 25),
       2500000
     );
     checkTrue(
-      'So sanh: phan cung tot nhat hien nay khoang 1.000 qubit vat ly - con thieu hon 3 bac do lon',
+      'For comparison: the best hardware today has around 1,000 physical qubits - a shortfall of more than 3 orders of magnitude',
       physicalQubitsNeeded(4000, 25) / 1000 > 1000
     );
   }

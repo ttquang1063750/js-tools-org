@@ -145,8 +145,13 @@ lines = [
     '',
 ]
 
-# Viec o cap toan site, ghi tay trong open-work.md. Chen nguyen van vao day de no
-# song sot qua moi lan sinh lai — day la cho duy nhat trong task.md duoc viet tay.
+# Viec o cap toan site (khong thuoc series nao), ghi tay trong open-work.md. Chen
+# nguyen van vao day de no song sot qua moi lan sinh lai — day la cho duy nhat
+# trong task.md duoc viet tay.
+#
+# QUY UOC: xong viec nao thi XOA HAN muc do khoi open-work.md (lich su nam trong
+# git). File phai RONG khi khong con viec nao — `--finish` tu choi don task.md
+# neu file con bat ky noi dung nao, ke ca muc da gach ngang hay chu thich.
 OPEN = f'{HERE}/open-work.md'
 if os.path.exists(OPEN):
     body = open(OPEN, encoding='utf-8').read().strip()

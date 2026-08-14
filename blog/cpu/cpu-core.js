@@ -1379,7 +1379,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   check('toBinString(9, 4) = 1001', toBinString(9, 4), '1001');
   check('toSigned(9, 4) = -7 (bu 2: 1001)', toSigned(9, 4), -7);
   check('toSigned(7, 4) = 7 (bit dau = 0)', toSigned(7, 4), 7);
-  check('toSigned(8, 4) = -8 (so am nho nhat 4-bit)', toSigned(8, 4), -8);
+  check('toSigned(8, 4) = -8 (the most negative 4-bit value)', toSigned(8, 4), -8);
 
   // --- Half adder: the exact truth table (2^2 = 4 combinations) ---
   check('halfAdder(0,0) sum', halfAdder(0, 0).sum, 0);
@@ -1387,7 +1387,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   check('halfAdder(1,0) sum', halfAdder(1, 0).sum, 1);
   check('halfAdder(1,0) carry', halfAdder(1, 0).carry, 0);
   check('halfAdder(1,1) sum = 0 (1+1 = 10, tong bit = 0)', halfAdder(1, 1).sum, 0);
-  check('halfAdder(1,1) carry = 1 (co nho)', halfAdder(1, 1).carry, 1);
+  check('halfAdder(1,1) carry = 1 (a carry is produced)', halfAdder(1, 1).carry, 1);
 
   // --- Full adder: all 8 combinations against real arithmetic ---
   for (let a = 0; a < 2; a++) {
@@ -1395,8 +1395,8 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       for (let cin = 0; cin < 2; cin++) {
         const { sum, cout } = fullAdder(a, b, cin);
         const total = a + b + cin;
-        check(`fullAdder(${a},${b},${cin}) sum khop bit thap cua ${total}`, sum, total & 1);
-        check(`fullAdder(${a},${b},${cin}) cout khop bit nho cua ${total}`, cout, total >> 1);
+        check(`fullAdder(${a},${b},${cin}) sum matches the low bit of ${total}`, sum, total & 1);
+        check(`fullAdder(${a},${b},${cin}) cout matches the carry bit of ${total}`, cout, total >> 1);
       }
     }
   }
@@ -1411,17 +1411,17 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
         if (cout !== (a + b > 15 ? 1 : 0)) ok = false;
       }
     }
-    checkTrue('rippleCarryAdd 4-bit khop (a+b)&0xF va carry tren ca 256 to hop', ok);
+    checkTrue('4-bit rippleCarryAdd matches (a+b)&0xF and the carry across all 256 combinations', ok);
   }
 
   // --- ALU: verify the REAL numbers used in quiz question 1 (5 + 4 on 4 bits) ---
   {
     const r = aluExecute(5, 4, 'ADD');
-    check('ALU 5+4: ket qua = 9 (1001)', r.result, 9);
+    check('ALU 5+4: result = 9 (1001)', r.result, 9);
     check('ALU 5+4: chuoi nhi phan = 1001', toBinString(r.result), '1001');
-    checkTrue('ALU 5+4: Z = 0 (ket qua khac 0)', r.flags.z === false);
+    checkTrue('ALU 5+4: Z = 0 (the result is non-zero)', r.flags.z === false);
     checkTrue('ALU 5+4: S = 1 (bit cao nhat = 1)', r.flags.s === true);
-    checkTrue('ALU 5+4: C = 0 (9 <= 15, khong tran khong dau)', r.flags.c === false);
+    checkTrue('ALU 5+4: C = 0 (9 <= 15, no unsigned overflow)', r.flags.c === false);
     checkTrue('ALU 5+4: V = 1 (+5 + +4 = +9 vuot [-8,7], tran co dau)', r.flags.v === true);
   }
 
@@ -1440,7 +1440,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
         if (r.result !== ((a + b) & 0xf)) ok = false;
       }
     }
-    checkTrue('ALU ADD: co C/V va ket qua khop dinh nghia tham chieu (256 to hop)', ok);
+    checkTrue('ALU ADD: the C/V flags and result match the reference definition (256 combinations)', ok);
   }
 
   // --- ALU SUB: result and flags match the two's complement reference, 256 combinations ---
@@ -1457,7 +1457,10 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
         if (r.flags.v !== refOverflow) ok = false;
       }
     }
-    checkTrue('ALU SUB: ket qua bu 2, co muon (C) va tran co dau (V) khop tham chieu (256 to hop)', ok);
+    checkTrue(
+      'ALU SUB: twos-complement result, borrow (C) and signed overflow (V) match the reference (256 combinations)',
+      ok
+    );
   }
 
   // --- ALU logical AND/OR/XOR: correct bitwise, with C and V always false ---
@@ -1469,10 +1472,10 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const rXor = aluExecute(0b1100, 0b1010, 'XOR');
     check('ALU XOR 1100 ^ 1010 = 0110', rXor.result, 0b0110);
     checkTrue(
-      'ALU phep luan ly: C va V luon = false',
+      'ALU logical operations: C and V are always false',
       !rAnd.flags.c && !rAnd.flags.v && !rOr.flags.c && !rOr.flags.v && !rXor.flags.c && !rXor.flags.v
     );
-    checkTrue('ALU XOR cua 2 gia tri bang nhau => co Zero bat', aluExecute(0b1010, 0b1010, 'XOR').flags.z === true);
+    checkTrue('ALU XOR of two equal values sets the Zero flag', aluExecute(0b1010, 0b1010, 'XOR').flags.z === true);
   }
 
   // --- Lesson 2: toy CPU fetch-decode-execute (Von Neumann: one RAM for code & data) ---
@@ -1487,9 +1490,9 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     ];
     const { state: s1, steps: steps1 } = runProgram(prog1);
     check('Toy CPU: chuong trinh 5+3 -> R2 = 8', s1.regs[2], 8);
-    check('Toy CPU: STORE ghi dung gia tri 8 vao RAM[10]', s1.ram[10], 8);
-    check('Toy CPU: chay dung 5 chu ky fetch-decode-execute (5 lenh, khong nhay)', steps1, 5);
-    check('Toy CPU: PC dung o 5 sau HALT (da fetch het 5 lenh, tang moi lan fetch)', s1.pc, 5);
+    check('Toy CPU: STORE writes the correct value 8 into RAM[10]', s1.ram[10], 8);
+    check('Toy CPU: runs exactly 5 fetch-decode-execute cycles (5 instructions, no jumps)', steps1, 5);
+    check('Toy CPU: PC stops at 5 after HALT (all 5 instructions fetched, incrementing each time)', s1.pc, 5);
 
     // Vong lap tinh tong 1+2+3+4+5 bang BEQ+JMP (kiem tra dung thu tu PC tang
     // TRUOC roi JMP/BEQ GHI DE PC o buoc execute - pitfall Muc 2.2)
@@ -1505,9 +1508,9 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       { op: 'HALT' }, // 8
     ];
     const { state: s2, steps: steps2 } = runProgram(prog2);
-    check('Toy CPU: vong lap BEQ/JMP tinh dung tong 1+2+3+4+5 = 15', s2.regs[1], 15);
-    check('Toy CPU: counter (R0) ve dung 0 sau vong lap', s2.regs[0], 0);
-    check('Toy CPU: tong so chu ky fetch-decode-execute (verified, khong bia)', steps2, 26);
+    check('Toy CPU: the BEQ/JMP loop correctly sums 1+2+3+4+5 = 15', s2.regs[1], 15);
+    check('Toy CPU: the counter (R0) reaches exactly 0 after the loop', s2.regs[0], 0);
+    check('Toy CPU: total fetch-decode-execute cycles (verified, not invented)', steps2, 26);
 
     // Pitfall Muc 2.1: self-modifying code — STORE vo tinh ghi de dung dia chi
     // dang la 1 lenh trong CHINH chuong trinh (Von Neumann: RAM chung, khong
@@ -1526,7 +1529,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       selfModifyThrew = true;
     }
     checkTrue(
-      'Pitfall self-modifying code: STORE ghi de len vung LENH khien fetch ke tiep doc phai rac, nem loi (verified that, khong phai suy dien)',
+      'Self-modifying code pitfall: a STORE overwriting the CODE region makes the next fetch read garbage and throw (verified, not inferred)',
       selfModifyThrew
     );
   }
@@ -1535,12 +1538,12 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   {
     // Khop CHINH XAC voi ma may that (verified bang tinh tay theo dac ta RISC-V)
     check(
-      'assembleRV32I ADD x3,x1,x2 = 0x2081b3 (dung dac ta RV32I)',
+      'assembleRV32I ADD x3,x1,x2 = 0x2081b3 (per the RV32I specification)',
       assembleRV32I('ADD', { rd: 3, rs1: 1, rs2: 2 }),
       0x2081b3
     );
     check(
-      'assembleRV32I SUB x3,x1,x2 = 0x402081b3 (funct7 bit dau phan biet SUB voi ADD)',
+      'assembleRV32I SUB x3,x1,x2 = 0x402081b3 (the funct7 flag bit distinguishes SUB from ADD)',
       assembleRV32I('SUB', { rd: 3, rs1: 1, rs2: 2 }),
       0x402081b3
     );
@@ -1561,7 +1564,10 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     ]) {
       const word = assembleRV32I(mnemonic, args);
       const decoded = decodeRV32I(word);
-      checkTrue(`RV32I khu hoi ${mnemonic}: decode(assemble(...)) khop mnemonic`, decoded.mnemonic === mnemonic);
+      checkTrue(
+        `RV32I round trip ${mnemonic}: decode(assemble(...)) returns the same mnemonic`,
+        decoded.mnemonic === mnemonic
+      );
     }
 
     // Datapath don chu ky: chuong trinh THAT (5+3)-2, luu vao mem[100], doc lai
@@ -1575,37 +1581,37 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       assembleRV32I('LW', { rd: 6, rs1: 0, imm: 100 }),
     ];
     const { regs, mem } = runRV32IProgram(program);
-    check('RV32I datapath: x3 = 5+3 = 8 (dung aluExecute cua Bai 1)', regs[3], 8);
+    check('RV32I datapath: x3 = 5+3 = 8 (using the aluExecute of Lesson 1)', regs[3], 8);
     check('RV32I datapath: x5 = (5+3)-2 = 6', regs[5], 6);
-    check('RV32I datapath: SW ghi dung mem[100] = 6', mem[100], 6);
-    check('RV32I datapath: LW doc lai dung x6 = 6', regs[6], 6);
+    check('RV32I datapath: SW correctly writes mem[100] = 6', mem[100], 6);
+    check('RV32I datapath: LW reads it back correctly as x6 = 6', regs[6], 6);
 
     // x0 la thanh ghi cung, MOI lenh ghi vao x0 deu bi bo qua
     const programX0 = [assembleRV32I('ADDI', { rd: 0, rs1: 0, imm: 42 })];
     const { regs: regsX0 } = runRV32IProgram(programX0);
-    check('RV32I x0 la hang so cung: ghi 42 vao x0 van doc ra 0', regsX0[0], 0);
+    check('RV32I x0 is hard-wired: writing 42 to x0 still reads back 0', regsX0[0], 0);
   }
 
   // --- Lesson 4: the 5-stage pipeline - time/CPI + RAW and load-use hazards ---
   {
     // Muc 4.2: 1 trieu lenh, pipeline 5 giai doan, xung nhip 2GHz (0,5ns/chu ky)
     check(
-      'pipelineTime: 1 trieu lenh, 5 giai doan, KHONG stall, 2GHz -> 500.002 ns',
+      'pipelineTime: 1 million instructions, 5 stages, NO stalls, 2GHz -> 500,002 ns',
       pipelineTime(1_000_000, 5, 0, 0.5),
       500002
     );
     check(
-      'pipelineTime: CUNG chuong trinh nhung co 200.000 stall -> 600.002 ns',
+      'pipelineTime: the SAME program with 200,000 stalls -> 600,002 ns',
       pipelineTime(1_000_000, 5, 200_000, 0.5),
       600002
     );
     check(
-      'pipelineCPI: khong stall = 1 (dung NGHIA cua pipeline - 1 lenh/chu ky o trang thai on dinh)',
+      'pipelineCPI: no stalls = 1 (the whole point of pipelining - 1 instruction per cycle in steady state)',
       pipelineCPI(1_000_000, 0),
       1
     );
     checkTrue(
-      'pipelineCPI: 200.000 stall tren 1 trieu lenh = 1,2 (CPI hieu dung tang dung ty le stall)',
+      'pipelineCPI: 200,000 stalls over 1 million instructions = 1.2 (effective CPI rises exactly with the stall ratio)',
       Math.abs(pipelineCPI(1_000_000, 200_000) - 1.2) < 1e-9
     );
 
@@ -1619,12 +1625,12 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const withFwd = detectHazards(seqRAW, true);
     const noFwd = detectHazards(seqRAW, false);
     check(
-      'detectHazards CO forwarding: 2 hazard RAW nhung 0 stall (forwarding giai quyet HOAN TOAN)',
+      'detectHazards WITH forwarding: 2 RAW hazards but 0 stalls (forwarding solves them COMPLETELY)',
       withFwd.totalStalls,
       0
     );
     check(
-      'detectHazards KHONG forwarding: CUNG 2 hazard nhung ton dung 4 stall (2 stall/hazard, cho toi WB)',
+      'detectHazards WITHOUT forwarding: the SAME 2 hazards cost exactly 4 stalls (2 per hazard, waiting for WB)',
       noFwd.totalStalls,
       4
     );
@@ -1636,12 +1642,12 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     ];
     const loadUseResult = detectHazards(seqLoadUse, true);
     check(
-      'Pitfall load-use: LW roi dung NGAY ket qua - forwarding VAN can dung 1 stall (khong the ve 0)',
+      'Load-use pitfall: LW then using the result IMMEDIATELY - forwarding STILL needs exactly 1 stall (it cannot reach 0)',
       loadUseResult.totalStalls,
       1
     );
     checkTrue(
-      'Pitfall load-use: hazard duoc gan dung nhan LOAD_USE (khac RAW thuong)',
+      'Load-use pitfall: the hazard is labelled LOAD_USE (distinct from an ordinary RAW)',
       loadUseResult.hazards[0].type === 'LOAD_USE'
     );
   }
@@ -1655,24 +1661,24 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       for (let inner = 0; inner < 4; inner++) nestedLoop.push('T');
       nestedLoop.push('N');
     }
-    check('Chuoi vong lap long nhau co dung 15 nhanh (3x5)', nestedLoop.length, 15);
+    check('The nested loop sequence contains exactly 15 branches (3x5)', nestedLoop.length, 15);
 
     const r1 = runPredictor(makeBranchPredictor1Bit(), nestedLoop);
-    check('Bo du doan 1-bit tren vong lap long nhau: 9/15 dung (60%)', r1.correct, 9);
-    checkTrue('Bo du doan 1-bit: ty le dung = 0.6', Math.abs(r1.rate - 0.6) < 1e-9);
+    check('1-bit predictor on the nested loop: 9/15 correct (60%)', r1.correct, 9);
+    checkTrue('1-bit predictor: accuracy = 0.6', Math.abs(r1.rate - 0.6) < 1e-9);
 
     const r2 = runPredictor(makeBranchPredictor2Bit(), nestedLoop);
-    check('Bo du doan 2-bit tren CUNG chuoi: 10/15 dung (66,7% - tot hon 1-bit)', r2.correct, 10);
-    checkTrue('Bo du doan 2-bit: ty le dung = 2/3', Math.abs(r2.rate - 2 / 3) < 1e-9);
+    check('2-bit predictor on the SAME sequence: 10/15 correct (66.7% - better than 1-bit)', r2.correct, 10);
+    checkTrue('2-bit predictor: accuracy = 2/3', Math.abs(r2.rate - 2 / 3) < 1e-9);
 
     // Pitfall Muc 5.2: 1-bit doan sai NGAY tai moi diem chuyen N->T va T->N
     // (dao dong lien tuc), con 2-bit CHIU DUNG 1 lan sai don le nho bao hoa
     checkTrue(
-      'Pitfall: bo 1-bit doan sai o CA hai bien cua moi vong lap trong (N->T va T->N)',
+      'Pitfall: the 1-bit predictor mispredicts at BOTH edges of every inner loop (N->T and T->N)',
       !r1.trace[0].hit && !r1.trace[4].hit && !r1.trace[5].hit
     );
     checkTrue(
-      '2-bit: sau khi bao hoa Rat-nhay (state=3), 1 lan N don le CHUA lam doi du doan ke tiep',
+      '2-bit: once saturated at strongly-taken (state=3), a single stray N does NOT flip the next prediction',
       r2.trace[5].predicted === 'T' // dung ngay sau N dau tien, van doan T (khac 1-bit)
     );
 
@@ -1694,19 +1700,26 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       // Dia chi 100 khoi dong tu state 0 (doan N) nen 2 lan dau sai truoc khi
       // hoc du de vuot nguong state>=2 - dung 2/4; dia chi 200 khop ngay tu
       // dau (state 0 da doan N) nen dung ca 4/4.
-      check('BHT: dia chi 100 (luon nhay) hoc dan, dung 2/4 (2 lan dau sai luc khoi dong)', correctA, 2);
-      check('BHT: dia chi 200 (khong bao gio nhay) khop ngay tu dau, dung 4/4', correctB, 4);
-      check('BHT: lan doan CUOI cua dia chi 100 da dung (T) sau khi hoc', bht.predict(100), 'T');
-      check('BHT: co dung 2 entry rieng biet cho 2 dia chi khac nhau', bht.size(), 2);
+      check(
+        'BHT: address 100 (always taken) learns gradually, 2/4 correct (the first 2 wrong during warm-up)',
+        correctA,
+        2
+      );
+      check('BHT: address 200 (never taken) matches from the start, 4/4 correct', correctB, 4);
+      check('BHT: the LAST prediction for address 100 is correct (T) once learned', bht.predict(100), 'T');
+      check('BHT: exactly 2 separate entries exist for the 2 different addresses', bht.size(), 2);
     }
 
     // Muc 5.3: CPI hieu dung - bai toan thuc te 20% lenh re nhanh, 10% doan
     // sai, penalty 3 chu ky, CPI ly tuong = 1 -> 1 + 0.2*0.1*3 = 1.06
     checkTrue(
-      'effectiveCPI(1, 0.2, 0.1, 3) = 1,06 (20% nhanh x 10% doan sai x 3 chu ky phat)',
+      'effectiveCPI(1, 0.2, 0.1, 3) = 1.06 (20% branches x 10% mispredictions x 3 penalty cycles)',
       Math.abs(effectiveCPI(1, 0.2, 0.1, 3) - 1.06) < 1e-9
     );
-    checkTrue('effectiveCPI khong co nhanh nao (branchFreq=0) = dung CPI ly tuong', effectiveCPI(1, 0, 0.1, 3) === 1);
+    checkTrue(
+      'effectiveCPI with no branches at all (branchFreq=0) equals the ideal CPI',
+      effectiveCPI(1, 0, 0.1, 3) === 1
+    );
   }
 
   // --- Lesson 6: out-of-order Tomasulo - RS/CDB/ROB, renaming removes WAR/WAW ---
@@ -1728,24 +1741,24 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const result = runTomasulo(program, { initialRegs });
 
     check(
-      'Tomasulo: R1 cuoi cung = 18 (tu instr3 SUB, DUNG thu tu chuong trinh nho in-order commit)',
+      'Tomasulo: final R1 = 18 (from instr3 SUB, in correct program order thanks to in-order commit)',
       result.regFile[1],
       18
     );
-    check('Tomasulo: R2 cuoi cung = 11 (tu instr2 ADD)', result.regFile[2], 11);
-    check('Tomasulo: tong so chu ky (verified thuc te, khong bia)', result.totalCycles, 9);
+    check('Tomasulo: final R2 = 11 (from instr2 ADD)', result.regFile[2], 11);
+    check('Tomasulo: total cycles (actually verified, not invented)', result.totalCycles, 9);
     checkTrue('Tomasulo: IPC = 3/9 = 0,333...', Math.abs(result.ipc - 3 / 9) < 1e-9);
 
     checkTrue(
-      'Pitfall WAR: instr2 (ghi R2) bat dau THUC THI (cycle 3) truoc ca khi instr1 (MUL doc R2) hoan tat writeback (cycle 6) - doi ten loai bo hoan toan WAR stall',
+      'WAR pitfall: instr2 (writing R2) begins EXECUTING at cycle 3, before instr1 (the MUL reading R2) finishes writeback at cycle 6 - renaming removes the WAR stall entirely',
       result.trace[1].execStart < result.trace[0].writeback
     );
     checkTrue(
-      'Out-of-order completion: instr2 writeback (cycle 5) XONG TRUOC instr1 (cycle 6) - hoan thanh tinh toan KHONG theo thu tu chuong trinh',
+      'Out-of-order completion: instr2 writes back at cycle 5, BEFORE instr1 at cycle 6 - computation completes out of program order',
       result.trace[1].writeback < result.trace[0].writeback
     );
     checkTrue(
-      'Nhung in-order commit: instr1 cam ket TRUOC instr2, instr2 TRUOC instr3 - dung thu tu chuong trinh du hoan thanh ngoai thu tu',
+      'Yet commit is in order: instr1 commits BEFORE instr2, instr2 BEFORE instr3 - program order holds despite out-of-order completion',
       result.trace[0].commit < result.trace[1].commit && result.trace[1].commit < result.trace[2].commit
     );
 
@@ -1753,29 +1766,36 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     // Kich ban A: lenh 1 (MUL) gay loi. Lenh 2 (ADD) da tinh xong TU TRUOC
     // (writeback cycle 5 < cycle 6 cua MUL) du no nam SAU trong chuong trinh.
     const faultA = architecturalStateOnFault(program, { initialRegs, faultAt: 0 });
-    check('Precise (co ROB), loi o lenh 1: R2 van la gia tri BAN DAU 3 - chua lenh nao commit', faultA.precise[2], 3);
     check(
-      'Imprecise (khong ROB), loi o lenh 1: R2 da bi ghi thanh 11 boi lenh 2 - mot lenh CHUA duoc phep chay',
+      'Precise (with a ROB), fault at instruction 1: R2 is still its INITIAL value 3 - nothing has committed',
+      faultA.precise[2],
+      3
+    );
+    check(
+      'Imprecise (no ROB), fault at instruction 1: R2 has been overwritten to 11 by instruction 2 - an instruction NOT yet allowed to run',
       faultA.imprecise[2],
       11
     );
-    checkTrue('Imprecise: co dung 1 lenh tu TUONG LAI da lam ban trang thai', faultA.leakedFromFuture.length === 1);
+    checkTrue(
+      'Imprecise: exactly 1 instruction from the FUTURE has dirtied the state',
+      faultA.leakedFromFuture.length === 1
+    );
 
     // Kich ban B: loi o lenh 2. Lan nay hong theo huong NGUOC LAI - lenh 1
     // (MUL, writeback cycle 6) van CHUA kip ghi khi loi lo ra o cycle 5.
     const faultB = architecturalStateOnFault(program, { initialRegs, faultAt: 1 });
     check(
-      'Precise (co ROB), loi o lenh 2: R1 = 12 - lenh 1 DA commit dung nhu chuong trinh yeu cau',
+      'Precise (with a ROB), fault at instruction 2: R1 = 12 - instruction 1 HAS committed, exactly as the program requires',
       faultB.precise[1],
       12
     );
     check(
-      'Imprecise (khong ROB), loi o lenh 2: R1 van la 10 - lenh 1 nam TRUOC loi ma chua he co hieu luc',
+      'Imprecise (no ROB), fault at instruction 2: R1 is still 10 - instruction 1 comes BEFORE the fault yet has not taken effect',
       faultB.imprecise[1],
       10
     );
     checkTrue(
-      'Ket luan: trang thai imprecise khong khop trang thai precise o CA HAI kich ban - no khong tuong ung voi bat ky thoi diem nao cua chuong trinh, nen khong the chay tiep',
+      'Conclusion: the imprecise state differs from the precise one in BOTH scenarios - it matches no point in the program at all, so it cannot be resumed',
       faultA.imprecise[2] !== faultA.precise[2] && faultB.imprecise[1] !== faultB.precise[1]
     );
 
@@ -1790,7 +1810,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     ];
     const resultNoConflict = runTomasulo(programNoConflict, { initialRegs });
     check(
-      'Tomasulo doi chung (khong WAR/WAW): tong chu ky bang HET truong hop co WAR/WAW (renaming da lam cho ca 2 truong hop giong nhau ve toc do)',
+      'Tomasulo control case (no WAR/WAW): the cycle count equals the WAR/WAW case (renaming makes both equally fast)',
       resultNoConflict.totalCycles,
       result.totalCycles
     );
@@ -1802,7 +1822,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     // -> offset = 4 bit thap = 0x4, index = 2 bit tiep = binary cua (4660>>4)&0b11
     check('splitAddress(0x1234, 4, 2).offset = 0x4', splitAddress(0x1234, 4, 2).offset, 0x4);
     checkTrue(
-      'splitAddress khu hoi: ghep lai tag<<(offset+index) | index<<offset | offset = dung dia chi goc',
+      'splitAddress round trip: recombining tag<<(offset+index) | index<<offset | offset gives the original address',
       (() => {
         const { tag, index, offset } = splitAddress(0x1234, 4, 2);
         return ((tag << 6) | (index << 4) | offset) === 0x1234;
@@ -1825,12 +1845,16 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const numSets = 4;
 
     const rowResult = runCacheTrace(makeDirectMappedCache(numSets, offsetBits), rowMajorAddrs);
-    check('Duyet theo HANG (spatial locality tot): 16/64 miss (25% - dung 1 lan/dong 4 phan tu)', rowResult.misses, 16);
-    checkTrue('Duyet theo HANG: missRate = 0,25', Math.abs(rowResult.missRate - 0.25) < 1e-9);
+    check(
+      'Walking BY ROW (good spatial locality): 16/64 misses (25% - one per line of 4 elements)',
+      rowResult.misses,
+      16
+    );
+    checkTrue('Walking BY ROW: missRate = 0.25', Math.abs(rowResult.missRate - 0.25) < 1e-9);
 
     const colResult = runCacheTrace(makeDirectMappedCache(numSets, offsetBits), colMajorAddrs);
     check(
-      'Pitfall Locality: duyet theo COT (spatial locality mat hoan toan) - MISS 100% (64/64), gap 4 lan te hon duyet hang',
+      'Locality pitfall: walking BY COLUMN (spatial locality lost entirely) - 100% misses (64/64), 4 times worse than by row',
       colResult.misses,
       64
     );
@@ -1847,26 +1871,26 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     }
     const dmResult = runCacheTrace(makeDirectMappedCache(numSets, offsetBits), conflictAddrs);
     check(
-      'Pitfall Conflict Miss: Direct-Mapped voi 2 dia chi trung index khac tag - MISS 100% (20/20), da nhau lien tuc',
+      'Conflict miss pitfall: direct-mapped with 2 addresses sharing an index but not a tag - 100% misses (20/20), evicting each other continuously',
       dmResult.misses,
       20
     );
     const saResult = runCacheTrace(makeSetAssociativeCache(numSets, 2, offsetBits), conflictAddrs);
     check(
-      'Set-Associative 2-way giai quyet HOAN TOAN conflict miss tren: chi 2/20 miss (2 lan dau, compulsory miss)',
+      '2-way set-associative solves that conflict miss COMPLETELY: only 2/20 misses (the first 2, compulsory)',
       saResult.misses,
       2
     );
 
     // AMAT 1 cap va 2 cap - vi du kinh dien (P&H): 2% mien L1, L2 hit=10,
     // 25% mien L2 CUC BO, phat DRAM=200 chu ky -> AMAT = 2,2 chu ky
-    checkTrue('amat(1, 0.05, 100) = 6 chu ky (1 + 0,05*100)', Math.abs(amat(1, 0.05, 100) - 6) < 1e-9);
+    checkTrue('amat(1, 0.05, 100) = 6 cycles (1 + 0.05*100)', Math.abs(amat(1, 0.05, 100) - 6) < 1e-9);
     checkTrue(
-      'amatTwoLevel(1, 0.02, 10, 0.25, 200) = 2,2 chu ky (vi du kinh dien Patterson&Hennessy)',
+      'amatTwoLevel(1, 0.02, 10, 0.25, 200) = 2.2 cycles (the classic Patterson & Hennessy example)',
       Math.abs(amatTwoLevel(1, 0.02, 10, 0.25, 200) - 2.2) < 1e-9
     );
     checkTrue(
-      'Pitfall Local vs Global miss rate: global L2 miss rate (tren TONG truy cap) = missRateL1*missRateL2Local = 0,02*0,25 = 0,005 - KHAC han 0,25 cuc bo',
+      'Local against global miss rate pitfall: the global L2 miss rate (over ALL accesses) = missRateL1*missRateL2Local = 0.02*0.25 = 0.005 - quite different from the local 0.25',
       Math.abs(0.02 * 0.25 - 0.005) < 1e-9
     );
 
@@ -1879,10 +1903,10 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     }
     const wtResult = runWriteTrace(makeWritePolicyCache(4, 2, 4, { writePolicy: 'through' }), rmwAccesses);
     const wbResult = runWriteTrace(makeWritePolicyCache(4, 2, 4, { writePolicy: 'back' }), rmwAccesses);
-    check('write-through: 10 lenh ghi -> 10 lan ghi xuong DRAM', wtResult.memWrites, 10);
-    check('write-back: 10 lenh ghi vao CUNG mot dong -> chi 1 lan ghi xuong DRAM (luc flush)', wbResult.memWrites, 1);
+    check('write-through: 10 stores -> 10 writes down to DRAM', wtResult.memWrites, 10);
+    check('write-back: 10 stores to the SAME line -> only 1 write down to DRAM (at the flush)', wbResult.memWrites, 1);
     checkTrue(
-      'Diem mau chot: hai chinh sach ghi co CUNG hit rate (19/20) - chung khac nhau o LUU LUONG DRAM, khong phai o hit rate',
+      'The key point: both write policies have the SAME hit rate (19/20) - they differ in DRAM TRAFFIC, not in hit rate',
       wtResult.hits === 19 && wbResult.hits === 19
     );
 
@@ -1896,16 +1920,23 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     }
     const c3dm = classifyMisses(conflictSeq, numSets, 1, offsetBits);
     const c3sa = classifyMisses(conflictSeq, numSets, 2, offsetBits);
-    check('3C chuoi conflict tren Direct-Mapped: 20 miss = 2 compulsory + 0 capacity + 18 conflict', c3dm.conflict, 18);
-    checkTrue('3C: tong 3 loai = tong so miss', c3dm.compulsory + c3dm.capacity + c3dm.conflict === c3dm.total);
-    check('3C cung chuoi do tren 2-way: conflict miss bien mat hoan toan (con 0)', c3sa.conflict, 0);
-    check('3C cung chuoi do tren 2-way: chi con 2 compulsory miss khong the tranh', c3sa.total, 2);
+    check(
+      '3C on the conflict trace, direct-mapped: 20 misses = 2 compulsory + 0 capacity + 18 conflict',
+      c3dm.conflict,
+      18
+    );
+    checkTrue(
+      '3C: the three categories sum to the total miss count',
+      c3dm.compulsory + c3dm.capacity + c3dm.conflict === c3dm.total
+    );
+    check('3C on the same trace at 2-way: conflict misses vanish entirely (down to 0)', c3sa.conflict, 0);
+    check('3C on the same trace at 2-way: only 2 unavoidable compulsory misses remain', c3sa.total, 2);
     // Cung mot ty le miss cao, nhung CHAN DOAN khac han: duyet theo cot 100%
     // miss lai KHONG phai conflict ma la capacity - chua bang cache to hon,
     // khong phai bang tang associativity. Do chinh la ly do phai phan loai 3C.
     const c3col = classifyMisses(colMajorAddrs, numSets, 1, offsetBits);
-    check('3C duyet theo COT: 64 miss = 16 compulsory + 48 capacity + 0 conflict', c3col.capacity, 48);
-    check('3C duyet theo COT: 0 conflict miss - tang associativity se KHONG cuu duoc', c3col.conflict, 0);
+    check('3C on the COLUMN walk: 64 misses = 16 compulsory + 48 capacity + 0 conflict', c3col.capacity, 48);
+    check('3C on the COLUMN walk: 0 conflict misses - raising associativity would NOT help', c3col.conflict, 0);
   }
 
   // --- Lesson 8: virtual memory - translation via TLB + page table, page table size ---
@@ -1918,7 +1949,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
 
     // Khu hoi VPN/offset
     checkTrue(
-      'splitVirtualAddress khu hoi dung dia chi goc',
+      'splitVirtualAddress round trip returns the original address',
       (() => {
         const va = (5 << pageOffsetBits) | 0x123;
         const { vpn, offset } = splitVirtualAddress(va, pageOffsetBits);
@@ -1930,34 +1961,34 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const va1 = (5 << pageOffsetBits) | 0x123;
     const r1 = translateAddress(va1, pageOffsetBits, tlb, pageTable);
     check(
-      'Lan dau truy cap VPN5: TLB MISS nhung Page Table HIT, dich dung PA',
+      'First access to VPN5: TLB MISS but page table HIT, translating to the correct PA',
       r1.physicalAddress,
       (100 << pageOffsetBits) | 0x123
     );
-    checkTrue('Lan dau truy cap VPN5: tlbHit=false (chua co trong TLB)', r1.tlbHit === false);
-    checkTrue('Lan dau truy cap VPN5: khong Page Fault (VPN co trong Page Table)', r1.pageFault === false);
+    checkTrue('First access to VPN5: tlbHit=false (not in the TLB yet)', r1.tlbHit === false);
+    checkTrue('First access to VPN5: no page fault (the VPN is in the page table)', r1.pageFault === false);
 
     const r2 = translateAddress(va1, pageOffsetBits, tlb, pageTable);
     checkTrue(
-      'Lan HAI truy cap CUNG VPN5: TLB HIT (da luu tu lan truoc) - tranh duoc 1 lan tra Page Table',
+      'SECOND access to the SAME VPN5: TLB HIT (cached from before) - saving one page table lookup',
       r2.tlbHit === true
     );
-    check('Lan hai van dich dung PA nhu lan dau', r2.physicalAddress, r1.physicalAddress);
+    check('The second access translates to the same correct PA as the first', r2.physicalAddress, r1.physicalAddress);
 
     const va4 = (7 << pageOffsetBits) | 0; // VPN 7 khong co trong Page Table
     const r4 = translateAddress(va4, pageOffsetBits, tlb, pageTable);
-    checkTrue('Pitfall: truy cap VPN chua duoc anh xa (VPN 7) -> Page Fault = true', r4.pageFault === true);
-    check('Page Fault: physicalAddress = null (khong dich duoc)', r4.physicalAddress, null);
+    checkTrue('Pitfall: accessing an unmapped VPN (VPN 7) -> page fault = true', r4.pageFault === true);
+    check('Page fault: physicalAddress = null (no translation possible)', r4.physicalAddress, null);
 
     // Dung luong Page Table don cap: 32-bit, trang 4KB, PTE 4-byte -> 4MB
     check('pageTableEntryCount(32, 12) = 2^20 trang ao co the co', pageTableEntryCount(32, 12), Math.pow(2, 20));
     check(
-      'singleLevelPageTableSizeBytes(32, 12, 4) = 4.194.304 byte (dung 4MB) - kich thuoc THAT cua Page Table 32-bit don cap',
+      'singleLevelPageTableSizeBytes(32, 12, 4) = 4,194,304 bytes (exactly 4MB) - the REAL size of a single-level 32-bit page table',
       singleLevelPageTableSizeBytes(32, 12, 4),
       4 * 1024 * 1024
     );
     checkTrue(
-      'Pitfall Muc 8.2: khong gian dia chi 48-bit (64-bit thuc te) voi Page Table DON CAP nhu tren se can 256GB - hoan toan bat kha thi',
+      'Section 8.2 pitfall: a 48-bit address space (what 64-bit machines really use) with the same SINGLE-LEVEL page table would need 256GB - entirely impossible',
       Math.abs(singleLevelPageTableSizeBytes(48, 12, 4) / (1024 * 1024 * 1024) - 256) < 1e-6
     );
 
@@ -1965,12 +1996,12 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     // (2MB) tren khong gian 32-bit -> chi 8KB, RE HON HANG TRAM LAN so voi
     // don cap (4MB) vi bang cap 2 CHI cap phat cho vung THAT SU dang dung.
     check(
-      '2 cap: 512 trang dang dung (2MB), entriesPerTable=1024, entryBytes=4 -> 8192 byte (8KB)',
+      'Two-level: 512 pages in use (2MB), entriesPerTable=1024, entryBytes=4 -> 8192 bytes (8KB)',
       twoLevelPageTableSizeBytes(512, 1024, 4),
       8192
     );
     checkTrue(
-      'Page Table 2 cap TIET KIEM hon 2 cap don RAT NHIEU khi chi dung 1 phan nho khong gian dia chi (8KB vs 4MB = re hon 512 lan)',
+      'A two-level page table saves ENORMOUSLY over a single-level one when only a small part of the address space is used (8KB against 4MB = 512 times cheaper)',
       singleLevelPageTableSizeBytes(32, 12, 4) / twoLevelPageTableSizeBytes(512, 1024, 4) === 512
     );
   }
@@ -1990,9 +2021,9 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const umaGBps = 400;
     const cmp = compareTransferMethods(bytes4K, pcieGBps, umaGBps);
     checkTrue('PCIe: thoi gian truyen 1 khung 4K ~ 1,0368 ms', Math.abs(cmp.pcieTimeMs - 1.0368) < 1e-3);
-    checkTrue('UMA: thoi gian truy cap TRUC TIEP CUNG khung 4K ~ 0,0829 ms', Math.abs(cmp.umaTimeMs - 0.0829) < 1e-3);
+    checkTrue('UMA: DIRECT access time for the SAME 4K frame ~ 0.0829 ms', Math.abs(cmp.umaTimeMs - 0.0829) < 1e-3);
     checkTrue(
-      'UMA nhanh hon PCIe DUNG bang ty le bang thong (400/32 = 12,5 lan) - khong phai con so tuy tien',
+      'UMA beats PCIe by EXACTLY the bandwidth ratio (400/32 = 12.5x) - not an arbitrary figure',
       Math.abs(cmp.speedupFactor - 12.5) < 1e-9
     );
 
@@ -2000,7 +2031,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     // - o day, chenh lech 12,5 lan hoan toan den tu BANG THONG (400 vs 32
     // GB/s), KHONG lien quan gi den xung nhip CPU/GPU
     checkTrue(
-      'Pitfall: chenh lech 12,5 lan la do TY LE BANG THONG RAM, khong phai do xung nhip CPU nhanh hay cham hon',
+      'Pitfall: the 12.5x gap comes from the RAM BANDWIDTH RATIO, not from a faster or slower CPU clock',
       Math.abs(cmp.speedupFactor - umaGBps / pcieGBps) < 1e-9
     );
 
@@ -2012,7 +2043,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       Math.abs((cmp.pcieTimeMs / frameBudgetMs) * 100 - 6.22) < 0.01
     );
     checkTrue(
-      'UMA: thoi gian truy cap chi chiem ~0,5% ngan sach 1 khung hinh o 60fps - khong dang ke',
+      'UMA: the access takes only ~0.5% of the per-frame budget at 60fps - negligible',
       (cmp.umaTimeMs / frameBudgetMs) * 100 < 1
     );
   }
@@ -2021,36 +2052,32 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   {
     // Nhan ma tran 1024x1024: N^2*(2N-1) = 2N^3 - N^2 = 2.146.435.072 FLOPs
     check(
-      'matrixMultiplyFlops(1024) = 2.146.435.072 FLOPs (dung cong thuc N^2*(2N-1))',
+      'matrixMultiplyFlops(1024) = 2,146,435,072 FLOPs (matching the formula N^2*(2N-1))',
       matrixMultiplyFlops(1024),
       2146435072
     );
-    check(
-      'matrixMultiplyFlops(2) = 12 FLOPs (2 phan tu, moi phan tu 2*2-1=3 FLOPs, x4 phan tu)',
-      matrixMultiplyFlops(2),
-      12
-    );
+    check('matrixMultiplyFlops(2) = 12 FLOPs (each of the 4 elements costs 2*2-1=3 FLOPs)', matrixMultiplyFlops(2), 12);
 
     // So sanh 3 kien truc: scalar 4 GFLOPS, SIMD 32 GFLOPS (AVX 8-wide = 8x scalar), GPU 10 TFLOPS
     const cmpCompute = compareComputeMethods(1024, 4, 32, 10);
     checkTrue(
-      'Scalar (4 GFLOPS): thoi gian ~0,5366 giay cho ma tran 1024x1024',
+      'Scalar (4 GFLOPS): ~0.5366 seconds for a 1024x1024 matrix',
       Math.abs(cmpCompute.scalarTimeSeconds - 0.5366) < 1e-3
     );
     checkTrue(
-      'SIMD (32 GFLOPS): thoi gian ~0,0671 giay - nhanh hon scalar DUNG BANG do rong vector (8x)',
+      'SIMD (32 GFLOPS): ~0.0671 seconds - beating scalar by EXACTLY the vector width (8x)',
       Math.abs(cmpCompute.simdTimeSeconds - 0.0671) < 1e-3
     );
     checkTrue(
-      'SIMD nhanh hon scalar DUNG 8 lan (= 32/4, dung do rong vector AVX, khong phai con so tuy tien)',
+      'SIMD beats scalar by EXACTLY 8x (= 32/4, the AVX vector width, not an arbitrary figure)',
       Math.abs(cmpCompute.scalarTimeSeconds / cmpCompute.simdTimeSeconds - 8) < 1e-6
     );
     checkTrue(
-      'GPU (10 TFLOPS): thoi gian ~0,000215 giay (0,215 ms) - nhanh hon scalar 2500 lan',
+      'GPU (10 TFLOPS): ~0.000215 seconds (0.215 ms) - 2500 times faster than scalar',
       Math.abs(cmpCompute.gpuTimeSeconds - 0.000215) < 1e-6
     );
     checkTrue(
-      'GPU nhanh hon scalar dung 2500 lan (= 10000/4, ty le TFLOPS/GFLOPS)',
+      'The GPU beats scalar by exactly 2500x (= 10000/4, the TFLOPS to GFLOPS ratio)',
       Math.abs(cmpCompute.scalarTimeSeconds / cmpCompute.gpuTimeSeconds - 2500) < 1
     );
 
@@ -2058,7 +2085,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     // CHAM HON ca CPU vo huong - verified thuc te bang engine
     const cmpSmall = compareComputeMethods(4, 4, 32, 10, 0.0001); // GPU co 0,1ms overhead co dinh
     checkTrue(
-      'Pitfall: ma tran 4x4 QUA NHO - GPU (co overhead nap du lieu 0,1ms) CHAM HON scalar (khong co overhead)',
+      'Pitfall: a 4x4 matrix is TOO SMALL - the GPU (carrying 0.1ms of load overhead) is SLOWER than scalar (which has none)',
       cmpSmall.gpuTimeSeconds > cmpSmall.scalarTimeSeconds
     );
 
@@ -2067,45 +2094,45 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const BW = 600e9;
     const PEAK = 10e12;
     const ridge = PEAK / BW;
-    checkTrue('Roofline: ridge point = 10e12/600e9 = 16,67 FLOP/byte', Math.abs(ridge - 16.666666666666668) < 1e-9);
+    checkTrue('Roofline: ridge point = 10e12/600e9 = 16.67 FLOP/byte', Math.abs(ridge - 16.666666666666668) < 1e-9);
 
     const aiMatmul = matmulArithmeticIntensity(1024, 4);
     const rMatmul = rooflineAttainable(aiMatmul, PEAK, BW);
     checkTrue(
-      'Roofline: AI cua matmul 1024 (FP32, chia khoi ly tuong) ~ 170,58 FLOP/byte',
+      'Roofline: the AI of a 1024 matmul (FP32, ideally tiled) ~ 170.58 FLOP/byte',
       Math.abs(aiMatmul - 170.58333333333334) < 1e-9
     );
-    check('Roofline: matmul nam BEN PHAI ridge -> nghen TINH TOAN, khong phai bang thong', rMatmul.bound, 'compute');
-    checkTrue('Roofline: matmul dat 100% thong luong dinh', Math.abs(rMatmul.fractionOfPeak - 1) < 1e-12);
+    check('Roofline: matmul sits RIGHT of the ridge -> COMPUTE-bound, not bandwidth-bound', rMatmul.bound, 'compute');
+    checkTrue('Roofline: matmul reaches 100% of peak throughput', Math.abs(rMatmul.fractionOfPeak - 1) < 1e-12);
 
     // Doi chung tren CUNG phan cung: cong vector co AI co dinh 0,167 - thap hon
     // ridge gan 100 lan, nen chi dung duoc 1% suc manh cua chinh cai GPU do.
     const aiVecAdd = vectorAddArithmeticIntensity(4);
     const rVecAdd = rooflineAttainable(aiVecAdd, PEAK, BW);
-    check('Roofline: cong vector nghen BANG THONG', rVecAdd.bound, 'memory');
+    check('Roofline: vector addition is MEMORY-bound', rVecAdd.bound, 'memory');
     checkTrue(
-      'Roofline: cong vector chi dat 100 GFLOPS = 1% thong luong dinh cua CUNG GPU do',
+      'Roofline: vector addition reaches only 100 GFLOPS = 1% of peak on that SAME GPU',
       Math.abs(rVecAdd.attainable - 100e9) < 1
     );
     checkTrue(
-      'Ket luan Roofline: cung mot GPU, matmul dung 100% suc con cong vector chi 1% - FLOPS dinh KHONG du de doan hieu nang',
+      'Roofline conclusion: on one GPU, matmul uses 100% of the power and vector addition just 1% - peak FLOPS is NOT enough to predict performance',
       rMatmul.fractionOfPeak / rVecAdd.fractionOfPeak === 100
     );
 
     // --- Muc 10.5: phan ky warp ---
     const warpUniform = warpDivergence(new Array(32).fill(true));
-    check('Warp dong nhat (ca 32 luong cung huong): 1 luot chay', warpUniform.passes, 1);
-    checkTrue('Warp dong nhat: hieu suat 100%', warpUniform.efficiency === 1);
+    check('Uniform warp (all 32 threads the same way): 1 pass', warpUniform.passes, 1);
+    checkTrue('Uniform warp: 100% efficiency', warpUniform.efficiency === 1);
 
     const warpHalf = warpDivergence(Array.from({ length: 32 }, (_, i) => i < 16));
-    check('Warp chia doi 16/16: phai chay 2 luot tuan tu', warpHalf.passes, 2);
-    checkTrue('Warp chia doi: hieu suat tut con 50%', warpHalf.efficiency === 0.5);
+    check('Warp split 16/16: must run 2 sequential passes', warpHalf.passes, 2);
+    checkTrue('Split warp: efficiency drops to 50%', warpHalf.efficiency === 0.5);
 
     // Con so dang nho nhat cua ca muc: KHONG phai chia deu moi te.
     const warpOne = warpDivergence(Array.from({ length: 32 }, (_, i) => i === 0));
-    check('CHI MOT luong lac loai trong 32: van phai chay 2 luot', warpOne.passes, 2);
+    check('JUST ONE stray thread in 32: still 2 passes', warpOne.passes, 2);
     checkTrue(
-      'CHI MOT luong lac loai cung lam hieu suat ca warp tut con 50% - y het truong hop chia doi 16/16',
+      'JUST ONE stray thread drops the whole warp to 50% efficiency - identical to the even 16/16 split',
       warpOne.efficiency === warpHalf.efficiency
     );
   }
@@ -2126,21 +2153,21 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       90
     );
     check(
-      'diesPerWafer(300mm, 150mm^2) = 416 die/wafer (chiplet nho hon 4 lan cat duoc NHIEU hon 4 lan)',
+      'diesPerWafer(300mm, 150mm^2) = 416 dies per wafer (a chiplet 4 times smaller yields MORE than 4 times as many)',
       diesPerWafer(waferDiameter, chipletArea),
       416
     );
 
     checkTrue(
-      'yieldMurphy(mono, 600mm^2) = 0,5655 (56,55% die dat chuan)',
+      'yieldMurphy(mono, 600mm^2) = 0.5655 (56.55% of dies pass)',
       Math.abs(yieldMurphy(monoArea, defectDensity) - 0.5655) < 1e-3
     );
     checkTrue(
-      'yieldMurphy(chiplet, 150mm^2) = 0,8623 (86,23% - die NHO hon co Yield CAO hon han)',
+      'yieldMurphy(chiplet, 150mm^2) = 0.8623 (86.23% - a SMALLER die yields far BETTER)',
       Math.abs(yieldMurphy(chipletArea, defectDensity) - 0.8623) < 1e-3
     );
     checkTrue(
-      'yieldPoisson(mono) < yieldMurphy(mono) - Poisson bi quan hon Murphy voi die lon',
+      'yieldPoisson(mono) < yieldMurphy(mono) - Poisson is more pessimistic than Murphy for large dies',
       yieldPoisson(monoArea, defectDensity) < yieldMurphy(monoArea, defectDensity)
     );
 
@@ -2148,13 +2175,10 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
     const costChiplet1 = costPerGoodDie(waferCost, chipletArea, waferDiameter, defectDensity, yieldMurphy);
     const costChipletTotal4 = costChiplet1 * 4; // can DUNG 4 chiplet tot cho 1 san pham hoan chinh
 
-    checkTrue('Chi phi 1 die nguyen khoi dat chuan ~ 196,49 USD', Math.abs(costMono - 196.49) < 0.1);
+    checkTrue('Cost of 1 good monolithic die ~ 196.49 USD', Math.abs(costMono - 196.49) < 0.1);
+    checkTrue('Cost of 4 good chiplets (1 finished product) ~ 111.51 USD', Math.abs(costChipletTotal4 - 111.51) < 0.1);
     checkTrue(
-      'Chi phi 4 chiplet dat chuan (1 san pham hoan chinh) ~ 111,51 USD',
-      Math.abs(costChipletTotal4 - 111.51) < 0.1
-    );
-    checkTrue(
-      'Pitfall/dong luc kinh te: chiplet RE HON nguyen khoi ~43% cho CUNG mot luong logic - dong luc that su nganh ban dan chuyen sang chiplet',
+      'The economic driver: chiplets are ~43% CHEAPER than monolithic for the SAME logic - the real reason the industry moved to chiplets',
       costChipletTotal4 < costMono && 1 - costChipletTotal4 / costMono > 0.4
     );
 
@@ -2177,13 +2201,13 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       interposerCostUsd: 15,
       packageYield: 0.97,
     });
-    checkTrue('Tinh du dong goi: nguyen khoi ~201,51 USD', Math.abs(monoPkg.total - 201.51) < 0.1);
-    checkTrue('Tinh du dong goi: chiplet ~142,79 USD', Math.abs(chipPkg.total - 142.79) < 0.1);
+    checkTrue('Counting packaging too: monolithic ~201.51 USD', Math.abs(monoPkg.total - 201.51) < 0.1);
+    checkTrue('Counting packaging too: chiplet ~142.79 USD', Math.abs(chipPkg.total - 142.79) < 0.1);
     checkTrue(
-      'Loi that su la ~29%, KHONG phai 43% - con so 43% chi dem tien silicon, bo qua de noi + test + rui ro ghep hong',
+      'The real saving is ~29%, NOT 43% - the 43% counts silicon only, ignoring the interposer, testing and assembly risk',
       Math.abs((1 - chipPkg.total / monoPkg.total) * 100 - 29) < 1
     );
-    checkTrue('Dong goi chiem ~19,5% hoa don cua chiplet, so voi 1,5% cua nguyen khoi', chipPkg.packagingShare > 0.15);
+    checkTrue('Packaging is ~19.5% of the chiplet bill, against 1.5% for monolithic', chipPkg.packagingShare > 0.15);
 
     // Va day la ly do chip NHO van lam nguyen khoi: chia nho mot con chip da
     // co yield cao san thi phan tiet kiem silicon khong bu noi tien dong goi.
@@ -2196,23 +2220,23 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
       packageYield: 0.97,
     });
     checkTrue(
-      'DAO CHIEU: voi chip nho 100mm2, chiplet DAT HON HON GAP DOI nguyen khoi (43,53 vs 20,46 USD) - chiplet khong phai luon luon dung',
+      'REVERSAL: for a small 100mm2 chip, chiplets cost MORE THAN TWICE as much as monolithic (43.53 against 20.46 USD) - chiplets are not always right',
       smallChiplet.total > smallMono.total * 2
     );
 
     // --- Muc 11.2: cai gia HIEU NANG cua viec cat nho ---
     const lat = crossDieLatency(1, 4, 0.3);
     checkTrue(
-      'Do tre trung binh khi 30% truy cap vuot die (noi bo 1ns, xuyen die 4ns) = 1,9ns',
+      'Average latency when 30% of accesses cross a die (1ns local, 4ns cross-die) = 1.9ns',
       Math.abs(lat.avg - 1.9) < 1e-9
     );
     checkTrue(
-      'Tuc cham di 1,9 lan so voi die nguyen khoi - cai gia phai tra cho phan tiet kiem chi phi',
+      'That is 1.9x slower than a monolithic die - the price paid for the cost saving',
       Math.abs(lat.slowdown - 1.9) < 1e-9
     );
     const latLow = crossDieLatency(1, 4, 0.05);
     checkTrue(
-      'Neu chia khoi luong tot de chi 5% truy cap vuot die thi chi cham 1,15 lan - chia o DAU quan trong hon chia BAO NHIEU',
+      'Partition the workload so only 5% cross a die and it costs just 1.15x - WHERE you cut matters more than HOW MANY pieces',
       Math.abs(latLow.slowdown - 1.15) < 1e-9
     );
   }
