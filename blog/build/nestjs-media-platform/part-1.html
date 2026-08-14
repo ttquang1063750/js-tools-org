@@ -526,6 +526,80 @@ import * as Joi from 'joi';
 export class AppConfigModule {}</code></pre>
             </div>
 
+            <p>
+              joi mới chỉ chặn giá trị sai lúc khởi động. Để phần còn lại của ứng dụng đọc cấu hình
+              <strong>có kiểu</strong> thay vì bốc <code>process.env</code> khắp nơi, thêm một tầng mỏng:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/config/configuration.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">export interface AppConfig {
+  readonly nodeEnv: 'development' | 'production' | 'test';
+  readonly port: number;
+  readonly databaseUrl: string;
+}
+
+// joi da kiem tra o config.module.ts truoc khi ham nay chay, nen o day
+// khong can kiem tra lai — chi doc va dat ten cho tu te.
+export default (): AppConfig =&gt; ({
+  nodeEnv: process.env['NODE_ENV'] as AppConfig['nodeEnv'],
+  port: Number(process.env['PORT']),
+  databaseUrl: process.env['DATABASE_URL'] as string,
+});</code></pre>
+            </div>
+
+            <p>
+              Chú ý <code>process.env['NODE_ENV']</code> viết bằng ngoặc vuông chứ không phải dấu chấm — đó là yêu cầu
+              của cờ <code>noPropertyAccessFromIndexSignature</code> bật ở mục 5. Cũng chính vì kiểu dữ liệu của
+              <code>process.env</code> là <code>Record&lt;string, string | undefined&gt;</code> mà tầng này tồn tại: gói
+              phần xấu xí vào một chỗ, phần còn lại của ứng dụng dùng kiểu sạch.
+            </p>
+
+            <p>Nạp nó vào <code>ConfigModule.forRoot</code> bằng tuỳ chọn <code>load</code>:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/config/config.module.ts — thêm dòng load</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import configuration from './configuration';
+
+ConfigModule.forRoot({
+  isGlobal: true,
+  load: [configuration],
+  validationSchema: Joi.object({ /* ... nhu tren ... */ }),
+  validationOptions: { abortEarly: false },
+});</code></pre>
+            </div>
+
+            <p>Từ giờ mọi nơi trong ứng dụng đọc cấu hình như sau, và trình biên dịch biết kiểu:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Cách đọc cấu hình trong một service bất kỳ</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">constructor(private readonly config: ConfigService&lt;AppConfig, true&gt;) {}
+
+// port co kieu number, khong phai string | undefined
+const port = this.config.get('port', { infer: true });</code></pre>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">
+                💡 Tham số <code>true</code> trong <code>ConfigService&lt;AppConfig, true&gt;</code>
+              </div>
+              <div class="callout__content">
+                Nó bật chế độ <em>WasValidated</em>: <code>ConfigService</code> tin rằng cấu hình đã qua kiểm tra, nên
+                <code>get()</code> trả về <code>number</code> thay vì <code>number | undefined</code>. Bỏ nó đi thì mọi
+                chỗ đọc cấu hình đều phải xử lý <code>undefined</code> một cách thừa thãi, vì joi đã chặn từ lúc khởi
+                động.
+              </div>
+            </div>
+
             <div class="callout callout--tip">
               <div class="callout__title">💡 <code>abortEarly: false</code> — chi tiết nhỏ, khác biệt lớn</div>
               <div class="callout__content">
@@ -992,65 +1066,57 @@ KHÔNG hợp lệ:  completed → bất kỳ đâu     (đã xong là xong)
 
             <h3>7.1 DataSource — một file, hai nơi dùng</h3>
             <p>
-              TypeORM CLI (để sinh migration) và ứng dụng NestJS (để chạy) đều cần cấu hình kết nối. Khai báo một lần
-              trong <code>src/database/data-source.ts</code>:
+              Ở đây có một chỗ vướng đáng nói. TypeORM CLI sinh migration bằng cách chạy một script Node độc lập —
+              <strong>không có container DI của Nest</strong>, nên không dùng được <code>ConfigService</code>. Còn ứng
+              dụng thì ngược lại: nó nên đọc qua <code>ConfigService</code> chứ không bốc <code>process.env</code>.
+            </p>
+            <p>
+              Cách giải quyết là tách đôi. Phần dùng chung — entity ở đâu, migration ở đâu, đặt tên cột thế nào — nằm
+              trong một hằng số để hai bên không trôi khỏi nhau:
             </p>
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">src/database/data-source.ts</span>
+                <span class="code-filename">src/database/typeorm.options.ts — phần dùng chung</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import { config } from 'dotenv';
-import { DataSource, type DataSourceOptions } from 'typeorm';
-import { SnakeNamingStrategy } from './snake-naming.strategy';
+              <pre><code class="language-typescript">import type { DataSourceOptions } from 'typeorm';
+import { SnakeNamingStrategy } from 'typeorm-naming-strategies';
 
-config();
-
-export const dataSourceOptions: DataSourceOptions = {
+// Moi thu KHONG phu thuoc moi truong. Chi thieu duy nhat `url`.
+export const sharedOptions = {
   type: 'postgres',
-  url: process.env['DATABASE_URL'],
-
   entities: [__dirname + '/../**/*.entity.{ts,js}'],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
-
   // Sinh cot snake_case tu thuoc tinh camelCase: passwordHash -> password_hash
   namingStrategy: new SnakeNamingStrategy(),
-
   // Bat buoc false. Xem canh bao ben duoi.
   synchronize: false,
-  logging: process.env['NODE_ENV'] === 'development',
-};
-
-export const AppDataSource = new DataSource(dataSourceOptions);</code></pre>
+} satisfies Partial&lt;DataSourceOptions&gt;;</code></pre>
             </div>
 
             <p>
-              Truy cập <code>process.env['DATABASE_URL']</code> bằng ngoặc vuông, không phải dấu chấm — đó là yêu cầu
-              của <code>noPropertyAccessFromIndexSignature</code> đã bật ở mục 5. Cài nốt hai gói:
+              Bản cho CLI. Đây là <strong>nơi duy nhất</strong> trong dự án còn đọc <code>process.env</code> trực tiếp,
+              và nó có lý do rõ ràng: script này chạy ngoài Nest:
             </p>
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">Terminal</span>
+                <span class="code-filename">src/database/data-source.ts — chỉ dành cho TypeORM CLI</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-bash">npm i dotenv typeorm-naming-strategies</code></pre>
-            </div>
+              <pre><code class="language-typescript">import { config } from 'dotenv';
+import { DataSource } from 'typeorm';
+import { sharedOptions } from './typeorm.options';
 
-            <div class="callout callout--pitfall">
-              <div class="callout__title">⚠️ <code>synchronize: true</code> — tiện, và có ngày xoá sạch dữ liệu</div>
-              <div class="callout__content">
-                Bật cờ này thì TypeORM tự đổi schema cho khớp entity mỗi lần khởi động. Rất sướng lúc mới học: thêm một
-                trường, chạy lại, cột xuất hiện.
-                <br /><br />
-                Vấn đề là nó tự quyết định <em>cách</em> đổi. Đổi tên một thuộc tính, TypeORM không biết đó là đổi tên —
-                nó thấy một cột biến mất và một cột mới xuất hiện, nên
-                <strong>xoá cột cũ cùng toàn bộ dữ liệu bên trong</strong> rồi thêm cột rỗng. Trên máy dev thì mất vài
-                dòng seed. Trên production thì mất thật. <br /><br />
-                Migration bắt bạn phải nhìn thấy câu lệnh SQL trước khi nó chạy. Chậm hơn vài giây, và đó là vài giây
-                đáng giá nhất trong quy trình.
-              </div>
+config();
+
+const url = process.env['DATABASE_URL'];
+if (!url) {
+  throw new Error('Thiếu DATABASE_URL — CLI không chạy qua ConfigModule nên phải tự kiểm.');
+}
+
+export const AppDataSource = new DataSource({ ...sharedOptions, url });</code></pre>
             </div>
 
             <h3>7.2 Viết entity</h3>
@@ -1197,12 +1263,25 @@ export class Job {
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppConfigModule } from './config/config.module';
-import { dataSourceOptions } from './database/data-source';
+import type { AppConfig } from './config/configuration';
+import { sharedOptions } from './database/typeorm.options';
 
 @Module({
-  imports: [AppConfigModule, TypeOrmModule.forRoot(dataSourceOptions)],
+  imports: [
+    AppConfigModule,
+    // forRootAsync: cho ConfigModule san sang roi moi dung ConfigService
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService&lt;AppConfig, true&gt;) =&gt; ({
+        ...sharedOptions,
+        url: config.get('databaseUrl', { infer: true }),
+        logging: config.get('nodeEnv', { infer: true }) === 'development',
+      }),
+    }),
+  ],
 })
 export class AppModule {}</code></pre>
             </div>

@@ -108,8 +108,17 @@ Commit: `2745e04`, `07062f5`, và bản viết lại monolith
       là dòng SẮP thêm) → bảng so sánh 3 cách (bi quan / SERIALIZABLE / lạc quan)
       và lý do chọn.
 
-**PART 1 ĐÃ VIẾT XONG.** 10 mục H2, 18 mục H3, 4.037 từ (không kể code),
-33 khối code, 3 sơ đồ SVG. Đo trên trình duyệt: typescript 1.092 token, 0 nhãn
+- [x] **Sửa mâu thuẫn ConfigModule vs `process.env`** — chủ dự án chỉ ra: dựng
+      `AppConfigModule` có joi ở mục 4 nhưng mục 7 lại đọc thẳng `process.env`,
+      vậy validate để làm gì. Đã sửa cả hai phía: - Thêm `src/config/configuration.ts` — factory trả `AppConfig` có kiểu,
+      nạp bằng `load:`; dùng `ConfigService<AppConfig, true>` (chế độ
+      WasValidated → `get()` trả `number` chứ không `number | undefined`) - Tách `typeorm.options.ts` (phần dùng chung, `satisfies`) khỏi
+      `data-source.ts` (chỉ cho CLI) - `app.module.ts` chuyển sang `TypeOrmModule.forRootAsync` + `useFactory`
+      inject `ConfigService` - **Nói rõ ràng buộc thật thay vì giấu:** TypeORM CLI chạy ngoài container
+      DI của Nest nên KHÔNG dùng được `ConfigService`. `data-source.ts` là nơi
+      DUY NHẤT còn đọc `process.env` trực tiếp, và bài nói rõ vì sao.
+
+**PART 1 ĐÃ VIẾT XONG.** 10 mục H2, 18 mục H3, 4.173 từ (không kể code), 36 khối code, 3 sơ đồ SVG. Đo trên trình duyệt: typescript 1.092 token, 0 nhãn
 SVG tràn/chồng, 0 lỗi console, không tràn ngang, check-lesson.js xanh.
 
 Việc còn lại trước khi đăng: chủ dự án đọc duyệt, rồi mới thêm vào 4 chỗ
