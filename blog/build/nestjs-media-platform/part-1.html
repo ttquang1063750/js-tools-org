@@ -987,6 +987,339 @@ KHÔNG hợp lệ:  completed → bất kỳ đâu     (đã xong là xong)
               </div>
             </div>
 
+            <h2>7. TypeORM &amp; migration</h2>
+            <p>Dịch thiết kế ở mục 6 thành entity, rồi sinh migration từ chính entity đó.</p>
+
+            <h3>7.1 DataSource — một file, hai nơi dùng</h3>
+            <p>
+              TypeORM CLI (để sinh migration) và ứng dụng NestJS (để chạy) đều cần cấu hình kết nối. Khai báo một lần
+              trong <code>src/database/data-source.ts</code>:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/database/data-source.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { config } from 'dotenv';
+import { DataSource, type DataSourceOptions } from 'typeorm';
+import { SnakeNamingStrategy } from './snake-naming.strategy';
+
+config();
+
+export const dataSourceOptions: DataSourceOptions = {
+  type: 'postgres',
+  url: process.env['DATABASE_URL'],
+
+  entities: [__dirname + '/../**/*.entity.{ts,js}'],
+  migrations: [__dirname + '/migrations/*.{ts,js}'],
+
+  // Sinh cot snake_case tu thuoc tinh camelCase: passwordHash -> password_hash
+  namingStrategy: new SnakeNamingStrategy(),
+
+  // Bat buoc false. Xem canh bao ben duoi.
+  synchronize: false,
+  logging: process.env['NODE_ENV'] === 'development',
+};
+
+export const AppDataSource = new DataSource(dataSourceOptions);</code></pre>
+            </div>
+
+            <p>
+              Truy cập <code>process.env['DATABASE_URL']</code> bằng ngoặc vuông, không phải dấu chấm — đó là yêu cầu
+              của <code>noPropertyAccessFromIndexSignature</code> đã bật ở mục 5. Cài nốt hai gói:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">npm i dotenv typeorm-naming-strategies</code></pre>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ <code>synchronize: true</code> — tiện, và có ngày xoá sạch dữ liệu</div>
+              <div class="callout__content">
+                Bật cờ này thì TypeORM tự đổi schema cho khớp entity mỗi lần khởi động. Rất sướng lúc mới học: thêm một
+                trường, chạy lại, cột xuất hiện.
+                <br /><br />
+                Vấn đề là nó tự quyết định <em>cách</em> đổi. Đổi tên một thuộc tính, TypeORM không biết đó là đổi tên —
+                nó thấy một cột biến mất và một cột mới xuất hiện, nên
+                <strong>xoá cột cũ cùng toàn bộ dữ liệu bên trong</strong> rồi thêm cột rỗng. Trên máy dev thì mất vài
+                dòng seed. Trên production thì mất thật. <br /><br />
+                Migration bắt bạn phải nhìn thấy câu lệnh SQL trước khi nó chạy. Chậm hơn vài giây, và đó là vài giây
+                đáng giá nhất trong quy trình.
+              </div>
+            </div>
+
+            <h3>7.2 Viết entity</h3>
+            <p>
+              Bắt đầu bằng <code>credit_entries</code> — bảng mang quyết định thiết kế ở mục 6.2, và cũng là bảng ngắn
+              nhất:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/credit-entry.entity.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+import { User } from '../auth/user.entity';
+
+export type CreditReason = 'topup' | 'transcode' | 'refund';
+
+@Entity('credit_entries')
+// Index theo dung truy van se chay nhieu nhat: cong so du cua mot user
+@Index(['userId', 'createdAt'])
+export class CreditEntry {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Column('uuid')
+  userId!: string;
+
+  @ManyToOne(() =&gt; User, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_id' })
+  user!: User;
+
+  // So nguyen, co the am. KHONG dung float cho thu phai cong dung.
+  @Column('integer')
+  delta!: number;
+
+  @Column({ type: 'varchar', length: 32 })
+  reason!: CreditReason;
+
+  // Nap tien thi khong gan voi job nao -> nullable
+  @Column({ type: 'uuid', nullable: true })
+  jobId!: string | null;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt!: Date;
+}</code></pre>
+            </div>
+
+            <p>
+              Không có phương thức <code>update()</code> hay <code>delete()</code> nào cho bảng này — đó là toàn bộ ý
+              nghĩa của sổ cái. Mọi thay đổi số dư là một dòng mới.
+            </p>
+            <p>Tiếp đến <code>jobs</code>, nơi trạng thái là enum thật của Postgres chứ không phải chuỗi tự do:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/job/job.entity.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+import { Video } from '../media/video.entity';
+
+export const JOB_STATUSES = ['queued', 'processing', 'completed', 'failed'] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
+
+@Entity('jobs')
+// Worker lay job theo trang thai + thu tu vao truoc ra truoc
+@Index(['status', 'createdAt'])
+export class Job {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Column('uuid')
+  videoId!: string;
+
+  @ManyToOne(() =&gt; Video, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'video_id' })
+  video!: Video;
+
+  @Column({ type: 'enum', enum: JOB_STATUSES, default: 'queued' })
+  status!: JobStatus;
+
+  @Column({ type: 'integer', default: 0 })
+  attempts!: number;
+
+  @Column({ type: 'text', nullable: true })
+  error!: string | null;
+
+  // Thieu cot nay thi khong phan biet duoc job dang chay voi job da chet
+  @Column({ type: 'timestamptz', nullable: true })
+  startedAt!: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  finishedAt!: Date | null;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt!: Date;
+}</code></pre>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 <code>as const</code> — một mảng, hai công dụng</div>
+              <div class="callout__content">
+                <code>JOB_STATUSES</code> vừa là giá trị chạy được (TypeORM dùng để tạo enum trong Postgres), vừa sinh
+                ra kiểu <code>JobStatus</code> ở compile time nhờ <code>(typeof JOB_STATUSES)[number]</code>. Một nguồn
+                sự thật duy nhất — thêm trạng thái mới thì cả database lẫn kiểu TypeScript cùng cập nhật, không thể lệch
+                nhau. <br /><br />
+                Viết tay <code>type JobStatus = 'queued' | 'processing' | ...</code> song song với mảng là mở đường cho
+                hai danh sách trôi khỏi nhau sau vài tháng.
+              </div>
+            </div>
+
+            <p>
+              Bốn entity còn lại (<code>User</code>, <code>RefreshToken</code>, <code>Video</code>,
+              <code>MediaAsset</code>) theo đúng khuôn trên. <code>RefreshToken</code> sẽ được dùng thật ở Part 2 khi
+              làm xoay vòng token, nhưng khai báo luôn từ giờ để migration chỉ chạy một lần.
+            </p>
+
+            <h3>7.3 Nối TypeORM vào ứng dụng</h3>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/app.module.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppConfigModule } from './config/config.module';
+import { dataSourceOptions } from './database/data-source';
+
+@Module({
+  imports: [AppConfigModule, TypeOrmModule.forRoot(dataSourceOptions)],
+})
+export class AppModule {}</code></pre>
+            </div>
+
+            <h3>7.4 Sinh và chạy migration</h3>
+            <p>Thêm script vào <code>package.json</code>:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">package.json — phần scripts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-json">{
+  "scripts": {
+    "typeorm": "typeorm-ts-node-commonjs -d src/database/data-source.ts",
+    "migration:generate": "npm run typeorm -- migration:generate",
+    "migration:run": "npm run typeorm -- migration:run",
+    "migration:revert": "npm run typeorm -- migration:revert"
+  }
+}</code></pre>
+            </div>
+
+            <p>Sinh migration đầu tiên. TypeORM so entity với database thật rồi tự viết SQL:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">npm run migration:generate -- src/database/migrations/InitSchema
+
+# → Migration src/database/migrations/1755...-InitSchema.ts has been generated successfully.</code></pre>
+            </div>
+
+            <p>
+              <strong>Mở file vừa sinh ra và đọc nó.</strong> Đây là bước hay bị bỏ qua nhất, và cũng là lý do migration
+              tồn tại — bạn thấy chính xác điều gì sắp xảy ra với dữ liệu:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/database/migrations/1755…-InitSchema.ts (trích)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">export class InitSchema1755000000000 implements MigrationInterface {
+  public async up(queryRunner: QueryRunner): Promise&lt;void&gt; {
+    await queryRunner.query(
+      `CREATE TYPE "public"."jobs_status_enum" AS ENUM('queued','processing','completed','failed')`,
+    );
+    await queryRunner.query(`CREATE TABLE "credit_entries" (
+      "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+      "user_id" uuid NOT NULL,
+      "delta" integer NOT NULL,
+      "reason" character varying(32) NOT NULL,
+      "job_id" uuid,
+      "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+      CONSTRAINT "PK_credit_entries" PRIMARY KEY ("id")
+    )`);
+    // ... cac bang con lai
+  }
+
+  public async down(queryRunner: QueryRunner): Promise&lt;void&gt; {
+    // Duong lui, sinh tu dong theo thu tu nguoc lai
+  }
+}</code></pre>
+            </div>
+
+            <p>Chạy nó:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">npm run migration:run
+
+# → Migration InitSchema1755000000000 has been executed successfully.</code></pre>
+            </div>
+
+            <p>Kiểm bằng chính psql trong container, đừng tin thông báo:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">docker exec -it forge-postgres psql -U forge -d media_forge -c '\dt'
+
+#              List of relations
+#  Schema |      Name       | Type  | Owner
+# --------+-----------------+-------+-------
+#  public | credit_entries  | table | forge
+#  public | jobs            | table | forge
+#  public | media_assets    | table | forge
+#  public | migrations      | table | forge
+#  public | refresh_tokens  | table | forge
+#  public | users           | table | forge
+#  public | videos          | table | forge</code></pre>
+            </div>
+
+            <p>
+              Bảng <code>migrations</code> là của TypeORM: nó ghi lại migration nào đã chạy, nên lần sau gọi
+              <code>migration:run</code> sẽ không chạy lại cái cũ.
+            </p>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Migration phải được commit vào git</div>
+              <div class="callout__content">
+                File migration là <strong>lịch sử schema</strong>, không phải file tạm. Đồng nghiệp kéo code về chạy
+                <code>migration:run</code> là có ngay đúng cấu trúc bạn đang có; máy chủ triển khai cũng vậy.
+                <br /><br />
+                Ngược lại, đừng bao giờ <em>sửa</em> một migration đã chạy trên môi trường khác. Nó đã được ghi vào bảng
+                <code>migrations</code> ở đó rồi nên sẽ không chạy lại — schema hai nơi lệch nhau âm thầm. Cần đổi gì
+                thì sinh migration mới.
+              </div>
+            </div>
+
             <div class="article-related">
               <h2>Các phần trong loạt bài</h2>
               <div class="article-related__links">

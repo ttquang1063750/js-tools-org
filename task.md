@@ -93,9 +93,13 @@ Commit: `2745e04`, `07062f5`, và bản viết lại monolith
       job kẹt `processing` vĩnh viễn (lý do `started_at` phải có từ thiết kế) - 5.4 Kiểu dữ liệu & ràng buộc — uuid vs số tự tăng, `timestamptz`, số
       nguyên cho tiền, enum Postgres; callout "ràng buộc ở DB hay app" kết bằng
       câu dẫn thẳng sang ACID: hai request đồng thời cùng lọt qua kiểm tra
-- [ ] **Mục 6 — TypeORM & migration.** Dịch thiết kế trên thành entity,
-      migration, seed. Code listing đầy đủ, có kiểu, không `any`.
-- [ ] **Mục 7 — ACID trong thực tế.** Tái hiện **double-spend**: hai request
+- [x] **Mục 7 — TypeORM & migration** (đã viết). 4 mục con: DataSource dùng
+      chung cho CLI + app, entity (`CreditEntry` và `Job` viết đầy đủ, 4 entity
+      còn lại nói theo khuôn), nối vào `app.module`, sinh/chạy/kiểm migration.
+      Pitfall: `synchronize: true` xoá dữ liệu khi đổi tên cột; migration phải
+      commit và không được sửa cái đã chạy. Tip: `as const` cho `JOB_STATUSES`
+      làm một nguồn sự thật cho cả enum Postgres lẫn kiểu TS.
+- [ ] **Mục 8 — ACID trong thực tế.** Tái hiện **double-spend**: hai request
       đồng thời cùng trừ credit → số dư âm. Rồi vá bằng `SELECT FOR UPDATE`, so
       sánh các isolation level, optimistic vs pessimistic. Phần này chỉ đắt được
       vì mục 5 đã chọn mô hình sổ cái.
