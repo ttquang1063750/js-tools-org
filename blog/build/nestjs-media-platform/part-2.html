@@ -241,6 +241,28 @@ export class PasswordService {
               </div>
             </div>
 
+            <p>
+              Dữ liệu vào từ request phải qua DTO trước khi chạm tới <code>AuthService</code> — đúng quy ước đã đặt từ
+              Part 1:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/auth/login.dto.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { IsEmail, IsString, MinLength } from 'class-validator';
+
+export class LoginDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @MinLength(8)
+  password!: string;
+}</code></pre>
+            </div>
+
             <h3>1.1. Đăng nhập sai thì trả lỗi gì</h3>
 
             <p>
@@ -342,12 +364,16 @@ export class AuthService {
   JWT_SECRET: z.string().min(32),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+
+  // Dung cho RedisService (gioi han tan suat o muc 5, hang doi o Part 3).
+  REDIS_URL: z.string().url().startsWith('redis://').default('redis://localhost:6379'),
 });</code></pre>
             </div>
 
             <p>
-              Thêm ba dòng vào schema là kiểu <code>AppConfig</code> tự có thêm ba trường — đúng như mục 4 của Part 1 đã
-              nói. Giờ dựng module JWT, đọc khoá qua <code>ConfigService</code> chứ không đụng <code>process.env</code>:
+              Thêm bốn dòng vào schema là kiểu <code>AppConfig</code> tự có thêm bốn trường — đúng như mục 4 của Part 1
+              đã nói. Giờ dựng module JWT, đọc khoá qua <code>ConfigService</code> chứ không đụng
+              <code>process.env</code>:
             </p>
 
             <div class="code-window">
@@ -400,7 +426,9 @@ export class AuthModule {}</code></pre>
                 <span class="code-filename">src/auth/jwt-payload.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">export const USER_ROLES = ['user', 'admin'] as const;
+              <pre><code class="language-typescript">import type { Request } from 'express';
+
+export const USER_ROLES = ['user', 'admin'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 export const USER_PLANS = ['free', 'pro'] as const;
@@ -419,6 +447,19 @@ export interface JwtPayload {
 export interface AuthedRequest extends Request {
   readonly user: JwtPayload;
 }</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Thiếu import này thì <code>AuthedRequest</code> âm thầm sai kiểu</div>
+              <div class="callout__content">
+                Không có <code>import type { Request } from 'express'</code>, TypeScript không hiểu
+                <code>Request</code> là kiểu nào và lặng lẽ suy ra <code>Request</code> toàn cục của Fetch API (có sẵn
+                từ <code>@types/node</code>) thay vì kiểu <code>Request</code> của Express. Hai kiểu trùng tên nhưng
+                khác hẳn nhau: bản Fetch không có <code>cookies</code>, không index được vào <code>headers</code> bằng
+                dấu ngoặc vuông, và không phải một Node.js <code>Readable</code> stream. Hậu quả chỉ lộ ra ở nơi dùng
+                <code>AuthedRequest</code> — ví dụ <code>UploadController</code> ở mục 6 — dưới dạng những lỗi kiểu khó
+                hiểu, không phải ngay tại đây.
+              </div>
             </div>
 
             <div class="code-window">
@@ -483,16 +524,58 @@ export const CurrentUser = createParamDecorator(
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">// TRUOC — userId do client gui. Ai cung tieu tien cua ai cung duoc.
-@Post('spend')
-spend(@Body() dto: SpendDto) {
-  return this.billing.spend(dto.userId, dto.amount);
+@Post('charge')
+charge(@Body() dto: ChargeDto) {
+  return this.billing.charge(dto.userId, dto.amount, dto.reason);
 }
 
 // SAU — userId lay tu chu ky, client khong noi vao duoc.
-@Post('spend')
+@Post('charge')
 @UseGuards(JwtAuthGuard)
-spend(@CurrentUser() user: JwtPayload, @Body() dto: SpendDto) {
-  return this.billing.spend(user.sub, dto.amount);
+async charge(@CurrentUser() user: JwtPayload, @Body() dto: ChargeDto) {
+  await this.billing.charge(user.sub, dto.amount, dto.reason);
+  return { balance: await this.billing.getBalance(user.sub) };
+}</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Tên method phải khớp với <code>BillingService</code> thật</div>
+              <div class="callout__content">
+                <code>BillingService</code> ở Part 1 chỉ có <code>charge()</code> và <code>getBalance()</code> — không
+                có <code>spend()</code>. Route và tên method ở đây đổi thành <code>charge</code> để khớp đúng những gì
+                Part 1 đã viết; <code>ChargeDto</code> khai báo <code>amount</code> và <code>reason</code> (kiểu
+                <code>CreditReason</code> từ <code>credit-entry.entity.ts</code>), qua <code>class-validator</code> như
+                quy ước ở mục 4 của Part 1.
+              </div>
+            </div>
+
+            <p>
+              Bọc lại thành một controller hoàn chỉnh — bản "sau" ở trên là method thật, phần còn lại chỉ là khung quen
+              thuộc:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/billing.controller.ts — khung đầy đủ</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { JwtPayload } from '../auth/jwt-payload';
+import { BillingService } from './billing.service';
+import { ChargeDto } from './charge.dto';
+
+@Controller('billing')
+export class BillingController {
+  constructor(private readonly billing: BillingService) {}
+
+  @Post('charge')
+  @UseGuards(JwtAuthGuard)
+  async charge(@CurrentUser() user: JwtPayload, @Body() dto: ChargeDto): Promise&lt;{ balance: number }&gt; {
+    await this.billing.charge(user.sub, dto.amount, dto.reason);
+    return { balance: await this.billing.getBalance(user.sub) };
+  }
 }</code></pre>
             </div>
 
@@ -692,7 +775,7 @@ export class RefreshToken {
   usedAt!: Date | null;
 
   // Token nao da thay the token nay. Dung cho khoang an han o muc 3.3.
-  @Column({ name: 'replaced_by_hash', length: 64, nullable: true })
+  @Column({ name: 'replaced_by_hash', type: 'varchar', length: 64, nullable: true })
   replacedByHash!: string | null;
 
   @Column({ name: 'expires_at', type: 'timestamptz' })
@@ -709,6 +792,21 @@ export class RefreshToken {
               <code>npm run migration:generate -- AddReplacedByHash</code> là TypeORM tự so sánh entity với schema hiện
               tại và sinh ra đúng một lệnh <code>ALTER TABLE</code>.
             </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ <code>type: 'varchar'</code> ở đây không phải thừa</div>
+              <div class="callout__content">
+                Bỏ <code>type</code> đi và để TypeORM tự suy từ kiểu TypeScript sẽ làm
+                <code>migration:generate</code> chết ngay với
+                <code>DataTypeNotSupportedError: Data type "Object" ... is not supported</code>. Nguyên nhân nằm ở
+                <code>reflect-metadata</code>: TypeScript phát ra kiểu thiết kế (<code>design:type</code>) cho một union
+                như <code>string | null</code> thành <code>Object</code> chứ không phải <code>String</code> — phần
+                <code>| null</code> làm mất thông tin. <code>usedAt: Date | null</code> ở trên không gặp lỗi này vì nó
+                đã khai báo <code>type: 'timestamptz'</code> tường minh; quy tắc chung là
+                <strong>mọi cột nullable ngoài kiểu nguyên thuỷ không union đều cần khai <code>type</code> tay</strong>,
+                không dựa vào suy luận.
+              </div>
+            </div>
 
             <p>
               Refresh token cũng là mật khẩu — nó đổi được lấy quyền truy cập. Nhưng ở đây dùng SHA-256 chứ không phải
@@ -736,6 +834,7 @@ export class RefreshToken {
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">import { randomBytes, createHash, randomUUID } from 'node:crypto';
+import type { EntityManager } from 'typeorm';
 
 export interface TokenPair {
   readonly accessToken: string;
@@ -746,19 +845,25 @@ private sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-private async issuePair(user: User, familyId: string): Promise&lt;TokenPair&gt; {
+// manager tuy chon: khi goi tu trong mot transaction dang mo (xoay vong o
+// muc 3.3), insert token moi phai dung CHUNG transaction do voi thao tac
+// danh dau token cu — dung repo tiem (khong truyen manager) o day se tach
+// hai thao tac ra hai ket noi khac nhau, mat tinh nguyen tu cua ca chuoi.
+private async issuePair(user: User, familyId: string, manager?: EntityManager): Promise&lt;TokenPair&gt; {
   const accessToken = await this.jwt.signAsync({ sub: user.id, role: user.role, plan: user.plan });
 
   // 32 byte ngau nhien tu nguon cua he dieu hanh. Khong dung Math.random().
   const refreshToken = randomBytes(32).toString('base64url');
   const days = this.config.get('REFRESH_TOKEN_TTL_DAYS', { infer: true });
+  const repo = manager ? manager.getRepository(RefreshToken) : this.refreshTokens;
 
-  await this.refreshTokens.insert({
+  await repo.insert({
     userId: user.id,
     tokenHash: this.sha256(refreshToken),
     familyId,
     expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
     usedAt: null,
+    replacedByHash: null,
   });
 
   return { accessToken, refreshToken };
@@ -771,7 +876,7 @@ async login(email: string, plain: string): Promise&lt;TokenPair&gt; {
 }</code></pre>
             </div>
 
-            <div class="callout callout--warn">
+            <div class="callout callout--warning">
               <div class="callout__title">⚠️ <code>Math.random()</code> không dùng được ở đây</div>
               <div class="callout__content">
                 <code>Math.random()</code> là bộ sinh giả ngẫu nhiên được tối ưu cho tốc độ, không phải cho việc đoán
@@ -786,7 +891,9 @@ async login(email: string, plain: string): Promise&lt;TokenPair&gt; {
 
             <p>
               Đây là hàm quan trọng nhất của mục này. Nó phải làm bốn việc trong <em>cùng một</em> transaction: tìm
-              token, phát hiện tái sử dụng, đánh dấu đã dùng, phát cặp mới.
+              token, phát hiện tái sử dụng, đánh dấu đã dùng, phát cặp mới. Viết thành hai hàm — một hàm công khai mở
+              transaction, một hàm riêng làm việc thật — vì mục 3.3 bên dưới cần <em>gọi đệ quy</em> vào đúng phần việc
+              thật đó khi gặp khoảng ân hạn.
             </p>
 
             <div class="code-window">
@@ -795,36 +902,39 @@ async login(email: string, plain: string): Promise&lt;TokenPair&gt; {
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">async refresh(presented: string): Promise&lt;TokenPair&gt; {
-  const hash = this.sha256(presented);
+  return this.dataSource.transaction((manager) =&gt; this.reissueFrom(manager, this.sha256(presented)));
+}
 
-  return this.dataSource.transaction(async (manager) =&gt; {
-    // Khoa dong nay lai. Hai tab cung refresh thi mot cai phai xep hang.
-    const row = await manager
-      .createQueryBuilder(RefreshToken, 'rt')
-      .setLock('pessimistic_write')
-      .where('rt.token_hash = :hash', { hash })
-      .getOne();
+private async reissueFrom(manager: EntityManager, hash: string): Promise&lt;TokenPair&gt; {
+  // Khoa dong nay lai. Hai tab cung refresh thi mot cai phai xep hang.
+  const row = await manager
+    .createQueryBuilder(RefreshToken, 'rt')
+    .setLock('pessimistic_write')
+    .where('rt.token_hash = :hash', { hash })
+    .getOne();
 
-    if (row === null) {
-      throw new UnauthorizedException('Refresh token khong hop le');
-    }
+  if (row === null) {
+    throw new UnauthorizedException('Refresh token khong hop le');
+  }
 
-    // TAI SU DUNG. Ban sao dang ton tai o dau do — dot ca family.
-    if (row.usedAt !== null) {
-      await manager.delete(RefreshToken, { familyId: row.familyId });
-      throw new UnauthorizedException('Phien dang nhap da bi thu hoi');
-    }
+  // TAI SU DUNG. Ban sao dang ton tai o dau do — dot ca family (xem tiep muc 3.3).
+  if (row.usedAt !== null) {
+    await manager.delete(RefreshToken, { familyId: row.familyId });
+    throw new UnauthorizedException('Phien dang nhap da bi thu hoi');
+  }
 
-    if (row.expiresAt.getTime() &lt; Date.now()) {
-      throw new UnauthorizedException('Refresh token da het han');
-    }
+  if (row.expiresAt.getTime() &lt; Date.now()) {
+    throw new UnauthorizedException('Refresh token da het han');
+  }
 
-    row.usedAt = new Date();
-    await manager.save(row);
+  const user = await manager.findOneOrFail(User, { where: { id: row.userId } });
+  const pair = await this.issuePair(user, row.familyId, manager);
 
-    const user = await manager.findOneOrFail(User, { where: { id: row.userId } });
-    return this.issuePair(user, row.familyId, manager);
-  });
+  row.usedAt = new Date();
+  row.replacedByHash = this.sha256(pair.refreshToken);
+  await manager.save(row);
+
+  return pair;
 }</code></pre>
             </div>
 
@@ -867,7 +977,93 @@ if (row.usedAt !== null) {
 }</code></pre>
             </div>
 
-            <div class="callout callout--warn">
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Nhánh báo động ở trên không thật sự đốt được gì</div>
+              <div class="callout__content">
+                Nhìn lại nhánh báo động: <code>await manager.delete(...)</code> rồi <code>throw</code>, cả hai đều nằm
+                trong <em>cùng một</em> <code>dataSource.transaction()</code> đang mở ở <code>refresh()</code>. Khi hàm
+                callback bên trong <code>transaction()</code> ném lỗi, TypeORM tự động
+                <strong>rollback toàn bộ</strong> những gì đã làm bên trong nó — kể cả lệnh xoá family bạn vừa gọi. Kết
+                quả: request bị từ chối đúng như mong đợi, nhưng family <em>không hề bị đốt</em>. Token cũ vẫn nằm
+                nguyên trong bảng, và lần phát hiện tái sử dụng kế tiếp lặp lại y hệt — cơ chế được quảng cáo là "đốt cả
+                family" thực chất không làm gì cả. <br /><br />
+                Cách vá: đừng xoá <em>bên trong</em> transaction đang khoá dòng đó. Để <code>reissueFrom</code> trả về
+                một <strong>tín hiệu</strong> thay vì tự ném lỗi khi gặp tái sử dụng thật, rồi xoá family
+                <em>sau khi</em> transaction đó đã đóng — dùng repository tiêm (<code>this.refreshTokens</code>), không
+                phải <code>manager</code> của transaction vừa kết thúc, để lệnh xoá này chạy trên một giao dịch độc lập,
+                không bị cuốn theo bất kỳ rollback nào:
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/auth/auth.service.ts — tách tín hiệu ra khỏi transaction</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">async refresh(presented: string): Promise&lt;TokenPair&gt; {
+  const hash = this.sha256(presented);
+  const result = await this.dataSource.transaction((manager) =&gt; this.tryReissue(manager, hash));
+
+  if (result.kind === 'reused') {
+    // Repo tiem mo mot giao dich RIENG, doc lap voi giao dich khoa dong da dong o tren.
+    await this.refreshTokens.delete({ familyId: result.familyId });
+    throw new UnauthorizedException('Phien dang nhap da bi thu hoi');
+  }
+
+  return result.pair;
+}
+
+private async tryReissue(
+  manager: EntityManager,
+  hash: string,
+): Promise&lt;{ kind: 'ok'; pair: TokenPair } | { kind: 'reused'; familyId: string }&gt; {
+  const row = await manager
+    .createQueryBuilder(RefreshToken, 'rt')
+    .setLock('pessimistic_write')
+    .where('rt.token_hash = :hash', { hash })
+    .getOne();
+
+  if (row === null) {
+    throw new UnauthorizedException('Refresh token khong hop le');
+  }
+
+  if (row.usedAt !== null) {
+    const age = Date.now() - row.usedAt.getTime();
+
+    if (age &lt; GRACE_MS &amp;&amp; row.replacedByHash !== null) {
+      return this.tryReissue(manager, row.replacedByHash);
+    }
+
+    // KHONG throw o day. Tin hieu ra ngoai de refresh() xu ly sau khi
+    // transaction nay da dong — xem ly do o callout ben tren.
+    return { kind: 'reused', familyId: row.familyId };
+  }
+
+  if (row.expiresAt.getTime() &lt; Date.now()) {
+    throw new UnauthorizedException('Refresh token da het han');
+  }
+
+  const user = await manager.findOneOrFail(User, { where: { id: row.userId } });
+  const pair = await this.issuePair(user, row.familyId, manager);
+
+  row.usedAt = new Date();
+  row.replacedByHash = this.sha256(pair.refreshToken);
+  await manager.save(row);
+
+  return { kind: 'ok', pair };
+}</code></pre>
+            </div>
+
+            <p>
+              Hàm <code>reissueFrom</code> ở hai khối phía trên chỉ để dễ theo dõi từng mảnh riêng lẻ —
+              <code>tryReissue</code> là bản ghép đầy đủ, thay thế hoàn toàn cho nó. Cấu trúc tín hiệu (<code
+                >{ kind: 'ok' | 'reused', ... }</code
+              >) thay vì <code>throw</code> ngay là điểm mấu chốt: nó cho <code>refresh()</code> cơ hội chờ transaction
+              đóng xong rồi mới quyết định bước tiếp theo, đúng như nguyên tắc "transaction chỉ nên bảo vệ những gì
+              <em>thật sự</em> cần nguyên tử cùng nhau".
+            </p>
+
+            <div class="callout callout--warning">
               <div class="callout__title">⚠️ Khoảng ân hạn là một đánh đổi, không phải cải tiến</div>
               <div class="callout__content">
                 Trong 30 giây đó, một kẻ trộm dùng lại token đúng lúc sẽ không bị phát hiện. Bạn đang đổi một chút an
@@ -912,6 +1108,27 @@ async logoutEverywhere(userId: string): Promise&lt;void&gt; {
               tin mỗi access token: bắt nhập lại mật khẩu ngay tại chỗ.
             </p>
 
+            <p>
+              <code>AuthService</code> vừa được lắp từng mảnh qua năm khối phía trên — mỗi khối chỉ thêm những gì
+              constructor cần cho riêng phần đó, nên constructor cuối cùng chưa từng xuất hiện trọn vẹn. Ráp lại một lần
+              cho rõ:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/auth/auth.service.ts — constructor đầy đủ</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">constructor(
+  @InjectRepository(User) private readonly users: Repository&lt;User&gt;,
+  @InjectRepository(RefreshToken) private readonly refreshTokens: Repository&lt;RefreshToken&gt;,
+  private readonly passwords: PasswordService,
+  private readonly jwt: JwtService,
+  private readonly config: ConfigService&lt;AppConfig, true&gt;,
+  private readonly dataSource: DataSource,
+) {}</code></pre>
+            </div>
+
             <h3>3.5. Trả refresh token qua cookie hay qua body</h3>
 
             <p>Hai lựa chọn, và chúng thua ở hai kiểu tấn công khác nhau.</p>
@@ -950,6 +1167,121 @@ async logoutEverywhere(userId: string): Promise&lt;void&gt; {
                 niệm cookie tự động và các nền tảng đó có kho lưu trữ an toàn riêng. <br /><br />
                 Dự án này để endpoint hỗ trợ cả hai: đọc refresh token từ cookie trước, không có thì đọc từ body. Chỉ
                 vài dòng, mà sau này thêm ứng dụng di động thì không phải sửa gì.
+              </div>
+            </div>
+
+            <p>
+              Ghép mọi thứ ở mục 3 lại thành controller thật — <code>auth.module.ts</code> ở đầu mục đã khai nó rồi:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/auth/refresh.dto.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { IsOptional, IsString } from 'class-validator';
+
+export class RefreshDto {
+  // Chi dung khi client khong phai trinh duyet (khong co cookie tu dong).
+  @IsOptional()
+  @IsString()
+  refreshToken?: string;
+}</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/auth/auth.controller.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Body, Controller, HttpCode, HttpStatus, Post, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { ConfigService } from '@nestjs/config';
+import { AuthService } from './auth.service';
+import { LoginDto } from './login.dto';
+import { RefreshDto } from './refresh.dto';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { CurrentUser } from './current-user.decorator';
+import type { AuthedRequest, JwtPayload } from './jwt-payload';
+import type { AppConfig } from '../config/configuration';
+
+const COOKIE_NAME = 'refresh_token';
+
+@Controller('auth')
+export class AuthController {
+  constructor(
+    private readonly auth: AuthService,
+    private readonly config: ConfigService&lt;AppConfig, true&gt;,
+  ) {}
+
+  @Post('login')
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response): Promise&lt;{ accessToken: string }&gt; {
+    const pair = await this.auth.login(dto.email, dto.password);
+    this.setRefreshCookie(response, pair.refreshToken);
+    return { accessToken: pair.accessToken };
+  }
+
+  // Doc cookie truoc, khong co thi doc body — dung nhu quyet dinh o muc 3.5.
+  @Post('refresh')
+  async refresh(
+    @Req() request: Request,
+    @Body() dto: RefreshDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise&lt;{ accessToken: string }&gt; {
+    const presented = this.readPresentedToken(request, dto);
+    if (presented === undefined) {
+      throw new UnauthorizedException('Thieu refresh token');
+    }
+
+    const pair = await this.auth.refresh(presented);
+    this.setRefreshCookie(response, pair.refreshToken);
+    return { accessToken: pair.accessToken };
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async logout(@Req() request: Request, @Body() dto: RefreshDto, @Res({ passthrough: true }) response: Response): Promise&lt;void&gt; {
+    const presented = this.readPresentedToken(request, dto);
+    if (presented !== undefined) {
+      await this.auth.logout(presented);
+    }
+    response.clearCookie(COOKIE_NAME, { path: '/auth/refresh' });
+  }
+
+  @Post('logout-everywhere')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async logoutEverywhere(@CurrentUser() user: JwtPayload): Promise&lt;void&gt; {
+    await this.auth.logoutEverywhere(user.sub);
+  }
+
+  private readPresentedToken(request: Request, dto: RefreshDto): string | undefined {
+    return (request as AuthedRequest &amp; Request).cookies?.[COOKIE_NAME] ?? dto.refreshToken;
+  }
+
+  private setRefreshCookie(response: Response, refreshToken: string): void {
+    const days = this.config.get('REFRESH_TOKEN_TTL_DAYS', { infer: true });
+
+    response.cookie(COOKIE_NAME, refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'strict',
+      path: '/auth/refresh',
+      maxAge: days * 24 * 60 * 60 * 1000,
+    });
+  }
+}</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">📝 <code>request.cookies</code> cần <code>cookie-parser</code></div>
+              <div class="callout__content">
+                Express không tự parse header <code>Cookie</code> thành <code>request.cookies</code> — thiếu
+                <code>cookie-parser</code>, <code>readPresentedToken</code> ở trên luôn nhận <code>undefined</code> từ
+                nhánh cookie, và mọi client trình duyệt sẽ luôn rơi vào lỗi "Thieu refresh token" dù cookie vẫn nằm
+                trong request. Cài đặt và gắn ở <code>main.ts</code>, trước dòng <code>app.listen()</code>:<br /><br />
+                <code>npm i cookie-parser<br />npm i -D @types/cookie-parser</code><br /><br />
+                <code>import cookieParser from 'cookie-parser';<br />app.use(cookieParser());</code>
               </div>
             </div>
 
@@ -1110,7 +1442,7 @@ server {
 app.set('trust proxy', 1);</code></pre>
             </div>
 
-            <div class="callout callout--warn">
+            <div class="callout callout--warning">
               <div class="callout__title">⚠️ <code>trust proxy: true</code> là một lỗ hổng</div>
               <div class="callout__content">
                 <code>X-Forwarded-For</code> là một header thường — client tự đặt được. Đặt <code>true</code>, Express
@@ -1211,6 +1543,75 @@ return { allowed, math.floor(tokens) }</code></pre>
               Không có vòng lặp nào chạy nền để đổ token. Gáo chỉ được tính lại đúng lúc có người chạm vào nó, dựa trên
               khoảng thời gian kể từ lần chạm trước. Một triệu người dùng im lặng thì tốn đúng không đồng nào.
             </p>
+
+            <p>
+              File Lua ở trên cần một nơi nạp và chạy nó. <code>RedisService</code> kế thừa thẳng từ client
+              <code>ioredis</code> — mọi lệnh Redis thô (<code>xadd</code>, <code>publish</code>,
+              <code>duplicate()</code>...) dùng ở Part 3 đều là method có sẵn từ lớp cha, chỉ
+              <code>runTokenBucket()</code> là method riêng thêm vào cho gáo token ở đây:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/redis/redis.service.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { AppConfig } from '../config/configuration';
+
+@Injectable()
+export class RedisService extends Redis implements OnModuleDestroy {
+  constructor(config: ConfigService&lt;AppConfig, true&gt;) {
+    super(config.get('REDIS_URL', { infer: true }));
+
+    this.defineCommand('tokenBucket', {
+      numberOfKeys: 1,
+      lua: readFileSync(join(__dirname, '../common/rate-limit/token-bucket.lua'), 'utf8'),
+    });
+  }
+
+  // Chu ky khop dung file .lua: capacity, refillPerSecond, now (giay), want.
+  // defineCommand gan method nay luc runtime nen TypeScript khong tu suy ra
+  // duoc kieu — khai bao tay o day de phan con lai dung kieu that.
+  async runTokenBucket(
+    key: string,
+    capacity: number,
+    refillPerSecond: number,
+    now: number,
+    want: number,
+  ): Promise&lt;[allowed: number, remaining: number]&gt; {
+    const call = this as unknown as {
+      tokenBucket(key: string, capacity: number, refill: number, now: number, want: number): Promise&lt;[number, number]&gt;;
+    };
+    return call.tokenBucket(key, capacity, refillPerSecond, now, want);
+  }
+
+  onModuleDestroy(): void {
+    this.disconnect();
+  }
+}</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">📝 File <code>.lua</code> biến mất sau <code>nest build</code></div>
+              <div class="callout__content">
+                <code>nest build</code> chỉ biên dịch <code>.ts</code> — nó không tự copy
+                <code>token-bucket.lua</code> sang <code>dist/</code>, nên bản build production
+                <code>readFileSync</code> ở trên báo <code>ENOENT</code> dù <code>npm run start:dev</code> (chạy qua
+                <code>ts-node</code>, đọc thẳng từ <code>src/</code>) không hề gặp lỗi này. Khai báo tường minh trong
+                <code>nest-cli.json</code> để asset này được copy đúng chỗ:<br /><br />
+                <code
+                  >"compilerOptions": {<br />
+                  &nbsp;&nbsp;"assets": [{ "include": "common/rate-limit/*.lua", "outDir": "dist/src" }],<br />
+                  &nbsp;&nbsp;"watchAssets": true<br />
+                  }</code
+                >
+              </div>
+            </div>
 
             <div class="code-window">
               <div class="code-header">
@@ -1359,6 +1760,50 @@ export class UploadController {
     return this.media.registerUpload(videoId, user.sub, target);
   }
 }</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/media/media.service.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
+import { Video } from './video.entity';
+import type { AppConfig } from '../config/configuration';
+
+@Injectable()
+export class MediaService {
+  readonly uploadDir: string;
+
+  constructor(
+    @InjectRepository(Video) private readonly videos: Repository&lt;Video&gt;,
+    config: ConfigService&lt;AppConfig, true&gt;,
+  ) {
+    this.uploadDir = config.get('UPLOAD_DIR', { infer: true });
+  }
+
+  // videoId da duoc UploadController sinh TRUOC khi ghi file (de dat ten file
+  // theo id) — luu voi id da co san thay vi de TypeORM tu sinh.
+  async registerUpload(videoId: string, userId: string, path: string): Promise&lt;Video&gt; {
+    return this.videos.save(this.videos.create({ id: videoId, userId, originalKey: path }));
+  }
+}</code></pre>
+            </div>
+
+            <p>
+              Thêm một biến môi trường cho thư mục lưu file — <code>docker-compose.yml</code> ở mục 5 của Part 3 gắn một
+              volume vào đúng đường dẫn này để API và worker cùng nhìn thấy một nơi:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/config/configuration.ts — thêm biến cho upload</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">UPLOAD_DIR: z.string().default('./uploads'),</code></pre>
             </div>
 
             <h3>6.1. Backpressure, nói cho gọn</h3>

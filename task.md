@@ -5,6 +5,35 @@
 > nếu ai đó chạy nó cho một series khác. Cần chạy script đó thì copy nội dung
 > dưới đây đi chỗ khác trước, rồi khôi phục lại sau.
 
+## ⚠️ Việc còn mở (đọc mục này trước, đừng đi mò lại từ đầu)
+
+**Bối cảnh:** loạt bài 4 part đã viết xong từ trước (xem lịch sử bên dưới), rồi
+sau đó có một phiên riêng (15/08/2026) đóng vai **người đọc thật sự làm theo
+bài** để kiểm xem code có chạy được không — không phải viết thêm nội dung, mà
+**rà lỗi runtime**. Phiên đó đã sửa 21 lỗi thật, kiểm bằng công cụ thật (không
+đoán), và **đã commit**. Tất cả chi tiết ở mục "## Đã kiểm runtime & vá lỗi
+(15/08/2026)" phía dưới — đọc mục đó để biết CHÍNH XÁC cái gì đã được đo, tránh
+lặp lại việc đã làm.
+
+**Việc CHƯA làm, còn mở cho phiên sau:**
+
+- [ ] **Dựng thật hệ 3 microservice của Part 4** (`apps/billing-svc`,
+      `apps/media-svc`, `apps/auth-svc` + gateway) và chạy gRPC thật giữa
+      chúng. Phiên vừa rồi CHỈ kiểm được `media.proto`/`billing.proto` bằng
+      `protoc` thật (cú pháp đúng) và đối chiếu logic để `chargeForJob()`
+      khớp chữ ký giữa Part 3 và Part 4 — **không** có một hệ microservice
+      thật nào từng chạy gRPC end-to-end. Nếu làm, nhớ: Part 4 vốn không có
+      project code hoàn chỉnh để scaffold (nó là phần mở rộng lý thuyết từ
+      monolith Part 1–3), nên cần tự viết `apps/*` từ đầu dựa theo các đoạn
+      code đã cho trong bài.
+- [ ] Quyết định có muốn giữ nguyên quyết định cũ **"Code: KHÔNG dựng project
+      thật"** (xem bảng quyết định đã chốt bên dưới) hay không, vì phiên vừa
+      rồi đã dựng một project thật **trong scratchpad tạm** (không phải trong
+      repo, không commit) chỉ để kiểm chứng — bài viết (4 file HTML) vẫn giữ
+      nguyên hình thức "chữ + code listing + tên file" như quyết định gốc,
+      chỉ khác là giờ nội dung code trong đó đã được xác nhận **thật sự ráp
+      lại chạy được**, không còn là listing chưa kiểm.
+
 ## Đang làm gì
 
 Viết loạt bài **code thực chiến** dạng bài dài liên tục (KHÔNG phải bài học):
@@ -223,6 +252,52 @@ không chặn event loop*.
       event sourcing — mỗi cái kèm lý do
 - [x] Mục 8 tổng kết: **cùng một bài toán quay lại 5 lần** qua cả 4 part, 3 loại
       lời giải (khoá lại / làm nguyên tử / gộp thành một); 3 hướng đi tiếp
+
+## Đã kiểm runtime & vá lỗi (15/08/2026) — đọc trước khi rà soát lại
+
+Phiên này **không viết nội dung mới** — đóng vai người đọc thật, gõ theo đúng
+từng bước 4 part, dựng project thật trong scratchpad (Postgres + Redis +
+ffmpeg + protoc thật, KHÔNG phải trong repo này), để trả lời câu hỏi: code
+trong bài có thật sự ráp lại và chạy được không.
+
+**Phương pháp:** mọi khẳng định dưới đây đều đo bằng công cụ thật — không có
+khẳng định nào chỉ dựa vào đọc code. Vòng kiểm cuối cùng: trích code trực
+tiếp từ 4 file HTML **sau khi đã sửa xong**, ráp thành project mới hoàn toàn
+tách biệt, chạy `tsc --noEmit` — sạch, 0 lỗi. Bắt được thêm 2 lỗi transcription
+(thiếu import, thiếu ép kiểu) chỉ nhờ vòng này và đã vá luôn.
+
+**21 lỗi đã tìm thấy và sửa trực tiếp trong 4 file HTML** (không cần sửa lại,
+nếu nghi ngờ thì kiểm bằng cách chạy lại, đừng đọc code rồi đoán):
+
+| # | File | Lỗi | Cách kiểm đã dùng |
+|---|------|-----|---------------------|
+| A | part-1 | `typeorm-naming-strategies` bỏ hoang từ 2022, không tương thích TypeORM hiện tại → ERESOLVE | `npm install` thật, đối chiếu npm registry |
+| B | part-1 | `User`/`Video` entity được dùng khắp nơi nhưng chưa từng có code | viết đủ, `tsc` sạch |
+| C | part-1 | `main.ts` mặc định của Nest CLI vỡ dưới `noPropertyAccessFromIndexSignature` | `tsc` thật |
+| D | part-1 | Demo nạp credit vi phạm khoá ngoại (chưa từng `INSERT INTO users`) | chạy SQL thật trên Postgres |
+| F | part-1 | ERD `users` thiếu cột `role` mà Part 2 RBAC cần | `tsc` báo lỗi thật |
+| G | part-2 | `billing.controller.ts` gọi `spend()` — method không tồn tại trên `BillingService` | đối chiếu chữ ký |
+| H | part-3 | `chargeForJob()` khai `void` nhưng Part 4 lấy `{charged, balance}` | đối chiếu chữ ký + chạy thật |
+| J | part-2 | `replacedByHash` thiếu `type: 'varchar'` → `DataTypeNotSupportedError` | `migration:generate` thật |
+| K, L | part-2 | `reissueFrom`/`issuePair` được gọi nhưng sai chữ ký / chưa định nghĩa | `tsc` + kịch bản đua 2-tab thật |
+| M | part-2 | Nhánh "đốt family" nằm trong transaction bị rollback khi `throw` → **không bao giờ xoá được gì** | kịch bản đua thật trên Postgres, đếm số dòng trước/sau |
+| N | part-3 | `processOne` viết như free function nhưng dùng `this` | đối chiếu cú pháp |
+| O | part-1 | Thiếu unique index trên `job_id` → `ON CONFLICT DO NOTHING` không có gì để khớp | gọi `chargeForJob` 2 lần thật, đếm số dòng |
+| P | part-3 | Thiếu `ScheduleModule.forRoot()` → `@Interval` không bao giờ chạy, im lặng | app boot thật |
+| Q | part-3 | `ProgressGateway` nhận tham số `redis` không dùng → vỡ dưới `noUnusedLocals` | `tsc` thật |
+| R | part-2 | `AuthedRequest extends Request` thiếu import → ngầm dùng `Request` của Fetch API thay vì Express | `tsc` thật, lỗi lan khắp nơi dùng |
+| T | part-2/3/4 | 10 chỗ dùng nhầm class CSS `callout--warn` thay vì `callout--warning` (không tồn tại trong `blog.css`) | `grep` đối chiếu `blog.css` |
+| U | part-2 | Constructor đầy đủ của `AuthService` (6 tham số) chưa từng được gộp một chỗ | đối chiếu 5 mảnh rời rạc |
+| E | part-2/3 | **Mảng thiếu lớn nhất**: `RedisService`, `MediaService`, `AuthController`, `JobService`, `JobController`, `JobQueue` (bản đầy đủ), `JobRunner` (constructor + `runTranscode`), `DelayedJobPromoter`, `WorkerModule`, `ProgressSubscriber` — chưa từng tồn tại dưới bất kỳ dạng nào | viết đủ, chạy **toàn trình thật**: enqueue → ffmpeg thật transcode → publish tiến độ qua Redis pub/sub thật → trừ tiền → hoàn tất; nhánh lỗi → retry backoff 2/4/8s → hàng đợi chết, tất cả đo bằng `verify/pipeline-e2e.ts` và `verify/retry-dead-letter.ts` |
+| I | part-4 | `media.proto` thiếu `message WatchJobRequest` | `protoc` thật: trước `"WatchJobRequest" is not defined`, sau exit 0 |
+
+**Đã xác nhận app thật khởi động và chạy** (không chỉ biên dịch): `nest build`
+sạch, `node dist/src/main.js` boot đủ mọi module, `POST /auth/login` trả về
+`201` kèm access token JWT hợp lệ + cookie `refresh_token` đúng cấu hình
+(`HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/auth/refresh`).
+
+**Commit:** xem log gần nhất sau mục này trong git — commit message bắt đầu
+bằng `fix(blog): NestJS series` chứa toàn bộ 21 lỗi trên.
 
 ## Còn lại — khi chủ dự án quyết định xuất bản
 

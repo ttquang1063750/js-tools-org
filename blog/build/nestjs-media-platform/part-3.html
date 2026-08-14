@@ -330,7 +330,7 @@ spawn   tra ve STREAM stdout/stderr, khong gom vao bo nho
         -> dung cho tien trinh chay lau va noi nhieu. Chinh la ffmpeg.</code></pre>
             </div>
 
-            <div class="callout callout--warn">
+            <div class="callout callout--warning">
               <div class="callout__title">⚠️ <code>exec</code> với chuỗi ghép là lỗ hổng chèn lệnh</div>
               <div class="callout__content">
                 <code>exec(`ffmpeg -i ${path} out.mp4`)</code> đưa cả chuỗi cho shell diễn giải. Người dùng đặt tên file
@@ -477,7 +477,7 @@ try {
 }</code></pre>
             </div>
 
-            <div class="callout callout--warn">
+            <div class="callout callout--warning">
               <div class="callout__title">⚠️ Tiến trình mồ côi khi worker chết</div>
               <div class="callout__content">
                 Worker bị <code>SIGKILL</code> — do container hết bộ nhớ chẳng hạn — thì ffmpeg
@@ -645,16 +645,70 @@ Dung khi            goi ffmpeg, imagemagick hash, nen anh, tinh toan
                 <span class="code-filename">src/job/job.controller.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">@Post(':videoId/transcode')
+              <pre><code class="language-typescript">import { Controller, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RateLimitGuard } from '../common/rate-limit/rate-limit.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { JwtPayload } from '../auth/jwt-payload';
+import { JobService } from './job.service';
+
+@Controller('media')
 @UseGuards(JwtAuthGuard, RateLimitGuard)
-@HttpCode(HttpStatus.ACCEPTED) // 202: da nhan, chua lam xong
-async transcode(
-  @Param('videoId') videoId: string,
-  @CurrentUser() user: JwtPayload,
-): Promise&lt;{ jobId: string }&gt; {
-  const job = await this.jobs.enqueue(videoId, user.sub);
-  return { jobId: job.id };
+export class JobController {
+  constructor(private readonly jobs: JobService) {}
+
+  @Post(':videoId/transcode')
+  @HttpCode(HttpStatus.ACCEPTED) // 202: da nhan, chua lam xong
+  async transcode(
+    @Param('videoId') videoId: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise&lt;{ jobId: string }&gt; {
+    const job = await this.jobs.enqueue(videoId, user.sub);
+    return { jobId: job.id };
+  }
 }</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/job/job.service.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Job } from './job.entity';
+import { JobQueue } from './job.queue';
+
+@Injectable()
+export class JobService {
+  constructor(
+    @InjectRepository(Job) private readonly jobs: Repository&lt;Job&gt;,
+    private readonly queue: JobQueue,
+  ) {}
+
+  async enqueue(videoId: string, userId: string, height: 480 | 720 | 1080 = 720): Promise&lt;Job&gt; {
+    const job = await this.jobs.save(this.jobs.create({ videoId }));
+    await this.queue.push({ id: job.id, videoId, userId, height, attempt: 0 });
+    return job;
+  }
+
+  async markFailed(jobId: string, error: string): Promise&lt;void&gt; {
+    await this.jobs.update(jobId, { status: 'failed', error, finishedAt: new Date() });
+  }
+}</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">
+                📝 <code>JobController</code> và <code>JobService</code> chưa từng xuất hiện
+              </div>
+              <div class="callout__content">
+                <code>this.jobs.enqueue(...)</code> ở trên giả định một service đã tồn tại sẵn, nhưng
+                <code>JobService</code> — nơi thật sự ghi dòng vào bảng <code>jobs</code> rồi đẩy vào
+                <code>JobQueue</code> — chưa từng được viết ra ở đâu trong cả bốn phần. Khai báo đầy đủ ở trên, cùng với
+                việc bọc endpoint vào một <code>JobController</code> thật.
+              </div>
             </div>
 
             <p>
@@ -672,27 +726,83 @@ async transcode(
                 <span class="code-filename">src/job/job.queue.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">const STREAM = 'jobs:transcode';
+              <pre><code class="language-typescript">import { Injectable, OnModuleInit } from '@nestjs/common';
+import { RedisService } from '../redis/redis.service';
+
+export interface TranscodeJob {
+  readonly id: string; // trung voi Job.id trong Postgres
+  readonly videoId: string;
+  readonly userId: string;
+  readonly height: 480 | 720 | 1080;
+  readonly attempt: number;
+  // Gan boi pull() sau khi doc tu Redis Streams — push() khong co gia tri nay.
+  readonly messageId?: string;
+  // Chi co khi day sang hang doi chet (muc 4.1).
+  readonly lastError?: string;
+}
+
+const STREAM = 'jobs:transcode';
 const GROUP = 'workers';
 
-async push(payload: TranscodeJob): Promise&lt;string&gt; {
-  return this.redis.xadd(STREAM, '*', 'data', JSON.stringify(payload));
+function parseMessage(fields: string[]): TranscodeJob {
+  // xadd luu 'data' &lt;json&gt; — fields la mang phang [key, value, key, value, ...].
+  const raw = fields[fields.indexOf('data') + 1] as string;
+  return JSON.parse(raw) as TranscodeJob;
 }
 
-async pull(consumerName: string): Promise&lt;TranscodeJob | null&gt; {
-  // BLOCK 5000: cho toi 5 giay neu hang doi rong, khong quay vong hoi lien tuc.
-  const result = await this.redis.xreadgroup(
-    'GROUP', GROUP, consumerName,
-    'COUNT', 1,
-    'BLOCK', 5000,
-    'STREAMS', STREAM, '&gt;',
-  );
-  return result === null ? null : parse(result);
-}
+@Injectable()
+export class JobQueue implements OnModuleInit {
+  constructor(private readonly redis: RedisService) {}
 
-async ack(messageId: string): Promise&lt;void&gt; {
-  await this.redis.xack(STREAM, GROUP, messageId);
+  async onModuleInit(): Promise&lt;void&gt; {
+    // MKSTREAM: tao stream neu chua co. '$' = bo qua nhung message co tu
+    // truoc, chi doc nhung gi den sau khi group nay duoc tao.
+    try {
+      await this.redis.xgroup('CREATE', STREAM, GROUP, '$', 'MKSTREAM');
+    } catch (err) {
+      // BUSYGROUP: group da ton tai tu lan khoi dong truoc — khong phai loi that.
+      if (!String(err).includes('BUSYGROUP')) throw err;
+    }
+  }
+
+  async push(payload: TranscodeJob): Promise&lt;string&gt; {
+    const id = await this.redis.xadd(STREAM, '*', 'data', JSON.stringify(payload));
+    if (id === null) throw new Error('XADD khong tra ve id.');
+    return id;
+  }
+
+  async pull(consumerName: string): Promise&lt;TranscodeJob | null&gt; {
+    // BLOCK 5000: cho toi 5 giay neu hang doi rong, khong quay vong hoi lien tuc.
+    // Chu thich kieu tra ve bang tay: chu ky bien the nay cua xreadgroup khong
+    // duoc ioredis suy ra dung, TypeScript thay "unknown" neu khong ep kieu.
+    const result = (await this.redis.xreadgroup(
+      'GROUP', GROUP, consumerName,
+      'COUNT', 1,
+      'BLOCK', 5000,
+      'STREAMS', STREAM, '&gt;',
+    )) as [string, [string, string[]][]][] | null;
+
+    if (result === null || result.length === 0) return null;
+
+    const [messageId, fields] = result[0]![1][0]!;
+    return { ...parseMessage(fields), messageId };
+  }
+
+  async ack(messageId: string): Promise&lt;void&gt; {
+    await this.redis.xack(STREAM, GROUP, messageId);
+  }
 }</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">
+                📝 <code>TranscodeJob</code>, <code>parseMessage</code> và lớp bao quanh không có sẵn
+              </div>
+              <div class="callout__content">
+                Ba hàm trên dùng <code>this.redis</code> nên phải nằm trong một class thật, và
+                <code>TranscodeJob</code> — kiểu dữ liệu xuất hiện trong cả ba chữ ký hàm — chưa từng được định nghĩa ở
+                đâu trước đó. Khai báo đầy đủ ở trên để phần còn lại của mục này biên dịch được.
+              </div>
             </div>
 
             <h3>4.1. Thử lại, và nơi chứa job không bao giờ chạy được</h3>
@@ -704,6 +814,76 @@ async ack(messageId: string): Promise&lt;void&gt; {
               các job phía sau.
             </p>
 
+            <p>
+              Hai loại thất bại cần hai nơi khác nhau để đợi: một hàng đợi trễ cho lần thử lại kế tiếp, một hàng đợi
+              chết cho thứ không thử lại nữa. Thêm hai method vào <code>JobQueue</code> đã viết ở mục 4:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/job/job.queue.ts — thêm hàng đợi trễ &amp; hàng đợi chết</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">// them vao class JobQueue o muc 4
+private readonly DELAYED_KEY = 'jobs:delayed'; // sorted set: score = thoi diem (ms) duoc phep chay
+private readonly DEAD_LETTER_STREAM = 'jobs:dead';
+
+// Khong day thang vao stream chinh — xep vao sorted-set voi diem la thoi
+// diem duoc phep chay. promoteDelayed() (goi dinh ky) day nhung job da toi
+// han sang stream chinh.
+async pushDelayed(payload: TranscodeJob, delayMs: number): Promise&lt;void&gt; {
+  await this.redis.zadd(this.DELAYED_KEY, Date.now() + delayMs, JSON.stringify(payload));
+}
+
+async promoteDelayed(): Promise&lt;number&gt; {
+  const due = await this.redis.zrangebyscore(this.DELAYED_KEY, 0, Date.now());
+  for (const raw of due) {
+    // ZREM truoc: hai worker cung quet dung luc thi chi mot ben con xoa
+    // duoc, ben kia nhan 0 — khong day trung.
+    const removed = await this.redis.zrem(this.DELAYED_KEY, raw);
+    if (removed &gt; 0) await this.push(JSON.parse(raw) as TranscodeJob);
+  }
+  return due.length;
+}
+
+// Khong dung consumer group — day la noi con nguoi doc lai bang XRANGE,
+// khong ai XACK ca.
+async pushDeadLetter(payload: TranscodeJob): Promise&lt;string&gt; {
+  const id = await this.redis.xadd(this.DEAD_LETTER_STREAM, '*', 'data', JSON.stringify(payload));
+  if (id === null) throw new Error('XADD khong tra ve id.');
+  return id;
+}</code></pre>
+            </div>
+
+            <p>
+              <code>promoteDelayed()</code> cần một nơi gọi định kỳ — giống hệt <code>OutboxRelay</code> ở Part 4, chỉ
+              khác nó chạy trong tiến trình worker:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/job/delayed-job-promoter.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Injectable } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
+import { JobQueue } from './job.queue';
+
+@Injectable()
+export class DelayedJobPromoter {
+  constructor(private readonly queue: JobQueue) {}
+
+  @Interval(1000)
+  async flush(): Promise&lt;void&gt; {
+    await this.queue.promoteDelayed();
+  }
+}</code></pre>
+            </div>
+
+            <p>
+              Giờ mới tới vòng lặp chính — một method riêng của <code>JobRunner</code> ở mục 4.3, không phải hàm rời:
+            </p>
+
             <div class="code-window">
               <div class="code-header">
                 <span class="code-filename">src/job/job.worker.ts — vòng lặp chính</span>
@@ -711,17 +891,20 @@ async ack(messageId: string): Promise&lt;void&gt; {
               </div>
               <pre><code class="language-typescript">const MAX_ATTEMPTS = 3;
 
-async function processOne(job: TranscodeJob): Promise&lt;void&gt; {
+// Method cua JobRunner, KHONG PHAI mot ham doc lap — mot function() thuong
+// khong co `this` gan san, trong khi than ham ben duoi dung this.queue,
+// this.jobs. Xem class JobRunner day du o muc 4.3.
+private async processOne(job: TranscodeJob): Promise&lt;void&gt; {
   try {
     await this.runTranscode(job);
-    await this.queue.ack(job.messageId);
+    await this.queue.ack(job.messageId!);
   } catch (error) {
     const attempt = job.attempt + 1;
 
     if (attempt &gt;= MAX_ATTEMPTS) {
       // Het luot: day sang hang doi chet. KHONG xoa — con nguoi can xem lai.
       await this.queue.pushDeadLetter({ ...job, lastError: String(error) });
-      await this.queue.ack(job.messageId);
+      await this.queue.ack(job.messageId!);
       await this.jobs.markFailed(job.id, String(error));
       return;
     }
@@ -730,7 +913,7 @@ async function processOne(job: TranscodeJob): Promise&lt;void&gt; {
     // dung cai he thong dang gap su co.
     const delayMs = 2 ** attempt * 1000;
     await this.queue.pushDelayed({ ...job, attempt }, delayMs);
-    await this.queue.ack(job.messageId);
+    await this.queue.ack(job.messageId!);
   }
 }</code></pre>
             </div>
@@ -764,17 +947,33 @@ async function processOne(job: TranscodeJob): Promise&lt;void&gt; {
                 <span class="code-filename">src/billing/billing.service.ts — trừ tiền bình thản</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">async chargeForJob(jobId: string, userId: string, amount: number): Promise&lt;void&gt; {
-  await this.dataSource.transaction(async (manager) =&gt; {
+              <pre><code class="language-typescript">export interface ChargeForJobResult {
+  readonly charged: boolean;
+  readonly balance: number;
+}
+
+async chargeForJob(jobId: string, userId: string, amount: number): Promise&lt;ChargeForJobResult&gt; {
+  return this.dataSource.transaction(async (manager) =&gt; {
     // So cai append-only tu Part 1, gio them mot rang buoc duy nhat tren job_id.
     // Lan chay thu hai va vao rang buoc nay va bi tu choi.
-    await manager
+    const result = await manager
       .createQueryBuilder()
       .insert()
       .into(CreditEntry)
       .values({ userId, jobId, delta: -amount, reason: 'transcode' })
       .orIgnore() // ON CONFLICT DO NOTHING
       .execute();
+
+    // Bi bo qua vi trung job_id thi RETURNING khong tra dong nao — result.raw rong.
+    const charged = result.raw.length &gt; 0;
+
+    const row = await manager
+      .createQueryBuilder(CreditEntry, 'e')
+      .select('COALESCE(SUM(e.delta), 0)', 'balance')
+      .where('e.user_id = :userId', { userId })
+      .getRawOne&lt;{ balance: string }&gt;();
+
+    return { charged, balance: Number(row?.balance ?? 0) };
   });
 }</code></pre>
             </div>
@@ -784,6 +983,21 @@ async function processOne(job: TranscodeJob): Promise&lt;void&gt; {
               xong. Không cần cờ, không cần bảng phụ theo dõi "đã xử lý chưa", không có cửa sổ đua nào. Database giữ
               ràng buộc, và nó giữ đúng kể cả khi hai worker chạy cùng lúc trên hai máy khác nhau.
             </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚠️ <code>result.identifiers</code> nói dối khi bị <code>ON CONFLICT DO NOTHING</code> bỏ qua
+              </div>
+              <div class="callout__content">
+                Bản năng đầu tiên là kiểm <code>result.identifiers.length &gt; 0</code> để biết dòng có được chèn hay
+                không. Đo thật trên Postgres cho thấy điều ngược lại: khi bị xung đột bỏ qua,
+                <code>identifiers</code> không phải mảng rỗng — nó là mảng
+                <strong>có đúng một phần tử, mang giá trị <code>null</code></strong> (<code>[null]</code>), nên
+                <code>.length &gt; 0</code> vẫn đúng ở cả hai lần gọi và luôn báo <code>charged: true</code>. Tín hiệu
+                đáng tin là <code>result.raw</code>: rỗng khi bị bỏ qua, có một dòng khi chèn thành công, vì nó phản ánh
+                đúng những gì mệnh đề <code>RETURNING</code> thực sự trả về.
+              </div>
+            </div>
 
             <h3>4.3. Worker là một tiến trình như thế nào</h3>
 
@@ -857,6 +1071,62 @@ void bootstrap();</code></pre>
       replicas: 2 # hai worker chay song song, Redis Streams tu chia viec</code></pre>
             </div>
 
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/worker/worker.module.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
+import { AppConfigModule } from '../config/config.module';
+import { sharedOptions } from '../database/typeorm.options';
+import type { AppConfig } from '../config/configuration';
+import { RedisModule } from '../redis/redis.module';
+import { BillingModule } from '../billing/billing.module';
+import { JobModule } from '../job/job.module';
+import { Video } from '../media/video.entity';
+import { DelayedJobPromoter } from '../job/delayed-job-promoter';
+import { JobRunner } from './job.runner';
+
+// Dung lai toan bo module nghiep vu — chia thu muc theo mien nghiep vu
+// tra co tuc dung o day (xem Part 1, muc 1).
+@Module({
+  imports: [
+    AppConfigModule,
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService&lt;AppConfig, true&gt;) =&gt; ({
+        ...sharedOptions,
+        url: config.get('DATABASE_URL', { infer: true }),
+      }),
+    }),
+    TypeOrmModule.forFeature([Video]),
+    ScheduleModule.forRoot(), // bat buoc de @Interval o DelayedJobPromoter chay that
+    RedisModule,
+    BillingModule,
+    JobModule,
+  ],
+  providers: [JobRunner, DelayedJobPromoter],
+})
+export class WorkerModule {}</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚠️ Thiếu <code>ScheduleModule.forRoot()</code> thì <code>@Interval</code> im lặng không chạy
+              </div>
+              <div class="callout__content">
+                <code>@Interval</code> (dùng ở <code>DelayedJobPromoter</code> trên, và ở <code>OutboxRelay</code> tại
+                Part 4) đến từ gói <code>@nestjs/schedule</code> — cần <code>npm i @nestjs/schedule</code> và đăng ký
+                <code>ScheduleModule.forRoot()</code> trong module gốc của mỗi tiến trình dùng nó. Thiếu bước này ứng
+                dụng vẫn khởi động bình thường, không báo lỗi gì cả — chỉ riêng hàm gắn <code>@Interval</code> không bao
+                giờ được gọi. Đây là kiểu lỗi khó phát hiện nhất: mọi thứ trông như chạy đúng cho tới khi có ai hỏi vì
+                sao hàng đợi trễ không bao giờ được đẩy lại.
+              </div>
+            </div>
+
             <h3>4.4. Dừng worker mà không bỏ dở job</h3>
 
             <p>
@@ -870,10 +1140,37 @@ void bootstrap();</code></pre>
                 <span class="code-filename">src/worker/job.runner.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">@Injectable()
+              <pre><code class="language-typescript">import { Injectable, OnApplicationShutdown } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { hostname } from 'node:os';
+import { dirname, join } from 'node:path';
+import { Job } from '../job/job.entity';
+import { JobQueue } from '../job/job.queue';
+import { JobService } from '../job/job.service';
+import type { TranscodeJob } from '../job/job.queue';
+import { Video } from '../media/video.entity';
+import { BillingService } from '../billing/billing.service';
+import { RedisService } from '../redis/redis.service';
+import { transcode } from './transcoder';
+
+// Gia tren moi do phan giai — dung cho demo, thuc te se doc tu bang gia.
+const PRICE_BY_HEIGHT: Record&lt;TranscodeJob['height'], number&gt; = { 480: 5, 720: 10, 1080: 20 };
+
+@Injectable()
 export class JobRunner implements OnApplicationShutdown {
   private stopping = false;
   private current: Promise&lt;void&gt; | null = null;
+  private readonly consumerName = `${hostname()}-${process.pid}`;
+
+  constructor(
+    private readonly queue: JobQueue,
+    private readonly jobs: JobService,
+    @InjectRepository(Job) private readonly jobRepo: Repository&lt;Job&gt;,
+    @InjectRepository(Video) private readonly videos: Repository&lt;Video&gt;,
+    private readonly billing: BillingService,
+    private readonly redis: RedisService,
+  ) {}
 
   async loop(): Promise&lt;void&gt; {
     while (!this.stopping) {
@@ -891,10 +1188,47 @@ export class JobRunner implements OnApplicationShutdown {
     this.stopping = true; // khong nhan viec moi nua
     await this.current; // nhung lam not viec dang do
   }
+
+  private async runTranscode(job: TranscodeJob): Promise&lt;void&gt; {
+    const video = await this.videos.findOneOrFail({ where: { id: job.videoId } });
+    await this.jobRepo.update(job.id, { status: 'processing', startedAt: new Date() });
+
+    const controller = new AbortController();
+    const output = join(dirname(video.originalKey), `${video.id}-${job.height}p.mp4`);
+
+    await transcode({
+      input: video.originalKey,
+      output,
+      height: job.height,
+      durationSeconds: video.duration ?? 60,
+      signal: controller.signal,
+      onProgress: (percent) =&gt; {
+        // Worker khong biet gi ve WebSocket. No chi phat ra Redis (muc 6).
+        void this.redis.publish('progress', JSON.stringify({ userId: job.userId, jobId: job.id, percent }));
+      },
+    });
+
+    // Tru credit BINH THAN — an toan neu job nay bi xu ly lai (muc 4.2).
+    await this.billing.chargeForJob(job.id, job.userId, PRICE_BY_HEIGHT[job.height]);
+    await this.jobRepo.update(job.id, { status: 'completed', finishedAt: new Date() });
+
+    void this.redis.publish('progress', JSON.stringify({ userId: job.userId, jobId: job.id, percent: 100 }));
+  }
 }</code></pre>
             </div>
 
-            <div class="callout callout--warn">
+            <div class="callout callout--note">
+              <div class="callout__title">📝 Constructor và <code>runTranscode</code> chưa từng được viết ra</div>
+              <div class="callout__content">
+                <code>loop()</code> gọi <code>this.processOne(job)</code> ở mục 4.1, và <code>processOne</code> gọi
+                <code>this.runTranscode(job)</code> — nhưng cả constructor lẫn thân của <code>runTranscode</code> đều
+                chưa từng xuất hiện. Nó chính là chỗ ghép <code>transcode()</code> (mục 2.2),
+                <code>RedisService.publish</code> (mục 6), và <code>BillingService.chargeForJob</code> (mục 4.2) lại với
+                nhau — thứ mà cả bài liên tục nói tới nhưng chưa từng viết thành một khối liền.
+              </div>
+            </div>
+
+            <div class="callout callout--warning">
               <div class="callout__title">⚠️ Thời gian ân hạn của bộ điều phối</div>
               <div class="callout__content">
                 Docker cho 10 giây giữa <code>SIGTERM</code> và <code>SIGKILL</code>; Kubernetes cho 30 giây. Một job
@@ -1025,15 +1359,14 @@ if (cluster.isPrimary) {
               </div>
               <pre><code class="language-typescript">import { OnGatewayConnection, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';
+import { JwtService } from '@nestjs/jwt';
+import type { JwtPayload } from '../auth/jwt-payload';
 
 @WebSocketGateway({ path: '/ws', cors: false })
 export class ProgressGateway implements OnGatewayConnection {
   @WebSocketServer() private readonly server!: Server;
 
-  constructor(
-    private readonly jwt: JwtService,
-    private readonly redis: RedisService,
-  ) {}
+  constructor(private readonly jwt: JwtService) {}
 
   async handleConnection(client: Socket): Promise&lt;void&gt; {
     try {
@@ -1056,6 +1389,16 @@ export class ProgressGateway implements OnGatewayConnection {
 }</code></pre>
             </div>
 
+            <div class="callout callout--note">
+              <div class="callout__title">📝 Không có tham số <code>redis</code> ở đây</div>
+              <div class="callout__content">
+                Kết nối Redis dùng để lắng nghe kênh <code>progress</code> thuộc về <code>ProgressSubscriber</code> ngay
+                bên dưới, không phải <code>ProgressGateway</code> — gateway chỉ cần <code>JwtService</code> để xác thực
+                bắt tay. Thêm tham số <code>redis: RedisService</code> vào constructor mà không dùng tới sẽ biên dịch
+                lỗi <code>TS6138</code> dưới <code>noUnusedLocals</code> mà chính Part 1 khuyến nghị bật.
+              </div>
+            </div>
+
             <div class="code-window">
               <div class="code-header">
                 <span class="code-filename">src/worker/progress-publisher.ts — phía worker</span>
@@ -1073,18 +1416,51 @@ await this.redis.publish(
                 <span class="code-filename">src/gateway/progress.subscriber.ts — phía gateway</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">// MOT ket noi Redis RIENG chi de dang ky nghe. Ket noi dang o che do
-// subscribe khong chay duoc lenh thuong nao khac.
-onModuleInit(): void {
-  this.subscriber.subscribe('progress');
+              <pre><code class="language-typescript">import { Injectable, OnModuleInit } from '@nestjs/common';
+import type { Redis } from 'ioredis';
+import { RedisService } from '../redis/redis.service';
+import { ProgressGateway } from './progress.gateway';
 
-  this.subscriber.on('message', (_channel: string, raw: string) =&gt; {
-    const event = JSON.parse(raw) as ProgressEvent;
-    // Tien trinh nao dang giu ket noi cua nguoi do thi gui duoc.
-    // Cac tien trinh con lai goi to() vao mot phong rong — khong sao ca.
-    this.gateway.emitProgress(event.userId, event.jobId, event.percent);
-  });
+interface ProgressEvent {
+  readonly userId: string;
+  readonly jobId: string;
+  readonly percent: number;
+}
+
+@Injectable()
+export class ProgressSubscriber implements OnModuleInit {
+  private readonly subscriber: Redis;
+
+  constructor(
+    private readonly redis: RedisService,
+    private readonly gateway: ProgressGateway,
+  ) {
+    // MOT ket noi Redis RIENG chi de dang ky nghe. Ket noi dang o che do
+    // subscribe khong chay duoc lenh thuong nao khac.
+    this.subscriber = this.redis.duplicate();
+  }
+
+  onModuleInit(): void {
+    this.subscriber.subscribe('progress');
+
+    this.subscriber.on('message', (_channel: string, raw: string) =&gt; {
+      const event = JSON.parse(raw) as ProgressEvent;
+      // Tien trinh nao dang giu ket noi cua nguoi do thi gui duoc.
+      // Cac tien trinh con lai goi to() vao mot phong rong — khong sao ca.
+      this.gateway.emitProgress(event.userId, event.jobId, event.percent);
+    });
+  }
 }</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">📝 <code>redis.duplicate()</code> — nơi kết nối riêng thật sự được tạo</div>
+              <div class="callout__content">
+                <code>this.subscriber</code> ở trên chưa từng được gán giá trị nếu chỉ nhìn đoạn
+                <code>onModuleInit</code>. <code>RedisService</code> kế thừa từ <code>ioredis</code> nên có sẵn
+                <code>.duplicate()</code> — tạo một kết nối mới cùng cấu hình, đúng thứ cần cho một kênh luôn ở chế độ
+                subscribe.
+              </div>
             </div>
 
             <p>
@@ -1121,7 +1497,7 @@ onModuleInit(): void {
 }</code></pre>
             </div>
 
-            <div class="callout callout--warn">
+            <div class="callout callout--warning">
               <div class="callout__title">⚠️ Cân tải WebSocket cần dính phiên</div>
               <div class="callout__content">
                 Socket.IO mặc định thử long-polling trước rồi mới nâng lên WebSocket, và giai đoạn đó gồm nhiều request
