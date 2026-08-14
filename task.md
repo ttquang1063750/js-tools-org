@@ -22,17 +22,19 @@ chỉ cần thêm thư mục dưới `build/`.
 
 ## Các quyết định ĐÃ CHỐT (đừng mở lại)
 
-| Quyết định | Nội dung                                              | Vì sao                                                                                                                                                                                                                                                                               |
-| ---------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Sản phẩm   | Nền tảng upload → transcode → phát lại                | Là dự án DUY NHẤT khiến `child_process` (ffmpeg) và streaming trở thành _lý do tồn tại_, không phải minh hoạ gắn thêm. Đã cân nhắc và loại: ETL/crawler (realtime + streaming mỏng hơn, vướng pháp lý khi ví dụ thật) và e-commerce (ACID/cache đã trùng series `sql` + `sysdesign`) |
-| Hình thức  | **Một trang liên tục mỗi part**, không chia bài       | Yêu cầu trực tiếp của chủ dự án                                                                                                                                                                                                                                                      |
-| KHÔNG có   | quiz, điều hướng bài trước/sau, `data-lang-content`   | Đây là bài thực chiến, không phải bài học                                                                                                                                                                                                                                            |
-| Ngôn ngữ   | Tiếng Việt                                            |                                                                                                                                                                                                                                                                                      |
-| Frontend   | React + TypeScript + Tailwind, rải làm **3 mốc**      | Dồn hết vào cuối thì phần lớn bài không thấy sản phẩm                                                                                                                                                                                                                                |
-| ORM        | **TypeORM** (không phải Prisma)                       | Viết SQL thô tự nhiên hơn khi dạy `SELECT FOR UPDATE` ở phần ACID                                                                                                                                                                                                                    |
-| Auth       | JWT + **refresh token có rotation + reuse detection** | Yêu cầu trực tiếp. Kéo theo: `RefreshToken` phải vào ERD ngay từ phần thiết kế CSDL, không chắp vá sau                                                                                                                                                                               |
-| Code       | **KHÔNG dựng project thật**                           | Chủ dự án đã bác bỏ rõ ràng: bài chỉ cần chữ + code listing + tên file. Từng thử tạo `~/Projects/nestjs-media-forge` và đã xoá                                                                                                                                                       |
-| nginx      | Xuất hiện **3 lần** đúng chỗ cần                      | Không dồn thành một mục lý thuyết                                                                                                                                                                                                                                                    |
+| Quyết định | Nội dung                                              | Vì sao                                                                                                                                                                                                                                                                                                             |
+| ---------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Sản phẩm   | Nền tảng upload → transcode → phát lại                | Là dự án DUY NHẤT khiến `child_process` (ffmpeg) và streaming trở thành _lý do tồn tại_, không phải minh hoạ gắn thêm. Đã cân nhắc và loại: ETL/crawler (realtime + streaming mỏng hơn, vướng pháp lý khi ví dụ thật) và e-commerce (ACID/cache đã trùng series `sql` + `sysdesign`)                               |
+| Hình thức  | **Một trang liên tục mỗi part**, không chia bài       | Yêu cầu trực tiếp của chủ dự án                                                                                                                                                                                                                                                                                    |
+| KHÔNG có   | quiz, điều hướng bài trước/sau, `data-lang-content`   | Đây là bài thực chiến, không phải bài học                                                                                                                                                                                                                                                                          |
+| Ngôn ngữ   | Tiếng Việt                                            |                                                                                                                                                                                                                                                                                                                    |
+| Frontend   | React + TypeScript + Tailwind, rải làm **3 mốc**      | Dồn hết vào cuối thì phần lớn bài không thấy sản phẩm                                                                                                                                                                                                                                                              |
+| ORM        | **TypeORM** (không phải Prisma)                       | Viết SQL thô tự nhiên hơn khi dạy `SELECT FOR UPDATE` ở phần ACID                                                                                                                                                                                                                                                  |
+| Auth       | JWT + **refresh token có rotation + reuse detection** | Yêu cầu trực tiếp. Kéo theo: `RefreshToken` phải vào ERD ngay từ phần thiết kế CSDL, không chắp vá sau                                                                                                                                                                                                             |
+| Code       | **KHÔNG dựng project thật**                           | Chủ dự án đã bác bỏ rõ ràng: bài chỉ cần chữ + code listing + tên file. Từng thử tạo `~/Projects/nestjs-media-forge` và đã xoá                                                                                                                                                                                     |
+| nginx      | Xuất hiện **3 lần** đúng chỗ cần                      | Không dồn thành một mục lý thuyết                                                                                                                                                                                                                                                                                  |
+| Kiến trúc  | **Monolith trước, tách microservice ở Part 4**        | Dựng microservice từ ngày đầu buộc gỡ lỗi phân tán trước khi gỡ lỗi tại chỗ. Ranh giới module NestJS vạch đúng từ đầu thì tách chỉ là đổi cách gọi (inject → gRPC client). Quan trọng nhất: nó tạo mạch ACID (Part 1, một DB, đảm bảo chắc) → vỡ khi qua ranh giới service (Part 4) → outbox pattern có nghĩa thật |
+| Số part    | 4, **được phép tách thêm Part 5** nếu quá dài         | Chủ dự án đồng ý. Chỗ cắt tự nhiên: sau phần realtime (hết Part 3) sản phẩm đã chạy trọn vòng upload → transcode → xem tiến độ                                                                                                                                                                                     |
 
 ## Ràng buộc vận hành — QUAN TRỌNG
 
@@ -56,6 +58,9 @@ chỉ cần thêm thư mục dưới `build/`.
       `"strict"`, kèm output `tsc` THẬT)
 - [x] Kiểm trên trình duyệt: 0 asset 404, CSS nạp đúng ở độ sâu 3 cấp, SVG không
       tràn/không chồng nhãn, `check-lesson.js` xanh
+- [x] Thêm callout "Sơ đồ trên là ĐÍCH ĐẾN, không phải điểm xuất phát" ngay dưới
+      sơ đồ kiến trúc — giải thích monolith trước / tách sau, và báo trước mạch
+      ACID → vỡ khi tách → outbox
 
 Commit: `2745e04`
 
@@ -111,11 +116,30 @@ Commit: `2745e04`
       **nginx proxy WS** (`Upgrade`/`Connection`, timeout), reconnect/backfill
       → **FE mốc #3: bảng tiến độ realtime**
 
-### Part 4 — Microservices & vận hành
+### Part 4 — Tách microservice & vận hành
 
+- [ ] Tách `auth-svc` / `media-svc` khỏi monolith — nhấn mạnh: ranh giới module
+      KHÔNG đổi, chỉ đường truyền đổi
 - [ ] gRPC: proto, codegen, unary + server streaming, deadline, error model
+- [ ] **Transaction vỡ khi qua ranh giới service** — nối thẳng về phần ACID ở
+      Part 1: cùng một nghiệp vụ, giờ không còn transaction nào ôm được cả hai
+      thao tác
+- [ ] **Outbox pattern** — đảm bảo "ghi DB xong thì message chắc chắn được gửi"
+- [ ] Idempotency khi retry qua mạng
+- [ ] Cái giá phải trả: correlation ID, tracing, debug khó hơn hẳn
 - [ ] Cache-aside, chống stampede
 - [ ] Observability, graceful shutdown toàn hệ, đo tải
+
+**CỐ Ý KHÔNG đưa vào:** service discovery, circuit breaker, service mesh. Với 3
+service trong một `docker-compose`, chúng là giải pháp cho vấn đề chưa tồn tại —
+sẽ thành lý thuyết suông, đúng thứ loạt bài này đang tránh.
+
+### Part 5 — chỉ tạo NẾU cần
+
+Được phép tách nếu Part 3 hoặc Part 4 phình quá dài. Chỗ cắt tự nhiên đã chọn:
+sau phần realtime (hết Part 3), vì lúc đó sản phẩm đã chạy trọn vòng
+upload → transcode → xem tiến độ. Nếu tách, dời phần cache + vận hành sang
+Part 5 và để Part 4 thuần về tách service.
 
 ## Gotcha đã gặp — đừng vấp lại
 
