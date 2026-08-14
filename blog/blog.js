@@ -182,10 +182,14 @@ document.addEventListener('DOMContentLoaded', function () {
       }
 
       // Filter from index
+      // Moi truong deu phai co guard '': search-index.json tung lan hai schema
+      // khac nhau (13 muc electronics chi co {title,url,content}), va mot muc
+      // thieu titleVi lam removeDiacritics() nem loi NGAY TRONG filter ->
+      // toan bo tim kiem chet im lang, khong bao gi cho nguoi dung.
       var matches = blogSearchIndex.filter(function (item) {
-        var title = removeDiacritics(currentLang === 'vi' ? item.titleVi : item.titleEn);
+        var title = removeDiacritics((currentLang === 'vi' ? item.titleVi : item.titleEn) || '');
         var desc = removeDiacritics(item.desc || '');
-        var headings = removeDiacritics(currentLang === 'vi' ? item.headingsVi : item.headingsEn);
+        var headings = removeDiacritics((currentLang === 'vi' ? item.headingsVi : item.headingsEn) || '');
 
         return title.indexOf(query) !== -1 || desc.indexOf(query) !== -1 || headings.indexOf(query) !== -1;
       });
