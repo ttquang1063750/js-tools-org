@@ -296,8 +296,9 @@ sạch, `node dist/src/main.js` boot đủ mọi module, `POST /auth/login` tr�
 `201` kèm access token JWT hợp lệ + cookie `refresh_token` đúng cấu hình
 (`HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/auth/refresh`).
 
-**Commit:** xem log gần nhất sau mục này trong git — commit message bắt đầu
-bằng `fix(blog): NestJS series` chứa toàn bộ 21 lỗi trên.
+**Commit:** `29b80d2` — `fix(blog): NestJS series — vá 21 lỗi runtime tìm được
+khi làm theo bài như người đọc thật`. Chỉ commit local, chưa push (đúng ràng
+buộc vận hành ở trên).
 
 ## Còn lại — khi chủ dự án quyết định xuất bản
 
