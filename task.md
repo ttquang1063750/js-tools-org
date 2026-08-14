@@ -134,21 +134,35 @@ SVG tràn/chồng, 0 lỗi console, không tràn ngang, check-lesson.js xanh.
 Việc còn lại trước khi đăng: chủ dự án đọc duyệt, rồi mới thêm vào 4 chỗ
 (`blog/index.html`, `index.html` gốc, `sitemap.xml`, `blog/search-index.json`).
 
-### Part 2 — Cổng vào, nginx & streaming
+### Part 2 — Cổng vào, nginx & streaming ✅ ĐÃ VIẾT XONG
 
-- [ ] Auth: JWT, guard, RBAC → **FE mốc #1: form đăng nhập**
-- [ ] Refresh token: rotation, reuse detection (thu hồi cả family), lưu hash chứ
-      không lưu plaintext, `httpOnly` cookie vs body, đăng xuất 1 thiết bị vs
-      tất cả, **race condition hai tab cùng refresh**
-- [ ] API Gateway, timeout budget
-- [ ] Rate limit: token bucket Redis, **so với `limit_req` của nginx** — cái nào
-      đặt ở đâu
-- [ ] nginx: reverse proxy, TLS termination, forwarded header,
-      `client_max_body_size`
-- [ ] Streaming upload: resumable, backpressure, không phình RAM
-- [ ] Streaming download: Range/`206`, signed URL, **`X-Accel-Redirect`** (vì sao
-      đẩy file cho nginx thay vì stream từ Node) → **FE mốc #2: upload progress +
-      player**
+`blog/build/nestjs-media-platform/part-2.html` — 5.151 từ (chưa tính code),
+36 khối code, 2 sơ đồ SVG, 8 mục H2. `check-lesson.js` xanh 11/11.
+
+- [x] Mật khẩu: argon2id, tham số nằm trong chuỗi hash, `needsRehash`, một thông
+      báo lỗi duy nhất + `DUMMY_HASH` chống đo chênh lệch thời gian
+- [x] Access token JWT: `JwtAuthGuard` tự viết (không qua passport), decorator
+      `@CurrentUser`, `RolesGuard`. Vá lỗ `userId` do client gửi từ Part 1
+- [x] Refresh token: rotation, reuse detection → xoá cả `family_id`, lưu SHA-256
+      (giải thích vì sao KHÔNG argon2 ở đây), `httpOnly` cookie vs body,
+      logout 1 thiết bị vs tất cả
+- [x] **Đua hai tab**: `setLock('pessimistic_write')` + khoảng ân hạn 30s +
+      cột mới `replaced_by_hash` (kèm lệnh sinh migration)
+- [x] nginx: TLS termination, `client_max_body_size 2g`, forwarded headers,
+      bẫy `trust proxy: true`
+- [x] Rate limit **hai tầng**: `limit_req` của nginx theo IP (chặn lưu lượng) vs
+      token bucket Lua trên Redis theo người dùng (chặn hạn mức)
+- [x] Ngân sách thời gian: tầng ngoài luôn dài hơn tầng trong
+- [x] Upload stream: `pipeline` vs `FileInterceptor`, backpressure, cách đo RSS
+      để tự kiểm chứng, upload theo mảnh có `status` để tiếp tục sau khi đứt
+- [x] Download: `Range`/`206`/`416` viết tay, rồi thay bằng `X-Accel-Redirect`
+      + `internal`, signed URL HMAC với `timingSafeEqual`
+- [x] FE mốc #1 (biến `refreshing` gộp mọi refresh vào một promise) và
+      mốc #2 (`XMLHttpRequest` vì `fetch` không báo tiến trình upload)
+
+Mạch xuyên suốt đã chốt ở callout cuối: cả 4 vấn đề khó của Part 2 đều là **một
+biến thể của double-spend ở Part 1**, và lời giải luôn thuộc 3 loại — khoá lại /
+làm nguyên tử / gộp thành một lời gọi. Part 3 nên nối tiếp mạch này.
 
 ### Part 3 — Process model & realtime
 
