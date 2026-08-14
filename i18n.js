@@ -206,7 +206,12 @@ const TRANSLATIONS = {
       'Our free utility tools — the Image Optimizer (compress and convert JPEG, PNG, WebP and HEIC), RemoveBG (AI background removal) and the QR Code Generator — run 100% client-side, so they work offline, respect your privacy, and never see your files. Alongside them we operate two cloud services for live events: SnapCast (a real-time photo slideshow where guests share photos to the big screen) and ColorQuarium (a generative ambient display you control from your phone). The event services require an account, offer paid plans, and store the photos and settings you choose to share.',
     'about.blog.title': 'The Learning Blog',
     'about.blog.desc':
-      'We write long-form, carefully edited tutorials that explain how this kind of software actually works — from C, C++ and JavaScript fundamentals to HTML5 Canvas, WebGL graphics and shell scripting. Each series is hands-on, with runnable code, interactive visualizers and quizzes, and every article is written in both English and Vietnamese to make deep technical material accessible to more readers.',
+      'We write long-form, carefully edited tutorials that explain how this kind of software actually works. The blog now runs to 22 lesson series and more than 300 lessons, spanning language fundamentals (C, C++, JavaScript, Bash), graphics (HTML5 Canvas, WebGL, WebGPU), the machine underneath (computer architecture, embedded systems, VLSI, digital signal processing), and the systems layer (SQL, vector databases, system design, applied AI engineering). Each series is hands-on, with runnable code, interactive visualizers and quizzes.',
+    'about.rigor.title': 'Every Number Is Verified, Not Estimated',
+    'about.rigor.desc':
+      'Technical writing usually asks you to trust its numbers. We decided not to ask. Each series ships a small engine — a few hundred lines of dependency-free JavaScript — that actually implements what the lessons describe: a 4-bit ALU, a RISC-V pipeline, a cache with LRU replacement, a Tomasulo scheduler, wafer yield models, a quantum circuit simulator. Every figure quoted in a lesson is produced by running that engine, and the engines carry self-tests you can run yourself with a single `node` command. When a lesson says a column-major traversal misses 100% of the time while a row-major one misses 25%, that is a measurement, not an illustration.',
+    'about.rigor.note':
+      'The engines are downloadable from the lessons that use them, so you can change a parameter and watch the conclusion change. Where a number comes from published measurements rather than our own code, we say so and cite the source.',
     'about.who.title': 'Who Builds This',
     'about.who.desc':
       'js-tools is created and maintained by Quang Tang, an independent software engineer who builds open web tools and writes about programming. The project is self-funded; optional advertising and donations help cover hosting and development so the tools can stay free for everyone. You can follow the work or get in touch through the links on our Contact page.',
@@ -504,7 +509,12 @@ const TRANSLATIONS = {
     'about.blog.title': 'Blog Học Lập Trình',
     'about.blog.desc':
       'Chúng tôi viết những bài hướng dẫn dài, biên tập kỹ lưỡng, giải thích cách loại phần mềm này thực sự vận hành — từ nền tảng C, C++ và JavaScript cho tới HTML5 Canvas, đồ hoạ WebGL và lập trình shell. Mỗi series đều thực hành trực tiếp, có code chạy được, visualizer tương tác và câu hỏi ôn tập; mọi bài viết đều song ngữ Anh–Việt để kiến thức kỹ thuật chuyên sâu đến được với nhiều người hơn.',
-    'about.who.title': 'Người Đứng Sau Dự Án',
+    'about.rigor.title': 'Mọi Con Số Đều Được Kiểm Chứng, Không Ước Lượng',
+    'about.rigor.desc':
+      'Bài viết kỹ thuật thường yêu cầu bạn tin vào con số của nó. Chúng tôi chọn cách không bắt bạn phải tin. Mỗi series đi kèm một engine nhỏ — vài trăm dòng JavaScript không phụ thuộc thư viện nào — thực sự cài đặt đúng thứ mà bài học mô tả: một ALU 4-bit, một pipeline RISC-V, một cache có LRU, bộ lập lịch Tomasulo, mô hình yield wafer, một trình mô phỏng mạch lượng tử. Mọi con số xuất hiện trong bài đều do chạy engine đó sinh ra, và bản thân engine có self-test bạn tự chạy được bằng một lệnh `node`. Khi bài viết nói duyệt theo cột miss 100% còn duyệt theo hàng chỉ miss 25%, đó là kết quả đo, không phải ví dụ minh hoạ.',
+    'about.rigor.note':
+      'Engine tải về được ngay từ bài học dùng nó, nên bạn có thể đổi một tham số và xem kết luận đổi theo. Chỗ nào con số lấy từ đo đạc đã công bố thay vì từ code của chúng tôi, chúng tôi nói rõ và dẫn nguồn.',
+'about.who.title': 'Người Đứng Sau Dự Án',
     'about.who.desc':
       'js-tools được tạo và duy trì bởi Quang Tang, một kỹ sư phần mềm độc lập chuyên xây dựng công cụ web mở và viết về lập trình. Dự án tự tài trợ; quảng cáo và ủng hộ (tuỳ tâm) giúp trang trải chi phí lưu trữ và phát triển để các công cụ luôn miễn phí cho mọi người. Bạn có thể theo dõi công việc hoặc liên hệ qua các liên kết trên trang Liên hệ.',
     'about.contact.title': 'Kết Nối Với Chúng Tôi',
