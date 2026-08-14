@@ -58,6 +58,16 @@ chỉ cần thêm thư mục dưới `build/`.
       `"strict"`, kèm output `tsc` THẬT)
 - [x] Kiểm trên trình duyệt: 0 asset 404, CSS nạp đúng ở độ sâu 3 cấp, SVG không
       tràn/không chồng nhãn, `check-lesson.js` xanh
+- [x] **Thêm mục 4 "Khởi tạo dự án"** — chủ dự án chỉ ra bài thiếu hẳn phần
+      quan trọng nhất của thể loại này: NGƯỜI ĐỌC GÕ GÌ ĐỂ BẮT ĐẦU. Trước đó bài
+      chỉ mô tả, không làm theo được. Đã bổ sung 5 mục con: `nest new`, cài gói
+      (kèm vai trò từng gói), dọn file mặc định, tạo cây thư mục, biến môi trường + kiểm bằng joi, dựng Postgres bằng Docker có healthcheck.
+      **Bài học rút ra cho các mục còn lại: mỗi mục phải là MỘT HÀNH ĐỘNG
+      (gõ lệnh → tạo file → viết gì trong đó → chạy thấy gì), không phải một mô
+      tả.**
+- [x] Đổi chỗ "Cấu trúc thư mục" lên trước "Khởi tạo dự án" — ban đầu mục 3.3
+      bảo tạo thư mục nhưng lại dẫn tới mục giải thích nằm PHÍA SAU. Đã kiểm:
+      cả 3 tham chiếu "mục N" giờ đều trỏ về phía trước.
 - [x] **Viết lại Part 1 theo hướng monolith thuần** sau khi rà soát phát hiện mâu
       thuẫn: callout nói "một app" nhưng cây thư mục lại vẽ 5 app tách rời +
       `libs/proto`. Đã sửa triệt để: - Sơ đồ kiến trúc vẽ ĐÚNG monolith (1 app NestJS + 1 worker), không vẽ
