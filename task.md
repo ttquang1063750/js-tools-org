@@ -164,16 +164,41 @@ Mạch xuyên suốt đã chốt ở callout cuối: cả 4 vấn đề khó c�
 biến thể của double-spend ở Part 1**, và lời giải luôn thuộc 3 loại — khoá lại /
 làm nguyên tử / gộp thành một lời gọi. Part 3 nên nối tiếp mạch này.
 
-### Part 3 — Process model & realtime
+### Part 3 — Process model & realtime ✅ ĐÃ VIẾT XONG
 
-- [ ] `child_process`: spawn ffmpeg, stdio, kill/timeout, zombie, exit code
-- [ ] `worker_threads`: hash ảnh, thumbnail, pool, transferable.
-      **Bảng so sánh: khi nào `child_process`, khi nào `worker_threads`**
-- [ ] `cluster` + **nginx load balancing** nhiều instance gateway
-- [ ] Queue: tách job khỏi request, retry, DLQ, idempotency
-- [ ] Realtime: WebSocket, room theo user, worker → gateway qua Redis pub/sub,
-      **nginx proxy WS** (`Upgrade`/`Connection`, timeout), reconnect/backfill
-      → **FE mốc #3: bảng tiến độ realtime**
+`blog/build/nestjs-media-platform/part-3.html` — 3.280 từ (chưa tính code),
+26 khối code, 1 sơ đồ SVG, 8 mục H2. `check-lesson.js` xanh 11/11.
+
+- [x] Mở đầu: thử nghiệm `/block` + `/ping` 10 dòng cho thấy event loop một luồng
+- [x] `child_process`: bảng 4 hàm (`exec`/`execFile`/`fork`/`spawn`) và vì sao
+      chỉ `spawn` đúng; `exec` chuỗi ghép = lỗ hổng chèn lệnh; đọc tiến độ bằng
+      `-progress pipe:2` + `readline` (KHÔNG bắt `'data'` vì chunk cắt giữa dòng);
+      chặn ở 99% vì mã thoát mới là sự thật; `AbortSignal` + SIGTERM→SIGKILL hai
+      bước; tiến trình mồ côi và `init: true`
+- [x] `worker_threads`: hash worker, `WorkerPool` với `availableParallelism()`
+      (không phải `os.cpus().length` — sai trong container), bảng so sánh với
+      `child_process`, transfer list chuyển quyền sở hữu thay vì sao chép
+- [x] Hàng đợi Redis Streams (`XACK` giữ job khi worker chết, khác `LPOP`),
+      `202 Accepted`, retry lùi dần 2/4/8s, DLQ không phải thùng rác
+- [x] **Idempotency**: unique index trên `job_id` + `ON CONFLICT DO NOTHING` —
+      nối thẳng về sổ cái append-only của Part 1
+- [x] **Worker chạy thế nào** (mục 4.3–4.4, bổ sung sau khi rà lại): 
+      `createApplicationContext` chứ không `create()`, script trong package.json,
+      dịch vụ trong docker-compose, `OnApplicationShutdown` làm nốt job đang dở,
+      `stop_grace_period` vs mặc định 10s của Docker
+- [x] `cluster`: `availableParallelism`, không fork lại khi thoát do SIGTERM,
+      3 thứ vỡ khi chuyển 1→N tiến trình; `cluster` vs nhiều container
+- [x] nginx `least_conn` (vì thời gian xử lý rất lệch) + `max_fails`
+- [x] Realtime: xác thực ngay lúc bắt tay, room `user:<id>`, worker chỉ
+      `publish` ra Redis — không biết gì về WebSocket; kết nối subscribe riêng;
+      nginx `Upgrade`/`Connection` + `proxy_read_timeout 3600s`; sticky session
+      hoặc `transports: ['websocket']`
+- [x] Reconnect/backfill: coi realtime là thứ tăng tốc, nguồn sự thật là bảng
+      `jobs` — mỗi lần `connect` gọi `/jobs/active` một phát
+- [x] FE mốc #3: `useJobProgress`, `JobList`, `transition-[width]`
+
+Callout đóng bài nối 4 công cụ về một câu hỏi duy nhất: *việc này chạy ở đâu để
+không chặn event loop*.
 
 ### Part 4 — Tách microservice & vận hành
 
