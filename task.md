@@ -58,11 +58,16 @@ chỉ cần thêm thư mục dưới `build/`.
       `"strict"`, kèm output `tsc` THẬT)
 - [x] Kiểm trên trình duyệt: 0 asset 404, CSS nạp đúng ở độ sâu 3 cấp, SVG không
       tràn/không chồng nhãn, `check-lesson.js` xanh
-- [x] Thêm callout "Sơ đồ trên là ĐÍCH ĐẾN, không phải điểm xuất phát" ngay dưới
-      sơ đồ kiến trúc — giải thích monolith trước / tách sau, và báo trước mạch
-      ACID → vỡ khi tách → outbox
+- [x] **Viết lại Part 1 theo hướng monolith thuần** sau khi rà soát phát hiện mâu
+      thuẫn: callout nói "một app" nhưng cây thư mục lại vẽ 5 app tách rời +
+      `libs/proto`. Đã sửa triệt để: - Sơ đồ kiến trúc vẽ ĐÚNG monolith (1 app NestJS + 1 worker), không vẽ
+      đích đến microservice nữa — tránh làm người đọc hoang mang - Cây thư mục là `src/{auth,media,job,billing}` chia theo MIỀN NGHIỆP VỤ,
+      không còn `apps/*` hay `libs/proto`. Ghi rõ thư mục nào thêm ở part nào - Bỏ hết từ "monorepo" kể cả trong meta description - Thêm mục **1. Yêu cầu tiên quyết** (Node 22+, Docker; Postgres/Redis/
+      ffmpeg chạy trong container — lý do: Part 3 cần khoá phiên bản ffmpeg) - Thêm callout **"Hết Part 1 bạn sẽ có gì"** — lời hứa cụ thể - Sửa "sơ đồ trên" → đúng đối tượng (trước đó nói "sơ đồ" khi ý là cây
+      thư mục) - Callout mới: chia theo miền nghiệp vụ để "module hôm nay là đường cắt
+      của ngày mai" — dẫn sang Part 4 nhẹ nhàng thay vì gieo mầm dày đặc
 
-Commit: `2745e04`
+Commit: `2745e04`, `07062f5`, và bản viết lại monolith
 
 ## Việc tiếp theo, theo đúng thứ tự
 
