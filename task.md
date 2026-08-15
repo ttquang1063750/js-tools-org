@@ -385,8 +385,8 @@ Vòng kiểm cuối: trích lại code từ 4 file HTML **sau khi sửa xong**, 
 với bản đã chạy được trong scratchpad — khớp hoàn toàn (chỉ khác câu chữ
 comment).
 
-**Commit:** xem log gần nhất — commit message bắt đầu bằng
-`fix(blog): NestJS series — vá lỗi tích hợp frontend`.
+**Commit:** `d8cdc2d` — `fix(blog): NestJS series — vá lỗi tích hợp
+frontend↔backend + 9 lỗi backend mới`. Chỉ commit local, chưa push.
 
 ## Còn lại — khi chủ dự án quyết định xuất bản
 
