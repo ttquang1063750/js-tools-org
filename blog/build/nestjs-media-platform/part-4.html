@@ -403,7 +403,15 @@ message ChargeReply {
               <pre><code class="language-bash">npm i @nestjs/microservices @grpc/grpc-js @grpc/proto-loader
 npm i -D ts-proto
 
+# ts-proto chi la plugin sinh kieu TypeScript cho protoc, khong thay the duoc
+# ban than trinh bien dich protoc. npx tu tai mot binary thay the neu may
+# chua co, nhung binary do la mot goi npm khong ro nguon goc — cai qua trinh
+# quan ly goi he dieu hanh de kiem soat dung phien ban dang dung:
+brew install protobuf                    # macOS
+sudo apt install -y protobuf-compiler    # Ubuntu/Debian
+
 npx protoc \
+  --proto_path=./proto \
   --plugin=./node_modules/.bin/protoc-gen-ts_proto \
   --ts_proto_out=./libs/proto-types \
   --ts_proto_opt=nestJs=true,useOptionals=messages \
@@ -416,6 +424,40 @@ npx protoc \
               phải lỗi lúc chạy lúc 2 giờ sáng.
             </p>
 
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Thiếu <code>--proto_path</code> thì file sinh ra nằm sai chỗ</div>
+              <div class="callout__content">
+                <code>protoc</code> phản chiếu đường dẫn tương đối của input vào cây thư mục output. Bỏ
+                <code>--proto_path=./proto</code> và chỉ truyền <code>./proto/*.proto</code>, kết quả nằm ở
+                <code>libs/proto-types/proto/billing.ts</code> — không phải <code>libs/proto-types/billing.ts</code> như
+                mọi câu <code>import ... from '@app/proto-types/billing'</code> trong phần còn lại của bài giả định.
+                Thiếu cờ này, mọi import đó báo <code>Cannot find module '@app/proto-types/billing'</code>, dù lệnh sinh
+                kiểu chạy exit 0 không báo lỗi gì.
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">tsconfig.json — path alias cho proto-types</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-json">{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@app/proto-types/*": ["libs/proto-types/*"]
+    }
+  }
+}</code></pre>
+            </div>
+
+            <p>
+              Alias này cho cả billing-svc lẫn media-svc cùng import chung một bộ kiểu sinh ra ở
+              <code>libs/proto-types</code>, kiểu
+              <code>import type { ChargeRequest } from '@app/proto-types/billing'</code>
+              — không cần đường dẫn tương đối dài dòng giữa hai app nằm ở hai thư mục khác nhau.
+            </p>
+
             <div class="code-window">
               <div class="code-header">
                 <span class="code-filename">apps/billing-svc/src/billing.controller.ts — phía phục vụ</span>
@@ -423,7 +465,12 @@ npx protoc \
               </div>
               <pre><code class="language-typescript">import { Controller } from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
-import type { ChargeRequest, ChargeReply } from '@app/proto-types/billing';
+import type {
+  ChargeRequest,
+  ChargeReply,
+  GetBalanceRequest,
+  BalanceReply,
+} from '@app/proto-types/billing';
 
 @Controller()
 export class BillingGrpcController {
@@ -438,6 +485,12 @@ export class BillingGrpcController {
       request.amount,
     );
     return { charged: result.charged, newBalance: result.balance };
+  }
+
+  @GrpcMethod('BillingService', 'GetBalance')
+  async getBalance(request: GetBalanceRequest): Promise&lt;BalanceReply&gt; {
+    const balance = await this.billing.getBalance(request.userId);
+    return { balance };
   }
 }</code></pre>
             </div>
@@ -474,6 +527,13 @@ export class BillingClient implements OnModuleInit {
     );
     return reply.charged;
   }
+
+  async getBalance(userId: string): Promise&lt;number&gt; {
+    const reply = await firstValueFrom(
+      this.service.getBalance({ userId }).pipe(timeout(3000)),
+    );
+    return reply.balance;
+  }
 }</code></pre>
             </div>
 
@@ -505,37 +565,44 @@ message JobProgress {
 }</code></pre>
             </div>
 
-            <div class="callout callout--warning">
-              <div class="callout__title">⚠️ <code>WatchJobRequest</code> chưa từng được khai báo</div>
-              <div class="callout__content">
-                <code>rpc WatchJob</code> ở trên tham chiếu <code>WatchJobRequest</code> nhưng message đó chưa từng xuất
-                hiện trong file — biên dịch thật bằng <code>protoc</code> báo lỗi ngay:
-                <code>media.proto:5:17: "WatchJobRequest" is not defined.</code> Thêm message còn thiếu là đủ;
-                <code>billing.proto</code> ở mục trên không gặp lỗi này vì mọi message nó tham chiếu đều đã được khai
-                báo đầy đủ.
-              </div>
-            </div>
-
             <div class="code-window">
               <div class="code-header">
                 <span class="code-filename">apps/media-svc/src/media.controller.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">@GrpcMethod('MediaService', 'WatchJob')
-watchJob(request: WatchJobRequest): Observable&lt;JobProgress&gt; {
-  return new Observable&lt;JobProgress&gt;((subscriber) =&gt; {
-    const handler = (event: ProgressEvent): void =&gt; {
-      if (event.jobId !== request.jobId) return;
-      subscriber.next({ jobId: event.jobId, percent: event.percent, status: event.status });
-      if (event.percent === 100) subscriber.complete();
-    };
+              <pre><code class="language-typescript">import { Controller } from '@nestjs/common';
+import { GrpcMethod } from '@nestjs/microservices';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Observable } from 'rxjs';
+import type { WatchJobRequest, JobProgress } from '@app/proto-types/media';
 
-    this.progress.on('progress', handler);
+// Ten rieng, KHONG trung voi ProgressEvent co san cua DOM.
+interface JobProgressEvent {
+  jobId: string;
+  percent: number;
+  status: string;
+}
 
-    // Ham don dep — chay khi ben goi ngat luong hoac het han.
-    // Thieu no thi moi ket noi ro ra mot listener.
-    return () =&gt; this.progress.off('progress', handler);
-  });
+@Controller()
+export class MediaGrpcController {
+  constructor(private readonly progress: EventEmitter2) {}
+
+  @GrpcMethod('MediaService', 'WatchJob')
+  watchJob(request: WatchJobRequest): Observable&lt;JobProgress&gt; {
+    return new Observable&lt;JobProgress&gt;((subscriber) =&gt; {
+      const handler = (event: JobProgressEvent): void =&gt; {
+        if (event.jobId !== request.jobId) return;
+        subscriber.next({ jobId: event.jobId, percent: event.percent, status: event.status });
+        if (event.percent === 100) subscriber.complete();
+      };
+
+      this.progress.on('progress', handler);
+
+      // Ham don dep — chay khi ben goi ngat luong hoac het han.
+      // Thieu no thi moi ket noi ro ra mot listener.
+      return () =&gt; this.progress.off('progress', handler);
+    });
+  }
 }</code></pre>
             </div>
 
@@ -738,8 +805,19 @@ export class OutboxMessage {
                 <span class="code-filename">apps/media-svc/src/outbox/outbox.relay.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">@Injectable()
+              <pre><code class="language-typescript">import { Injectable } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
+import { DataSource } from 'typeorm';
+import { OutboxMessage } from './outbox.entity';
+import { BillingClient } from '../billing.client';
+
+@Injectable()
 export class OutboxRelay {
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly billingClient: BillingClient,
+  ) {}
+
   @Interval(1000)
   async flush(): Promise&lt;void&gt; {
     await this.dataSource.transaction(async (manager) =&gt; {
@@ -763,7 +841,37 @@ export class OutboxRelay {
       }
     });
   }
+
+  private async dispatch(message: OutboxMessage): Promise&lt;void&gt; {
+    if (message.topic === 'billing.charge') {
+      const { userId, amount, jobId } = message.payload as {
+        userId: string;
+        amount: number;
+        jobId: string;
+      };
+      await this.billingClient.charge(userId, amount, jobId);
+      return;
+    }
+    // Topic la chuoi tu do, khong phai enum — mot ban ghi voi topic sai
+    // (do bug hoac do doi migration) khong duoc am tham bo qua.
+    throw new Error(`Unknown outbox topic: ${message.topic}`);
+  }
 }</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚠️ Thiếu <code>ScheduleModule.forRoot()</code> thì <code>@Interval</code> không bao giờ chạy
+              </div>
+              <div class="callout__content">
+                <code>@Interval(1000)</code> chỉ hoạt động nếu module gốc của media-svc (module chứa
+                <code>OutboxRelay</code>) có <code>ScheduleModule.forRoot()</code> trong mảng <code>imports</code>, và
+                phải <code>import { ScheduleModule } from '@nestjs/schedule'</code> để lấy nó. <br /><br />
+                Thiếu dòng import đó, <code>flush()</code> không bao giờ được gọi — không có lỗi nào ném ra, ứng dụng
+                khởi động bình thường, log không báo gì bất thường. Message nằm mãi trong bảng <code>outbox</code> với
+                <code>sent_at</code> luôn là <code>null</code>, và chỉ lộ ra khi có người thắc mắc vì sao tiền không bao
+                giờ bị trừ.
+              </div>
             </div>
 
             <p>
@@ -820,34 +928,46 @@ export class OutboxRelay {
                 <span class="code-filename">apps/media-svc/src/cache/balance.cache.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">private readonly inFlight = new Map&lt;string, Promise&lt;number&gt;&gt;();
+              <pre><code class="language-typescript">import { Injectable } from '@nestjs/common';
+import { RedisService } from '../../redis/redis.service';
+import { BillingClient } from '../billing.client';
 
-async getBalance(userId: string): Promise&lt;number&gt; {
-  const key = `balance:${userId}`;
+@Injectable()
+export class BalanceCache {
+  constructor(
+    private readonly redis: RedisService,
+    private readonly billingClient: BillingClient,
+  ) {}
 
-  const cached = await this.redis.get(key);
-  if (cached !== null) return Number(cached);
+  private readonly inFlight = new Map&lt;string, Promise&lt;number&gt;&gt;();
 
-  // Trong MOT tien trinh: moi nguoi cho chung mot lan goi.
-  // Cung y tuong voi bien `refreshing` cua Part 2.
-  const existing = this.inFlight.get(key);
-  if (existing !== undefined) return existing;
+  async getBalance(userId: string): Promise&lt;number&gt; {
+    const key = `balance:${userId}`;
 
-  const promise = this.loadAndStore(key, userId).finally(() =&gt; {
-    this.inFlight.delete(key);
-  });
-  this.inFlight.set(key, promise);
-  return promise;
-}
+    const cached = await this.redis.get(key);
+    if (cached !== null) return Number(cached);
 
-private async loadAndStore(key: string, userId: string): Promise&lt;number&gt; {
-  const balance = await this.billingClient.getBalance(userId);
+    // Trong MOT tien trinh: moi nguoi cho chung mot lan goi.
+    // Cung y tuong voi bien `refreshing` cua Part 2.
+    const existing = this.inFlight.get(key);
+    if (existing !== undefined) return existing;
 
-  // Han dung ngau nhien 60-75s. Neu tat ca cung dat 60s thi cac khoa
-  // tao ra trong cung mot dot se cung het han trong cung mot dot.
-  const ttl = 60 + Math.floor(Math.random() * 15);
-  await this.redis.set(key, String(balance), 'EX', ttl);
-  return balance;
+    const promise = this.loadAndStore(key, userId).finally(() =&gt; {
+      this.inFlight.delete(key);
+    });
+    this.inFlight.set(key, promise);
+    return promise;
+  }
+
+  private async loadAndStore(key: string, userId: string): Promise&lt;number&gt; {
+    const balance = await this.billingClient.getBalance(userId);
+
+    // Han dung ngau nhien 60-75s. Neu tat ca cung dat 60s thi cac khoa
+    // tao ra trong cung mot dot se cung het han trong cung mot dot.
+    const ttl = 60 + Math.floor(Math.random() * 15);
+    await this.redis.set(key, String(balance), 'EX', ttl);
+    return balance;
+  }
 }</code></pre>
             </div>
 
@@ -907,11 +1027,21 @@ export class CorrelationMiddleware implements NestMiddleware {
                 <span class="code-filename">apps/gateway/src/common/correlation.interceptor.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">// Dinh correlation id vao metadata cua MOI loi goi gRPC di ra.
-const metadata = new Metadata();
-metadata.set('x-correlation-id', requestContext.getStore()?.correlationId ?? 'unknown');
+              <pre><code class="language-typescript">import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import { Metadata } from '@grpc/grpc-js';
+import { requestContext } from './correlation.middleware';
 
-return this.service.charge({ userId, amount, jobId }, metadata);</code></pre>
+@Injectable()
+export class CorrelationInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler) {
+    // Dinh correlation id vao metadata cua MOI loi goi gRPC di ra.
+    const metadata = new Metadata();
+    metadata.set('x-correlation-id', requestContext.getStore()?.correlationId ?? 'unknown');
+    context.switchToRpc().getContext().add(metadata);
+
+    return next.handle();
+  }
+}</code></pre>
             </div>
 
             <p>

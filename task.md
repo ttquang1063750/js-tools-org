@@ -41,33 +41,51 @@ sau đó có hai phiên rà lỗi runtime riêng, cả hai đều **đã commit*
    được 6 lỗi mà script không thể bắt kể cả sau khi vá. Script tìm thêm
    **1 phát hiện mới → tổng 32**. Chi tiết ở mục con "### Đối chiếu lại bảng
    trên bằng công cụ". **Không sửa file HTML nào trong phiên này.**
+5. **15/08/2026, phiên 5** — xử lý toàn bộ 32 phát hiện: xác minh lại từng
+   dòng bằng đọc file thật (4 agent song song, một agent một part), áp fix
+   trực tiếp vào 4 file HTML, rồi **dựng lại project thật** trong
+   `~/Projects/Scratchpad/media-forge` để đo Part 1-3, và kiểm tĩnh bằng
+   `protoc`/`tsc` thật cho Part 4 (Part 4 vẫn CHƯA dựng thành 3 microservice
+   chạy gRPC thật — xem việc mở riêng bên dưới). Kết quả: 31/32 sửa thật, 1
+   dòng (#21) xác nhận là bỏ boilerplate có chủ đích, không sửa. Trong lúc rà
+   diff, tự phát hiện thêm 1 lỗi (constructor thiếu của `OutboxRelay`) và
+   sửa luôn. Trong lúc build thật, phát hiện thêm **2 lỗi hoàn toàn mới**,
+   nghiêm trọng hơn cả 32 dòng gốc, và đã sửa cả hai:
+   - **Không có `ValidationPipe` toàn cục nào được đăng ký ở đâu trong cả
+     loạt bài** — nghĩa là mọi DTO dùng `class-validator` (`ChargeDto`,
+     `LoginDto`, `RefreshDto`...) từ Part 1 tới Part 4 chưa từng thực sự chạy
+     validate lúc runtime, dù bài liên tục khẳng định "kiểm dữ liệu vào bằng
+     class-validator". Đo thật: gọi `/billing/charge` thiếu `amount` trước
+     khi vá → `500` với lỗi Postgres thô `22P02 invalid input syntax for
+     integer`, không phải `400` như logic DTO ngụ ý. Đã thêm
+     `app.useGlobalPipes(new ValidationPipe(...))` vào Part 2 (ngay sau
+     `LoginDto`, nơi DTO có validate đầu tiên xuất hiện).
+   - **Lệnh `npx protoc` ở Part 4 thiếu `--proto_path=./proto`** — làm file
+     sinh ra nằm ở `libs/proto-types/proto/*.ts` thay vì
+     `libs/proto-types/*.ts`, phá mọi `import ... from '@app/proto-types/...'`
+     trong phần còn lại của Part 4. Tái hiện được với 2 bản `protoc` khác
+     nhau. Đã thêm cờ còn thiếu + một callout giải thích tại sao.
+   Chi tiết đầy đủ (bảng 32 dòng đã điền cột Trạng thái, phương pháp build
+   thật, và 2 lỗi mới) ở mục "## Phiên 5 — xử lý 32 phát hiện + build thật
+   (15/08/2026)" bên dưới.
 
 **Việc CHƯA làm, còn mở cho phiên sau:**
 
-- [ ] **Xử lý 32 phát hiện của `review-build-series`** (mục riêng bên dưới) —
-      trạng thái xác minh hiện tại:
-      - 4 dòng xác minh bằng `grep` thật ở phiên 3 (đánh dấu ✅ trong bảng)
-      - nhóm "thiếu code" đã được đối chiếu máy ở phiên 4 → xem mục con
-        "### Đối chiếu lại bảng trên bằng công cụ" trước khi đi xác minh lại
-        thủ công, tránh làm hai lần
-      - phần còn lại vẫn "can-xac-nhan", một số có thể là bỏ boilerplate có
-        chủ đích chứ không phải lỗi
-      Việc tiếp theo: đi qua từng dòng, xác nhận thật/không thật, rồi sửa —
-      theo đúng độ sâu đã làm ở phiên 1-2 (dựng lại project thật, chạy thật,
-      không chỉ sửa theo suy đoán). Điền cột **Trạng thái** khi xử lý xong
-      từng dòng, đừng để bảng thoái hoá lại thành văn xuôi.
-
-      Muốn chạy lại pass tĩnh bằng bản script đã vá:
-
-      ```bash
-      python3 .claude/skills/review-build-series/extract-parts.py \
-        blog/build/nestjs-media-platform /tmp/review-nestjs
-      ```
-
-      Nhớ: script là SÀN chứ không phải trần — nó không bắt được tên bị che
-      bởi method trùng tên ở lớp khác, kiểu chỉ dùng làm tham số, lời gọi trần
-      không qua `this.`, và khối code không phải là file. Vẫn phải đọc.
-
+- [x] ~~Xử lý 32 phát hiện của `review-build-series`~~ — xong ở phiên 5, xem
+      mục "## Phiên 5" bên dưới để biết chi tiết từng dòng.
+- [ ] **Chưa xác nhận: `EventEmitter2` (Part 4, `MediaGrpcController`) có
+      thực sự nhận được sự kiện tiến độ từ Redis pub/sub (Part 3) hay
+      không** — phát hiện mới ở phiên 5 (đọc, chưa build để xác nhận chắc
+      trăm phần trăm): Part 3 phát tiến độ qua Redis pub/sub
+      (`this.redis.publish('progress', ...)`), nhưng `MediaGrpcController`
+      của Part 4 lắng nghe qua `EventEmitter2` nội bộ tiến trình
+      (`this.progress.on('progress', handler)`) — không đoạn nào trong bài
+      bắc cầu hai cơ chế này lại với nhau. Có thể là thiếu code thật (cần
+      thêm một subscriber Redis → re-emit qua `EventEmitter2`, giống hệt vai
+      trò `ProgressSubscriber` của Part 3 nhưng đặt trong media-svc), hoặc
+      có thể là chi tiết cố ý bỏ qua vì Part 4 vốn là phần mở rộng lý thuyết.
+      Chưa sửa — cần đọc kỹ hơn hoặc dựng chạy thật mới quyết được, và việc
+      đó gắn liền với việc dựng 3 microservice thật ngay dưới đây.
 - [ ] **Dựng thật hệ 3 microservice của Part 4** (`apps/billing-svc`,
       `apps/media-svc`, `apps/auth-svc` + gateway) và chạy gRPC thật giữa
       chúng. Cả hai phiên rà lỗi CHỈ kiểm được `media.proto`/`billing.proto`
@@ -126,11 +144,15 @@ chỉ cần thêm thư mục dưới `build/`.
 
 ## Ràng buộc vận hành — QUAN TRỌNG
 
-- **CHỈ commit local. KHÔNG push.** Chủ dự án sẽ tự push sau vài tuần.
-- **CHƯA** thêm vào `sitemap.xml`, `blog/search-index.json`, hay card ở
-  `blog/index.html`. Lý do: site mới ~2,5 tháng tuổi (repo init 29/5/2026) và
-  đang cần **giảm nhịp xuất bản** — 315 trang trong 10 tuần là mẫu hình rủi ro
-  theo chính sách scaled content của Google. Chờ chủ dự án quyết định thời điểm.
+- **CHỈ commit local. KHÔNG push.** Chủ dự án sẽ tự push sau vài tuần. (Đã
+  ahead ~31 commit so với `origin/main` tính tới phiên 5 — kiểm `git log
+  origin/main..HEAD` nếu cần biết con số mới nhất, đừng giả định lại từ đầu.)
+- **ĐÃ** thêm vào `sitemap.xml`, `blog/search-index.json`, và card ở
+  `blog/index.html`/`index.html` gốc — xem mục "## Đã xuất bản ra ngoài
+  (15/08/2026)" bên dưới. Ghi chú này từng nói "CHƯA" khi loạt bài còn chờ
+  chủ dự án duyệt; chủ dự án đã quyết định đưa ra hub, chỉ còn thiếu bước
+  `git push` (site mới ~2,5 tháng tuổi, vẫn đang giảm nhịp xuất bản theo
+  chính sách scaled content — xem "## Bối cảnh SEO" cuối file).
 - Chạy `node check-lesson.js <file>` trước khi coi là xong.
 - Chạy `npx prettier --write` sau mỗi lần sửa HTML/CSS.
 
@@ -431,13 +453,13 @@ comment).
 **Commit:** `d8cdc2d` — `fix(blog): NestJS series — vá lỗi tích hợp
 frontend↔backend + 9 lỗi backend mới`. Chỉ commit local, chưa push.
 
-## Rà soát tĩnh — NestJS Media Platform (15/08/2026, review-build-series, chưa sửa)
+## Rà soát tĩnh — NestJS Media Platform (15/08/2026, review-build-series)
 
-**Chỉ đọc, không chạy gì để xác nhận** — trừ 4 dòng được đánh dấu "✅ đã xác
-minh bằng grep thật" trong cột Ghi chú, phần còn lại là phát hiện từ việc đọc
-kỹ (workflow đa-agent theo đúng skill `review-build-series`, 4 agent đọc
-song song mỗi part + 1 agent đối chiếu riêng frontend↔backend), **chưa được
-xác nhận bằng cách chạy thật**. Trước khi sửa, xác nhận lại từng dòng.
+**TRẠNG THÁI: đã xử lý toàn bộ ở phiên 5 (xem mục "## Phiên 5" bên dưới cho
+phương pháp + build thật + 2 lỗi mới phát hiện thêm).** Bảng dưới đây giữ
+nguyên làm hồ sơ gốc của phiên 3 (4 dòng xác minh bằng grep thật, còn lại
+"can-xac-nhan") — cột **Ghi chú** đã được điền lại theo kết quả xử lý thật ở
+phiên 5, đừng đọc cột này như còn là "chưa sửa" nữa.
 
 Đáng chú ý: dù phiên 1-2 đã dựng và chạy thật phần lớn dự án, review này vẫn
 tìm ra 31 điều mới — vì phiên 1-2 kiểm qua script gọi thẳng service
@@ -446,37 +468,37 @@ mô tả, nên một số route/wiring không bao giờ bị chạm tới trong 
 
 | # | Part | Vị trí | Loại | Mô tả | Ghi chú |
 |---|------|--------|------|-------|---------|
-| 1 | 1 | Mục 8.2 (curl `/billing/charge`) đối chiếu mục 7.3 (`app.module.ts`) | Mơ hồ | `app.module.ts` cuối cùng của Part 1 không import `BillingController`/`BillingModule` nào — route `/billing/charge` không tồn tại, 10 lệnh curl trong demo chỉ nhận 404 | ✅ đã xác minh bằng grep thật — `BillingController` không xuất hiện ở đâu trong `part-1.html` |
-| 2 | 1 | `src/billing/billing.service.ts` — "bản đầu tiên" vs "bản đã vá" | Đứt mạch | "Bản đầu tiên" chỉ constructor-inject `entries`; "bản đã vá" dùng `this.dataSource.transaction(...)` nhưng không đoạn nào thêm `dataSource: DataSource` vào constructor | ✅ đã xác minh bằng grep thật |
-| 3 | 1 | Mục 7.4 (`\dt`) đối chiếu mục 7.2 (entity đã viết) | Mơ hồ | Kết quả `\dt` liệt kê `media_assets`, `refresh_tokens` nhưng chỉ 4 entity (CreditEntry/Job/User/Video) có code thật; `media_assets` không có entity nào cả | can-xac-nhan |
-| 4 | 1 | Mục 3 (cây thư mục) đối chiếu mục 4.5 (`docker-compose.yml`) | Mơ hồ | Comment trong cây thư mục ngụ ý Redis có ngay ở Part 1, nhưng `docker-compose.yml` mục 4.5 chỉ có service `postgres` | can-xac-nhan |
-| 5 | 1 | `src/database/data-source.ts` đối chiếu mục 4.1 (danh sách npm install) | Mơ hồ | Import gói `dotenv` nhưng không có lệnh cài đặt nào cho nó — chạy được nhờ dependency bắc cầu của `@nestjs/config`, bài không giải thích | can-xac-nhan |
-| 6 | 1 | Mục 3 (cây thư mục) — dòng `docker/Dockerfile` | Mơ hồ | Liệt kê như đã tồn tại nhưng không bước nào tạo nội dung file này | can-xac-nhan |
-| 7 | 2 | Mục 4 (`proxy_read_timeout 60s`) đối chiếu mục 5.2 (bảng ngân sách thời gian nói 15s) | Mơ hồ | Hai giá trị mâu thuẫn cho cùng một tham số, không được đối chiếu lại | can-xac-nhan |
-| 8 | 2 | `src/billing/billing.controller.ts` — khung đầy đủ, `ChargeDto` | Thiếu code | `ChargeDto` được import và dùng (`dto.amount`, `dto.reason`) nhưng không có `export class ChargeDto` nào trong cả 4 part | ✅ đã xác minh bằng grep thật |
-| 9 | 2 | `src/media/upload.controller.ts` — "nhận từng mảnh", `this.media.tempDir` | Thiếu code | `MediaService` chỉ có `uploadDir`, không có `tempDir`, không có config key nào cho thư mục tạm | can-xac-nhan |
-| 10 | 2 | `upload.controller.ts` (chú thích header `x-filename`) đối chiếu `src/lib/upload.ts` (`uploadWithProgress`) | Mơ hồ | Chú thích hứa header được đặt ở `uploadWithProgress()`, nhưng hàm đó chỉ set `Authorization`/`Content-Type` — không set `x-filename` | can-xac-nhan |
-| 11 | 2 | Mục 6.2 — "ghép các mảnh lại" | Mơ hồ | Không có code/route nào cho bước ghép chunk thành file hoàn chỉnh | can-xac-nhan |
-| 12 | 2 | Mục 2.2 (`RolesGuard`, `@Roles()`) | Mơ hồ | Được định nghĩa đầy đủ nhưng không route nào trong Part 2 thực sự dùng `@Roles(...)` để minh hoạ | can-xac-nhan |
-| 13 | 2 | Mục 8 (cài Tailwind) đối chiếu `VideoPlayer.tsx` | Mơ hồ | Không có bước đăng ký plugin Tailwind trong `vite.config.ts`, nhưng component dùng thẳng class Tailwind | can-xac-nhan |
-| 14 | 3 | `src/worker/job.runner.ts` mục 4.4 (`loop()`) | Đứt mạch | Gọi `this.processOne(job)` nhưng method này chỉ có ở một đoạn RIÊNG mục 4.1 với tên file khác hẳn (`src/job/job.worker.ts`), không được ghép vào class "đầy đủ" | can-xac-nhan |
-| 15 | 3 | `src/lib/progress.ts` + `useJobProgress.ts` (hàm `api()`) | Thiếu code | Gọi `api('/jobs/active')` nhưng không import, không có định nghĩa `api` ở đâu | can-xac-nhan |
-| 16 | 3 | `src/cluster.ts` (`void bootstrap()`) | Thiếu code | Gọi `bootstrap()` không import; `bootstrap` duy nhất có trong bài nằm ở `worker/main.ts`, dùng cho tiến trình worker không HTTP — không phải bản API có cổng lắng nghe mà `cluster.ts` cần | can-xac-nhan |
-| 17 | 3 | Mục 4.1, chú thích "Xem class JobRunner đầy đủ ở mục 4.3" | Mơ hồ | Class JobRunner đầy đủ thực ra ở mục 4.4, không phải 4.3 — con trỏ sai | can-xac-nhan |
-| 18 | 3 | Mục 1, tiêu đề "Thử nghiệm 20 giây" | Mơ hồ | Code chặn đúng 5000ms, văn bản ngay dưới cũng nói "năm giây" — tiêu đề không khớp | can-xac-nhan |
-| 19 | 3 | Mục 6.1 (đề xuất `ip_hash` riêng cho `/ws`) | Mơ hồ | Thuật toán cân tải là thuộc tính của cả khối `upstream`, không thể khác nhau theo từng `location` dùng chung upstream với `least_conn` đã đặt ở mục 5.1 | can-xac-nhan |
-| 20 | 3 | Mục 4.4 (`stop_grace_period: 10m`) | Mơ hồ | Nói "phải nâng hạn" nhưng `docker-compose.yml` đã "chốt" ở mục 4.3 không có trường này | can-xac-nhan |
-| 21 | 3 | `src/worker/worker.module.ts` (import RedisModule/BillingModule/JobModule) | Thiếu code | Nội dung 3 module này không xuất hiện trong danh sách export — có thể là boilerplate lược bỏ có chủ đích | can-xac-nhan |
-| 22 | 4 | Mục 3.1, `media.proto` + callout "WatchJobRequest chưa từng được khai báo" | Mơ hồ | **Mâu thuẫn trực tiếp**: code hiển thị NGAY TRÊN đã có `message WatchJobRequest {...}` (đây là bản đã sửa ở phiên 1), nhưng callout cảnh báo cũ bên dưới vẫn nói nó chưa được khai báo — sót lại từ lúc sửa, chưa xoá | ✅ đã xác minh bằng grep thật — đây là lỗi do chính phiên 1 gây ra khi sửa, chưa dọn callout cũ |
-| 23 | 4 | Mục 5, `balance.cache.ts` (`this.billingClient.getBalance(userId)`) | Thiếu code | `BillingClient` (định nghĩa đầy đủ ở mục 3) chỉ có `charge()`, không có `getBalance()`; phía server cũng chỉ implement `@GrpcMethod` cho `Charge`, không có cho `GetBalance` dù đã khai báo trong `.proto` | can-xac-nhan |
-| 24 | 4 | Mục 6, `correlation.interceptor.ts` | Đứt mạch | Chỉ 3 dòng lệnh trần, không có function/class/decorator bao quanh — cú pháp không hợp lệ nếu copy y nguyên | can-xac-nhan |
-| 25 | 4 | Mục 3.1, `media.controller.ts` (`ProgressEvent`) | Thiếu code | Kiểu `ProgressEvent` dùng làm type tham số nhưng không được định nghĩa ở đâu, và không khớp `ProgressEvent` có sẵn của DOM | can-xac-nhan |
-| 26 | 4 | Mục 3, lệnh `npx protoc ...` | Mơ hồ | Giả định có sẵn binary `protoc` nhưng danh sách cài đặt phía trên không cài nó | can-xac-nhan |
-| 27 | 4 | Mục 4.1, `outbox.relay.ts` (`this.dispatch(message)`) | Thiếu code | Method `dispatch` — bước quan trọng nhất của outbox pattern — không có thân hàm ở đâu | can-xac-nhan |
-| 28 | 4 | Mục 3.1, `media.controller.ts` (`watchJob`, `this.progress.on/off`) | Đứt mạch | Method không có class/constructor bao quanh, không rõ `progress` được inject ra sao | can-xac-nhan |
-| 29 | 4 | Mục 5, `balance.cache.ts` | Mơ hồ | Lớp cache in-flight-promise không có `export class .../@Injectable()` bao quanh, không rõ tên lớp | can-xac-nhan |
-| 30 | 4 | Mục 4.1, `@Interval(1000)` trong `outbox.relay.ts` | Mơ hồ | Cần `ScheduleModule.forRoot()` (đã biết là Bug P ở phiên 1, nhưng đó là fix cho `WorkerModule`/monolith — Part 4 là project microservice riêng, chưa chắc đã đăng ký lại) | can-xac-nhan |
-| 31 | — | `src/lib/upload.ts` (`uploadWithProgress`) đối chiếu `UploadController`/`Video` entity | Đứt mạch | `uploadWithProgress()` ép kiểu trả về `{ videoId: string }` và đọc `result.videoId`, nhưng backend trả nguyên `Video` entity — cột là `id`, không phải `videoId`. `result.videoId` sẽ luôn `undefined` phía client | can-xac-nhan, đáng ưu tiên cao vì ảnh hưởng trực tiếp luồng upload→transcode phía frontend |
+| 1 | 1 | Mục 8.2 (curl `/billing/charge`) đối chiếu mục 7.3 (`app.module.ts`) | Mơ hồ | `app.module.ts` cuối cùng của Part 1 không import `BillingController`/`BillingModule` nào — route `/billing/charge` không tồn tại, 10 lệnh curl trong demo chỉ nhận 404 | ✅ đã sửa + đo thật (phiên 5): thêm `ChargeDto`+`BillingController`+`BillingModule`, đăng ký vào `AppModule`. Build thật: `curl POST /billing/charge` → `201`/`400`, không còn `404` |
+| 2 | 1 | `src/billing/billing.service.ts` — "bản đầu tiên" vs "bản đã vá" | Đứt mạch | "Bản đầu tiên" chỉ constructor-inject `entries`; "bản đã vá" dùng `this.dataSource.transaction(...)` nhưng không đoạn nào thêm `dataSource: DataSource` vào constructor | ✅ đã sửa (phiên 5): constructor "bản đã vá" giờ inject cả `entries` lẫn `dataSource`. Build thật: scratchpad vốn đã có constructor đúng từ phiên 1 — chỉ cần đồng bộ bài viết khớp lại |
+| 3 | 1 | Mục 7.4 (`\dt`) đối chiếu mục 7.2 (entity đã viết) | Mơ hồ | Kết quả `\dt` liệt kê `media_assets`, `refresh_tokens` nhưng chỉ 4 entity (CreditEntry/Job/User/Video) có code thật; `media_assets` không có entity nào cả | ✅ đã sửa (phiên 5): viết ra `RefreshToken` entity tường minh, xoá dòng `media_assets` khỏi `\dt`. Scratchpad đã có entity này khớp sẵn (cần cho rotation ở phiên 1) |
+| 4 | 1 | Mục 3 (cây thư mục) đối chiếu mục 4.5 (`docker-compose.yml`) | Mơ hồ | Comment trong cây thư mục ngụ ý Redis có ngay ở Part 1, nhưng `docker-compose.yml` mục 4.5 chỉ có service `postgres` | ✅ đã sửa (phiên 5) — chỉ văn bản, không ảnh hưởng runtime |
+| 5 | 1 | `src/database/data-source.ts` đối chiếu mục 4.1 (danh sách npm install) | Mơ hồ | Import gói `dotenv` nhưng không có lệnh cài đặt nào cho nó — chạy được nhờ dependency bắc cầu của `@nestjs/config`, bài không giải thích | ✅ đã sửa (phiên 5) — chỉ văn bản, không ảnh hưởng runtime |
+| 6 | 1 | Mục 3 (cây thư mục) — dòng `docker/Dockerfile` | Mơ hồ | Liệt kê như đã tồn tại nhưng không bước nào tạo nội dung file này | ✅ đã sửa (phiên 5) — chỉ văn bản, không ảnh hưởng runtime |
+| 7 | 2 | Mục 4 (`proxy_read_timeout 60s`) đối chiếu mục 5.2 (bảng ngân sách thời gian nói 15s) | Mơ hồ | Hai giá trị mâu thuẫn cho cùng một tham số, không được đối chiếu lại | ✅ đã sửa (phiên 5) — chỉ văn bản/config nginx, không cần dựng nginx thật để đo |
+| 8 | 2 | `src/billing/billing.controller.ts` — khung đầy đủ, `ChargeDto` | Thiếu code | `ChargeDto` được import và dùng (`dto.amount`, `dto.reason`) nhưng không có `export class ChargeDto` nào trong cả 4 part | ✅ đã sửa + đo thật (phiên 5): `ChargeDto` bản Part 2 KHÔNG có `userId` (đến từ JWT). Build thật xác nhận route hoạt động đúng |
+| 9 | 2 | `src/media/upload.controller.ts` — "nhận từng mảnh", `this.media.tempDir` | Thiếu code | `MediaService` chỉ có `uploadDir`, không có `tempDir`, không có config key nào cho thư mục tạm | ✅ đã sửa + đo thật (phiên 5): thêm `TEMP_UPLOAD_DIR`+`tempDir`+`mkdir`. Build thật: upload 4 mảnh thật, `md5sum` khớp file gốc byte-for-byte |
+| 10 | 2 | `upload.controller.ts` (chú thích header `x-filename`) đối chiếu `src/lib/upload.ts` (`uploadWithProgress`) | Mơ hồ | Chú thích hứa header được đặt ở `uploadWithProgress()`, nhưng hàm đó chỉ set `Authorization`/`Content-Type` — không set `x-filename` | ✅ đã sửa + đo thật (phiên 5): thêm `X-Filename` header ở client. Phía server đã đọc/decode đúng từ trước (đo bằng `curl` mô phỏng, tên file có dấu round-trip đúng) |
+| 11 | 2 | Mục 6.2 — "ghép các mảnh lại" | Mơ hồ | Không có code/route nào cho bước ghép chunk thành file hoàn chỉnh | ✅ đã sửa + đo thật (phiên 5): route `POST /upload/:uploadId/complete` mới hoàn toàn. Build thật: ghép 4 mảnh, `md5sum` khớp, thư mục tạm bị xoá sau khi xong |
+| 12 | 2 | Mục 2.2 (`RolesGuard`, `@Roles()`) | Mơ hồ | Được định nghĩa đầy đủ nhưng không route nào trong Part 2 thực sự dùng `@Roles(...)` để minh hoạ | ✅ đã sửa + đo thật (phiên 5): thêm `GET /billing/:userId/balance` admin-only. Build thật: user thường → `403`, admin thật (tạo trong DB) → `200` |
+| 13 | 2 | Mục 8 (cài Tailwind) đối chiếu `VideoPlayer.tsx` | Mơ hồ | Không có bước đăng ký plugin Tailwind trong `vite.config.ts`, nhưng component dùng thẳng class Tailwind | ✅ đã sửa (phiên 5) — thêm `vite.config.ts`+`src/index.css`; chỉ config, KHÔNG chạy frontend thật (React vẫn chưa dựng, xem việc mở riêng) |
+| 14 | 3 | `src/worker/job.runner.ts` mục 4.4 (`loop()`) | Đứt mạch | Gọi `this.processOne(job)` nhưng method này chỉ có ở một đoạn RIÊNG mục 4.1 với tên file khác hẳn (`src/job/job.worker.ts`), không được ghép vào class "đầy đủ" | ✅ đã sửa (phiên 5, chỉ bài viết): `processOne` ghép vào class `JobRunner` ở mục 4.4. Code thật trong scratchpad vốn đã đúng từ phiên 1 (worker đã chạy full E2E) — chỉ đồng bộ lại bài |
+| 15 | 3 | `src/lib/progress.ts` + `useJobProgress.ts` (hàm `api()`) | Thiếu code | Gọi `api('/jobs/active')` nhưng không import, không có định nghĩa `api` ở đâu | ✅ đã sửa (phiên 5, chỉ import/bài viết) — không cần đổi code thật vì đây là frontend, chưa dựng thật |
+| 16 | 3 | `src/cluster.ts` (`void bootstrap()`) | Thiếu code | Gọi `bootstrap()` không import; `bootstrap` duy nhất có trong bài nằm ở `worker/main.ts`, dùng cho tiến trình worker không HTTP — không phải bản API có cổng lắng nghe mà `cluster.ts` cần | ✅ đã sửa + đo thật (phiên 5): `main.ts` bọc `export async function bootstrap()` + guard `require.main === module`. Build thật: `node dist/cluster.js` fork 10 tiến trình thật, mỗi tiến trình boot Nest đầy đủ, `curl` login qua cổng chung thành công |
+| 17 | 3 | Mục 4.1, chú thích "Xem class JobRunner đầy đủ ở mục 4.3" | Mơ hồ | Class JobRunner đầy đủ thực ra ở mục 4.4, không phải 4.3 — con trỏ sai | ✅ đã sửa (phiên 5, gộp chung sửa với #14) — chỉ văn bản |
+| 18 | 3 | Mục 1, tiêu đề "Thử nghiệm 20 giây" | Mơ hồ | Code chặn đúng 5000ms, văn bản ngay dưới cũng nói "năm giây" — tiêu đề không khớp | ✅ đã sửa (phiên 5) — chỉ văn bản |
+| 19 | 3 | Mục 6.1 (đề xuất `ip_hash` riêng cho `/ws`) | Mơ hồ | Thuật toán cân tải là thuộc tính của cả khối `upstream`, không thể khác nhau theo từng `location` dùng chung upstream với `least_conn` đã đặt ở mục 5.1 | ✅ đã sửa (phiên 5) — chỉ văn bản/config nginx, tách khối `upstream app_ws` riêng |
+| 20 | 3 | Mục 4.4 (`stop_grace_period: 10m`) | Mơ hồ | Nói "phải nâng hạn" nhưng `docker-compose.yml` đã "chốt" ở mục 4.3 không có trường này | ✅ đã sửa (phiên 5) — thêm code-window minh hoạ dòng cần bổ sung, chỉ văn bản/config |
+| 21 | 3 | `src/worker/worker.module.ts` (import RedisModule/BillingModule/JobModule) | Thiếu code | Nội dung 3 module này không xuất hiện trong danh sách export — có thể là boilerplate lược bỏ có chủ đích | **cố ý, không sửa** (phiên 5) — xác nhận đúng là bỏ boilerplate có chủ đích, khớp quy ước chung của cả bài (chỉ hiện `exports:` khi có gotcha thật) |
+| 22 | 4 | Mục 3.1, `media.proto` + callout "WatchJobRequest chưa từng được khai báo" | Mơ hồ | **Mâu thuẫn trực tiếp**: code hiển thị NGAY TRÊN đã có `message WatchJobRequest {...}` (đây là bản đã sửa ở phiên 1), nhưng callout cảnh báo cũ bên dưới vẫn nói nó chưa được khai báo — sót lại từ lúc sửa, chưa xoá | ✅ đã sửa (phiên 5): xoá callout lỗi thời |
+| 23 | 4 | Mục 5, `balance.cache.ts` (`this.billingClient.getBalance(userId)`) | Thiếu code | `BillingClient` (định nghĩa đầy đủ ở mục 3) chỉ có `charge()`, không có `getBalance()`; phía server cũng chỉ implement `@GrpcMethod` cho `Charge`, không có cho `GetBalance` dù đã khai báo trong `.proto` | ✅ đã sửa + xác minh tĩnh (phiên 5): thêm `getBalance()` cả hai phía. `protoc`+`tsc` thật sạch, kể cả test âm (đổi field sai tên → tsc bắt đúng lỗi) |
+| 24 | 4 | Mục 6, `correlation.interceptor.ts` | Đứt mạch | Chỉ 3 dòng lệnh trần, không có function/class/decorator bao quanh — cú pháp không hợp lệ nếu copy y nguyên | ✅ đã sửa + xác minh tĩnh (phiên 5): bọc thành `CorrelationInterceptor implements NestInterceptor`, `tsc --noEmit` sạch |
+| 25 | 4 | Mục 3.1, `media.controller.ts` (`ProgressEvent`) | Thiếu code | Kiểu `ProgressEvent` dùng làm type tham số nhưng không được định nghĩa ở đâu, và không khớp `ProgressEvent` có sẵn của DOM | ✅ đã sửa + xác minh tĩnh (phiên 5): interface riêng `JobProgressEvent`, `tsc` sạch (gộp cùng khối với #28) |
+| 26 | 4 | Mục 3, lệnh `npx protoc ...` | Mơ hồ | Giả định có sẵn binary `protoc` nhưng danh sách cài đặt phía trên không cài nó | ✅ đã sửa, rồi sửa TIẾP (phiên 5): thêm bước cài `protoc` qua brew/apt — nhưng lý do nhân-quả ban đầu ("thiếu thì `npx protoc` sẽ hỏng") SAI, đã đo thật bằng cách giả lập PATH không có `protoc`: `npx protoc` vẫn chạy được vì tự tải một gói npm tên `protoc` thay thế. Đã sửa lại câu giải thích thành lý do đúng (kiểm soát nguồn gốc/phiên bản binary, không phải "nếu không cài thì hỏng") |
+| 27 | 4 | Mục 4.1, `outbox.relay.ts` (`this.dispatch(message)`) | Thiếu code | Method `dispatch` — bước quan trọng nhất của outbox pattern — không có thân hàm ở đâu | ✅ đã sửa + xác minh tĩnh (phiên 5): thêm `dispatch()`. **Trong lúc rà diff, tự phát hiện thêm 1 lỗi ngoài phạm vi dòng này**: `OutboxRelay` không hề có constructor (dùng `this.dataSource` từ trước, giờ thêm cả `this.billingClient`, cả hai chưa từng được inject) — đã thêm constructor tiêm `DataSource`+`BillingClient`, `tsc` sạch |
+| 28 | 4 | Mục 3.1, `media.controller.ts` (`watchJob`, `this.progress.on/off`) | Đứt mạch | Method không có class/constructor bao quanh, không rõ `progress` được inject ra sao | ✅ đã sửa + xác minh tĩnh (phiên 5): bọc `MediaGrpcController`, tiêm `EventEmitter2`. `tsc` sạch — nhưng xem việc mở mới "EventEmitter2 vs Redis pub/sub" ở đầu file, chưa rõ ai bắc cầu hai cơ chế |
+| 29 | 4 | Mục 5, `balance.cache.ts` | Mơ hồ | Lớp cache in-flight-promise không có `export class .../@Injectable()` bao quanh, không rõ tên lớp | ✅ đã sửa + xác minh tĩnh (phiên 5): bọc `BalanceCache`, tiêm `RedisService`+`BillingClient`, `tsc` sạch |
+| 30 | 4 | Mục 4.1, `@Interval(1000)` trong `outbox.relay.ts` | Mơ hồ | Cần `ScheduleModule.forRoot()` (đã biết là Bug P ở phiên 1, nhưng đó là fix cho `WorkerModule`/monolith — Part 4 là project microservice riêng, chưa chắc đã đăng ký lại) | ✅ đã sửa (phiên 5) — thêm callout giải thích, xác nhận bằng đọc/grep (đúng hành vi NestJS đã biết chắc), không dựng media-svc thật để đo |
+| 31 | — | `src/lib/upload.ts` (`uploadWithProgress`) đối chiếu `UploadController`/`Video` entity | Đứt mạch | `uploadWithProgress()` ép kiểu trả về `{ videoId: string }` và đọc `result.videoId`, nhưng backend trả nguyên `Video` entity — cột là `id`, không phải `videoId`. `result.videoId` sẽ luôn `undefined` phía client | ✅ đã sửa + đo thật (phiên 5): sửa PHÍA BACKEND (`UploadController.upload()` trả `{ videoId }`), không sửa client. Build thật: scratchpad vẫn trả `Video` thô trước khi sửa (bug thật, đã xác nhận) — sau khi sửa, response chỉ có `{"videoId":"..."}` |
 
 ### Đối chiếu lại bảng trên bằng công cụ (15/08/2026, sau khi vá `extract-parts.py`)
 
@@ -505,11 +527,99 @@ Một dòng mới, script tìm ra mà bảng cũ chưa có:
 
 | # | Part | Vị trí | Loại | Mô tả | Trạng thái |
 |---|------|--------|------|-------|------------|
-| 32 | 4 | Mục 3, lệnh `npx protoc` đối chiếu mọi `import ... from '@app/proto-types/...'` | Mơ hồ | Codegen ghi ra `./libs/proto-types` nhưng mọi import lại dùng alias `@app/proto-types/...`, và Part 4 không có chỗ nào khai báo `paths` trong `tsconfig.json` — làm theo đúng bài thì TypeScript không phân giải được alias này | chưa xử lý |
+| 32 | 4 | Mục 3, lệnh `npx protoc` đối chiếu mọi `import ... from '@app/proto-types/...'` | Mơ hồ | Codegen ghi ra `./libs/proto-types` nhưng mọi import lại dùng alias `@app/proto-types/...`, và Part 4 không có chỗ nào khai báo `paths` trong `tsconfig.json` — làm theo đúng bài thì TypeScript không phân giải được alias này | ✅ đã sửa + xác minh tĩnh (phiên 5): thêm `tsconfig.json` với `baseUrl`+`paths`. `tsc` thật xác nhận resolve được (test âm: xoá `paths` → đúng lỗi `TS2307`). **Xác minh tĩnh còn lộ thêm 1 lỗi khác** liên quan trực tiếp tới dòng này — xem "## Phiên 5" |
 
 Ba tên `BillingServiceClient` / `ChargeReply` / `ChargeRequest` bản thân chúng
 là file sinh tự động, **không phải lỗi thiếu code** — nhưng chính vì đi qua
 alias chưa khai báo mà chúng nổi lên. Xử lý dòng 32 là xử lý luôn cả ba.
+
+## Phiên 5 — xử lý 32 phát hiện + build thật (15/08/2026)
+
+**Phương pháp:** 4 agent song song (1 agent/part) đọc lại TỪNG dòng trong 32
+dòng ở trên trực tiếp từ file HTML hiện tại (không tin mô tả có sẵn), xác
+nhận lại bằng chứng, rồi đề xuất fix chính xác (file, vị trí, nội dung). Sau
+đó 4 agent khác (1 agent/part, chỉ sửa file của part mình — không đụng nhau)
+áp fix trực tiếp vào HTML, chạy `check-lesson.js`+`prettier` ngay sau khi
+sửa. Tôi tự đọc lại toàn bộ diff của cả 4 file trước khi tin — đây là bước
+bắt được lỗi đầu tiên (xem "Lỗi tự phát hiện thêm" bên dưới). Cuối cùng,
+**build thật để đo**, đúng kỷ luật đã có từ phiên 1-2:
+
+- **Part 1-3 (monolith)**: dựng lại trong `~/Projects/Scratchpad/media-forge`
+  (project đã có từ phiên 2, khởi động lại Postgres+Redis qua Docker vì
+  container cũ đã bị xoá sau phiên 2). Với mỗi fix, trước tiên xác nhận code
+  THẬT trong scratchpad đã khớp bài viết mới chưa (nhiều fix chỉ sửa văn bản
+  bài, code thật vốn đã đúng từ phiên 1-2 vì worker/auth đã chạy full E2E) —
+  chỉ những chỗ THẬT SỰ thiếu (BillingController+Module+DTO, chunked-upload
+  tempDir+route `/complete`, admin balance endpoint, `UploadController` đổi
+  return type, `cluster.ts`+`main.ts` bọc `bootstrap()`) mới cần viết mới và
+  đo bằng `curl`/build thật.
+- **Part 4 (3 microservice gRPC)**: KHÔNG dựng 3 service thật (việc đó tách
+  riêng, xem việc mở đầu file) — xác minh bằng `protoc` thật trên các khối
+  `.proto` trích ra, và `tsc --noEmit` thật trên các khối TypeScript trích ra
+  (kèm stub tối giản cho type sinh từ proto, dựng trong một thư mục scratch
+  npm riêng, không đụng project chính). Có làm test âm (cố ý gõ sai một field
+  hoặc xoá một khai báo) để chắc phép thử có ý nghĩa, không phải false-positive.
+
+**Kết quả: 31/32 sửa vào HTML, 1 dòng (#21) xác nhận cố ý không sửa.** Chi
+tiết từng dòng đã điền vào cột Ghi chú của bảng 32 dòng ở trên — đọc bảng đó
+để biết CHÍNH XÁC dòng nào đo bằng gì, đừng lặp lại việc đã làm.
+
+### Lỗi tự phát hiện thêm (ngoài 32 dòng gốc)
+
+Ba lỗi dưới đây KHÔNG nằm trong 32 phát hiện gốc — phát hiện trong lúc rà
+diff hoặc build thật ở chính phiên này. Đúng với mẫu hình đã lặp lại xuyên
+suốt cả 5 phiên: mỗi vòng kiểm sâu hơn lại lộ thêm một lớp mới.
+
+1. **`OutboxRelay` (Part 4) không có constructor nào cả** — `this.dataSource`
+   đã được dùng từ trước (fix #27 chỉ hỏi thêm `dispatch()`), và giờ
+   `this.billingClient` cũng vậy, nhưng class chưa từng khai báo constructor
+   tiêm hai thứ đó. Phát hiện khi tôi tự đọc lại diff Part 4 (không phải từ
+   verify-agent). Đã thêm `constructor(private readonly dataSource:
+   DataSource, private readonly billingClient: BillingClient) {}` + import.
+   `tsc` xác nhận sạch.
+2. **Không có `ValidationPipe` toàn cục nào được đăng ký ở đâu trong cả loạt
+   bài** — phát hiện khi build thật monolith Part 1-3. Mọi DTO dùng
+   `class-validator` (`ChargeDto`, `LoginDto`, `RefreshDto`) chưa từng thực
+   sự chạy validate lúc runtime, dù Part 1 mục 4.1 khẳng định thẳng
+   "class-validator... kiểm tra dữ liệu vào ở lúc chạy" — lời hứa đó chưa
+   từng được giữ ở bất kỳ đâu trong 4 part. Đo thật: gọi
+   `POST /billing/charge` thiếu `amount` → **`500`** với lỗi Postgres thô
+   `22P02 invalid input syntax for integer: "NaN"`, không phải `400` sạch sẽ.
+   Đã thêm `app.useGlobalPipes(new ValidationPipe({ whitelist: true,
+   forbidNonWhitelisted: true, transform: true }))` vào Part 2, ngay sau khi
+   `LoginDto` xuất hiện lần đầu (chỗ tự nhiên nhất — DTO có validate đầu tiên
+   của cả bài) — kèm callout dùng đúng con số `500`/`22P02` vừa đo được làm
+   ví dụ thật, không bịa.
+3. **Lệnh `npx protoc` ở Part 4 thiếu `--proto_path=./proto`** — phát hiện
+   khi xác minh tĩnh Part 4. `protoc` phản chiếu đường dẫn tương đối của
+   input vào cây output: thiếu cờ này, file sinh ra nằm ở
+   `libs/proto-types/proto/billing.ts` thay vì `libs/proto-types/billing.ts`
+   — phá MỌI `import ... from '@app/proto-types/...'` trong phần còn lại của
+   Part 4 (`Cannot find module`), dù lệnh sinh kiểu tự nó chạy exit 0 không
+   báo lỗi gì. Tái hiện được với 2 bản `protoc` khác nhau (hệ thống lẫn
+   `npx` tự tải). Đã thêm cờ còn thiếu + một callout giải thích cơ chế.
+
+Một điều chỉnh nhỏ khác (không phải bug mới, mà là sửa một câu giải thích
+sai trong chính fix #26): bài nói cần cài `protoc` qua brew/apt vì "không có
+nó thì lệnh `npx protoc` sẽ hỏng" — đo thật bằng cách giả lập PATH không có
+`protoc` hệ thống: lệnh **vẫn chạy được**, vì `npx` tự tải một gói npm tên
+`protoc` thay thế. Việc cài qua brew/apt vẫn là thực hành tốt (kiểm soát
+đúng nguồn gốc/phiên bản binary), chỉ là lý do nhân-quả ban đầu không đúng —
+đã viết lại câu giải thích cho khớp với hành vi thật.
+
+### Việc mở mới, chưa sửa (ghi vào đầu file rồi, nhắc lại ở đây cho đủ mạch)
+
+**`EventEmitter2` (Part 4, `MediaGrpcController`) và Redis pub/sub (Part 3)
+là hai cơ chế tiến độ khác nhau, không thấy đoạn nào bắc cầu chúng lại** —
+phát hiện trong lúc xác minh tĩnh Part 4, nhưng CHƯA xác nhận chắc chắn là
+lỗi thật hay chi tiết cố ý bỏ qua (Part 4 vốn là phần mở rộng lý thuyết,
+chưa từng dựng 3 service thật). Xem chi tiết ở mục "⚠️ Việc còn mở" đầu file.
+
+**Cleanup:** container Docker (`forge-postgres`/`forge-redis`) đã dừng+xoá
+sau khi đo xong; thư mục project trong scratchpad còn nguyên (không xoá),
+chỉ những file thật sự cần sửa mới bị đổi. Không commit gì trong scratchpad
+(không phải git repo). Chưa commit gì vào repo chính ở thời điểm viết mục
+này — xem "## Đã xong" phía trên/commit log cho commit thật của phiên này.
 
 ## Đã xuất bản ra ngoài (15/08/2026)
 

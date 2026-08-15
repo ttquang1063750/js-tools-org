@@ -188,7 +188,7 @@
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">Thử nghiệm 20 giây để tự thấy</span>
+                <span class="code-filename">Thử nghiệm 5 giây để tự thấy</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">@Get('block')
@@ -921,19 +921,19 @@ export class DelayedJobPromoter {
             </div>
 
             <p>
-              Giờ mới tới vòng lặp chính — một method riêng của <code>JobRunner</code> ở mục 4.3, không phải hàm rời:
+              Giờ mới tới vòng lặp chính — một method riêng của <code>JobRunner</code> ở mục 4.4, không phải hàm rời:
             </p>
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">src/job/job.worker.ts — vòng lặp chính</span>
+                <span class="code-filename">src/worker/job.runner.ts — trích đoạn processOne()</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">const MAX_ATTEMPTS = 3;
 
 // Method cua JobRunner, KHONG PHAI mot ham doc lap — mot function() thuong
 // khong co `this` gan san, trong khi than ham ben duoi dung this.queue,
-// this.jobs. Xem class JobRunner day du o muc 4.3.
+// this.jobs. Xem class JobRunner day du o muc 4.4.
 private async processOne(job: TranscodeJob): Promise&lt;void&gt; {
   try {
     await this.runTranscode(job);
@@ -1200,6 +1200,9 @@ import { transcode } from './transcoder';
 // Gia tren moi do phan giai — dung cho demo, thuc te se doc tu bang gia.
 const PRICE_BY_HEIGHT: Record&lt;TranscodeJob['height'], number&gt; = { 480: 5, 720: 10, 1080: 20 };
 
+// So lan thu toi da truoc khi day sang hang doi chet (muc 4.1).
+const MAX_ATTEMPTS = 3;
+
 @Injectable()
 export class JobRunner implements OnApplicationShutdown {
   private stopping = false;
@@ -1230,6 +1233,31 @@ export class JobRunner implements OnApplicationShutdown {
   async onApplicationShutdown(): Promise&lt;void&gt; {
     this.stopping = true; // khong nhan viec moi nua
     await this.current; // nhung lam not viec dang do
+  }
+
+  // Method cua JobRunner, KHONG PHAI mot ham doc lap — mot function() thuong
+  // khong co `this` gan san, ma than ham duoi day dung this.queue, this.jobs.
+  private async processOne(job: TranscodeJob): Promise&lt;void&gt; {
+    try {
+      await this.runTranscode(job);
+      await this.queue.ack(job.messageId!);
+    } catch (error) {
+      const attempt = job.attempt + 1;
+
+      if (attempt &gt;= MAX_ATTEMPTS) {
+        // Het luot: day sang hang doi chet. KHONG xoa — con nguoi can xem lai.
+        await this.queue.pushDeadLetter({ ...job, lastError: String(error) });
+        await this.queue.ack(job.messageId!);
+        await this.jobs.markFailed(job.id, String(error));
+        return;
+      }
+
+      // Cho lau dan: 2s, 4s, 8s. Thu lai ngay lap tuc chi lam nang them
+      // dung cai he thong dang gap su co.
+      const delayMs = 2 ** attempt * 1000;
+      await this.queue.pushDelayed({ ...job, attempt }, delayMs);
+      await this.queue.ack(job.messageId!);
+    }
   }
 
   private async runTranscode(job: TranscodeJob): Promise&lt;void&gt; {
@@ -1275,13 +1303,13 @@ export class JobRunner implements OnApplicationShutdown {
             </div>
 
             <div class="callout callout--note">
-              <div class="callout__title">📝 Constructor và <code>runTranscode</code> chưa từng được viết ra</div>
+              <div class="callout__title">📝 <code>processOne</code> được ghép vào từ mục 4.1</div>
               <div class="callout__content">
-                <code>loop()</code> gọi <code>this.processOne(job)</code> ở mục 4.1, và <code>processOne</code> gọi
-                <code>this.runTranscode(job)</code> — nhưng cả constructor lẫn thân của <code>runTranscode</code> đều
-                chưa từng xuất hiện. Nó chính là chỗ ghép <code>transcode()</code> (mục 2.2),
+                <code>loop()</code> gọi <code>this.processOne(job)</code> — thân của nó đã viết riêng ở mục 4.1 khi bàn
+                về thử lại, và vừa được ghép vào ngay trên, ngay trước <code>runTranscode</code>. Cùng với
+                <code>runTranscode</code> — nơi ghép <code>transcode()</code> (mục 2.2),
                 <code>RedisService.publish</code> (mục 6), và <code>BillingService.chargeForJob</code> (mục 4.2) lại với
-                nhau — thứ mà cả bài liên tục nói tới nhưng chưa từng viết thành một khối liền.
+                nhau — class <code>JobRunner</code> ở trên giờ đầy đủ.
               </div>
             </div>
 
@@ -1297,6 +1325,19 @@ export class JobRunner implements OnApplicationShutdown {
               </div>
             </div>
 
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">docker-compose.yml — thêm thời gian ân hạn</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-yaml">services:
+  worker:
+    # ... build, command, init, environment, volumes, depends_on da chot o muc 4.3 ...
+    stop_grace_period: 10m # doi toi 10 phut truoc khi Docker gui SIGKILL
+    deploy:
+      replicas: 2</code></pre>
+            </div>
+
             <h2>5. <code>cluster</code>: dùng hết số nhân CPU</h2>
 
             <p>
@@ -1307,13 +1348,39 @@ export class JobRunner implements OnApplicationShutdown {
               <code>cluster</code> nhân bản tiến trình: một tiến trình chính đẻ ra N tiến trình con, tất cả cùng nghe
               trên một cổng, và hệ điều hành chia kết nối cho chúng.
             </p>
+            <p>
+              Mỗi tiến trình con phải tự chạy được một bản NestJS đầy đủ — tức là gọi lại đúng đoạn
+              <code>NestFactory.create(AppModule)</code> và <code>app.listen(...)</code> đã thấy ở Part 1 và Part 2. Bọc
+              đoạn đó vào một hàm <code>export function bootstrap()</code> trong <code>src/main.ts</code>, và chỉ tự gọi
+              nó khi file chạy trực tiếp — để <code>cluster.ts</code> phía dưới import lại đúng hàm này mà không chạy nó
+              thêm một lần nữa lúc import:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/main.ts — bọc bootstrap để cluster.ts import lại</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">export async function bootstrap(): Promise&lt;void&gt; {
+  const app = await NestFactory.create&lt;NestExpressApplication&gt;(AppModule);
+  app.set('trust proxy', 1); // xem Part 2, muc 4.2
+  await app.listen(process.env.PORT ?? 3000);
+}
+
+// Chi tu chay khi file nay la entry point that su (npm run start:dev goi
+// thang main.ts) — tranh chay bootstrap() hai lan khi cluster.ts import ham nay.
+if (require.main === module) {
+  void bootstrap();
+}</code></pre>
+            </div>
 
             <div class="code-window">
               <div class="code-header">
                 <span class="code-filename">src/cluster.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import cluster from 'node:cluster';
+              <pre><code class="language-typescript">import { bootstrap } from './main';
+import cluster from 'node:cluster';
 import { availableParallelism } from 'node:os';
 
 if (cluster.isPrimary) {
@@ -1332,7 +1399,10 @@ if (cluster.isPrimary) {
     }
   });
 } else {
-  void bootstrap(); // Moi tien trinh con chay mot ban NestJS day du.
+  // bootstrap() CUA src/main.ts (tien trinh API, co app.listen()) — KHONG
+  // PHAI bootstrap() cua src/worker/main.ts (tien trinh worker, khong HTTP,
+  // xem muc 4.3). Hai file dinh nghia hai ham trung ten nhung khac nhau.
+  void bootstrap();
 }</code></pre>
             </div>
 
@@ -1580,9 +1650,22 @@ export class ProgressSubscriber implements OnModuleInit {
                 HTTP <strong>phải tới cùng một instance</strong>. Với <code>least_conn</code>, chúng bị rải ra khắp nơi
                 và kết nối thất bại một cách rất khó hiểu — thường biểu hiện là client cứ kết nối rồi rớt thành vòng
                 lặp. <br /><br />
-                Hai cách chữa: bật <code>ip_hash</code> cho riêng <code>location /ws</code> để cùng một IP luôn về một
-                instance, hoặc ép client dùng thẳng WebSocket: <code>io(url, { transports: ['websocket'] })</code> — bỏ
-                hẳn giai đoạn polling và bỏ luôn vấn đề.
+                Thuật toán cân tải là thuộc tính của cả khối <code>upstream</code>, không thể khác nhau theo từng
+                <code>location</code> dùng chung một khối. Hai cách chữa: tách một khối <code>upstream</code> riêng chỉ
+                để <code>/ws</code> dùng — <br /><br />
+                <code
+                  >upstream app_ws {<br />
+                  &nbsp;&nbsp;ip_hash;<br />
+                  &nbsp;&nbsp;server app1:3000;<br />
+                  &nbsp;&nbsp;server app2:3000;<br />
+                  &nbsp;&nbsp;server app3:3000;<br />
+                  }</code
+                >
+                <br /><br />
+                — rồi đổi <code>proxy_pass</code> trong <code>location /ws</code> sang <code>http://app_ws</code> (khối
+                <code>app</code> còn lại ở mục 5.1 giữ nguyên <code>least_conn</code> cho các request thường), hoặc ép
+                client dùng thẳng WebSocket: <code>io(url, { transports: ['websocket'] })</code> — bỏ hẳn giai đoạn
+                polling và bỏ luôn vấn đề.
               </div>
             </div>
 
@@ -1596,13 +1679,19 @@ export class ProgressSubscriber implements OnModuleInit {
               Cách chữa không nằm ở WebSocket mà ở chỗ khác: coi kênh realtime là thứ <em>tăng tốc</em>, không phải
               nguồn sự thật. Trạng thái thật luôn nằm trong bảng <code>jobs</code>.
             </p>
+            <p>
+              <code>api()</code> gọi dưới đây là hàm tự làm mới token đã viết ở Part 2, mục 8.1 — mọi request qua
+              <code>GET /jobs/active</code> đi kèm access token mới nhất mà không cần lặp lại logic refresh ở đây.
+            </p>
 
             <div class="code-window">
               <div class="code-header">
                 <span class="code-filename">src/lib/progress.ts — phía client</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">socket.on('connect', async () =&gt; {
+              <pre><code class="language-typescript">import { api } from './api';
+
+socket.on('connect', async () =&gt; {
   // Moi lan noi lai — ke ca lan dau — hoi mot phat trang thai hien tai.
   // Sau do WebSocket lo phan cap nhat.
   const res = await api('/jobs/active');
@@ -1631,6 +1720,7 @@ socket.on('job:progress', (event: { jobId: string; percent: number }) =&gt; {
               </div>
               <pre><code class="language-typescript">import { useEffect, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { api } from '../lib/api';
 
 export interface JobState {
   readonly id: string;

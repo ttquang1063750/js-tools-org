@@ -334,8 +334,7 @@
 │   ├── job/                    # vòng đời job chuyển mã
 │   └── billing/                # sổ cái credit — nơi phần ACID diễn ra
 ├── docker/
-│   ├── docker-compose.yml      # postgres + redis (+ app khi cần)
-│   └── Dockerfile
+│   └── docker-compose.yml      # chỉ Postgres — redis thêm ở Part 3
 ├── .env.example
 ├── tsconfig.json
 └── package.json</code></pre>
@@ -398,6 +397,7 @@ cd media-forge</code></pre>
               </div>
               <pre><code class="language-bash"># Cấu hình &amp; kiểm tra biến môi trường
 npm i @nestjs/config zod
+npm i dotenv
 
 # Cơ sở dữ liệu
 npm i @nestjs/typeorm typeorm pg
@@ -413,6 +413,11 @@ npm i class-validator class-transformer</code></pre>
                 <code>zod</code> — kiểm tra biến môi trường <strong>lúc khởi động</strong>, và sinh luôn kiểu TypeScript
                 từ chính schema đó. Thiếu <code>DATABASE_URL</code> thì app dừng ngay với thông báo rõ, thay vì chạy
                 được rồi mới sập lúc truy vấn đầu tiên
+              </li>
+              <li>
+                <code>dotenv</code> — gói duy nhất mà <code>data-source.ts</code> (mục 7.1) dùng trực tiếp để nạp
+                <code>.env</code>. Script CLI của TypeORM chạy độc lập, ngoài container DI của Nest, nên không có
+                <code>ConfigModule</code> để dựa vào
               </li>
               <li><code>typeorm</code> + <code>pg</code> — ORM và driver PostgreSQL</li>
               <li>
@@ -1336,7 +1341,7 @@ export class Job {
             </div>
 
             <p>
-              Hai entity còn lại theo đúng khuôn trên — viết ra đây để migration ở mục sau sinh đủ bảng trong một lần,
+              Ba entity còn lại theo đúng khuôn trên — viết ra đây để migration ở mục sau sinh đủ bảng trong một lần,
               thay vì phải chạy thêm một migration nữa khi Part 2 cần tới chúng.
             </p>
 
@@ -1407,9 +1412,53 @@ export class Video {
             </div>
 
             <p>
-              <code>RefreshToken</code> sẽ được dùng thật ở Part 2 khi làm xoay vòng token, nhưng khai báo luôn từ giờ
-              để migration chỉ chạy một lần — xem code đầy đủ ở đó.
+              Bảng cuối cùng của mục này là <code>refresh_tokens</code> — khai báo luôn từ giờ để migration ở mục 7.4
+              sinh đủ bảng trong một lần:
             </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/auth/refresh-token.entity.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { User } from './user.entity';
+
+@Entity('refresh_tokens')
+export class RefreshToken {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @ManyToOne(() =&gt; User, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_id' })
+  user!: User;
+
+  @Column({ name: 'user_id' })
+  userId!: string;
+
+  // SHA-256 cua token. Khong bao gio luu ban goc.
+  @Index({ unique: true })
+  @Column({ name: 'token_hash', length: 64 })
+  tokenHash!: string;
+
+  // Ca mot chuoi xoay vong dung chung mot family_id.
+  @Index()
+  @Column({ name: 'family_id' })
+  familyId!: string;
+
+  // null = chua dung. Co gia tri = da dung, dung lai la bao dong.
+  @Column({ name: 'used_at', type: 'timestamptz', nullable: true })
+  usedAt!: Date | null;
+
+  @Column({ name: 'expires_at', type: 'timestamptz' })
+  expiresAt!: Date;
+
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  createdAt!: Date;
+}</code></pre>
+            </div>
+
+            <p>Logic xoay vòng, và thu hồi cả family khi token cũ bị dùng lại, được viết đầy đủ ở Part 2.</p>
 
             <h3>7.3 Nối TypeORM vào ứng dụng</h3>
 
@@ -1531,7 +1580,6 @@ export class AppModule {}</code></pre>
 # --------+-----------------+-------+-------
 #  public | credit_entries  | table | forge
 #  public | jobs            | table | forge
-#  public | media_assets    | table | forge
 #  public | migrations      | table | forge
 #  public | refresh_tokens  | table | forge
 #  public | users           | table | forge
@@ -1728,25 +1776,49 @@ seq 1 10 | xargs -P 10 -I{} curl -s -o /dev/null -w '%{http_code}\n' \
                 <span class="code-filename">src/billing/billing.service.ts — bản đã vá</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">async charge(userId: string, amount: number, reason: CreditReason): Promise&lt;void&gt; {
-  await this.dataSource.transaction(async (manager) =&gt; {
-    // Khoa DONG cua user nay. Request thu hai se DUNG o day cho toi khi
-    // transaction dau tien commit.
-    await manager.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+              <pre><code class="language-typescript">import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { CreditEntry, type CreditReason } from './credit-entry.entity';
 
-    const row = await manager
-      .createQueryBuilder(CreditEntry, 'e')
+@Injectable()
+export class BillingService {
+  constructor(
+    @InjectRepository(CreditEntry)
+    private readonly entries: Repository&lt;CreditEntry&gt;,
+    private readonly dataSource: DataSource,
+  ) {}
+
+  async getBalance(userId: string): Promise&lt;number&gt; {
+    const row = await this.entries
+      .createQueryBuilder('e')
       .select('COALESCE(SUM(e.delta), 0)', 'balance')
       .where('e.user_id = :userId', { userId })
       .getRawOne&lt;{ balance: string }&gt;();
 
-    const balance = Number(row?.balance ?? 0);
-    if (balance &lt; amount) {
-      throw new BadRequestException('Không đủ credit');
-    }
+    return Number(row?.balance ?? 0);
+  }
 
-    await manager.insert(CreditEntry, { userId, delta: -amount, reason });
-  });
+  async charge(userId: string, amount: number, reason: CreditReason): Promise&lt;void&gt; {
+    await this.dataSource.transaction(async (manager) =&gt; {
+      // Khoa DONG cua user nay. Request thu hai se DUNG o day cho toi khi
+      // transaction dau tien commit.
+      await manager.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+
+      const row = await manager
+        .createQueryBuilder(CreditEntry, 'e')
+        .select('COALESCE(SUM(e.delta), 0)', 'balance')
+        .where('e.user_id = :userId', { userId })
+        .getRawOne&lt;{ balance: string }&gt;();
+
+      const balance = Number(row?.balance ?? 0);
+      if (balance &lt; amount) {
+        throw new BadRequestException('Không đủ credit');
+      }
+
+      await manager.insert(CreditEntry, { userId, delta: -amount, reason });
+    });
+  }
 }</code></pre>
             </div>
 
@@ -1760,6 +1832,122 @@ seq 1 10 | xargs -P 10 -I{} curl -s -o /dev/null -w '%{http_code}\n' \
               Chạy lại đúng lệnh ở mục 8.2. Lần này đúng 5 request trả <code>201</code>, 5 request trả <code>400</code>,
               và số dư dừng ở 0.
             </p>
+
+            <p>
+              <code>BillingService</code> một mình chưa lộ ra ngoài được — nó chỉ là một provider. Cần thêm một
+              controller nhận request HTTP và một module gói cả hai lại, đúng khuôn các module khác trong dự án; thiếu
+              hai thứ này thì lệnh curl ở mục 8.2 chỉ nhận về <code>404</code>, không phải <code>201</code> hay
+              <code>400</code>.
+            </p>
+
+            <p>DTO đứng trước, kiểm dữ liệu vào bằng đúng bộ <code>class-validator</code> đã cài từ mục 4.1:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/charge.dto.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { IsIn, IsInt, IsUUID, Min } from 'class-validator';
+import type { CreditReason } from './credit-entry.entity';
+
+export class ChargeDto {
+  @IsUUID()
+  userId!: string;
+
+  @IsInt()
+  @Min(1)
+  amount!: number;
+
+  @IsIn(['topup', 'transcode', 'refund'])
+  reason!: CreditReason;
+}</code></pre>
+            </div>
+
+            <p>
+              Controller gọi thẳng xuống <code>BillingService</code>, nhận <code>userId</code> từ chính body — Part 2 sẽ
+              vá lại đúng chỗ này khi thêm xác thực:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/billing.controller.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Body, Controller, Post } from '@nestjs/common';
+import { BillingService } from './billing.service';
+import { ChargeDto } from './charge.dto';
+
+@Controller('billing')
+export class BillingController {
+  constructor(private readonly billing: BillingService) {}
+
+  @Post('charge')
+  charge(@Body() dto: ChargeDto) {
+    return this.billing.charge(dto.userId, dto.amount, dto.reason);
+  }
+}</code></pre>
+            </div>
+
+            <p>
+              Module gói cả hai lại, và export <code>BillingService</code> — Part 3 cần tới nó khi
+              <code>WorkerModule</code> gọi lại đúng hàm trừ credit này từ phía worker:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/billing.module.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { CreditEntry } from './credit-entry.entity';
+import { BillingController } from './billing.controller';
+import { BillingService } from './billing.service';
+
+@Module({
+  imports: [TypeOrmModule.forFeature([CreditEntry])],
+  controllers: [BillingController],
+  providers: [BillingService],
+  exports: [BillingService],
+})
+export class BillingModule {}</code></pre>
+            </div>
+
+            <p>
+              Cuối cùng, đăng ký <code>BillingModule</code> vào <code>AppModule</code> — thiếu bước này thì route vẫn
+              nằm trong code nhưng Nest không bao giờ khởi tạo nó:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/app.module.ts — thêm BillingModule</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppConfigModule } from './config/config.module';
+import type { AppConfig } from './config/configuration';
+import { sharedOptions } from './database/typeorm.options';
+import { BillingModule } from './billing/billing.module';
+
+@Module({
+  imports: [
+    AppConfigModule,
+    // forRootAsync: cho ConfigModule san sang roi moi dung ConfigService
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService&lt;AppConfig, true&gt;) =&gt; ({
+        ...sharedOptions,
+        url: config.get('DATABASE_URL', { infer: true }),
+        logging: config.get('NODE_ENV', { infer: true }) === 'development',
+      }),
+    }),
+    BillingModule,
+  ],
+})
+export class AppModule {}</code></pre>
+            </div>
 
             <h3>8.4 Còn cách nào khác</h3>
             <p>Khoá bi quan không phải lựa chọn duy nhất. Hai hướng còn lại, và lý do bài này chọn cách trên:</p>

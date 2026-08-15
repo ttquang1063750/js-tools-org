@@ -263,6 +263,43 @@ export class LoginDto {
 }</code></pre>
             </div>
 
+            <p>
+              Các decorator trên <code>LoginDto</code> không tự chạy — chúng chỉ là metadata cho tới khi có một
+              <code>ValidationPipe</code> toàn cục đọc metadata đó trước khi request chạm tới controller. Đăng ký ngay
+              trong <code>src/main.ts</code>, trước dòng đầu tiên gọi <code>app.listen(...)</code>:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/main.ts — bật validate toàn cục</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { ValidationPipe } from '@nestjs/common';
+
+const app = await NestFactory.create&lt;NestExpressApplication&gt;(AppModule);
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true, // xoa nhung field khong khai bao trong DTO thay vi chuyen tiep nguyen si
+    forbidNonWhitelisted: true, // co field la khong khai bao -&gt; 400, khong am tham xoa
+    transform: true, // "42" tu query string thanh so 42 truoc khi vao ham
+  }),
+);</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Thiếu dòng này thì mọi DTO trong cả loạt bài chỉ là trang trí</div>
+              <div class="callout__content">
+                Không có <code>ValidationPipe</code> toàn cục, NestJS không bao giờ đọc metadata mà
+                <code>@IsEmail()</code>, <code>@IsInt()</code>, <code>@IsIn(...)</code> gắn lên DTO — dữ liệu vào thẳng
+                controller y nguyên, đúng hay sai đều như nhau. Đo thật bằng cách bỏ dòng này rồi gọi
+                <code>POST /billing/charge</code> thiếu hẳn trường <code>amount</code>: không có <code>400</code> nào
+                cả, request đi thẳng xuống Postgres với giá trị <code>undefined</code>, và driver trả về nguyên văn
+                <code>error: invalid input syntax for integer: "NaN"</code> kèm mã lỗi <code>22P02</code> — một lỗi
+                <code>500</code> lộ chi tiết nội bộ, đúng thứ <code>ValidationPipe</code>
+                được sinh ra để chặn trước khi nó xảy ra.
+              </div>
+            </div>
+
             <h3>1.1. Đăng nhập sai thì trả lỗi gì</h3>
 
             <p>
@@ -553,6 +590,31 @@ async charge(@CurrentUser() user: JwtPayload, @Body() dto: ChargeDto) {
             </div>
 
             <p>
+              DTO đi kèm giờ trông thế này — đã bỏ trường <code>userId</code> của bản Part 1, vì giờ nó đến từ JWT chứ
+              không còn tin theo client:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/charge.dto.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { IsIn, IsInt, IsPositive } from 'class-validator';
+import type { CreditReason } from './credit-entry.entity';
+
+const CREDIT_REASONS: readonly CreditReason[] = ['topup', 'transcode', 'refund'];
+
+export class ChargeDto {
+  @IsInt()
+  @IsPositive()
+  amount!: number;
+
+  @IsIn(CREDIT_REASONS)
+  reason!: CreditReason;
+}</code></pre>
+            </div>
+
+            <p>
               Bọc lại thành một controller hoàn chỉnh — bản "sau" ở trên là method thật, phần còn lại chỉ là khung quen
               thuộc:
             </p>
@@ -638,6 +700,29 @@ export class RolesGuard implements CanActivate {
               <code>RolesGuard</code> chắc chắn đã có <code>request.user</code> để đọc. Đảo lại thì nó đọc phải
               <code>undefined</code> và ném ra một lỗi khó hiểu — trình biên dịch không cứu được bạn ở đây vì thứ tự chỉ
               tồn tại lúc chạy.
+            </p>
+
+            <p>
+              Một chỗ dùng thật: đội hỗ trợ cần xem số dư của một user bất kỳ khi xử lý khiếu nại, nhưng chỉ admin được
+              làm việc đó. Quay lại <code>BillingController</code> ở mục 2.1 và thêm một endpoint:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/billing.controller.ts — endpoint chỉ dành cho admin</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">@Get(':userId/balance')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
+async getBalanceForUser(@Param('userId') userId: string): Promise&lt;{ balance: number }&gt; {
+  return { balance: await this.billing.getBalance(userId) };
+}</code></pre>
+            </div>
+
+            <p>
+              <code>UserRole</code> ở mục 2.1 đã có sẵn <code>'admin'</code> trong <code>USER_ROLES</code>, nên
+              <code>@Roles('admin')</code> ở đây không cần khai báo gì thêm.
             </p>
 
             <h2>3. Refresh token: xoay vòng và phát hiện bị đánh cắp</h2>
@@ -1401,7 +1486,8 @@ server {
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        proxy_read_timeout 60s;
+        # 15s - dung dung ngan sach thoi gian o muc 5.2, khong phai mac dinh cua nginx
+        proxy_read_timeout 15s;
     }
 }
 
@@ -1752,7 +1838,6 @@ import { RateLimitGuard } from '../common/rate-limit/rate-limit.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthedRequest, JwtPayload } from '../auth/jwt-payload';
 import { MediaService } from './media.service';
-import { Video } from './video.entity';
 
 @Controller('media')
 @UseGuards(JwtAuthGuard, RateLimitGuard)
@@ -1760,7 +1845,10 @@ export class UploadController {
   constructor(private readonly media: MediaService) {}
 
   @Post('upload')
-  async upload(@Req() request: AuthedRequest, @CurrentUser() user: JwtPayload): Promise&lt;Video&gt; {
+  async upload(
+    @Req() request: AuthedRequest,
+    @CurrentUser() user: JwtPayload,
+  ): Promise&lt;{ videoId: string }&gt; {
     const contentLength = Number(request.headers['content-length'] ?? 0);
     if (contentLength &gt; 2 * 1024 * 1024 * 1024) {
       throw new BadRequestException('File vuot qua 2GB');
@@ -1779,7 +1867,8 @@ export class UploadController {
     const originalName = request.headers['x-filename'];
     const decodedName = typeof originalName === 'string' ? decodeURIComponent(originalName) : null;
 
-    return this.media.registerUpload(videoId, user.sub, target, decodedName);
+    const video = await this.media.registerUpload(videoId, user.sub, target, decodedName);
+    return { videoId: video.id };
   }
 }</code></pre>
             </div>
@@ -1806,12 +1895,14 @@ export interface PlayableAsset {
 @Injectable()
 export class MediaService {
   readonly uploadDir: string;
+  readonly tempDir: string;
 
   constructor(
     @InjectRepository(Video) private readonly videos: Repository&lt;Video&gt;,
     config: ConfigService&lt;AppConfig, true&gt;,
   ) {
     this.uploadDir = config.get('UPLOAD_DIR', { infer: true });
+    this.tempDir = config.get('TEMP_UPLOAD_DIR', { infer: true });
   }
 
   // videoId da duoc UploadController sinh TRUOC khi ghi file (de dat ten file
@@ -1867,7 +1958,8 @@ export class MediaService {
                 <span class="code-filename">src/config/configuration.ts — thêm biến cho upload</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">UPLOAD_DIR: z.string().default('./uploads'),</code></pre>
+              <pre><code class="language-typescript">UPLOAD_DIR: z.string().default('./uploads'),
+TEMP_UPLOAD_DIR: z.string().default('./uploads/tmp'),</code></pre>
             </div>
 
             <h3>6.1. Backpressure, nói cho gọn</h3>
@@ -1922,7 +2014,9 @@ await pipeline(request, createWriteStream(target));</code></pre>
                 <span class="code-filename">src/media/upload.controller.ts — nhận từng mảnh</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">// Client chia file thanh cac manh 5MB va gui lan luot.
+              <pre><code class="language-typescript">import { mkdir, readdir } from 'node:fs/promises';
+
+// Client chia file thanh cac manh 5MB va gui lan luot.
 @Post('upload/:uploadId/chunk/:index')
 async uploadChunk(
   @Param('uploadId') uploadId: string,
@@ -1930,6 +2024,8 @@ async uploadChunk(
   @Req() request: AuthedRequest,
 ) {
   const target = join(this.media.tempDir, uploadId, `${index}.part`);
+  // Thu muc con theo tung uploadId chua tung duoc tao truoc do.
+  await mkdir(join(this.media.tempDir, uploadId), { recursive: true });
   await pipeline(request, createWriteStream(target));
   return { received: Number(index) };
 }
@@ -1946,6 +2042,43 @@ async status(@Param('uploadId') uploadId: string) {
               Mất mạng, mở lại trang, client gọi <code>status</code>, biết mảnh 0–37 đã tới nơi, gửi tiếp từ mảnh 38.
               Ghép các mảnh lại là việc của bước cuối, và nó cũng chạy bằng stream chứ không đọc hết vào bộ nhớ.
             </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/media/upload.controller.ts — ghép mảnh thành file hoàn chỉnh</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { createReadStream } from 'node:fs';
+import { rm } from 'node:fs/promises';
+
+// Client goi endpoint nay khi da gui xong tat ca cac manh.
+@Post('upload/:uploadId/complete')
+async completeUpload(
+  @Param('uploadId') uploadId: string,
+  @CurrentUser() user: JwtPayload,
+): Promise&lt;{ videoId: string }&gt; {
+  const tempPath = join(this.media.tempDir, uploadId);
+  const parts = await readdir(tempPath);
+  const ordered = parts.map((p) =&gt; Number(p.replace('.part', ''))).sort((a, b) =&gt; a - b);
+
+  const videoId = randomUUID();
+  const target = join(this.media.uploadDir, `${videoId}.bin`);
+  const out = createWriteStream(target);
+
+  // MOT writeStream duy nhat cho ca file dich. { end: false } de pipeline
+  // khong tu dong voi moi manh, chi dong that su o cuoi vong lap.
+  for (const index of ordered) {
+    await pipeline(createReadStream(join(tempPath, `${index}.part`)), out, { end: false });
+  }
+  out.end();
+
+  // Da ghep xong, thu muc chua tung manh khong con can nua.
+  await rm(tempPath, { recursive: true, force: true });
+
+  const video = await this.media.registerUpload(videoId, user.sub, target, null);
+  return { videoId: video.id };
+}</code></pre>
+            </div>
 
             <h2>7. Download: tua được, mà Node gần như không làm gì</h2>
 
@@ -2253,6 +2386,33 @@ npm i
 npm i -D tailwindcss @tailwindcss/vite</code></pre>
             </div>
 
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">vite.config.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+});</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/index.css</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-css">@import "tailwindcss";</code></pre>
+            </div>
+
+            <p>
+              Không cần <code>tailwind.config.js</code>: <code>@tailwindcss/vite</code> (Tailwind v4) không bắt buộc
+              file cấu hình riêng cho trường hợp mặc định này.
+            </p>
+
             <h3>8.1. Mốc #1 — đăng nhập và tự làm mới token</h3>
 
             <p>
@@ -2335,6 +2495,9 @@ export async function api(path: string, init: RequestInit = {}): Promise&lt;Resp
     xhr.open('POST', '/media/upload');
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    // Ten file goc di kem qua header rieng, encode de an toan qua HTTP header
+    // (xem src/media/upload.controller.ts o muc 6, noi header nay duoc doc lai).
+    xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
 
     // upload.onprogress — thu ma fetch khong co.
     xhr.upload.onprogress = (event) =&gt; {
