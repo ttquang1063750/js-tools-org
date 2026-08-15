@@ -45,16 +45,18 @@ CODE_BLOCK_RE = re.compile(
 # Dem tong so khoi code that su co trong trang, de canh bao khi co khoi bi bo qua.
 ANY_CODE_RE = re.compile(r'<pre><code class="language-')
 
-# "export class Foo", "export function foo(", "export interface Foo",
-# "export const FOO", "export type Foo" -- moi dang khai bao co the la
-# "dinh nghia day du" cho mot ten.
+# "export class Foo", "export function foo(", "export async function foo(",
+# "export interface Foo", "export const FOO", "export type Foo" -- moi dang
+# khai bao co the la "dinh nghia day du" cho mot ten. Thieu "async" o day tung
+# lam sot ca `api()` (Part 2) lan `bootstrap()`/`transcode()` (Part 3) -- ca
+# ba deu la "export async function", regex cu chi biet "export function".
 EXPORT_RE = re.compile(
-    r'export\s+(?:default\s+)?(?:abstract\s+)?(?:class|function|interface|const|type|enum)\s+([A-Za-z_$][\w$]*)'
+    r'export\s+(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(?:class|function|interface|const|type|enum)\s+([A-Za-z_$][\w$]*)'
 )
 # Khai bao khong co "export" van la dinh nghia -- doan trich trong bai hay luoc
 # chu export di cho gon.
 LOCAL_DECL_RE = re.compile(
-    r'(?:^|\n)\s*(?:abstract\s+)?(?:class|function|interface|const|type|enum)\s+([A-Za-z_$][\w$]*)'
+    r'(?:^|\n)\s*(?:abstract\s+)?(?:async\s+)?(?:class|function|interface|const|type|enum)\s+([A-Za-z_$][\w$]*)'
 )
 
 # ---- ben DUNG ----------------------------------------------------------------
