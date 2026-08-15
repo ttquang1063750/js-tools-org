@@ -83,6 +83,24 @@ sau đó có hai phiên rà lỗi runtime riêng, cả hai đều **đã commit*
    `createApplicationContext` không phải lỗi của bài, chỉ là kinh nghiệm khi
    tự dựng test harness). Chi tiết đầy đủ ở mục "## Phiên 6 — dựng thật
    media-svc + billing-svc (15/08/2026)" bên dưới.
+7. **15/08/2026, phiên 7** — chủ dự án đổi quyết định phạm vi của phiên 6:
+   yêu cầu viết THẬT nội dung `auth-svc` + `gateway` vào bài (không chỉ dựng
+   để kiểm). Đã dựng thật `auth-svc` (tái dùng nguyên `AuthService` của
+   Part 2) + phần `gateway` liên quan (forward auth qua gRPC, bắc cầu
+   `WatchJob` gRPC streaming sang WebSocket) trong cùng
+   `~/Projects/Scratchpad/media-forge-services/`. Đo thật: cookie/JWT đúng
+   cấu hình, "đua hai tab" (Part 2 mục 3.3) vẫn đúng qua thêm một tầng gRPC,
+   và toàn bộ 6 chặng ffmpeg→Redis→ProgressBridge→EventEmitter2→gRPC
+   stream→gateway→Socket.io nhận đúng chuỗi tiến độ `0%→96%→100%`. Phát
+   hiện + vá 1 bug thật (naive→fail→fix đúng mạch bài): `UnauthorizedException`
+   ném từ `@GrpcMethod` không tự dịch sang mã trạng thái gRPC, rơi thành
+   `UNKNOWN`/`"Internal server error"` — vá bằng `RpcException` ở auth-svc +
+   bắt lại đúng mã ở gateway. **Đã viết vào part-4.html**: thêm đoạn
+   `ProgressBridge` vào mục 3.1 (lấp lỗ "ai emit vào EventEmitter2" mà
+   `MediaGrpcController` để hở), và 2 mục H3 mới — 3.2 "Auth-svc: cùng logic,
+   khoác vỏ gRPC", 3.3 "Bắc cầu gRPC streaming sang WebSocket". Chi tiết đầy
+   đủ ở mục "## Phiên 7 — viết auth-svc + gateway vào bài (15/08/2026)"
+   bên dưới.
 
 **Việc CHƯA làm, còn mở cho phiên sau:**
 
@@ -92,13 +110,12 @@ sau đó có hai phiên rà lỗi runtime riêng, cả hai đều **đã commit*
       pub/sub (Part 3) không~~ — xong ở phiên 6: **có cần cầu nối thật**,
       đã xây và đo thật (ffmpeg chạy ở tiến trình khác, gRPC vẫn nhận đúng
       tiến độ qua cầu nối). Xem mục "## Phiên 6".
-- [x] ~~Dựng thật hệ 3 microservice của Part 4~~ — **một phần**, xong ở
-      phiên 6 cho `media-svc`+`billing-svc` (2 dịch vụ THẬT SỰ có code trong
-      bài). `auth-svc` và `gateway` HTTP đầy đủ **cố ý không dựng** — bài
-      không cho code nào cho hai thứ đó, xem lý do ở mục "## Phiên 6". Nếu
-      sau này chủ dự án muốn viết thêm nội dung thật cho `auth-svc`/
-      `gateway` (không chỉ để kiểm mà để đăng trong bài), đó là việc VIẾT
-      THÊM nội dung mới, không phải việc kiểm lỗi — cần quyết định riêng.
+- [x] ~~Dựng thật hệ 3 microservice của Part 4~~ — xong hoàn toàn. Phiên 6
+      dựng `media-svc`+`billing-svc`. Phiên 7: chủ dự án quyết định viết
+      thêm nội dung thật cho `auth-svc`+`gateway` (không chỉ kiểm mà để
+      đăng trong bài) — đã dựng thật, đo thật, và **viết vào part-4.html**
+      dưới dạng 2 mục H3 mới (3.2, 3.3) + một đoạn bổ sung ở mục 3.1. Xem
+      mục "## Phiên 7" bên dưới.
 - [ ] Quyết định có muốn giữ nguyên quyết định cũ **"Code: KHÔNG dựng project
       thật"** (xem bảng quyết định đã chốt bên dưới) hay không, vì cả hai
       phiên rà lỗi đều đã dựng project thật **trong scratchpad tạm** (không
@@ -316,8 +333,10 @@ không chặn event loop*.
 
 ### Part 4 — Tách microservice & vận hành ✅ ĐÃ VIẾT XONG — LOẠT BÀI HOÀN TẤT
 
-`blog/build/nestjs-media-platform/part-4.html` — 2.704 từ (chưa tính code),
-20 khối code, 2 sơ đồ SVG, 8 mục H2. `check-lesson.js` xanh 11/11.
+`blog/build/nestjs-media-platform/part-4.html` — ~3.768 từ (chưa tính code,
+cập nhật sau phiên 7), 30 khối code, 2 sơ đồ SVG, 8 mục H2 + 4 mục H3.
+`check-lesson.js` xanh 11/11. (Số liệu gốc lúc mới viết xong: 2.704 từ, 20
+khối code — tăng lên sau phiên 7 khi thêm mục 3.2/3.3 auth-svc + gateway.)
 
 - [x] Mục 1 mở bằng **khi nào KHÔNG tách**: lý do thật duy nhất của dự án này là
       hai loại việc cần cách nhân bản khác nhau; kèm callout liệt kê thẳng cái giá
@@ -730,6 +749,95 @@ Node cục bộ (`ts-node`) trỏ vào Postgres/Redis thật qua Docker, KHÔNG 
 Postgres, Redis, ffmpeg đều là thật — chỉ khác lớp đóng gói. Kịch bản (c)
 dùng `SIGKILL` tiến trình thay vì `docker stop` — về bản chất mô phỏng đúng
 "instance chết đột ngột".
+
+## Phiên 7 — viết auth-svc + gateway vào bài (15/08/2026)
+
+**Khác về bản chất so với phiên 5-6:** đây là phiên đầu tiên VIẾT THÊM nội
+dung mới cho bài (theo yêu cầu trực tiếp của chủ dự án), không phải kiểm/vá
+lỗi nội dung đã có. Vẫn giữ đúng kỷ luật đã có: dựng thật, đo thật, rồi mới
+viết — không suy đoán hành vi.
+
+**Vị trí dựng:** vẫn `~/Projects/Scratchpad/media-forge-services/` (thêm
+vào những gì phiên 6 đã có, không dựng lại từ đầu).
+
+**Quyết định vị trí chèn vào bài** (đã hỏi và chủ dự án chọn): chèn thêm
+vào Part 4 dưới dạng mục H3 mới, KHÔNG tạo Part 5 — Part 4 vẫn giữ nguyên
+là điểm đóng loạt bài 4 part.
+
+### Đã dựng thật + đo thật
+
+| Kịch bản | Kết quả | Bằng chứng thật |
+|---|---|---|
+| Login qua gateway → cookie + accessToken | PASS | `Set-Cookie` đúng cấu hình (`HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/auth/refresh`, `Max-Age`); `jwt.verify` thành công |
+| "Đua hai tab" qua thêm một tầng gRPC (Part 2 mục 3.3) | PASS | 2 request refresh cùng lúc, cùng token cũ → cả hai thành công, đúng 3 dòng `refresh_tokens`. Dùng lại token gốc sau 31s (ngoài ân hạn 30s) → `401`, family bị xoá thật (0 dòng còn lại) |
+| Bắc cầu `WatchJob` gRPC streaming → Socket.io | PASS | Client Socket.io thật nhận đúng chuỗi `job:progress` **0%, 96%, 100%** rồi `job:done` — đủ 6 chặng: ffmpeg → Redis (nội bộ media-svc) → `ProgressBridge` → `EventEmitter2` → gRPC `WatchJob` → gateway → Socket.io |
+
+Cả 3 kịch bản chạy lại 2 lần, kết quả giống hệt.
+
+### Bug thật phát hiện + vá (đúng mạch naive→fail→fix của cả loạt bài)
+
+`UnauthorizedException` ném từ bên trong một `@GrpcMethod` (auth-svc) không
+tự dịch sang mã trạng thái gRPC — đo thật bằng client `@grpc/grpc-js` thô:
+nhận `code: 2 (UNKNOWN)`, `details: "Internal server error"`, mất sạch lý do
+thật. Gateway nhận được cái này chỉ còn cách trả `500`, dù lỗi thật là
+`401`. Vá bằng cặp đối xứng: `AuthGrpcController` bọc lại thành
+`RpcException({code: UNAUTHENTICATED, message})`; `AuthClient` (gateway) bắt
+đúng mã đó, ném lại `UnauthorizedException` HTTP. Đo lại: `401` kèm thông
+điệp thật, không còn `500` rỗng nghĩa. **Đã viết vào bài** (mục 3.2) đúng
+format naive→đo lỗi thật→giải thích→vá→đo lại đã dùng xuyên suốt loạt bài.
+
+### Con số thật đưa vào bài
+
+`git diff --no-index` giữa `AuthController` gốc (Part 2, DI trực tiếp) và
+bản gateway (qua `AuthClient`): đúng **5 dòng code nghiệp vụ** khác nhau —
+1 dòng kiểu tham số constructor + 4 lời gọi `this.auth.xxx()` →
+`this.authClient.xxx()`. Toàn bộ `setRefreshCookie`, `readPresentedToken`,
+cấu hình cookie — không đổi một ký tự. Con số này đưa thẳng vào một callout
+mới trong bài, chứng minh đúng luận điểm Part 4 đã nêu ở đầu ("code nghiệp
+vụ gần như không đổi").
+
+### Đã viết vào part-4.html
+
+1. **Mục 3.1** — thêm đoạn văn + code-window `ProgressBridge`
+   (`apps/media-svc/src/progress/progress-bridge.ts`) ngay sau
+   `MediaGrpcController`, lấp đúng lỗ hổng mà câu hỏi mở của phiên 5-6 đã
+   nêu: bài trước đó cho `EventEmitter2` nhưng chưa từng cho biết ai
+   `.emit()` vào đó.
+2. **Mục 3.2 — "Auth-svc: cùng logic, khoác vỏ gRPC"** (mới): `proto/auth.proto`,
+   `AuthGrpcController` (theo đúng mạch naive→fail→fix ở trên), `AuthClient`
+   (gateway), `AuthController` (gateway, callout "5 dòng đổi"), và đoạn tái
+   xác nhận "đua hai tab" qua gRPC.
+3. **Mục 3.3 — "Bắc cầu gRPC streaming sang WebSocket"** (mới): giải thích vì
+   sao gateway không được tự ý nghe Redis nội bộ của media-svc, `MediaClient`
+   (gRPC client streaming), `ProgressGateway` (Socket.io relay theo từng
+   `jobId`, dọn `Subscription` khi disconnect), callout đo thật cả 6 chặng.
+
+Toàn bộ code mới đã thêm import đầy đủ (không để dạng fragment thiếu import
+như một số khối cũ trong bài) — tự rà lại theo đúng kỷ luật "thiếu code" đã
+áp dụng xuyên suốt các phiên trước, tránh tạo ra phát hiện review mới ngay
+sau khi vừa viết.
+
+**Kiểm:** `node check-lesson.js` xanh 11/11, `npx prettier --write` sạch,
+grep `**` không còn markdown bold nào lọt vào phần mới thêm. Cross-reference
+"Part 2 mục 3.3" (đua hai tab) đã đối chiếu lại đúng số mục thật của Part 2
+(ban đầu viết nhầm 3.4, đã tự sửa).
+
+### Ranh giới: nguyên bản Part 2/3 vs. tự viết thêm ở phiên 7
+
+**Tái dùng nguyên vẹn từ Part 2 (chỉ đổi import path):** `AuthService`,
+`PasswordService`, `RefreshToken`/`User` entity, `JwtAuthGuard`,
+`CurrentUser`, `jwt-payload.ts`, `login.dto.ts`, `refresh.dto.ts`, toàn bộ
+logic cookie trong `AuthController`.
+
+**Tự thiết kế mới hoàn toàn, không có trong bài trước phiên 7:**
+`proto/auth.proto` (bài gốc chỉ nhắc tên `auth-svc` trong sơ đồ cây thư
+mục), `AuthGrpcController`, `AuthClient`, `MediaClient`, `ProgressGateway`
+(nguồn tiến độ đổi hoàn toàn, giao diện Socket.io giữ nguyên từ Part 3).
+
+**Cleanup:** đã dừng toàn bộ tiến trình `ts-node` và xoá 4 container Docker
+tạo trong phiên (`forge-billing-db`, `forge-media-db`, `forge-auth-db`,
+`forge-redis`). Thư mục `~/Projects/Scratchpad/media-forge-services/` giữ
+nguyên, chỉ thêm file mới.
 
 ## Đã xuất bản ra ngoài (15/08/2026)
 

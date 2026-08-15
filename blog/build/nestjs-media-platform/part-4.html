@@ -621,6 +621,54 @@ export class MediaGrpcController {
 }</code></pre>
             </div>
 
+            <p>
+              <code>this.progress</code> ở trên là <code>EventEmitter2</code> — nội bộ một tiến trình, không tự vượt
+              được ranh giới nào cả. Ai gọi <code>.emit('progress', ...)</code>? Worker chuyển mã của media-svc chỉ biết
+              publish lên Redis, y hệt Part 3 — nó không đổi khi tách dịch vụ, vì Redis giờ là hạ tầng riêng của
+              media-svc, không còn dùng chung với gateway nữa. Thiếu một mắt nối ở giữa hai thứ này, thì
+              <code>MediaGrpcController</code> ở trên không bao giờ nhận được gì, dù cú pháp biên dịch hoàn toàn đúng.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/media-svc/src/progress/progress-bridge.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Injectable, OnModuleInit } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import type { Redis } from 'ioredis';
+import { RedisService } from '../redis/redis.service';
+
+interface ProgressEvent {
+  readonly jobId: string;
+  readonly percent: number;
+  readonly status: string;
+}
+
+// Nguoi lam cau noi. Worker publish len Redis (khong biet gi ve EventEmitter2),
+// class nay nghe roi phat lai NOI BO tien trinh — dung vai tro cua
+// ProgressSubscriber o Part 3, nhung gio dat trong chinh media-svc.
+@Injectable()
+export class ProgressBridge implements OnModuleInit {
+  private readonly subscriber: Redis;
+
+  constructor(
+    private readonly redis: RedisService,
+    private readonly emitter: EventEmitter2,
+  ) {
+    this.subscriber = this.redis.duplicate();
+  }
+
+  async onModuleInit(): Promise&lt;void&gt; {
+    await this.subscriber.subscribe('progress');
+    this.subscriber.on('message', (_channel, raw) =&gt; {
+      const event = JSON.parse(raw) as ProgressEvent;
+      this.emitter.emit('progress', event);
+    });
+  }
+}</code></pre>
+            </div>
+
             <div class="callout callout--warning">
               <div class="callout__title">⚠️ Hạn chót phải truyền tiếp, không chỉ đặt tại chỗ</div>
               <div class="callout__content">
@@ -630,6 +678,401 @@ export class MediaGrpcController {
                 Cách đúng là mỗi tầng <strong>trừ đi thời gian đã tiêu</strong> rồi truyền phần còn lại xuống dưới. gRPC
                 có sẵn khái niệm này gọi là deadline, và nó lan truyền qua metadata — đây chính là ngân sách thời gian
                 của Part 2, giờ đi qua ranh giới tiến trình.
+              </div>
+            </div>
+
+            <h3>3.2. Auth-svc: cùng logic, khoác vỏ gRPC</h3>
+
+            <p>
+              Sơ đồ ở mục 2 đã vẽ auth-svc như dịch vụ thứ ba, nhưng chưa cho code nào — ranh giới của nó đơn giản hơn
+              billing-svc/media-svc vì không có gì mới về mặt nghiệp vụ. Toàn bộ logic xoay vòng refresh token, phát
+              hiện dùng lại, khoảng ân hạn đã viết đầy đủ ở Part 2 mục 3. Việc ở đây chỉ là đặt đúng lớp vỏ.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">proto/auth.proto</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">syntax = "proto3";
+package auth;
+
+service AuthService {
+  rpc Login (LoginRequest) returns (TokenPair);
+  rpc Refresh (RefreshRequest) returns (TokenPair);
+  rpc Logout (LogoutRequest) returns (Empty);
+  rpc LogoutEverywhere (LogoutEverywhereRequest) returns (Empty);
+}
+
+message LoginRequest { string email = 1; string password = 2; }
+message RefreshRequest { string refresh_token = 1; }
+message LogoutRequest { string refresh_token = 1; }
+message LogoutEverywhereRequest { string user_id = 1; }
+message TokenPair { string access_token = 1; string refresh_token = 2; }
+message Empty {}</code></pre>
+            </div>
+
+            <p>
+              Bên phục vụ gọi lại đúng <code>AuthService</code> đã có ở Part 2 — constructor 6 tham số,
+              <code>login</code>/<code>refresh</code>/<code>logout</code>/<code>logoutEverywhere</code> giữ nguyên chữ
+              ký. Viết ngây thơ thì để lỗi tự bay lên:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/auth-svc/src/auth.controller.ts — bản đầu tiên</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">@GrpcMethod('AuthService', 'Refresh')
+async refresh(request: RefreshRequest): Promise&lt;TokenPair&gt; {
+  const pair = await this.auth.refresh(request.refreshToken); // co the nem UnauthorizedException
+  return { accessToken: pair.accessToken, refreshToken: pair.refreshToken };
+}</code></pre>
+            </div>
+
+            <p>
+              Gọi thử với một refresh token không tồn tại, đo bằng client gRPC thô — <code>UnauthorizedException</code>
+              của Part 2 không đi xuyên qua ranh giới gRPC:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Lỗi thật, đo bằng grpc-js thô</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">code: 2 (UNKNOWN)
+details: "Internal server error"</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚠️ NestJS không tự dịch <code>HttpException</code> sang mã trạng thái gRPC
+              </div>
+              <div class="callout__content">
+                Trong một app HTTP, exception filter của Nest tự đổi <code>UnauthorizedException</code> thành
+                <code>401</code>. Qua <code>@GrpcMethod</code>, không có filter tương đương nào chạy mặc định — bất kỳ
+                exception nào không phải <code>RpcException</code> đều rơi xuống thành <code>UNKNOWN</code> kèm thông
+                điệp rỗng, xoá sạch lý do thật ("Refresh token không hợp lệ", "Phiên đăng nhập đã bị thu hồi"...).
+                Gateway nhận được cái này thì chỉ còn cách trả <code>500</code>, dù lỗi thật là <code>401</code>.
+              </div>
+            </div>
+
+            <p>Vá bằng một cặp đối xứng — bên phục vụ bọc lại, bên gọi đọc đúng mã rồi ném lại:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/auth-svc/src/auth.controller.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Controller, UnauthorizedException } from '@nestjs/common';
+import { GrpcMethod, RpcException } from '@nestjs/microservices';
+import { status as GrpcStatus } from '@grpc/grpc-js';
+import type {
+  LoginRequest,
+  RefreshRequest,
+  LogoutRequest,
+  LogoutEverywhereRequest,
+  TokenPair,
+  Empty,
+} from '@app/proto-types/auth';
+import { AuthService } from './auth.service';
+
+@Controller()
+export class AuthGrpcController {
+  constructor(private readonly auth: AuthService) {}
+
+  @GrpcMethod('AuthService', 'Login')
+  async login(request: LoginRequest): Promise&lt;TokenPair&gt; {
+    const pair = await this.callAuth(() =&gt; this.auth.login(request.email, request.password));
+    return { accessToken: pair.accessToken, refreshToken: pair.refreshToken };
+  }
+
+  @GrpcMethod('AuthService', 'Refresh')
+  async refresh(request: RefreshRequest): Promise&lt;TokenPair&gt; {
+    const pair = await this.callAuth(() =&gt; this.auth.refresh(request.refreshToken));
+    return { accessToken: pair.accessToken, refreshToken: pair.refreshToken };
+  }
+
+  @GrpcMethod('AuthService', 'Logout')
+  async logout(request: LogoutRequest): Promise&lt;Empty&gt; {
+    await this.callAuth(() =&gt; this.auth.logout(request.refreshToken));
+    return {};
+  }
+
+  @GrpcMethod('AuthService', 'LogoutEverywhere')
+  async logoutEverywhere(request: LogoutEverywhereRequest): Promise&lt;Empty&gt; {
+    await this.callAuth(() =&gt; this.auth.logoutEverywhere(request.userId));
+    return {};
+  }
+
+  // NestJS khong tu dich UnauthorizedException sang ma trang thai gRPC —
+  // boc lai thanh RpcException de AuthClient (gateway) doc dung ma + thong diep.
+  private async callAuth&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof UnauthorizedException) {
+        throw new RpcException({ code: GrpcStatus.UNAUTHENTICATED, message: err.message });
+      }
+      throw err;
+    }
+  }
+}</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/gateway/src/auth/auth.client.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import { Client, ClientGrpc, Transport } from '@nestjs/microservices';
+import { status as GrpcStatus } from '@grpc/grpc-js';
+import { catchError, firstValueFrom, throwError, timeout, type Observable } from 'rxjs';
+import type { AuthServiceClient, TokenPair } from '@app/proto-types/auth';
+
+function mapAuthError(err: { code?: number; details?: string; message?: string }): Observable&lt;never&gt; {
+  if (err?.code === GrpcStatus.UNAUTHENTICATED) {
+    return throwError(() =&gt; new UnauthorizedException(err.details ?? err.message));
+  }
+  return throwError(() =&gt; err);
+}
+
+@Injectable()
+export class AuthClient implements OnModuleInit {
+  @Client({
+    transport: Transport.GRPC,
+    options: { package: 'auth', protoPath: 'proto/auth.proto', url: 'auth-svc:50053' },
+  })
+  private readonly client!: ClientGrpc;
+  private service!: AuthServiceClient;
+
+  onModuleInit(): void {
+    this.service = this.client.getService&lt;AuthServiceClient&gt;('AuthService');
+  }
+
+  async login(email: string, password: string): Promise&lt;TokenPair&gt; {
+    return firstValueFrom(this.service.login({ email, password }).pipe(timeout(3000), catchError(mapAuthError)));
+  }
+
+  async refresh(refreshToken: string): Promise&lt;TokenPair&gt; {
+    return firstValueFrom(this.service.refresh({ refreshToken }).pipe(timeout(3000), catchError(mapAuthError)));
+  }
+
+  async logout(refreshToken: string): Promise&lt;void&gt; {
+    await firstValueFrom(this.service.logout({ refreshToken }).pipe(timeout(3000), catchError(mapAuthError)));
+  }
+
+  async logoutEverywhere(userId: string): Promise&lt;void&gt; {
+    await firstValueFrom(this.service.logoutEverywhere({ userId }).pipe(timeout(3000), catchError(mapAuthError)));
+  }
+}</code></pre>
+            </div>
+
+            <p>
+              Đo lại đúng thất bại vừa gặp: cùng request refresh-token-không-tồn-tại, giờ gateway trả đúng
+              <code>401</code> kèm thông điệp thật, không còn <code>500</code> rỗng nghĩa.
+            </p>
+
+            <p>
+              Phần đáng chú ý nhất nằm ở HTTP controller của gateway — nó gần như là <code>AuthController</code> của
+              Part 2 đem dán lại nguyên văn:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/gateway/src/auth/auth.controller.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">const COOKIE_NAME = 'refresh_token';
+
+@Controller('auth')
+export class AuthController {
+  constructor(
+    private readonly authClient: AuthClient,
+    private readonly config: ConfigService&lt;AppConfig, true&gt;,
+  ) {}
+
+  @Post('login')
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response): Promise&lt;{ accessToken: string }&gt; {
+    const pair = await this.authClient.login(dto.email, dto.password);
+    this.setRefreshCookie(response, pair.refreshToken);
+    return { accessToken: pair.accessToken };
+  }
+
+  @Post('refresh')
+  async refresh(
+    @Req() request: Request,
+    @Body() dto: RefreshDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise&lt;{ accessToken: string }&gt; {
+    const presented = this.readPresentedToken(request, dto);
+    if (presented === undefined) throw new UnauthorizedException('Thieu refresh token');
+
+    const pair = await this.authClient.refresh(presented);
+    this.setRefreshCookie(response, pair.refreshToken);
+    return { accessToken: pair.accessToken };
+  }
+
+  // logout, logout-everywhere, setRefreshCookie, readPresentedToken: xem Part 2 muc 3.5 —
+  // tung dong giu nguyen, chi ten thanh vien constructor doi tu "auth" sang "authClient".
+}</code></pre>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 5 dòng đổi, phần còn lại nguyên vẹn</div>
+              <div class="callout__content">
+                Diff thật giữa hai bản: đúng <strong>5 dòng code nghiệp vụ</strong> khác nhau — tên kiểu tham số
+                constructor, và bốn lời gọi <code>this.auth.xxx(...)</code> đổi thành
+                <code>this.authClient.xxx(...)</code>. Toàn bộ <code>setRefreshCookie</code>,
+                <code>readPresentedToken</code>, cấu hình
+                <code>httpOnly</code>/<code>secure</code>/<code>sameSite</code>/ <code>path</code>/<code>maxAge</code> —
+                không đổi một ký tự. Đây chính xác là luận điểm đã nêu ở đầu Part 4: cái đổi là đường truyền, không phải
+                nghiệp vụ.
+              </div>
+            </div>
+
+            <p>
+              Kịch bản "đua hai tab" của Part 2 mục 3.3 kiểm lại được nguyên vẹn qua ranh giới gRPC mới: hai request
+              <code>/auth/refresh</code> cùng lúc với cùng refresh token cũ — cả hai đều thành công (một xoay vòng bình
+              thường, một rơi vào nhánh ân hạn), đúng ba dòng trong bảng <code>refresh_tokens</code>. Gọi lại token gốc
+              <strong>sau 31 giây</strong> (ngoài khoảng ân hạn 30s) → <code>401</code>, và toàn bộ family bị thu hồi
+              thật trong Postgres — <strong>0 dòng</strong> còn lại cho family đó. Đúng hành vi đã đo ở phiên rà lỗi đầu
+              tiên của loạt bài (Part 2 mục 3.3), vẫn đúng sau khi đi qua thêm một tầng gRPC.
+            </p>
+
+            <h3>3.3. Bắc cầu gRPC streaming sang WebSocket</h3>
+
+            <p>
+              Ở monolith, <code>ProgressGateway</code> (Part 3 mục 7) subscribe trực tiếp vào Redis pub/sub — vì gateway
+              và worker khi đó là cùng một tiến trình, cùng một Redis. Sau khi tách, Redis mà
+              <code>ProgressBridge</code> vừa dùng ở mục 3.1 là hạ tầng RIÊNG của media-svc, không phải thứ dùng chung.
+              Cho gateway tự ý kết nối vào Redis nội bộ của một dịch vụ khác là phá đúng ranh giới vừa dựng ở mục 2 —
+              dịch vụ khác chỉ được phép nói chuyện qua hợp đồng công khai, tức là <code>rpc WatchJob</code>.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/gateway/src/progress/media.client.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Client, ClientGrpc, Transport } from '@nestjs/microservices';
+import type { Observable } from 'rxjs';
+import type { JobProgress, MediaServiceClient } from '@app/proto-types/media';
+
+@Injectable()
+export class MediaClient implements OnModuleInit {
+  @Client({
+    transport: Transport.GRPC,
+    options: { package: 'media', protoPath: 'proto/media.proto', url: 'media-svc:50052' },
+  })
+  private readonly client!: ClientGrpc;
+  private service!: MediaServiceClient;
+
+  onModuleInit(): void {
+    this.service = this.client.getService&lt;MediaServiceClient&gt;('MediaService');
+  }
+
+  // Tra ve Observable, khong await mot lan — day la stream, khong phai mot cau tra loi.
+  watchJob(jobId: string): Observable&lt;JobProgress&gt; {
+    return this.service.watchJob({ jobId });
+  }
+}</code></pre>
+            </div>
+
+            <p>
+              Khác với monolith (một kết nối Redis, phát cho mọi phòng cùng lúc), gateway giờ mở
+              <strong>một luồng gRPC riêng cho mỗi job</strong> mà client thật sự hỏi tới — client Socket.io gửi
+              <code>'job:subscribe'</code> kèm <code>jobId</code>, gateway mới mở <code>watchJob(jobId)</code>:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/gateway/src/progress/progress.gateway.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import {
+  ConnectedSocket,
+  MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
+import type { Server, Socket } from 'socket.io';
+import { JwtService } from '@nestjs/jwt';
+import type { Subscription } from 'rxjs';
+import type { JwtPayload } from '../auth/jwt-payload';
+import { MediaClient } from './media.client';
+
+@WebSocketGateway({ path: '/ws', cors: false })
+export class ProgressGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer() private readonly server!: Server;
+  private readonly subscriptions = new Map&lt;string, Set&lt;Subscription&gt;&gt;();
+
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly media: MediaClient,
+  ) {}
+
+  async handleConnection(client: Socket): Promise&lt;void&gt; {
+    try {
+      const token = String(client.handshake.auth['token'] ?? '');
+      const payload = await this.jwt.verifyAsync&lt;JwtPayload&gt;(token);
+      await client.join(`user:${payload.sub}`);
+      client.data.userId = payload.sub;
+    } catch {
+      client.disconnect(true);
+    }
+  }
+
+  // Ngat ket noi: huy moi stream gRPC dang mo cho client nay. Thieu buoc nay
+  // thi moi lan reconnect lai them mot stream ro ri, khong bao gio dong.
+  handleDisconnect(client: Socket): void {
+    const subs = this.subscriptions.get(client.id);
+    if (subs === undefined) return;
+    for (const sub of subs) sub.unsubscribe();
+    this.subscriptions.delete(client.id);
+  }
+
+  @SubscribeMessage('job:subscribe')
+  handleJobSubscribe(@ConnectedSocket() client: Socket, @MessageBody() body: { jobId: string }): void {
+    const room = `user:${client.data.userId as string}`;
+
+    const subscription = this.media.watchJob(body.jobId).subscribe({
+      next: (progress) =&gt; {
+        this.server.to(room).emit('job:progress', { jobId: progress.jobId, percent: progress.percent });
+        if (progress.status === 'completed') {
+          this.server.to(room).emit('job:done', { jobId: progress.jobId });
+        }
+      },
+      error: () =&gt; this.forgetSubscription(client.id, subscription),
+      complete: () =&gt; this.forgetSubscription(client.id, subscription),
+    });
+
+    const bucket = this.subscriptions.get(client.id) ?? new Set&lt;Subscription&gt;();
+    bucket.add(subscription);
+    this.subscriptions.set(client.id, bucket);
+  }
+
+  private forgetSubscription(clientId: string, subscription: Subscription): void {
+    subscription.unsubscribe();
+    this.subscriptions.get(clientId)?.delete(subscription);
+  }
+}</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔍 Đường đi thật, đo hết cả chặng</div>
+              <div class="callout__content">
+                <code>ffmpeg</code> thật chạy ở worker của media-svc → publish lên Redis nội bộ media-svc (kênh
+                <code>'progress'</code>) → <code>ProgressBridge</code> re-emit qua <code>EventEmitter2</code> →
+                <code>rpc WatchJob</code> chảy ra ngoài → <code>MediaClient</code> của gateway nhận →
+                <code>ProgressGateway</code> phát lại qua Socket.io. Đo bằng client Socket.io thật kết nối
+                <code>/ws</code>, nhận đúng chuỗi <code>job:progress</code>: <strong>0%, 96%, 100%</strong>, rồi
+                <code>job:done</code> — sáu chặng, một client thật, không chặng nào bị bỏ qua.
               </div>
             </div>
 
