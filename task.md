@@ -68,33 +68,37 @@ sau đó có hai phiên rà lỗi runtime riêng, cả hai đều **đã commit*
    Chi tiết đầy đủ (bảng 32 dòng đã điền cột Trạng thái, phương pháp build
    thật, và 2 lỗi mới) ở mục "## Phiên 5 — xử lý 32 phát hiện + build thật
    (15/08/2026)" bên dưới.
+6. **15/08/2026, phiên 6** — dựng THẬT `media-svc` + `billing-svc` (2/3 "microservice"
+   của Part 4) trong `~/Projects/Scratchpad/media-forge-services/`, gRPC
+   thật, 2 Postgres riêng, Redis thật, ffmpeg thật. **Cố tình KHÔNG** dựng
+   `auth-svc`/`gateway` — bài chưa từng cho một dòng code nào cho hai thứ
+   đó (chỉ nhắc tên trong sơ đồ cây thư mục), viết ra sẽ là bịa nội dung
+   mới. 6 kịch bản kiểm thật (charge/idempotent, outbox, billing-svc chết
+   giữa chừng, WatchJob streaming + ffmpeg thật, chống dồn toa cache,
+   deadline gRPC) — **cả 6 PASS**, chạy lại 2 lần để loại trừ ăn may. Câu
+   hỏi mở EventEmitter2-vs-Redis đã có câu trả lời chắc chắn: **cần một cầu
+   nối thật** (đã xây, xem chi tiết ở mục "## Phiên 6"), không phải chi tiết
+   cố ý bỏ qua. Phát hiện thêm 2 gotcha mới (thiếu `SnakeNamingStrategy` —
+   đã thêm callout vào bài; và một cái bẫy về `@Client()`+
+   `createApplicationContext` không phải lỗi của bài, chỉ là kinh nghiệm khi
+   tự dựng test harness). Chi tiết đầy đủ ở mục "## Phiên 6 — dựng thật
+   media-svc + billing-svc (15/08/2026)" bên dưới.
 
 **Việc CHƯA làm, còn mở cho phiên sau:**
 
 - [x] ~~Xử lý 32 phát hiện của `review-build-series`~~ — xong ở phiên 5, xem
       mục "## Phiên 5" bên dưới để biết chi tiết từng dòng.
-- [ ] **Chưa xác nhận: `EventEmitter2` (Part 4, `MediaGrpcController`) có
-      thực sự nhận được sự kiện tiến độ từ Redis pub/sub (Part 3) hay
-      không** — phát hiện mới ở phiên 5 (đọc, chưa build để xác nhận chắc
-      trăm phần trăm): Part 3 phát tiến độ qua Redis pub/sub
-      (`this.redis.publish('progress', ...)`), nhưng `MediaGrpcController`
-      của Part 4 lắng nghe qua `EventEmitter2` nội bộ tiến trình
-      (`this.progress.on('progress', handler)`) — không đoạn nào trong bài
-      bắc cầu hai cơ chế này lại với nhau. Có thể là thiếu code thật (cần
-      thêm một subscriber Redis → re-emit qua `EventEmitter2`, giống hệt vai
-      trò `ProgressSubscriber` của Part 3 nhưng đặt trong media-svc), hoặc
-      có thể là chi tiết cố ý bỏ qua vì Part 4 vốn là phần mở rộng lý thuyết.
-      Chưa sửa — cần đọc kỹ hơn hoặc dựng chạy thật mới quyết được, và việc
-      đó gắn liền với việc dựng 3 microservice thật ngay dưới đây.
-- [ ] **Dựng thật hệ 3 microservice của Part 4** (`apps/billing-svc`,
-      `apps/media-svc`, `apps/auth-svc` + gateway) và chạy gRPC thật giữa
-      chúng. Cả hai phiên rà lỗi CHỈ kiểm được `media.proto`/`billing.proto`
-      bằng `protoc` thật (cú pháp đúng) và đối chiếu logic để `chargeForJob()`
-      khớp chữ ký giữa Part 3 và Part 4 — **không** có một hệ microservice
-      thật nào từng chạy gRPC end-to-end. Nếu làm, nhớ: Part 4 vốn không có
-      project code hoàn chỉnh để scaffold (nó là phần mở rộng lý thuyết từ
-      monolith Part 1–3), nên cần tự viết `apps/*` từ đầu dựa theo các đoạn
-      code đã cho trong bài.
+- [x] ~~Xác nhận `EventEmitter2` (Part 4) có nhận được sự kiện từ Redis
+      pub/sub (Part 3) không~~ — xong ở phiên 6: **có cần cầu nối thật**,
+      đã xây và đo thật (ffmpeg chạy ở tiến trình khác, gRPC vẫn nhận đúng
+      tiến độ qua cầu nối). Xem mục "## Phiên 6".
+- [x] ~~Dựng thật hệ 3 microservice của Part 4~~ — **một phần**, xong ở
+      phiên 6 cho `media-svc`+`billing-svc` (2 dịch vụ THẬT SỰ có code trong
+      bài). `auth-svc` và `gateway` HTTP đầy đủ **cố ý không dựng** — bài
+      không cho code nào cho hai thứ đó, xem lý do ở mục "## Phiên 6". Nếu
+      sau này chủ dự án muốn viết thêm nội dung thật cho `auth-svc`/
+      `gateway` (không chỉ để kiểm mà để đăng trong bài), đó là việc VIẾT
+      THÊM nội dung mới, không phải việc kiểm lỗi — cần quyết định riêng.
 - [ ] Quyết định có muốn giữ nguyên quyết định cũ **"Code: KHÔNG dựng project
       thật"** (xem bảng quyết định đã chốt bên dưới) hay không, vì cả hai
       phiên rà lỗi đều đã dựng project thật **trong scratchpad tạm** (không
@@ -623,6 +627,109 @@ chỉ những file thật sự cần sửa mới bị đổi. Không commit gì 
 **Commit:** `bf4ff7a` — `fix(blog): NestJS series — xu ly 32 phat hien tu
 review-build-series + build that`. Chỉ commit local, chưa push (đúng ràng
 buộc vận hành ở trên).
+
+## Phiên 6 — dựng thật media-svc + billing-svc (15/08/2026)
+
+**Vị trí project mới:** `~/Projects/Scratchpad/media-forge-services/` —
+KHÁC với `~/Projects/Scratchpad/media-forge/` (monolith Part 1-3, không
+đụng tới, chỉ đọc tham khảo/tái dùng code đã kiểm chứng). Cả hai thư mục
+đều còn nguyên, không phải git repo, không commit gì trong đó.
+
+**Quyết định phạm vi (đọc trước khi mở lại việc này):** Part 4 mô tả kiến
+trúc 4 tiến trình (`gateway`, `auth-svc`, `media-svc`, `billing-svc`) nhưng
+**chỉ thật sự cho code cho `media-svc` + `billing-svc`** — `auth-svc` chỉ
+được nhắc tên trong sơ đồ cây thư mục (`apps/auth-svc/  # users,
+refresh_tokens`), và `gateway` chỉ có 2 file (`correlation.middleware.ts`,
+`correlation.interceptor.ts`), không controller HTTP nào. Dựng thêm hai
+thứ đó từ đầu là BỊA nội dung — đúng điều chủ dự án đã yêu cầu tránh ở đầu
+loạt bài này ("đảm bảo bạn là người đọc và làm theo chứ không hề tự thêm gì
+vào khi bài đọc không đề cập đến"). Nên phiên này **chỉ dựng `media-svc` +
+`billing-svc`**, mô phỏng vai trò gateway bằng một script gRPC client thật
+(`@grpc/grpc-js`, gọi thẳng, không qua HTTP) — đúng tinh thần đã dùng ở
+phiên 2 khi mô phỏng frontend bằng `curl` thay vì dựng React thật.
+
+### 6 kịch bản kiểm thật — cả 6 PASS (chạy lại 2 lần, kết quả giống hệt)
+
+| # | Kịch bản | Bằng chứng thật |
+|---|----------|-------------------|
+| a | Charge/GetBalance qua gRPC thật + idempotent retry | Lần 1: `charged=true, newBalance=-100`. Lần 2 CÙNG `job_id`: `charged=false, newBalance=-100` — không trừ lần 2. `SELECT count(*) FROM credit_entries WHERE job_id=...` = 1 trên Postgres thật |
+| b | Outbox pattern, nhất quán cuối cùng | Ngay sau `completeJob()`: `jobs.status='completed'`, `outbox.sent_at=null`. Sau 1-2 vòng `@Interval(1000)` thật: `sent_at` được set, `credit_entries` bên DB billing-svc RIÊNG (cổng 5433) có dòng `delta=-77` |
+| c | billing-svc chết giữa chừng, outbox tự phục hồi (đúng claim mục 4.1) | `SIGKILL` thật tiến trình billing-svc → `sent_at` luôn `null`, `attempts` tăng dần `[0,2,3,4,5]` qua các vòng relay thất bại thật. Khởi động lại → `sent_at` được set, `credit_entries` xuất hiện đúng, KHÔNG mất message |
+| d | WatchJob streaming thật + ffmpeg thật qua cầu nối Redis→EventEmitter2 | ffmpeg thật transcode file test 3s (`testsrc` lavfi). gRPC stream `WatchJob` nhận đúng 3 `JobProgress`: `[0%, 96%, 100%]`, sự kiện cuối `status='completed'` |
+| e | Cache-aside chống dồn toa (`inFlight`) | 20 lời gọi `BalanceCache.getBalance()` song song ngay sau khi xoá cache → đúng **1** lời gọi mạng thật tới billing-svc, không phải 20 |
+| f | Deadline gRPC → `DEADLINE_EXCEEDED` | gRPC trả đúng mã lỗi `4 = DEADLINE_EXCEEDED` thật. Đơn giản hoá: dùng deadline đã hết hạn thay vì thêm `sleep` giả vào code "y hệt bài" — chưa test đúng kịch bản "hai tầng cộng dồn ngân sách" |
+
+### Câu hỏi mở EventEmitter2 vs Redis — đã có câu trả lời chắc chắn
+
+**Cần một cầu nối thật, không phải chi tiết cố ý bỏ qua.** Kiến trúc đã xây
+(file `apps/media-svc/src/progress/progress-bridge.ts`, class
+`ProgressBridge`, KHÔNG có trong bài — tự viết thêm):
+
+- `TranscodeWorker` (tự viết) chạy ffmpeg thật ở **tiến trình Node khác**,
+  chỉ publish tiến độ lên Redis pub/sub kênh `'progress'` — không biết gì
+  về `EventEmitter2`, giống hệt cách Part 3's worker không biết gì về
+  WebSocket.
+- `ProgressBridge` chạy BÊN TRONG tiến trình gRPC thật của `media-svc`,
+  subscribe kênh Redis đó (giống vai trò `ProgressSubscriber` của Part 3),
+  rồi `emit('progress', event)` qua `EventEmitter2` nội bộ của chính tiến
+  trình đó — đây LÀ thứ `MediaGrpcController.watchJob()` (nguyên bản 100%
+  từ bài) cần để hoạt động.
+- Kịch bản (d) chứng minh cầu nối liên-tiến-trình này hoạt động đúng: ffmpeg
+  chạy ở tiến trình hoàn toàn khác, gRPC client vẫn nhận đúng tiến độ.
+
+### 3 bug/gotcha mới phát hiện khi dựng thật
+
+1. **Thiếu `SnakeNamingStrategy` làm mọi SQL thô trong `BillingService` vỡ
+   ngay lập tức** — Part 4 không hề nói tới `TypeOrmModule.forRootAsync()`
+   nào cho `billing-svc`/`media-svc` (chỉ có logic nghiệp vụ), nên ai dựng
+   theo đúng những gì bài viết ra mà không tự nhớ lại cấu hình TypeORM của
+   Part 1 sẽ gặp lỗi Postgres thật `column e.user_id does not exist` ngay
+   request đầu tiên. **Đã sửa vào bài**: thêm callout ngay sau mục 2 (sơ đồ
+   cây thư mục) nhắc rõ mỗi service cần đúng cấu hình TypeORM của Part 1,
+   gồm cả naming strategy.
+2. **`@Client()` không bao giờ được gán `ClientProxy` thật nếu app boot
+   bằng `NestFactory.createApplicationContext()`** — việc gán chỉ chạy qua
+   `MicroservicesModule.setupClients()`, hàm này chỉ được gọi từ
+   `NestApplication`/`NestMicroservice`, không bao giờ từ
+   `NestApplicationContext`. **KHÔNG phải lỗi của bài** (Part 4 không gợi ý
+   dùng `createApplicationContext`) — đây là bẫy gặp phải khi TỰ viết test
+   harness gọi thẳng service để kiểm, không sửa gì vào bài, chỉ ghi lại làm
+   kinh nghiệm cho phiên sau nếu cần dựng thêm.
+3. `proto/media.proto` trong bài chỉ trích đoạn `service`/`message`, thiếu
+   dòng `syntax = "proto3"; package media;` — cần tự thêm để `protoc` parse
+   được (khác `billing.proto` là file đầy đủ trong bài). Không phải lỗi cần
+   sửa vào bài (rõ ràng là trích đoạn có chủ đích, không phải file đầy đủ).
+
+### Ranh giới: bài đã cho vs. tự viết thêm khi dựng
+
+**Nguyên bản 100% từ part-4.html:** `proto/billing.proto`, phần
+service/message của `proto/media.proto`, `BillingGrpcController`,
+`BillingClient`, `MediaGrpcController`, `OutboxMessage` entity,
+`JobService.completeJob`, `OutboxRelay`, `BalanceCache`.
+
+**Tái dùng nguyên vẹn từ monolith đã kiểm chứng
+(`~/Projects/Scratchpad/media-forge`):** `BillingService`
+(transaction + `SELECT FOR UPDATE`), entity `CreditEntry`/`Job`/`Video`,
+`transcoder.ts` (ffmpeg + `-progress pipe:2` + readline), `SnakeNamingStrategy`.
+
+**Tự viết thêm hoàn toàn (không có trong bài, cần thiết để chạy được):**
+`ProgressBridge` (câu trả lời cho câu hỏi mở), `TranscodeWorker` (worker tối
+giản), header `syntax`/`package` của `media.proto`, một `User` entity tối
+giản cho billing-svc (giả định: cần vì `CreditEntry` có FK tới `User`, bài
+không nói billing-svc có bảng `users` riêng), toàn bộ `test/` (harness gRPC
+đóng vai gateway giả lập).
+
+### Giới hạn của phiên này
+
+Docker Hub không truy cập được từ sandbox (image mới như `node:22-slim`
+treo vô thời hạn, nhưng `postgres:17-alpine`/`redis:latest` đã cache sẵn
+thì chạy bình thường) — nên `billing-svc`/`media-svc` chạy bằng tiến trình
+Node cục bộ (`ts-node`) trỏ vào Postgres/Redis thật qua Docker, KHÔNG phải
+`docker compose up` toàn bộ cụm như file `docker-compose.yml` đã viết sẵn
+(file đó có, chưa build/chạy được bằng Docker thật trong phiên này). gRPC,
+Postgres, Redis, ffmpeg đều là thật — chỉ khác lớp đóng gói. Kịch bản (c)
+dùng `SIGKILL` tiến trình thay vì `docker stop` — về bản chất mô phỏng đúng
+"instance chết đột ngột".
 
 ## Đã xuất bản ra ngoài (15/08/2026)
 
