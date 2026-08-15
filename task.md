@@ -31,18 +31,42 @@ sau đó có hai phiên rà lỗi runtime riêng, cả hai đều **đã commit*
    bị chạm tới). Đã xác minh nhanh bằng `grep` thật 4/31 phát hiện quan
    trọng nhất — cả 4 đều có thật, kể cả một lỗi do chính phiên 2 vô tình gây
    ra (callout cảnh báo cũ về `WatchJobRequest` chưa xoá sau khi đã sửa).
-   Toàn bộ 31 phát hiện ở mục "## Rà soát tĩnh — NestJS Media Platform
+   Toàn bộ phát hiện ở mục "## Rà soát tĩnh — NestJS Media Platform
    (15/08/2026, review-build-series, chưa sửa)" bên dưới — **CHƯA sửa vào
    HTML**, đây là việc mở lớn nhất hiện tại.
+4. **15/08/2026, phiên 4** — vá chính skill `review-build-series` (script
+   `extract-parts.py` cũ chỉ trích ĐỊNH NGHĨA, không trích THAM CHIẾU), rồi
+   dùng bản vá **đối chiếu ngược lại bảng 31 dòng của phiên 3**. Kết quả:
+   nhóm "thiếu code" của phiên 3 gần như không sót gì, và phiên 3 còn bắt
+   được 6 lỗi mà script không thể bắt kể cả sau khi vá. Script tìm thêm
+   **1 phát hiện mới → tổng 32**. Chi tiết ở mục con "### Đối chiếu lại bảng
+   trên bằng công cụ". **Không sửa file HTML nào trong phiên này.**
 
 **Việc CHƯA làm, còn mở cho phiên sau:**
 
-- [ ] **Xử lý 31 phát hiện của `review-build-series`** (mục riêng bên dưới) —
-      đã xác minh 4/31 là có thật bằng grep, 27 còn lại chưa xác minh (một số
-      đánh dấu "can-xac-nhan" vì có thể là bỏ boilerplate có chủ đích, không
-      phải lỗi). Việc tiếp theo: đi qua từng dòng, xác nhận thật/không thật,
-      rồi sửa — theo đúng độ sâu đã làm ở phiên 1-2 (dựng lại project thật,
-      chạy thật, không chỉ sửa theo suy đoán).
+- [ ] **Xử lý 32 phát hiện của `review-build-series`** (mục riêng bên dưới) —
+      trạng thái xác minh hiện tại:
+      - 4 dòng xác minh bằng `grep` thật ở phiên 3 (đánh dấu ✅ trong bảng)
+      - nhóm "thiếu code" đã được đối chiếu máy ở phiên 4 → xem mục con
+        "### Đối chiếu lại bảng trên bằng công cụ" trước khi đi xác minh lại
+        thủ công, tránh làm hai lần
+      - phần còn lại vẫn "can-xac-nhan", một số có thể là bỏ boilerplate có
+        chủ đích chứ không phải lỗi
+      Việc tiếp theo: đi qua từng dòng, xác nhận thật/không thật, rồi sửa —
+      theo đúng độ sâu đã làm ở phiên 1-2 (dựng lại project thật, chạy thật,
+      không chỉ sửa theo suy đoán). Điền cột **Trạng thái** khi xử lý xong
+      từng dòng, đừng để bảng thoái hoá lại thành văn xuôi.
+
+      Muốn chạy lại pass tĩnh bằng bản script đã vá:
+
+      ```bash
+      python3 .claude/skills/review-build-series/extract-parts.py \
+        blog/build/nestjs-media-platform /tmp/review-nestjs
+      ```
+
+      Nhớ: script là SÀN chứ không phải trần — nó không bắt được tên bị che
+      bởi method trùng tên ở lớp khác, kiểu chỉ dùng làm tham số, lời gọi trần
+      không qua `this.`, và khối code không phải là file. Vẫn phải đọc.
 
 - [ ] **Dựng thật hệ 3 microservice của Part 4** (`apps/billing-svc`,
       `apps/media-svc`, `apps/auth-svc` + gateway) và chạy gRPC thật giữa
