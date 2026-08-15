@@ -3,19 +3,20 @@ name: review-build-series
 description: >-
   Read a "code thuc chien" (hands-on build) series under `blog/build/<du-an>/part-N.html`
   with the mindset of a complete newcomer, and write every gap found into
-  `task.md` for a later session to verify and fix. This skill only reads and
-  writes findings — it never edits the article's code, never installs
-  anything, never runs Docker or a dev server. It looks for three kinds of
-  defect: code that is used somewhere but never fully defined anywhere in the
-  series, prose that is vague or drops a term/decision without explaining it,
-  and code shown as disconnected fragments that do not actually fit together
-  when combined. Distinct from `beginner-proof-series`, which is for the
-  lesson-based, bilingual EN/VI series — this skill is only for the
-  continuous, Vietnamese-only "code thuc chien" build format (no lessons, no
-  quiz, no translation). Use whenever the user asks to review, rà soát, or
-  audit a code-thực-chiến / build series for completeness, asks "làm theo bài
-  này có chạy được không" without wanting code actually run yet, or after a
-  part in such a series gets marked "ĐÃ VIẾT XONG" in task.md.
+  `review-task.md` for a later session to verify and fix. This skill only
+  reads and writes findings — it never edits the article's code, never
+  installs anything, never runs Docker or a dev server. It looks for three
+  kinds of defect: code that is used somewhere but never fully defined
+  anywhere in the series, prose that is vague or drops a term/decision
+  without explaining it, and code shown as disconnected fragments that do not
+  actually fit together when combined. Distinct from `beginner-proof-series`,
+  which is for the lesson-based, bilingual EN/VI series — this skill is only
+  for the continuous, Vietnamese-only "code thuc chien" build format (no
+  lessons, no quiz, no translation). Use whenever the user asks to review, rà
+  soát, or audit a code-thực-chiến / build series for completeness, asks "làm
+  theo bài này có chạy được không" without wanting code actually run yet, or
+  after a part in such a series gets marked "ĐÃ VIẾT XONG" in design-task.md
+  (or task.md, for a series predating the design-task.md/review-task.md split).
 ---
 
 # Review a "code thực chiến" series as a first-time reader
@@ -31,9 +32,9 @@ recurs: **things that are obvious to the author are invisible gaps to anyone
 following along for the first time.**
 
 This skill is the read-only diagnostic pass. It finds three kinds of gap and
-writes every one of them into `task.md`, with enough location detail that
-whoever picks up the file next does not need to re-read the series to find
-what you found.
+writes every one of them into `review-task.md`, with enough location detail
+that whoever picks up the file next does not need to re-read the series to
+find what you found.
 
 **It never fixes anything, never runs anything.** No `npm install`, no
 Docker, no dev server, no editing the article's HTML. A gap that turns out
@@ -203,7 +204,7 @@ discontinuity**. Two angles:
   frontend displays that has no backing column anywhere is exactly the kind
   of gap that silent reading of the backend alone will not surface.
 
-## Writing findings into `task.md`
+## Writing findings into `review-task.md`
 
 One table, sorted by where the finding sits in the series (Part 1 → 4, top
 to bottom within a part) — not grouped by category. A reader picking this up
@@ -238,15 +239,19 @@ This matters because the project's `task.md` convention elsewhere
 distinguishes "đo bằng công cụ thật" from unverified claims, and a static
 reading pass must not blur into that language.
 
-If `task.md` already has content from a previous pass, add a new section
-rather than overwriting — do not delete another session's findings.
+If `review-task.md` already has content from a previous pass, add a new
+section rather than overwriting — do not delete another session's findings.
 
-`task.md` is a single shared slot at the repo root, and
-`beginner-proof-series`'s `make-task.py` **overwrites the whole file** when it
-runs for some other series. Before writing, check whether the file already
-carries a hand-written warning to that effect; if the findings matter beyond
-this session, say so in the report so the owner knows the file is not a safe
-long-term home.
+Write to `review-task.md` at the repo root, not `task.md`. This series used
+to share a single `task.md` for design notes, review findings, and fix
+history all at once — that overloading was itself a source of confusion (a
+design decision and a review finding read the same way, so "is this settled
+or still open" became ambiguous), and `task.md` is also the exact file
+`beginner-proof-series`'s `make-task.py` overwrites wholesale for lesson
+series. `review-task.md` is a dedicated file this skill owns, sidestepping
+both problems. (A series predating this split may still have its review
+history recorded inside a shared `task.md` — that's a historical record, not
+a reason to write new findings there; start `review-task.md` going forward.)
 
 ## What this is not
 
@@ -270,7 +275,7 @@ requires building it, which this pass does not do."
 ## After the review
 
 Report to the user: how many findings, roughly how they break down across
-the three categories, and point at the `task.md` table. Do not editorialize
+the three categories, and point at the `review-task.md` table. Do not editorialize
 about which ones matter most — that is the next session's call, informed by
 what they intend to do about it (some series stay draft-only for a long
 time; not every gap needs fixing before anyone reads it).

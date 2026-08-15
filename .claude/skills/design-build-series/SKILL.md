@@ -40,11 +40,16 @@ correction the series needed, including the two late commits that fixed 21
 runtime bugs and a round of frontend↔backend integration bugs found only by
 building the project for real.
 
-`task.md` may also still hold that series' decision table and gotcha list —
-read it if so. Do **not** rely on it: `task.md` is a single shared slot at the
-repo root and `beginner-proof-series`'s `make-task.py` overwrites the entire
-file when run for another series. Anything worth keeping past this session
-belongs in a skill or a commit message, not only there.
+That series' decision table and gotcha list were originally written into a
+shared `task.md` (before this skill wrote to its own dedicated file) — read
+it if so, for historical context. Going forward, this skill writes into
+`design-task.md` at the repo root, not `task.md`: the old shared file mixed
+design notes, review findings, and fix history together (making "is this
+settled or still open" ambiguous), and `task.md` is also the exact file
+`beginner-proof-series`'s `make-task.py` overwrites wholesale for lesson
+series. `design-task.md` is a dedicated file this skill owns, avoiding both
+problems — but it is still a single file per repo, so anything worth keeping
+past this session belongs in a skill or a commit message too, not only there.
 
 ## The house style (bake these in unless the user overrides)
 
@@ -170,8 +175,8 @@ Two things reduce this while you write, instead of discovering it later:
    lại". A name silently left dangling is the defect.
 2. **Run `review-build-series` after every part**, not only at the end. It
    is a read-only pass built specifically to catch this category — cheap
-   enough to run every time, and it writes findings straight into `task.md`
-   so nothing is lost between sessions.
+   enough to run every time, and it writes findings straight into
+   `review-task.md` so nothing is lost between sessions.
 
 A clean static pass is not the same as "done". In this series it came before
 two further commits that fixed 21 runtime bugs and a set of frontend↔backend
@@ -190,9 +195,9 @@ alone cannot earn.
 
 Checkpoint after each step — do not produce the whole plan in one turn. Show
 what was written, what's left, wait for a nod, continue. Write everything
-into `task.md` at the repo root as you go (create it if it does not exist),
-using the same sections the NestJS record uses so future sessions read a
-familiar shape:
+into `design-task.md` at the repo root as you go (create it if it does not
+exist), using the same sections the NestJS record uses so future sessions
+read a familiar shape:
 
 - [ ] Step 1 — Lock the topic (apply "Picking the topic" above; write the
       rejected alternatives and why, not just the winner)
@@ -207,12 +212,12 @@ familiar shape:
       the user explicitly (this project's series stayed commit-local, no
       sitemap/search-index entry, until the owner decided to publish — do
       not assume the same holds for a new series without asking). Whatever
-      the answer, write the four publish locations into `task.md` so the
-      later session does not have to rediscover them: a card in
+      the answer, write the four publish locations into `design-task.md` so
+      the later session does not have to rediscover them: a card in
       `blog/index.html`, an `a.learn-card` in the root `index.html`, the URLs
       in `sitemap.xml`, and entries in `blog/search-index.json` (7-key schema)
 - [ ] Step 6 — Write the `## Các quyết định ĐÃ CHỐT` table and the
-      `## Gotcha đã gặp` / `## Giọng văn` sections into `task.md`, seeded
+      `## Gotcha đã gặp` / `## Giọng văn` sections into `design-task.md`, seeded
       from this repo's existing entries (3-level-deep relative paths, chrome
       must be replaced fully not just `<head>`, Prism has no TypeScript by
       default — check `blog/prism.js` before using a new `language-x` for
@@ -220,8 +225,8 @@ familiar shape:
       made *editorially* — write for the reader, not to justify yourself to
       the person who assigned the piece)
 
-Each step's output is a section of `task.md`, appended as it's produced —
-not held in memory until the end.
+Each step's output is a section of `design-task.md`, appended as it's
+produced — not held in memory until the end.
 
 ## The mechanical gate
 
@@ -246,6 +251,7 @@ become a real `href` — verify that by hand across every part.
 ## Output
 
 Stop once the plan is written and confirmed, section by section, in
-`task.md`. Actually writing Part 1's prose and code is a separate, later
-job — offer it as the next step rather than continuing straight into it in
-the same session, exactly as `design-new-series` does for lesson series.
+`design-task.md`. Actually writing Part 1's prose and code is a separate,
+later job — offer it as the next step rather than continuing straight into
+it in the same session, exactly as `design-new-series` does for lesson
+series.

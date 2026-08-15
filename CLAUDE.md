@@ -365,13 +365,19 @@ page), read these two files **first**, in this order:
 This is a different format from the lesson series above: one continuous long-form page per
 part (`blog/build/<dự-án>/part-N.html`), no lessons, no quiz, no EN/VI split — Vietnamese only.
 Planning a brand-new one? Use the `design-build-series` skill rather than `design-new-series`
-(that one is for the chunked lesson format).
+(that one is for the chunked lesson format). It writes its plan into `design-task.md` at the
+repo root, not `task.md` — keeping design notes, review findings, and fix history in separate
+files avoids the ambiguity of a shared file (design decision vs. review finding vs. fix log all
+reading the same way) and the collision with `beginner-proof-series`'s `make-task.py`, which
+overwrites `task.md` wholesale for lesson series. (A series written before this split — the
+NestJS Media Platform series — still keeps everything in a shared `task.md`; that's a historical
+record, not a pattern to copy for a new series.)
 
-Whenever a part in one of these series gets marked "ĐÃ VIẾT XONG" in `task.md` (i.e. the
+Whenever a part in one of these series gets marked "ĐÃ VIẾT XONG" in `design-task.md` (i.e. the
 writing pass just finished), **proactively suggest running the `review-build-series` skill**
 before considering that part done or moving to the next one. It reads the whole series with a
 first-time-reader mindset and writes every gap it finds (code referenced but never defined,
-vague/unexplained prose, disconnected fragments) into `task.md` — it does not fix or run
+vague/unexplained prose, disconnected fragments) into `review-task.md` — it does not fix or run
 anything itself, so suggesting it costs the user nothing to decline. This is a separate,
 much lighter pass from actually building the series' project and running it for real; do not
 conflate the two when reporting what has and has not been verified.
