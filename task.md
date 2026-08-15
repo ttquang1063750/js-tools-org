@@ -511,23 +511,37 @@ Ba tên `BillingServiceClient` / `ChargeReply` / `ChargeRequest` bản thân ch�
 là file sinh tự động, **không phải lỗi thiếu code** — nhưng chính vì đi qua
 alias chưa khai báo mà chúng nổi lên. Xử lý dòng 32 là xử lý luôn cả ba.
 
-## Còn lại — khi chủ dự án quyết định xuất bản
+## Đã xuất bản ra ngoài (15/08/2026)
 
-Cả 4 part đã viết xong và commit local. Chưa xuất hiện ở bất kỳ đâu ngoài chính
-4 file HTML. Khi muốn công khai, thêm vào **4 chỗ**:
+Chủ dự án quyết định đưa loạt bài ra hub. Đã làm đủ **4 chỗ**:
 
-1. `blog/index.html` — card trong lưới, tag class `--build`
-2. `index.html` (gốc) — `a.learn-card`
-3. `sitemap.xml` — 4 URL
-4. `blog/search-index.json` — 4 entry theo schema 7 khoá chuẩn
+1. `blog/index.html` — nhóm mới **"Code thực chiến" / "Real-World Builds"** đặt
+   ngay dưới "Programming Courses", 4 mục part-1..4, tag `--build`.
+   Nhân tiện đổi khối "Programming Courses" từ thẻ vuông sang **dạng danh sách**
+   (`.blog-grid--list` trong `blog/blog.css`) — chiều cao trang 6960 → 5050px ở
+   1280px, giảm 27%. Không đổi markup `.blog-card` nào, bỏ một class là quay lại
+   được dạng cũ.
+2. `index.html` (gốc) — learn-card thứ 24 trỏ tới part-1, khoá
+   `learn.build.title`/`learn.build.desc` ở cả hai ngôn ngữ trong `i18n.js`.
+3. `sitemap.xml` — 4 URL, `priority 0.8`, `lastmod 2026-08-15`.
+4. `blog/search-index.json` — 4 entry, `parentSeries: ""` (đây là **bài viết**
+   chứ không phải bài học, nên thẻ hiện "Bài viết" chứ không phải "Trong khóa
+   học"). `headings*` trích thẳng từ H2/H3 thật của từng part (26/26/18/10 tiêu
+   đề), `desc` lấy từ chính thẻ `<meta name="description">`.
 
-Lý do hoãn vẫn giữ nguyên: site mới ~2,5 tháng tuổi, đang cần giảm nhịp xuất bản.
-Part 5 — chỉ tạo NẾU cần
+Hai bẫy đã gặp và đã vá, ghi lại kẻo lần sau vấp lại:
 
-Được phép tách nếu Part 3 hoặc Part 4 phình quá dài. Chỗ cắt tự nhiên đã chọn:
-sau phần realtime (hết Part 3), vì lúc đó sản phẩm đã chạy trọn vòng
-upload → transcode → xem tiến độ. Nếu tách, dời phần cache + vận hành sang
-Part 5 và để Part 4 thuần về tách service.
+- **`blog/blog.js` gán nhãn theo `indexOf`, và `'js-'` khớp với `"nestjs-media"`.**
+  Không thêm nhánh `build/` **trước** nhánh `js-` thì mọi kết quả tìm kiếm của
+  loạt bài này bị gắn nhãn JavaScript. Đã thêm nhánh, kèm chú thích ngay tại chỗ.
+- **`-webkit-line-clamp` vô hiệu trên con trực tiếp của grid** (bị blockify,
+  `display: -webkit-box` thành `flow-root`). Dùng `max-height` thay thế.
+
+Kiểm thật trên `localhost:5500`: 4 link trả 200; ô tìm kiếm ra đúng bài với
+"outbox", "refresh token", "worker_threads", "ffmpeg", "X-Accel-Redirect", và
+"xay nen tang media" (không dấu) ra đủ 4 part; sitemap parse XML hợp lệ, 0 URL
+trùng; search-index vẫn 1 biến thể schema duy nhất, 0 url trùng.
+
 
 ## Giọng văn — lỗi đã mắc, đừng lặp lại
 

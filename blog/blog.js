@@ -41,7 +41,12 @@ function renderSearchCard(item) {
   var tagClass = '';
 
   var series = item.parentSeries || item.url;
-  if (series.indexOf('cpp') !== -1) {
+  // Phai dat TRUOC nhanh 'js-': chuoi 'build/nestjs-media-platform' co chua
+  // 'js-' (trong "nestjs-media"), de bi gan nham nhan JavaScript.
+  if (series.indexOf('build/') !== -1) {
+    tagText = currentLang === 'vi' ? 'Code thực chiến' : 'Real-World Build';
+    tagClass = 'blog-card__tag--build';
+  } else if (series.indexOf('cpp') !== -1) {
     tagText = currentLang === 'vi' ? 'C++ Lập trình' : 'C++ Programming';
     tagClass = 'blog-card__tag--cpp';
   } else if (series.indexOf('webgl') !== -1) {
