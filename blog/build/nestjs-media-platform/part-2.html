@@ -408,7 +408,10 @@ import { AuthController } from './auth.controller';
   ],
   controllers: [AuthController],
   providers: [AuthService, PasswordService],
-  exports: [AuthService],
+  // JwtModule duoc export lai — ProgressGateway o Part 3 tiem JwtService
+  // truc tiep de xac thuc bat tay WebSocket, va no nam o mot module khac
+  // import AuthModule chu khong phai chinh AuthModule.
+  exports: [AuthService, JwtModule],
 })
 export class AuthModule {}</code></pre>
             </div>
@@ -1606,10 +1609,17 @@ export class RedisService extends Redis implements OnModuleDestroy {
                 <code>nest-cli.json</code> để asset này được copy đúng chỗ:<br /><br />
                 <code
                   >"compilerOptions": {<br />
-                  &nbsp;&nbsp;"assets": [{ "include": "common/rate-limit/*.lua", "outDir": "dist/src" }],<br />
+                  &nbsp;&nbsp;"assets": [{ "include": "common/rate-limit/*.lua", "outDir": "dist" }],<br />
                   &nbsp;&nbsp;"watchAssets": true<br />
                   }</code
                 >
+                <br /><br />
+                <code>outDir</code> ở đây phải khớp với vị trí thật của <code>main.js</code> sau khi build — TypeScript
+                tự suy ra <code>rootDir</code> từ tập file được biên dịch, nên tuỳ cấu hình
+                <code>tsconfig.json</code> của từng dự án, <code>dist/main.js</code> có thể nằm ở
+                <code>dist/</code> hoặc <code>dist/src/</code>. Chạy <code>find dist -iname main.js</code> để biết chắc,
+                rồi đặt <code>outDir</code> đúng thư mục cha của file đó — đặt sai thì lỗi <code>ENOENT</code> vẫn còn
+                nguyên, chỉ khác đường dẫn báo lỗi.
               </div>
             </div>
 
@@ -1620,7 +1630,7 @@ export class RedisService extends Redis implements OnModuleDestroy {
               </div>
               <pre><code class="language-typescript">import { CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import type { AuthedRequest } from '../../auth/jwt-payload';
-import { RedisService } from '../redis/redis.service';
+import { RedisService } from '../../redis/redis.service';
 
 interface BucketRule {
   readonly capacity: number;
@@ -1737,6 +1747,12 @@ import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RateLimitGuard } from '../common/rate-limit/rate-limit.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthedRequest, JwtPayload } from '../auth/jwt-payload';
+import { MediaService } from './media.service';
+import { Video } from './video.entity';
 
 @Controller('media')
 @UseGuards(JwtAuthGuard, RateLimitGuard)
@@ -1744,7 +1760,7 @@ export class UploadController {
   constructor(private readonly media: MediaService) {}
 
   @Post('upload')
-  async upload(@Req() request: AuthedRequest, @CurrentUser() user: JwtPayload) {
+  async upload(@Req() request: AuthedRequest, @CurrentUser() user: JwtPayload): Promise&lt;Video&gt; {
     const contentLength = Number(request.headers['content-length'] ?? 0);
     if (contentLength &gt; 2 * 1024 * 1024 * 1024) {
       throw new BadRequestException('File vuot qua 2GB');
@@ -1757,7 +1773,13 @@ export class UploadController {
     // thi phai tu bat 'error' o ca hai dau, quen mot ben la ro file.
     await pipeline(request, createWriteStream(target));
 
-    return this.media.registerUpload(videoId, user.sub, target);
+    // Ten file goc di kem qua header rieng — body la bytes thuan tuy, khong
+    // phai multipart, nen khong the doc file.name theo cach thuong (xem
+    // src/lib/upload.ts o muc 8.2, noi header nay duoc dat tu phia client).
+    const originalName = request.headers['x-filename'];
+    const decodedName = typeof originalName === 'string' ? decodeURIComponent(originalName) : null;
+
+    return this.media.registerUpload(videoId, user.sub, target, decodedName);
   }
 }</code></pre>
             </div>
@@ -1767,12 +1789,19 @@ export class UploadController {
                 <span class="code-filename">src/media/media.service.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import { Injectable } from '@nestjs/common';
+              <pre><code class="language-typescript">import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { basename } from 'node:path';
 import { Video } from './video.entity';
 import type { AppConfig } from '../config/configuration';
+
+export interface PlayableAsset {
+  readonly path: string;
+  readonly sizeBytes: number;
+  readonly storageKey: string;
+}
 
 @Injectable()
 export class MediaService {
@@ -1787,10 +1816,45 @@ export class MediaService {
 
   // videoId da duoc UploadController sinh TRUOC khi ghi file (de dat ten file
   // theo id) — luu voi id da co san thay vi de TypeORM tu sinh.
-  async registerUpload(videoId: string, userId: string, path: string): Promise&lt;Video&gt; {
-    return this.videos.save(this.videos.create({ id: videoId, userId, originalKey: path }));
+  async registerUpload(
+    videoId: string,
+    userId: string,
+    path: string,
+    originalName: string | null,
+  ): Promise&lt;Video&gt; {
+    return this.videos.save(
+      this.videos.create({ id: videoId, userId, originalKey: path, originalName }),
+    );
+  }
+
+  // Dung boi stream.controller.ts o muc 7. Kiem userId ngay tai day: video
+  // khong thuoc ve nguoi goi thi coi nhu khong ton tai, khong tiet lo no co
+  // ton tai o dau khac hay khong.
+  async findPlayable(id: string, userId: string): Promise&lt;PlayableAsset&gt; {
+    const video = await this.videos.findOne({ where: { id, userId } });
+    if (video === null) {
+      throw new NotFoundException('Khong tim thay video');
+    }
+    return {
+      path: video.originalKey,
+      sizeBytes: Number(video.size ?? 0),
+      // storageKey la duong dan TUONG DOI ma nginx alias /var/media/ ghep
+      // vao — dung khi uploadDir chinh la /var/media (xem docker-compose Part 3).
+      storageKey: basename(video.originalKey),
+    };
   }
 }</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">📝 <code>findPlayable</code> chưa từng được viết ra</div>
+              <div class="callout__content">
+                <code>stream.controller.ts</code> ở mục 7 gọi <code>this.media.findPlayable(id, userId)</code> và kỳ
+                vọng nó trả về <code>{ path, sizeBytes, storageKey }</code> — nhưng method này chưa từng tồn tại, và tên
+                trường trong đó cũng không khớp thẳng với entity (<code>Video</code> dùng
+                <code>originalKey</code>/<code>size</code>, không phải <code>path</code>/<code>sizeBytes</code>). Viết
+                ra ở đây, ánh xạ đúng tên cột thật sang hình dạng mà controller cần.
+              </div>
             </div>
 
             <p>
@@ -2038,35 +2102,138 @@ async play(
                 <span class="code-filename">src/media/signed-url.service.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import { createHmac, timingSafeEqual } from 'node:crypto';
+              <pre><code class="language-typescript">import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { AppConfig } from '../config/configuration';
 
-sign(assetId: string, userId: string, ttlSeconds = 300): string {
-  const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
-  const payload = `${assetId}:${userId}:${expires}`;
-  const signature = createHmac('sha256', this.secret).update(payload).digest('base64url');
-  return `/media/${assetId}/play?u=${userId}&amp;e=${expires}&amp;s=${signature}`;
-}
+@Injectable()
+export class SignedUrlService {
+  constructor(private readonly config: ConfigService&lt;AppConfig, true&gt;) {}
 
-verify(assetId: string, userId: string, expires: number, signature: string): boolean {
-  if (expires &lt; Math.floor(Date.now() / 1000)) return false;
+  private get secret(): string {
+    return this.config.get('SIGNED_URL_SECRET', { infer: true });
+  }
 
-  const expected = createHmac('sha256', this.secret)
-    .update(`${assetId}:${userId}:${expires}`)
-    .digest('base64url');
+  sign(assetId: string, userId: string, ttlSeconds = 300): string {
+    const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
+    const payload = `${assetId}:${userId}:${expires}`;
+    const signature = createHmac('sha256', this.secret).update(payload).digest('base64url');
+    return `/media/${assetId}/play?u=${userId}&amp;e=${expires}&amp;s=${signature}`;
+  }
 
-  const a = Buffer.from(signature);
-  const b = Buffer.from(expected);
-  // So sanh thoi gian hang so. Dung === thi thoat som o byte dau tien khac nhau,
-  // va chenh lech thoi gian do duoc de do dan tung byte cua chu ky.
-  return a.length === b.length &amp;&amp; timingSafeEqual(a, b);
+  verify(assetId: string, userId: string, expires: number, signature: string): boolean {
+    if (expires &lt; Math.floor(Date.now() / 1000)) return false;
+
+    const expected = createHmac('sha256', this.secret)
+      .update(`${assetId}:${userId}:${expires}`)
+      .digest('base64url');
+
+    const a = Buffer.from(signature);
+    const b = Buffer.from(expected);
+    // So sanh thoi gian hang so. Dung === thi thoat som o byte dau tien khac nhau,
+    // va chenh lech thoi gian do duoc de do dan tung byte cua chu ky.
+    return a.length === b.length &amp;&amp; timingSafeEqual(a, b);
+  }
+}</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚠️ <code>play()</code> ở mục 7.1 mâu thuẫn với chính lý do URL có chữ ký tồn tại
+              </div>
+              <div class="callout__content">
+                Nhìn lại <code>play()</code> vừa viết: nó bắt <code>@UseGuards(JwtAuthGuard)</code>, tức là đòi header
+                <code>Authorization</code>. Nhưng URL có chữ ký sinh ra <strong>chính vì</strong> thẻ
+                <code>&lt;video src="..."&gt;</code> không gửi được header đó — route mà nó trỏ tới phải chấp nhận yêu
+                cầu không kèm Bearer token. Giữ nguyên <code>JwtAuthGuard</code> ở đó thì mọi request từ
+                <code>&lt;video&gt;</code> luôn nhận 401, và <code>verify()</code> vừa viết không bao giờ được gọi tới.
+                Nối lại cho đúng — thêm endpoint xin URL (đòi xác thực bình thường, vì đây là một lời gọi
+                <code>fetch</code> từ chính trang, gửi header được) và sửa <code>play()</code> đọc chữ ký từ query thay
+                vì đọc JWT:
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/media/stream.controller.ts — bản cuối cùng</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Controller, Get, Param, Query, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { JwtPayload } from '../auth/jwt-payload';
+import { MediaService } from './media.service';
+import { SignedUrlService } from './signed-url.service';
+
+@Controller('media')
+export class StreamController {
+  constructor(
+    private readonly media: MediaService,
+    private readonly signedUrl: SignedUrlService,
+  ) {}
+
+  // Doi hoi JwtAuthGuard binh thuong: lay URL nay la mot lenh goi tu chinh
+  // trang SPA qua fetch/XHR, no gui duoc header Authorization.
+  @Get(':id/signed-url')
+  @UseGuards(JwtAuthGuard)
+  async getSignedUrl(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise&lt;{ url: string }&gt; {
+    // Kiem quyen xem NGAY tai day — phat URL cho video khong thuoc ve nguoi
+    // goi thi coi nhu tim khong thay, giong het play() ben duoi.
+    await this.media.findPlayable(id, user.sub);
+    return { url: this.signedUrl.sign(id, user.sub) };
+  }
+
+  // KHONG dung JwtAuthGuard — day chinh la route ma URL co chu ky ton tai de
+  // phuc vu, vi the &lt;video src="..."&gt; khong gui duoc header Authorization.
+  @Get(':id/play')
+  async play(
+    @Param('id') id: string,
+    // Khong co ValidationPipe toan cuc — @Query() khong dam bao gia tri ton
+    // tai luc runtime du kieu khai bao la string. Kiem tra tay truoc khi dung.
+    @Query('u') userId: string | undefined,
+    @Query('e') expires: string | undefined,
+    @Query('s') signature: string | undefined,
+    @Res() response: Response,
+  ): Promise&lt;void&gt; {
+    if (
+      userId === undefined ||
+      expires === undefined ||
+      signature === undefined ||
+      !this.signedUrl.verify(id, userId, Number(expires), signature)
+    ) {
+      throw new UnauthorizedException('URL het han hoac khong hop le');
+    }
+
+    // Nest van lam phan kho: kiem tra quyen, han muc, trang thai video.
+    const asset = await this.media.findPlayable(id, userId);
+
+    response.setHeader('X-Accel-Redirect', `/protected-media/${asset.storageKey}`);
+    response.setHeader('Content-Type', 'video/mp4');
+    response.end(); // Body rong. nginx thay header tren va tu gui file.
+  }
 }</code></pre>
             </div>
 
             <p>
-              Client gọi một endpoint có xác thực bình thường để xin URL, rồi gắn URL đó vào thẻ
-              <code>&lt;video&gt;</code>. URL sống 5 phút — đủ để bắt đầu phát, quá ngắn để chia sẻ lại có ý nghĩa. Đây
-              cũng chính là cơ chế mà các dịch vụ lưu trữ đám mây dùng cho link tải tạm thời.
+              Client gọi <code>GET /media/:id/signed-url</code> có xác thực bình thường để xin URL, rồi gắn URL đó vào
+              thẻ <code>&lt;video&gt;</code>. URL sống 5 phút — đủ để bắt đầu phát, quá ngắn để chia sẻ lại có ý nghĩa.
+              Đây cũng chính là cơ chế mà các dịch vụ lưu trữ đám mây dùng cho link tải tạm thời.
             </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/config/configuration.ts — thêm biến cho URL có chữ ký</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">// Doc lap voi JWT_SECRET vi khac vong doi: URL nay het han sau vai phut,
+// khong phai vai phut sau khi dang xuat.
+SIGNED_URL_SECRET: z.string().min(32),</code></pre>
+            </div>
 
             <h2>8. Giao diện: hai mốc để nhìn thấy thứ vừa dựng</h2>
 

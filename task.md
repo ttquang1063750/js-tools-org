@@ -8,38 +8,47 @@
 ## ⚠️ Việc còn mở (đọc mục này trước, đừng đi mò lại từ đầu)
 
 **Bối cảnh:** loạt bài 4 part đã viết xong từ trước (xem lịch sử bên dưới), rồi
-sau đó có một phiên riêng (15/08/2026) đóng vai **người đọc thật sự làm theo
-bài** để kiểm xem code có chạy được không — không phải viết thêm nội dung, mà
-**rà lỗi runtime**. Phiên đó đã sửa 21 lỗi thật, kiểm bằng công cụ thật (không
-đoán), và **đã commit**. Tất cả chi tiết ở mục "## Đã kiểm runtime & vá lỗi
-(15/08/2026)" phía dưới — đọc mục đó để biết CHÍNH XÁC cái gì đã được đo, tránh
-lặp lại việc đã làm.
+sau đó có hai phiên rà lỗi runtime riêng, cả hai đều **đã commit**:
+
+1. **15/08/2026, phiên 1** — đóng vai người đọc làm theo cả 4 part, tập trung
+   100% vào backend. Sửa 21 lỗi (A–U). Chi tiết ở mục "## Đã kiểm runtime & vá
+   lỗi (15/08/2026)" bên dưới.
+2. **15/08/2026, phiên 2** — liệt kê cấu trúc frontend (Part 2 §8, Part 3 §7),
+   phát hiện 5 lỗi tích hợp frontend↔backend (V–Z) qua đọc chéo, rồi **dựng
+   thật project NestJS trong `~/Projects/Scratchpad/media-forge`** để sửa và
+   kiểm — phát hiện thêm 9 lỗi backend nữa trong lúc đó (AA–AE và vài lỗi phụ
+   trợ). Tổng cộng phiên này sửa **11 lỗi** (V, W, X, Y, Z, AA, AB, AC, AD,
+   AE, cộng một lỗi robustness nhỏ ở `SignedUrlService.verify()`). Chi tiết ở
+   mục "## Đã sửa lỗi tích hợp frontend↔backend (phiên 2, 15/08/2026)" bên
+   dưới — đọc mục đó để biết CHÍNH XÁC cái gì đã được đo, tránh lặp lại việc
+   đã làm.
 
 **Việc CHƯA làm, còn mở cho phiên sau:**
 
 - [ ] **Dựng thật hệ 3 microservice của Part 4** (`apps/billing-svc`,
       `apps/media-svc`, `apps/auth-svc` + gateway) và chạy gRPC thật giữa
-      chúng. Phiên vừa rồi CHỈ kiểm được `media.proto`/`billing.proto` bằng
-      `protoc` thật (cú pháp đúng) và đối chiếu logic để `chargeForJob()`
+      chúng. Cả hai phiên rà lỗi CHỈ kiểm được `media.proto`/`billing.proto`
+      bằng `protoc` thật (cú pháp đúng) và đối chiếu logic để `chargeForJob()`
       khớp chữ ký giữa Part 3 và Part 4 — **không** có một hệ microservice
       thật nào từng chạy gRPC end-to-end. Nếu làm, nhớ: Part 4 vốn không có
       project code hoàn chỉnh để scaffold (nó là phần mở rộng lý thuyết từ
       monolith Part 1–3), nên cần tự viết `apps/*` từ đầu dựa theo các đoạn
       code đã cho trong bài.
 - [ ] Quyết định có muốn giữ nguyên quyết định cũ **"Code: KHÔNG dựng project
-      thật"** (xem bảng quyết định đã chốt bên dưới) hay không, vì phiên vừa
-      rồi đã dựng một project thật **trong scratchpad tạm** (không phải trong
-      repo, không commit) chỉ để kiểm chứng — bài viết (4 file HTML) vẫn giữ
-      nguyên hình thức "chữ + code listing + tên file" như quyết định gốc,
-      chỉ khác là giờ nội dung code trong đó đã được xác nhận **thật sự ráp
-      lại chạy được**, không còn là listing chưa kiểm.
-- [ ] **Frontend CHƯA được rà lỗi runtime — chỉ mới liệt kê cấu trúc và phát
-      hiện 5 lỗi tích hợp frontend↔backend bằng cách đọc chéo (chưa dựng
-      project React thật để chạy).** Phiên rà lỗi 15/08/2026 chỉ tập trung
-      100% vào backend (NestJS) — chưa hề chạy thử frontend. Khi kiểm chéo
-      để viết mục cấu trúc bên dưới, phát hiện thêm 5 lỗi thật (V–Z), xem
-      bảng ở mục "## Cấu trúc frontend" bên dưới. Đây là việc còn mở, giống
-      hệt các lỗi A–U ở backend nhưng **chưa sửa vào HTML**.
+      thật"** (xem bảng quyết định đã chốt bên dưới) hay không, vì cả hai
+      phiên rà lỗi đều đã dựng project thật **trong scratchpad tạm** (không
+      phải trong repo, không commit) chỉ để kiểm chứng — bài viết (4 file
+      HTML) vẫn giữ nguyên hình thức "chữ + code listing + tên file" như
+      quyết định gốc, chỉ khác là giờ nội dung code trong đó đã được xác nhận
+      **thật sự ráp lại chạy được**, không còn là listing chưa kiểm.
+- [ ] **Frontend (React) vẫn CHƯA được dựng thật để chạy** — phiên 2 chỉ mô
+      phỏng đúng các lời gọi HTTP/WebSocket mà 5 file frontend
+      (`api.ts`/`upload.ts`/`VideoPlayer.tsx`/`useJobProgress.ts`/`JobList.tsx`)
+      thực hiện, bằng `curl` và `socket.io-client` trực tiếp — không chạy
+      `npm create vite@latest` và mở trình duyệt thật để xác nhận UI hiển thị
+      đúng (thanh tiến độ, chuyển trạng thái, video phát được). Backend phía
+      sau các lời gọi đó đã sửa và kiểm xong (xem mục "## Đã sửa lỗi tích hợp
+      frontend↔backend" bên dưới).
 
 ## Đang làm gì
 
@@ -328,28 +337,56 @@ media-forge-web/            # du an Vite rieng, KHONG chung repo voi backend
         └── useJobProgress.ts # Part 3 §7  — socket.io-client + reconnect-backfill
 ```
 
-**Chưa dựng project React thật để chạy** (khác với backend đã dựng NestJS
-thật trong scratchpad) — chỉ đọc chéo frontend với backend đã sửa để lập cây
-trên. Việc đọc chéo này tự nó lộ ra **5 lỗi tích hợp frontend↔backend thật**,
-đều là cùng một dạng với lỗi E ở backend (frontend gọi một thứ mà backend
-không có), nhưng **CHƯA sửa vào HTML** — mới chỉ phát hiện:
+Ban đầu chỉ đọc chéo frontend với backend để lập cây trên (không dựng project
+React thật) — việc đọc chéo đó tự nó lộ ra 5 lỗi tích hợp frontend↔backend
+thật (V–Z). Toàn bộ đã **sửa và kiểm xong** ở phiên 2 (15/08/2026) — xem mục
+ngay dưới đây.
 
-| # | Chỗ phát hiện | Lỗi |
+## Đã sửa lỗi tích hợp frontend↔backend (phiên 2, 15/08/2026)
+
+**Phương pháp:** dựng lại project NestJS thật trong
+`~/Projects/Scratchpad/media-forge` (KHÔNG phải thư mục scratchpad tạm của
+phiên — dùng `~/Projects/Scratchpad` để có thể quay lại sau nếu cần), cùng
+Postgres + Redis thật qua Docker, ffmpeg thật. Sau khi sửa, mô phỏng đúng các
+lời gọi mà 5 file frontend thực hiện bằng `curl` (HTTP) và `socket.io-client`
+(WebSocket) — không chạy `npm create vite@latest` thật. Mọi khẳng định dưới
+đây đều đo bằng cách này, không suy đoán từ đọc code.
+
+**5 lỗi tích hợp frontend↔backend tìm thấy khi đọc chéo, đã sửa:**
+
+| # | Chỗ phát hiện | Lỗi | Cách kiểm |
+|---|---|---|---|
+| V | Part 2 §7.1 vs §7.2 | `/media/:id/play` bắt buộc `JwtAuthGuard` — mâu thuẫn với chính lý do signed-URL tồn tại (thẻ `<video>` không gửi được header). Sửa: bỏ guard, đọc `u`/`e`/`s` từ query, gọi `SignedUrlService.verify()`. | `curl` không kèm `Authorization` → trước: 401, sau: 200 kèm `X-Accel-Redirect` |
+| W | Part 2 §7.2 | Thiếu route `GET /media/:id/signed-url` cho `SignedUrlService.sign()`. Đã thêm, có `JwtAuthGuard` (đúng, vì đây là lời gọi `fetch` từ SPA, gửi header được). | `curl` kèm Bearer token → nhận `{ url }` đúng dạng `/media/:id/play?u=...&e=...&s=...` |
+| X | Part 3 §7 | Backend chỉ phát `'job:progress'`, `useJobProgress.ts` cần `'job:done'` riêng để chuyển `status` sang `completed`. Đã thêm kênh Redis `job:done` + `ProgressGateway.emitDone()`. | `socket.io-client` thật, enqueue transcode thật qua ffmpeg, nhận đúng `job:done` sau `job:progress` |
+| Y | Part 3 §6-7 | Thiếu route `GET /jobs/active`. Đã thêm `JobService.findActiveForUser()` + `JobController.active()`. | `curl` sau khi job hoàn tất → trả đúng `status: 'completed'` |
+| Z | Part 3 §7 | `JobState.videoTitle` không có cột nào tương ứng. Đã thêm cột `Video.originalName`, `UploadController` đọc từ header `X-Filename` (upload gửi bytes thô, không phải multipart, nên không có `file.name` tự nhiên). | Upload thật kèm `X-Filename: my%20cool%20video.mp4` → `/jobs/active` trả đúng `videoTitle` |
+
+**9 lỗi backend mới phát hiện trong lúc dựng lại để sửa V–Z** (không liên
+quan trực tiếp tới frontend, nhưng lộ ra khi build/chạy thật lại từ đầu):
+
+| # | Lỗi | Cách kiểm |
 |---|---|---|
-| V | Part 2 §7.1 vs §7.2 | `stream.controller.ts`'s `/media/:id/play` bắt buộc `JwtAuthGuard` (cần header `Authorization`) — nhưng đây CHÍNH LÀ route mà signed-URL sinh ra để dùng khi **không gửi được header** (thẻ `<video>`). Route hiện tại không đọc `u`/`e`/`s` từ query, không gọi `SignedUrlService.verify()` ở đâu cả — một request từ `<video src>` sẽ luôn nhận 401. |
-| W | Part 2 §7.2 | Frontend gọi `GET /media/:assetId/signed-url` (`VideoPlayer.tsx`) nhưng backend **không có controller route nào** cho đường dẫn này — chỉ có `SignedUrlService.sign()`, chưa từng được gắn vào một `@Get()` nào. |
-| X | Part 3 §7 | Backend (`ProgressGateway.emitProgress`) chỉ bao giờ phát sự kiện `'job:progress'` (kể cả lúc 100%) — không có nơi nào phát `'job:done'`. `useJobProgress.ts` lại cần đúng sự kiện `'job:done'` để chuyển `status` sang `'completed'`; thiếu nó thì trạng thái kẹt ở `'processing'` mãi mãi dù job đã xong thật. |
-| Y | Part 3 §6 + §7 | Frontend gọi `GET /jobs/active` ở cả `connect`-handler lẫn `useJobProgress.ts` để đồng bộ lại sau khi mất kết nối — route này **chưa từng được định nghĩa** ở backend phần nào. |
-| Z | Part 3 §7 | `JobState.videoTitle` được `JobList.tsx` hiển thị trực tiếp, nhưng không entity nào (`Video`, `Job`) có cột `title`/`videoTitle` — trường này sẽ luôn là `undefined` khi render. |
+| AA | `stream.controller.ts` gọi `this.media.findPlayable(...)` — method chưa từng được viết, và tên trường trả về (`path`/`sizeBytes`/`storageKey`) không khớp cột thật của `Video` (`originalKey`/`size`). Đã viết, ánh xạ đúng tên cột. | `tsc` + gọi `/media/:id/play` thật |
+| AB | `upload.controller.ts` thiếu import (`JwtAuthGuard`, `RateLimitGuard`, `CurrentUser`, `JwtPayload`, `AuthedRequest`, `MediaService`) — lọt qua vòng kiểm phiên 1 vì phiên đó không ghi đè bản HTML vào scratchpad cho đúng file này. | `tsc` |
+| AC | `rate-limit.guard.ts` (2 cấp sâu: `src/common/rate-limit/`) import `RedisService` qua `'../redis/redis.service'` — thiếu một cấp `../`, đúng ra phải `'../../redis/redis.service'`. | `tsc` |
+| AD | `AuthModule` chỉ export `[AuthService]`, không export `JwtModule` — `ProgressGateway` (ở module khác) tiêm `JwtService` trực tiếp nên không resolve được. | Boot app thật: `UnknownDependenciesException` trước, sạch sau |
+| AE | `WorkerModule` có `TypeOrmModule.forFeature([Video])` nhưng thiếu `Job` — `JobRunner` tiêm thẳng `Repository<Job>`. | Boot tiến trình worker thật: lỗi trước, sạch sau |
+| — | `nest-cli.json`'s `assets[].outDir` cho file `.lua` (Bug A phiên 1) hoá ra phụ thuộc vào cách TypeScript suy `rootDir` của từng dự án (`dist/` hay `dist/src/`) — không phải một giá trị cố định đúng cho mọi setup. Đã sửa callout thành hướng dẫn tự kiểm (`find dist -iname main.js`) thay vì khẳng định một giá trị. | So sánh 2 lần dựng project ở 2 phiên, ra 2 layout `dist/` khác nhau |
+| — | `SignedUrlService.verify()` ném lỗi 500 (thay vì 401) khi thiếu hẳn query param (`Buffer.from(undefined)`) — vá bằng kiểm `undefined` tường minh trong `play()` trước khi gọi `verify()`. | `curl` không kèm query nào → trước: 500, sau: 401 |
 
-Ngoài ra `signed-url.service.ts` (Part 2 §7.2) cũng bị thiếu class wrapper +
-constructor + nguồn của `this.secret` — cùng một khuôn "đưa ra như đoạn rời,
-chưa từng ráp thành class" đã sửa nhiều lần ở backend (xem lỗi E).
+**Đã xác nhận chạy thật toàn trình** (không chỉ biên dịch): tạo user →
+login → upload video thật (kèm `X-Filename`) → xin signed URL → phát video
+**không kèm** header `Authorization` → enqueue transcode → nhận đúng
+`job:progress` rồi `job:done` qua WebSocket thật → `GET /jobs/active` phản
+ánh đúng `status: 'completed'` và `videoTitle` đúng tên file gốc.
 
-**Chưa quyết định sửa hay chưa** — đang chờ chủ dự án xác nhận có muốn sửa
-tiếp theo đúng độ sâu đã làm với backend (dựng thật project React trong
-scratchpad, chạy thử signed-URL + WebSocket + reconnect thật) hay chỉ ghi
-nhận rồi để đó.
+Vòng kiểm cuối: trích lại code từ 4 file HTML **sau khi sửa xong**, đối chiếu
+với bản đã chạy được trong scratchpad — khớp hoàn toàn (chỉ khác câu chữ
+comment).
+
+**Commit:** xem log gần nhất — commit message bắt đầu bằng
+`fix(blog): NestJS series — vá lỗi tích hợp frontend`.
 
 ## Còn lại — khi chủ dự án quyết định xuất bản
 

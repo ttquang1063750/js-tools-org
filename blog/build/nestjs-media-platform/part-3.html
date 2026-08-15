@@ -645,19 +645,19 @@ Dung khi            goi ffmpeg, imagemagick hash, nen anh, tinh toan
                 <span class="code-filename">src/job/job.controller.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import { Controller, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+              <pre><code class="language-typescript">import { Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RateLimitGuard } from '../common/rate-limit/rate-limit.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { JwtPayload } from '../auth/jwt-payload';
-import { JobService } from './job.service';
+import { JobService, type JobState } from './job.service';
 
-@Controller('media')
+@Controller()
 @UseGuards(JwtAuthGuard, RateLimitGuard)
 export class JobController {
   constructor(private readonly jobs: JobService) {}
 
-  @Post(':videoId/transcode')
+  @Post('media/:videoId/transcode')
   @HttpCode(HttpStatus.ACCEPTED) // 202: da nhan, chua lam xong
   async transcode(
     @Param('videoId') videoId: string,
@@ -665,6 +665,12 @@ export class JobController {
   ): Promise&lt;{ jobId: string }&gt; {
     const job = await this.jobs.enqueue(videoId, user.sub);
     return { jobId: job.id };
+  }
+
+  // Nguon su that goi lai luc connect/reconnect — xem muc 6-7.
+  @Get('jobs/active')
+  async active(@CurrentUser() user: JwtPayload): Promise&lt;JobState[]&gt; {
+    return this.jobs.findActiveForUser(user.sub);
   }
 }</code></pre>
             </div>
@@ -679,6 +685,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Job } from './job.entity';
 import { JobQueue } from './job.queue';
+
+export interface JobState {
+  readonly id: string;
+  readonly videoTitle: string;
+  readonly status: 'queued' | 'processing' | 'completed' | 'failed';
+  readonly percent: number;
+}
 
 @Injectable()
 export class JobService {
@@ -696,6 +709,32 @@ export class JobService {
   async markFailed(jobId: string, error: string): Promise&lt;void&gt; {
     await this.jobs.update(jobId, { status: 'failed', error, finishedAt: new Date() });
   }
+
+  // Nguon su that cho FE khi connect/reconnect (muc 6) — WebSocket chi tang
+  // toc, bang jobs moi la thu luon dung. "Active" nghia la job chua xong
+  // (queued/processing) hoac vua xong/hong trong 24 gio gan nhat, de UI con
+  // thay duoc buoc chuyen trang thai cuoi cung sau khi reconnect.
+  async findActiveForUser(userId: string): Promise&lt;JobState[]&gt; {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const jobs = await this.jobs
+      .createQueryBuilder('job')
+      .innerJoinAndSelect('job.video', 'video')
+      .where('video.user_id = :userId', { userId })
+      .andWhere("(job.status IN ('queued', 'processing') OR job.updated_at &gt;= :cutoff)", { cutoff })
+      .orderBy('job.created_at', 'DESC')
+      .getMany();
+
+    return jobs.map((job) =&gt; ({
+      id: job.id,
+      videoTitle: job.video.originalName ?? job.videoId,
+      status: job.status,
+      // Phan tram song chi ton tai qua Redis pub/sub trong luc dang chay —
+      // khong luu vao Postgres. WebSocket se day gia tri that ngay sau khi
+      // connect (xem useJobProgress.ts o muc 7).
+      percent: job.status === 'completed' ? 100 : 0,
+    }));
+  }
 }</code></pre>
             </div>
 
@@ -707,7 +746,8 @@ export class JobService {
                 <code>this.jobs.enqueue(...)</code> ở trên giả định một service đã tồn tại sẵn, nhưng
                 <code>JobService</code> — nơi thật sự ghi dòng vào bảng <code>jobs</code> rồi đẩy vào
                 <code>JobQueue</code> — chưa từng được viết ra ở đâu trong cả bốn phần. Khai báo đầy đủ ở trên, cùng với
-                việc bọc endpoint vào một <code>JobController</code> thật.
+                việc bọc endpoint vào một <code>JobController</code> thật — kèm luôn <code>GET /jobs/active</code> mà
+                mục 6-7 phía dưới dùng để đồng bộ lại sau khi mất kết nối, cũng chưa từng có route nào phục vụ nó.
               </div>
             </div>
 
@@ -1087,6 +1127,7 @@ import { RedisModule } from '../redis/redis.module';
 import { BillingModule } from '../billing/billing.module';
 import { JobModule } from '../job/job.module';
 import { Video } from '../media/video.entity';
+import { Job } from '../job/job.entity';
 import { DelayedJobPromoter } from '../job/delayed-job-promoter';
 import { JobRunner } from './job.runner';
 
@@ -1102,7 +1143,9 @@ import { JobRunner } from './job.runner';
         url: config.get('DATABASE_URL', { infer: true }),
       }),
     }),
-    TypeOrmModule.forFeature([Video]),
+    // Video CUNG Job — JobRunner tiem thang Repository&lt;Job&gt;, va JobModule
+    // khong export forFeature cua rieng no nen phai khai lai o day.
+    TypeOrmModule.forFeature([Video, Job]),
     ScheduleModule.forRoot(), // bat buoc de @Interval o DelayedJobPromoter chay that
     RedisModule,
     BillingModule,
@@ -1212,9 +1255,23 @@ export class JobRunner implements OnApplicationShutdown {
     await this.billing.chargeForJob(job.id, job.userId, PRICE_BY_HEIGHT[job.height]);
     await this.jobRepo.update(job.id, { status: 'completed', finishedAt: new Date() });
 
-    void this.redis.publish('progress', JSON.stringify({ userId: job.userId, jobId: job.id, percent: 100 }));
+    // Kenh RIENG voi 'progress' — client can biet job da xong HOAN TOAN,
+    // khong chi la mot moc phan tram nua trong hang dai cac moc trung gian.
+    void this.redis.publish('job:done', JSON.stringify({ userId: job.userId, jobId: job.id }));
   }
 }</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Thiếu sự kiện <code>job:done</code> thì UI kẹt ở "đang xử lý" mãi mãi</div>
+              <div class="callout__content">
+                <code>useJobProgress.ts</code> ở mục 7 nghe <code>'job:progress'</code> <strong>và</strong>
+                <code>'job:done'</code> như hai sự kiện tách biệt — chỉ nhánh <code>job:done</code> mới chuyển
+                <code>status</code> sang <code>'completed'</code>. Nếu worker chỉ phát <code>'progress'</code> (kể cả
+                lúc 100%), phía client vẫn thấy thanh chạy đủ nhưng nhãn trạng thái đứng nguyên ở
+                <code>'processing'</code> — vì không nhánh nào trong <code>useJobProgress.ts</code> đọc
+                <code>percent</code> để tự suy ra job đã xong.
+              </div>
             </div>
 
             <div class="callout callout--note">
@@ -1386,6 +1443,12 @@ export class ProgressGateway implements OnGatewayConnection {
   emitProgress(userId: string, jobId: string, percent: number): void {
     this.server.to(`user:${userId}`).emit('job:progress', { jobId, percent });
   }
+
+  // Su kien RIENG, khac 'job:progress' — bao cho client biet job da xong
+  // hoan toan (kem tru credit), khong chi la mot moc phan tram nua.
+  emitDone(userId: string, jobId: string): void {
+    this.server.to(`user:${userId}`).emit('job:done', { jobId });
+  }
 }</code></pre>
             </div>
 
@@ -1427,6 +1490,11 @@ interface ProgressEvent {
   readonly percent: number;
 }
 
+interface DoneEvent {
+  readonly userId: string;
+  readonly jobId: string;
+}
+
 @Injectable()
 export class ProgressSubscriber implements OnModuleInit {
   private readonly subscriber: Redis;
@@ -1441,9 +1509,17 @@ export class ProgressSubscriber implements OnModuleInit {
   }
 
   onModuleInit(): void {
-    this.subscriber.subscribe('progress');
+    // Dang ky ca hai kenh — tham so channel cua callback tu phan biet duoc
+    // thong diep nao thuoc kenh nao, khong can hai handler rieng.
+    this.subscriber.subscribe('progress', 'job:done');
 
-    this.subscriber.on('message', (_channel: string, raw: string) =&gt; {
+    this.subscriber.on('message', (channel: string, raw: string) =&gt; {
+      if (channel === 'job:done') {
+        const event = JSON.parse(raw) as DoneEvent;
+        this.gateway.emitDone(event.userId, event.jobId);
+        return;
+      }
+
       const event = JSON.parse(raw) as ProgressEvent;
       // Tien trinh nao dang giu ket noi cua nguoi do thi gui duoc.
       // Cac tien trinh con lai goi to() vao mot phong rong — khong sao ca.
