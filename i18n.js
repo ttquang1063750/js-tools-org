@@ -246,6 +246,9 @@ const TRANSLATIONS = {
     'learn.cpp.desc': 'RAII, move semantics, templates, the STL and smart pointers, explained from the ground up.',
     'learn.js.title': 'JavaScript Deep Dive',
     'learn.js.desc': 'The engine, the event loop, closures, prototypes and async — how JavaScript really runs.',
+    'learn.build.title': 'Real-World Build: Media Platform',
+    'learn.build.desc':
+      'One system built end to end in NestJS: upload, ffmpeg transcoding, realtime progress and playback — with ACID, streaming, queues, cluster and gRPC where they are actually unavoidable.',
     'learn.canvas.title': 'HTML5 Canvas',
     'learn.canvas.desc': '2D graphics, animation, physics and particles — build interactive visuals from scratch.',
     'learn.webgl.title': 'WebGL & 3D Graphics',
@@ -514,7 +517,7 @@ const TRANSLATIONS = {
       'Bài viết kỹ thuật thường yêu cầu bạn tin vào con số của nó. Chúng tôi chọn cách không bắt bạn phải tin. Mỗi series đi kèm một engine nhỏ — vài trăm dòng JavaScript không phụ thuộc thư viện nào — thực sự cài đặt đúng thứ mà bài học mô tả: một ALU 4-bit, một pipeline RISC-V, một cache có LRU, bộ lập lịch Tomasulo, mô hình yield wafer, một trình mô phỏng mạch lượng tử. Mọi con số xuất hiện trong bài đều do chạy engine đó sinh ra, và bản thân engine có self-test bạn tự chạy được bằng một lệnh `node`. Khi bài viết nói duyệt theo cột miss 100% còn duyệt theo hàng chỉ miss 25%, đó là kết quả đo, không phải ví dụ minh hoạ.',
     'about.rigor.note':
       'Engine tải về được ngay từ bài học dùng nó, nên bạn có thể đổi một tham số và xem kết luận đổi theo. Chỗ nào con số lấy từ đo đạc đã công bố thay vì từ code của chúng tôi, chúng tôi nói rõ và dẫn nguồn.',
-'about.who.title': 'Người Đứng Sau Dự Án',
+    'about.who.title': 'Người Đứng Sau Dự Án',
     'about.who.desc':
       'js-tools được tạo và duy trì bởi Quang Tang, một kỹ sư phần mềm độc lập chuyên xây dựng công cụ web mở và viết về lập trình. Dự án tự tài trợ; quảng cáo và ủng hộ (tuỳ tâm) giúp trang trải chi phí lưu trữ và phát triển để các công cụ luôn miễn phí cho mọi người. Bạn có thể theo dõi công việc hoặc liên hệ qua các liên kết trên trang Liên hệ.',
     'about.contact.title': 'Kết Nối Với Chúng Tôi',
@@ -548,6 +551,9 @@ const TRANSLATIONS = {
     'learn.cpp.desc': 'RAII, move semantics, template, STL và smart pointer, giải thích từ gốc rễ.',
     'learn.js.title': 'JavaScript Chuyên Sâu',
     'learn.js.desc': 'Engine, event loop, closure, prototype và bất đồng bộ — cách JavaScript thực sự chạy.',
+    'learn.build.title': 'Code Thực Chiến: Nền Tảng Media',
+    'learn.build.desc':
+      'Một hệ thống dựng trọn vẹn bằng NestJS: upload, chuyển mã bằng ffmpeg, tiến độ realtime và phát lại — kèm ACID, streaming, hàng đợi, cluster và gRPC ở đúng chỗ không thể tránh.',
     'learn.canvas.title': 'HTML5 Canvas',
     'learn.canvas.desc': 'Đồ họa 2D, hoạt ảnh, vật lý và hạt — dựng hình ảnh tương tác từ con số 0.',
     'learn.webgl.title': 'WebGL & Đồ Họa 3D',
