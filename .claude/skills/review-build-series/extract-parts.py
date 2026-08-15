@@ -11,16 +11,19 @@ Sinh trong thu muc dich, cho MOI part-N.html:
     partN.txt           van ban thuan tuy (bo the HTML/SVG), doc de nhu doc bao
     partN-blocks.json    [{filename, lang, code}, ...] theo dung thu tu xuat hien
 
-Va mot file gop:
+Va hai file gop:
     all-symbols.json    voi moi khoi code: ten file/tieu de, part nao, co phai
-                         DINH NGHIA day du khong (doan co "export class/function/
-                         interface" hay chi la doan roi/fragment), va danh sach
-                         cac ten duoc "export" trong khoi do (de doi chieu xem
-                         co bao gio dinh nghia o dau khac khong).
+                        DINH NGHIA day du khong (co "export class/function/..."
+                        hay chi la doan roi), va danh sach ten duoc export.
+    references.json     NGUOC LAI: moi ten duoc DUNG (import noi bo, goi
+                        this.x.method(), kieu tham so constructor) kem noi dung,
+                        va co tim thay dinh nghia o dau trong series khong.
 
 Day chi la buoc TRICH XUAT co hoc. Doc va phan doan "thieu code / mo ho / dut
 mach" van la viec cua nguoi (hoac agent) lam theo SKILL.md — script nay khong
-tu ket luan gi ca.
+tu ket luan gi ca. Cu the: mot ten nam trong danh sach "khong tim thay dinh
+nghia" CHUA CHAC la loi — co the la boilerplate co y bo qua, co the la file
+sinh tu codegen. Script chi thu hep vung phai doc, khong thay viec doc.
 """
 import glob
 import html
@@ -39,11 +42,47 @@ CODE_BLOCK_RE = re.compile(
     r'<span class="code-filename">([^<]+)</span>.*?<code class="language-(\w+)">(.*?)</code></pre>',
     re.S,
 )
+# Dem tong so khoi code that su co trong trang, de canh bao khi co khoi bi bo qua.
+ANY_CODE_RE = re.compile(r'<pre><code class="language-')
+
 # "export class Foo", "export function foo(", "export interface Foo",
 # "export const FOO", "export type Foo" -- moi dang khai bao co the la
 # "dinh nghia day du" cho mot ten.
 EXPORT_RE = re.compile(
     r'export\s+(?:default\s+)?(?:abstract\s+)?(?:class|function|interface|const|type|enum)\s+([A-Za-z_$][\w$]*)'
+)
+# Khai bao khong co "export" van la dinh nghia -- doan trich trong bai hay luoc
+# chu export di cho gon.
+LOCAL_DECL_RE = re.compile(
+    r'(?:^|\n)\s*(?:abstract\s+)?(?:class|function|interface|const|type|enum)\s+([A-Za-z_$][\w$]*)'
+)
+
+# ---- ben DUNG ----------------------------------------------------------------
+# CHI lay import co nguon la duong dan tuong doi (./ ../) hoac alias noi bo
+# (@app/, @/, src/). Import tu node_modules (@nestjs/common, typeorm, node:crypto)
+# khong bao gio duoc dinh nghia trong bai, nen dua vao chi tao nhieu:
+# tren series NestJS that, khong loc = 104 ung vien, co loc = 8.
+INTERNAL_IMPORT_RE = re.compile(
+    r"import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['\"]((?:\.{1,2}/|@app/|@/|src/)[^'\"]*)['\"]"
+)
+# MOI import, ke ca tu node_modules — dung de biet kieu nao la CUA THU VIEN.
+# Khong co buoc nay thi Repository, JwtService, Worker deu bi bao la "thieu
+# dinh nghia", va tin hieu that chim trong nhieu.
+ANY_IMPORT_RE = re.compile(r"import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]")
+# this.media.findPlayable(...) -> ('media', 'findPlayable')
+THIS_CALL_RE = re.compile(r'this\.([a-z][\w$]*)\.([a-zA-Z][\w$]*)\s*\(')
+# Vua bat tham so constructor vua bat thuoc tinh cua class, lay CA ten CA kieu:
+#   private readonly media: MediaService     -> ('media', 'MediaService')
+#   private readonly idle: Worker[] = []     -> ('idle',  'Worker')
+#   @WebSocketServer() private readonly s!: Server  -> ('s', 'Server')
+TYPED_MEMBER_RE = re.compile(
+    r'(?:private|public|protected)\s+(?:readonly\s+)?([\w$]+)\s*!?\s*:\s*([A-Z][\w$]*)'
+)
+# Dinh nghia phuong thuc trong mot class: thut le, co the co async/private...,
+# ten, ngoac, roi than ham. Dung de biet findPlayable() co bao gio duoc viet ra.
+METHOD_DEF_RE = re.compile(
+    r'(?:^|\n)[ \t]{2,}(?:(?:private|public|protected|static|async|readonly)\s+)*'
+    r'([a-z][\w$]*)\s*(?:&lt;[^&]*&gt;)?\s*\([^)]*\)\s*(?::[^{;]+)?\{'
 )
 
 
@@ -71,6 +110,19 @@ def extract_blocks(html_src):
 
 
 all_symbols = []
+defined = set()        # moi ten co dinh nghia o dau do trong series
+defined_methods = set()
+uses = {}              # ten -> [{part, filename, kind, detail}]
+# Kieu san co cua TypeScript/JS — khong phai thu bai phai viet ra.
+BUILTIN_TYPES = {
+    'Promise', 'Array', 'Map', 'Set', 'Record', 'Partial', 'Readonly', 'Date',
+    'Error', 'Buffer', 'String', 'Number', 'Boolean', 'Object', 'RegExp',
+}
+external_types = set(BUILTIN_TYPES)  # ten den tu node_modules hoac san co
+pending_calls = []      # loc sau, khi da biet het external_types ca series
+pending_injects = []
+skipped_total = 0
+
 part_paths = sorted(
     glob.glob(f'{SERIES_DIR}/part-*.html'),
     key=lambda p: int(re.search(r'part-(\d+)', p).group(1)),
@@ -79,7 +131,7 @@ if not part_paths:
     raise SystemExit(f'khong thay part-*.html nao trong {SERIES_DIR}')
 
 for path in part_paths:
-    part_num = re.search(r'part-(\d+)', path).group(1)
+    part_num = int(re.search(r'part-(\d+)', path).group(1))
     src = open(path, encoding='utf-8').read()
 
     text = to_plain_text(src)
@@ -90,20 +142,113 @@ for path in part_paths:
         json.dumps(blocks, ensure_ascii=False, indent=2)
     )
 
+    # Khoi code khong co <span class="code-filename"> se bi regex bo qua HOAN
+    # TOAN, khong bao loi. Phai noi ra, neu khong nguoi doc tuong minh da doc het.
+    total_in_page = len(ANY_CODE_RE.findall(src))
+    if total_in_page != len(blocks):
+        skipped_total += total_in_page - len(blocks)
+        print(
+            f'  !! part {part_num}: trang co {total_in_page} khoi code nhung chi '
+            f'trich duoc {len(blocks)} — {total_in_page - len(blocks)} khoi KHONG co '
+            f'<span class="code-filename">, phai doc thang trong HTML.',
+            file=sys.stderr,
+        )
+
     for b in blocks:
         exported = EXPORT_RE.findall(b['code'])
+        local = [n for n in LOCAL_DECL_RE.findall(b['code']) if n not in exported]
+        defined.update(exported)
+        defined.update(local)
+        defined_methods.update(METHOD_DEF_RE.findall(b['code']))
+
         all_symbols.append({
-            'part': int(part_num),
+            'part': part_num,
             'filename': b['filename'],
             'lang': b['lang'],
             'exports': exported,
-            'is_typescript_like': b['lang'] in ('typescript', 'ts', 'tsx'),
+            'local_declarations': local,
+            # Khoi nay tu no dung duoc, hay chi la manh cua mot class o cho khac?
+            'is_full_definition': bool(exported or local),
         })
+
+        where = {'part': part_num, 'filename': b['filename']}
+
+        # Kieu nao den tu node_modules -> khong bao gio ky vong bai tu viet ra.
+        for m in ANY_IMPORT_RE.finditer(b['code']):
+            if not re.match(r'\.{1,2}/|@app/|@/|src/', m.group(2)):
+                for name in m.group(1).split(','):
+                    name = name.strip().removeprefix('type ').split(' as ')[0].strip()
+                    if name:
+                        external_types.add(name)
+
+        for m in INTERNAL_IMPORT_RE.finditer(b['code']):
+            for name in m.group(1).split(','):
+                name = name.strip().removeprefix('type ').split(' as ')[0].strip()
+                if name:
+                    uses.setdefault(name, []).append({**where, 'kind': 'import', 'detail': m.group(2)})
+
+        # prop -> kieu, de biet this.<prop>.<method>() goi vao thu vien hay vao
+        # code cua chinh bai.
+        member_types = dict(TYPED_MEMBER_RE.findall(b['code']))
+        for prop, method in THIS_CALL_RE.findall(b['code']):
+            owner = member_types.get(prop)
+            pending_calls.append({**where, 'prop': prop, 'method': method, 'owner': owner})
+
+        for prop, cls in TYPED_MEMBER_RE.findall(b['code']):
+            pending_injects.append({**where, 'type': cls})
+
+# Chi bay gio moi loc duoc: mot kieu co the duoc import tu node_modules o part 3
+# nhung dung o part 1 trong khoi khong co dong import nao.
+for c in pending_calls:
+    if c['owner'] in external_types:
+        continue  # this.jwt.signAsync() — jwt la JwtService cua @nestjs/jwt
+    if c['method'] in defined_methods:
+        continue
+    kind = 'method' if c['owner'] else 'method?'  # '?' = khong ro chu so huu
+    detail = f"this.{c['prop']}.{c['method']}()"
+    if c['owner']:
+        detail += f" — {c['prop']}: {c['owner']}"
+    uses.setdefault(c['method'], []).append(
+        {'part': c['part'], 'filename': c['filename'], 'kind': kind, 'detail': detail}
+    )
+
+for i in pending_injects:
+    if i['type'] in external_types:
+        continue
+    uses.setdefault(i['type'], []).append(
+        {'part': i['part'], 'filename': i['filename'], 'kind': 'inject', 'detail': 'kieu cua thanh vien class'}
+    )
+
+references = []
+for name, places in sorted(uses.items()):
+    found = name in defined or name in defined_methods
+    references.append({
+        'name': name,
+        'defined_somewhere': found,
+        'used_at': places,
+    })
 
 open(f'{OUT_DIR}/all-symbols.json', 'w', encoding='utf-8').write(
     json.dumps(all_symbols, ensure_ascii=False, indent=2)
 )
+open(f'{OUT_DIR}/references.json', 'w', encoding='utf-8').write(
+    json.dumps(references, ensure_ascii=False, indent=2)
+)
+
+dangling = [r for r in references if not r['defined_somewhere']]
 
 print(f'Da trich {len(part_paths)} part vao {OUT_DIR}/')
-print(f'Tong {len(all_symbols)} khoi code, {sum(len(s["exports"]) for s in all_symbols)} luot export ten.')
-print('Buoc tiep theo la DOC (khong phai chay them script) -- xem SKILL.md.')
+print(f'Tong {len(all_symbols)} khoi code, {len(defined)} ten co dinh nghia, '
+      f'{len(defined_methods)} phuong thuc co than ham.')
+if skipped_total:
+    print(f'CANH BAO: {skipped_total} khoi code bi bo qua vi khong co ten file — xem stderr.')
+print(f'{len(uses)} ten duoc DUNG (import noi bo / this.x.y() / inject), '
+      f'trong do {len(dangling)} chua thay dinh nghia o dau:')
+for r in dangling[:40]:
+    first = r['used_at'][0]
+    print(f"  {r['name']:26s} part {first['part']}  {first['filename'][:44]}  [{first['kind']}]")
+if len(dangling) > 40:
+    print(f'  ... con {len(dangling) - 40} ten nua, xem references.json')
+print()
+print('Danh sach tren la VUNG CAN DOC, khong phai danh sach loi. Boilerplate bo qua')
+print('co y va file sinh tu codegen deu roi vao day. Buoc tiep theo la DOC -- xem SKILL.md.')

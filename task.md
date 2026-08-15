@@ -22,8 +22,27 @@ sau đó có hai phiên rà lỗi runtime riêng, cả hai đều **đã commit*
    mục "## Đã sửa lỗi tích hợp frontend↔backend (phiên 2, 15/08/2026)" bên
    dưới — đọc mục đó để biết CHÍNH XÁC cái gì đã được đo, tránh lặp lại việc
    đã làm.
+3. **15/08/2026, phiên 3** — chạy skill `review-build-series` (mới viết cùng
+   phiên) trên cả 4 part bằng workflow đa-agent, **CHỈ đọc, chưa sửa gì**.
+   Tìm ra **31 phát hiện mới** dù 2 phiên trước đã sửa 32 lỗi runtime —
+   nghĩa là vẫn còn khoảng hở dù đã dựng và chạy thật một phần lớn dự án
+   (lý do: 2 phiên trước test qua script gọi thẳng service, không phải qua
+   đúng HTTP endpoint như bài mô tả, nên một số route/wiring không bao giờ
+   bị chạm tới). Đã xác minh nhanh bằng `grep` thật 4/31 phát hiện quan
+   trọng nhất — cả 4 đều có thật, kể cả một lỗi do chính phiên 2 vô tình gây
+   ra (callout cảnh báo cũ về `WatchJobRequest` chưa xoá sau khi đã sửa).
+   Toàn bộ 31 phát hiện ở mục "## Rà soát tĩnh — NestJS Media Platform
+   (15/08/2026, review-build-series, chưa sửa)" bên dưới — **CHƯA sửa vào
+   HTML**, đây là việc mở lớn nhất hiện tại.
 
 **Việc CHƯA làm, còn mở cho phiên sau:**
+
+- [ ] **Xử lý 31 phát hiện của `review-build-series`** (mục riêng bên dưới) —
+      đã xác minh 4/31 là có thật bằng grep, 27 còn lại chưa xác minh (một số
+      đánh dấu "can-xac-nhan" vì có thể là bỏ boilerplate có chủ đích, không
+      phải lỗi). Việc tiếp theo: đi qua từng dòng, xác nhận thật/không thật,
+      rồi sửa — theo đúng độ sâu đã làm ở phiên 1-2 (dựng lại project thật,
+      chạy thật, không chỉ sửa theo suy đoán).
 
 - [ ] **Dựng thật hệ 3 microservice của Part 4** (`apps/billing-svc`,
       `apps/media-svc`, `apps/auth-svc` + gateway) và chạy gRPC thật giữa
@@ -387,6 +406,53 @@ comment).
 
 **Commit:** `d8cdc2d` — `fix(blog): NestJS series — vá lỗi tích hợp
 frontend↔backend + 9 lỗi backend mới`. Chỉ commit local, chưa push.
+
+## Rà soát tĩnh — NestJS Media Platform (15/08/2026, review-build-series, chưa sửa)
+
+**Chỉ đọc, không chạy gì để xác nhận** — trừ 4 dòng được đánh dấu "✅ đã xác
+minh bằng grep thật" trong cột Ghi chú, phần còn lại là phát hiện từ việc đọc
+kỹ (workflow đa-agent theo đúng skill `review-build-series`, 4 agent đọc
+song song mỗi part + 1 agent đối chiếu riêng frontend↔backend), **chưa được
+xác nhận bằng cách chạy thật**. Trước khi sửa, xác nhận lại từng dòng.
+
+Đáng chú ý: dù phiên 1-2 đã dựng và chạy thật phần lớn dự án, review này vẫn
+tìm ra 31 điều mới — vì phiên 1-2 kiểm qua script gọi thẳng service
+(`verify/charge-v1.ts` kiểu vậy), không phải qua đúng HTTP endpoint như bài
+mô tả, nên một số route/wiring không bao giờ bị chạm tới trong lúc kiểm.
+
+| # | Part | Vị trí | Loại | Mô tả | Ghi chú |
+|---|------|--------|------|-------|---------|
+| 1 | 1 | Mục 8.2 (curl `/billing/charge`) đối chiếu mục 7.3 (`app.module.ts`) | Mơ hồ | `app.module.ts` cuối cùng của Part 1 không import `BillingController`/`BillingModule` nào — route `/billing/charge` không tồn tại, 10 lệnh curl trong demo chỉ nhận 404 | ✅ đã xác minh bằng grep thật — `BillingController` không xuất hiện ở đâu trong `part-1.html` |
+| 2 | 1 | `src/billing/billing.service.ts` — "bản đầu tiên" vs "bản đã vá" | Đứt mạch | "Bản đầu tiên" chỉ constructor-inject `entries`; "bản đã vá" dùng `this.dataSource.transaction(...)` nhưng không đoạn nào thêm `dataSource: DataSource` vào constructor | ✅ đã xác minh bằng grep thật |
+| 3 | 1 | Mục 7.4 (`\dt`) đối chiếu mục 7.2 (entity đã viết) | Mơ hồ | Kết quả `\dt` liệt kê `media_assets`, `refresh_tokens` nhưng chỉ 4 entity (CreditEntry/Job/User/Video) có code thật; `media_assets` không có entity nào cả | can-xac-nhan |
+| 4 | 1 | Mục 3 (cây thư mục) đối chiếu mục 4.5 (`docker-compose.yml`) | Mơ hồ | Comment trong cây thư mục ngụ ý Redis có ngay ở Part 1, nhưng `docker-compose.yml` mục 4.5 chỉ có service `postgres` | can-xac-nhan |
+| 5 | 1 | `src/database/data-source.ts` đối chiếu mục 4.1 (danh sách npm install) | Mơ hồ | Import gói `dotenv` nhưng không có lệnh cài đặt nào cho nó — chạy được nhờ dependency bắc cầu của `@nestjs/config`, bài không giải thích | can-xac-nhan |
+| 6 | 1 | Mục 3 (cây thư mục) — dòng `docker/Dockerfile` | Mơ hồ | Liệt kê như đã tồn tại nhưng không bước nào tạo nội dung file này | can-xac-nhan |
+| 7 | 2 | Mục 4 (`proxy_read_timeout 60s`) đối chiếu mục 5.2 (bảng ngân sách thời gian nói 15s) | Mơ hồ | Hai giá trị mâu thuẫn cho cùng một tham số, không được đối chiếu lại | can-xac-nhan |
+| 8 | 2 | `src/billing/billing.controller.ts` — khung đầy đủ, `ChargeDto` | Thiếu code | `ChargeDto` được import và dùng (`dto.amount`, `dto.reason`) nhưng không có `export class ChargeDto` nào trong cả 4 part | ✅ đã xác minh bằng grep thật |
+| 9 | 2 | `src/media/upload.controller.ts` — "nhận từng mảnh", `this.media.tempDir` | Thiếu code | `MediaService` chỉ có `uploadDir`, không có `tempDir`, không có config key nào cho thư mục tạm | can-xac-nhan |
+| 10 | 2 | `upload.controller.ts` (chú thích header `x-filename`) đối chiếu `src/lib/upload.ts` (`uploadWithProgress`) | Mơ hồ | Chú thích hứa header được đặt ở `uploadWithProgress()`, nhưng hàm đó chỉ set `Authorization`/`Content-Type` — không set `x-filename` | can-xac-nhan |
+| 11 | 2 | Mục 6.2 — "ghép các mảnh lại" | Mơ hồ | Không có code/route nào cho bước ghép chunk thành file hoàn chỉnh | can-xac-nhan |
+| 12 | 2 | Mục 2.2 (`RolesGuard`, `@Roles()`) | Mơ hồ | Được định nghĩa đầy đủ nhưng không route nào trong Part 2 thực sự dùng `@Roles(...)` để minh hoạ | can-xac-nhan |
+| 13 | 2 | Mục 8 (cài Tailwind) đối chiếu `VideoPlayer.tsx` | Mơ hồ | Không có bước đăng ký plugin Tailwind trong `vite.config.ts`, nhưng component dùng thẳng class Tailwind | can-xac-nhan |
+| 14 | 3 | `src/worker/job.runner.ts` mục 4.4 (`loop()`) | Đứt mạch | Gọi `this.processOne(job)` nhưng method này chỉ có ở một đoạn RIÊNG mục 4.1 với tên file khác hẳn (`src/job/job.worker.ts`), không được ghép vào class "đầy đủ" | can-xac-nhan |
+| 15 | 3 | `src/lib/progress.ts` + `useJobProgress.ts` (hàm `api()`) | Thiếu code | Gọi `api('/jobs/active')` nhưng không import, không có định nghĩa `api` ở đâu | can-xac-nhan |
+| 16 | 3 | `src/cluster.ts` (`void bootstrap()`) | Thiếu code | Gọi `bootstrap()` không import; `bootstrap` duy nhất có trong bài nằm ở `worker/main.ts`, dùng cho tiến trình worker không HTTP — không phải bản API có cổng lắng nghe mà `cluster.ts` cần | can-xac-nhan |
+| 17 | 3 | Mục 4.1, chú thích "Xem class JobRunner đầy đủ ở mục 4.3" | Mơ hồ | Class JobRunner đầy đủ thực ra ở mục 4.4, không phải 4.3 — con trỏ sai | can-xac-nhan |
+| 18 | 3 | Mục 1, tiêu đề "Thử nghiệm 20 giây" | Mơ hồ | Code chặn đúng 5000ms, văn bản ngay dưới cũng nói "năm giây" — tiêu đề không khớp | can-xac-nhan |
+| 19 | 3 | Mục 6.1 (đề xuất `ip_hash` riêng cho `/ws`) | Mơ hồ | Thuật toán cân tải là thuộc tính của cả khối `upstream`, không thể khác nhau theo từng `location` dùng chung upstream với `least_conn` đã đặt ở mục 5.1 | can-xac-nhan |
+| 20 | 3 | Mục 4.4 (`stop_grace_period: 10m`) | Mơ hồ | Nói "phải nâng hạn" nhưng `docker-compose.yml` đã "chốt" ở mục 4.3 không có trường này | can-xac-nhan |
+| 21 | 3 | `src/worker/worker.module.ts` (import RedisModule/BillingModule/JobModule) | Thiếu code | Nội dung 3 module này không xuất hiện trong danh sách export — có thể là boilerplate lược bỏ có chủ đích | can-xac-nhan |
+| 22 | 4 | Mục 3.1, `media.proto` + callout "WatchJobRequest chưa từng được khai báo" | Mơ hồ | **Mâu thuẫn trực tiếp**: code hiển thị NGAY TRÊN đã có `message WatchJobRequest {...}` (đây là bản đã sửa ở phiên 1), nhưng callout cảnh báo cũ bên dưới vẫn nói nó chưa được khai báo — sót lại từ lúc sửa, chưa xoá | ✅ đã xác minh bằng grep thật — đây là lỗi do chính phiên 1 gây ra khi sửa, chưa dọn callout cũ |
+| 23 | 4 | Mục 5, `balance.cache.ts` (`this.billingClient.getBalance(userId)`) | Thiếu code | `BillingClient` (định nghĩa đầy đủ ở mục 3) chỉ có `charge()`, không có `getBalance()`; phía server cũng chỉ implement `@GrpcMethod` cho `Charge`, không có cho `GetBalance` dù đã khai báo trong `.proto` | can-xac-nhan |
+| 24 | 4 | Mục 6, `correlation.interceptor.ts` | Đứt mạch | Chỉ 3 dòng lệnh trần, không có function/class/decorator bao quanh — cú pháp không hợp lệ nếu copy y nguyên | can-xac-nhan |
+| 25 | 4 | Mục 3.1, `media.controller.ts` (`ProgressEvent`) | Thiếu code | Kiểu `ProgressEvent` dùng làm type tham số nhưng không được định nghĩa ở đâu, và không khớp `ProgressEvent` có sẵn của DOM | can-xac-nhan |
+| 26 | 4 | Mục 3, lệnh `npx protoc ...` | Mơ hồ | Giả định có sẵn binary `protoc` nhưng danh sách cài đặt phía trên không cài nó | can-xac-nhan |
+| 27 | 4 | Mục 4.1, `outbox.relay.ts` (`this.dispatch(message)`) | Thiếu code | Method `dispatch` — bước quan trọng nhất của outbox pattern — không có thân hàm ở đâu | can-xac-nhan |
+| 28 | 4 | Mục 3.1, `media.controller.ts` (`watchJob`, `this.progress.on/off`) | Đứt mạch | Method không có class/constructor bao quanh, không rõ `progress` được inject ra sao | can-xac-nhan |
+| 29 | 4 | Mục 5, `balance.cache.ts` | Mơ hồ | Lớp cache in-flight-promise không có `export class .../@Injectable()` bao quanh, không rõ tên lớp | can-xac-nhan |
+| 30 | 4 | Mục 4.1, `@Interval(1000)` trong `outbox.relay.ts` | Mơ hồ | Cần `ScheduleModule.forRoot()` (đã biết là Bug P ở phiên 1, nhưng đó là fix cho `WorkerModule`/monolith — Part 4 là project microservice riêng, chưa chắc đã đăng ký lại) | can-xac-nhan |
+| 31 | — | `src/lib/upload.ts` (`uploadWithProgress`) đối chiếu `UploadController`/`Video` entity | Đứt mạch | `uploadWithProgress()` ép kiểu trả về `{ videoId: string }` và đọc `result.videoId`, nhưng backend trả nguyên `Video` entity — cột là `id`, không phải `videoId`. `result.videoId` sẽ luôn `undefined` phía client | can-xac-nhan, đáng ưu tiên cao vì ảnh hưởng trực tiếp luồng upload→transcode phía frontend |
 
 ## Còn lại — khi chủ dự án quyết định xuất bản
 
