@@ -116,13 +116,15 @@ sau đó có hai phiên rà lỗi runtime riêng, cả hai đều **đã commit*
       đăng trong bài) — đã dựng thật, đo thật, và **viết vào part-4.html**
       dưới dạng 2 mục H3 mới (3.2, 3.3) + một đoạn bổ sung ở mục 3.1. Xem
       mục "## Phiên 7" bên dưới.
-- [ ] Quyết định có muốn giữ nguyên quyết định cũ **"Code: KHÔNG dựng project
-      thật"** (xem bảng quyết định đã chốt bên dưới) hay không, vì cả hai
-      phiên rà lỗi đều đã dựng project thật **trong scratchpad tạm** (không
-      phải trong repo, không commit) chỉ để kiểm chứng — bài viết (4 file
-      HTML) vẫn giữ nguyên hình thức "chữ + code listing + tên file" như
-      quyết định gốc, chỉ khác là giờ nội dung code trong đó đã được xác nhận
-      **thật sự ráp lại chạy được**, không còn là listing chưa kiểm.
+- [x] ~~Quyết định có muốn giữ nguyên quyết định cũ "Code: KHÔNG dựng project
+      thật" hay không~~ — chủ dự án đã trả lời, **chốt lại đúng phạm vi**
+      (xem dòng "Code" trong bảng quyết định bên dưới, đã cập nhật): quyết
+      định gốc áp dụng cho **việc VIẾT bài** — không cần một project thật
+      chạy song song khi soạn nội dung, nhưng đổi lại code liệt kê trong
+      bài phải **đầy đủ tới mức copy/paste chạy được**, không phải fragment
+      thiếu import/thiếu constructor. Việc **REVIEW/kiểm tra bài đã viết**
+      thì được phép (và nên) dựng project thật để đo xem copy/paste có thật
+      sự chạy được không — đúng cách phiên 1-2, 5-7 đã làm.
 - [ ] **Frontend (React) vẫn CHƯA được dựng thật để chạy** — phiên 2 chỉ mô
       phỏng đúng các lời gọi HTTP/WebSocket mà 5 file frontend
       (`api.ts`/`upload.ts`/`VideoPlayer.tsx`/`useJobProgress.ts`/`JobList.tsx`)
@@ -158,7 +160,7 @@ chỉ cần thêm thư mục dưới `build/`.
 | Frontend   | React + TypeScript + Tailwind, rải làm **3 mốc**      | Dồn hết vào cuối thì phần lớn bài không thấy sản phẩm                                                                                                                                                                                                                                                              |
 | ORM        | **TypeORM** (không phải Prisma)                       | Viết SQL thô tự nhiên hơn khi dạy `SELECT FOR UPDATE` ở phần ACID                                                                                                                                                                                                                                                  |
 | Auth       | JWT + **refresh token có rotation + reuse detection** | Yêu cầu trực tiếp. Kéo theo: `RefreshToken` phải vào ERD ngay từ phần thiết kế CSDL, không chắp vá sau                                                                                                                                                                                                             |
-| Code       | **KHÔNG dựng project thật**                           | Chủ dự án đã bác bỏ rõ ràng: bài chỉ cần chữ + code listing + tên file. Từng thử tạo `~/Projects/nestjs-media-forge` và đã xoá                                                                                                                                                                                     |
+| Code       | **Viết bài: KHÔNG cần dựng project thật song song** — nhưng code liệt kê trong bài phải đầy đủ tới mức copy/paste chạy được. **Review bài đã viết: ĐƯỢC PHÉP (và nên) dựng project thật** để đo xem copy/paste có chạy được không | Quyết định gốc: bài chỉ cần chữ + code listing + tên file, không cần một project chạy song song lúc soạn — đã từng thử tạo `~/Projects/nestjs-media-forge` và xoá. Chốt lại phạm vi rõ hơn sau phiên 7: ràng buộc đó chỉ áp cho lúc VIẾT, không áp cho lúc KIỂM — dựng thật để review là cách duy nhất bắt được các lỗi mà đọc code không thấy (đã dùng xuyên suốt phiên 1-2, 5-7, tổng cộng hơn 40 lỗi tìm được đều nhờ cách này) |
 | nginx      | Xuất hiện **3 lần** đúng chỗ cần                      | Không dồn thành một mục lý thuyết                                                                                                                                                                                                                                                                                  |
 | Kiến trúc  | **Monolith trước, tách microservice ở Part 4**        | Dựng microservice từ ngày đầu buộc gỡ lỗi phân tán trước khi gỡ lỗi tại chỗ. Ranh giới module NestJS vạch đúng từ đầu thì tách chỉ là đổi cách gọi (inject → gRPC client). Quan trọng nhất: nó tạo mạch ACID (Part 1, một DB, đảm bảo chắc) → vỡ khi qua ranh giới service (Part 4) → outbox pattern có nghĩa thật |
 | Số part    | 4, **được phép tách thêm Part 5** nếu quá dài         | Chủ dự án đồng ý. Chỗ cắt tự nhiên: sau phần realtime (hết Part 3) sản phẩm đã chạy trọn vòng upload → transcode → xem tiến độ                                                                                                                                                                                     |
