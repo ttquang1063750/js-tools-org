@@ -360,6 +360,22 @@ page), read these two files **first**, in this order:
    Audio, Git) have had their design sections removed from this file — the actual pages under
    `blog/<series>/` are the source of truth for those, not `plan.md`.
 
+### Working on the `blog/build/` "code thực chiến" series
+
+This is a different format from the lesson series above: one continuous long-form page per
+part (`blog/build/<dự-án>/part-N.html`), no lessons, no quiz, no EN/VI split — Vietnamese only.
+Planning a brand-new one? Use the `design-build-series` skill rather than `design-new-series`
+(that one is for the chunked lesson format).
+
+Whenever a part in one of these series gets marked "ĐÃ VIẾT XONG" in `task.md` (i.e. the
+writing pass just finished), **proactively suggest running the `review-build-series` skill**
+before considering that part done or moving to the next one. It reads the whole series with a
+first-time-reader mindset and writes every gap it finds (code referenced but never defined,
+vague/unexplained prose, disconnected fragments) into `task.md` — it does not fix or run
+anything itself, so suggesting it costs the user nothing to decline. This is a separate,
+much lighter pass from actually building the series' project and running it for real; do not
+conflate the two when reporting what has and has not been verified.
+
 ### Before Modifying Code
 
 1. **Check CSS patterns**: Use flexbox + gap (no old margin/padding stacking)
