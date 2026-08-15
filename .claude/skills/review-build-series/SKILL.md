@@ -63,11 +63,35 @@ python3 .claude/skills/review-build-series/extract-parts.py \
   blog/build/<dự-án> /tmp/review-<dự-án>
 ```
 
-This produces `partN.txt` (plain text, read this fully — see below),
-`partN-blocks.json` (every code block with its filename header, in order),
-and `all-symbols.json` (every `export`ed name found in every block, tagged by
-part). It does **not** decide anything — it only saves you from hand-copying
-HTML into a script every time.
+This produces four things:
+
+- `partN.txt` — plain text, **read this fully**, it is the actual review.
+- `partN-blocks.json` — every code block with its filename header, in order.
+- `all-symbols.json` — per block: what it defines, and `is_full_definition`
+  (does it declare anything at all, or is it a fragment of a class shown
+  elsewhere).
+- `references.json` — the reverse direction, and the one that does the work
+  for check 1: every name the series **uses** (internal `import`,
+  `this.x.method(...)`, a typed class member) with `defined_somewhere` telling
+  you whether any block ever writes it out.
+
+The script prints the dangling names straight to stdout, so start there. Two
+things it does deliberately, both of which matter for reading the output:
+
+- **It filters out anything from `node_modules`.** Without that filter the
+  NestJS series reported 104 candidates, almost all of them `Injectable`,
+  `Column`, `Repository`. With it, 37 — and the real signal (`xadd`,
+  `pushDelayed`, `chargeForJob`, `ChargeDto`) is visible instead of buried.
+- **A call whose owner it could not resolve is tagged `method?`.** That means
+  "I could not tell whose method this is" — check those by hand rather than
+  trusting either answer.
+
+It does **not** decide anything. A dangling name is a *place to read*, not a
+bug: intentionally-omitted boilerplate and codegen output both land there.
+
+If the script warns that some blocks have no `<span class="code-filename">`,
+those blocks are **invisible** to every JSON file it produced — read them
+directly in the HTML, and do not treat the extract as complete until you have.
 
 For every code-filename header you see (`<span class="code-filename">`),
 ask: is what follows a **complete, standalone file** (has its imports, its
@@ -79,7 +103,7 @@ before/after teaching pattern. The defect is specifically when:
 
 - A name is **referenced** (imported, called, injected) somewhere, but
   `grep`ing `all-symbols.json` for an `export` of that exact name across
-  **all four parts** returns nothing. This happened repeatedly in the
+  **every part** returns nothing. This happened repeatedly in the
   NestJS series: `RedisService`, `MediaService`, `JobService`,
   `AuthController`, `findPlayable()` were all called from code the article
   gave in full, but none of them had ever been written out anywhere.
@@ -169,11 +193,16 @@ wants to work through the series in order, not jump between categories.
 ```markdown
 ## Rà soát tĩnh — <tên series> (<ngày>, review-build-series, chưa chạy thật)
 
-| # | Vị trí | Loại | Mô tả |
-|---|--------|------|-------|
-| 1 | Part 2, `src/media/stream.controller.ts` | Đứt mạch | `findPlayable()` được gọi nhưng không thấy định nghĩa ở bất kỳ đâu trong 4 part |
-| 2 | Part 3, mục 4.1 | Mơ hồ | Số `MAX_ATTEMPTS = 3` không giải thích vì sao là 3, không phải 5 |
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 1 | Part 2, `src/media/stream.controller.ts` | Đứt mạch | `findPlayable()` được gọi nhưng không thấy định nghĩa ở bất kỳ đâu trong series | chưa xử lý |
+| 2 | Part 3, mục 4.1 | Mơ hồ | Số `MAX_ATTEMPTS = 3` không giải thích vì sao là 3, không phải 5 | chưa xử lý |
 ```
+
+The last column exists because this table is written **for a different
+session**. Leave every row `chưa xử lý`; whoever acts on them fills in
+`đã sửa` / `cố ý, không sửa` / `cần build thật mới biết` as they go, and the
+table stays a usable worklist instead of turning back into prose.
 
 Every row must say **where** (part + file or section heading, not just "Part
 3") precisely enough that the next session does not re-read the whole part
@@ -192,6 +221,13 @@ reading pass must not blur into that language.
 
 If `task.md` already has content from a previous pass, add a new section
 rather than overwriting — do not delete another session's findings.
+
+`task.md` is a single shared slot at the repo root, and
+`beginner-proof-series`'s `make-task.py` **overwrites the whole file** when it
+runs for some other series. Before writing, check whether the file already
+carries a hand-written warning to that effect; if the findings matter beyond
+this session, say so in the report so the owner knows the file is not a safe
+long-term home.
 
 ## What this is not
 

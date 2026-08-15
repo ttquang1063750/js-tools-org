@@ -27,12 +27,24 @@ working, in the voice of an engineer walking a colleague through a real
 project: prose, a code block with its filename, more prose, no lesson
 boundaries, no quiz, Vietnamese only.
 
-The canonical worked example — decisions made, mistakes made, and what was
-learned fixing them afterward — is `task.md`'s record of the
-`nestjs-media-platform` series (read it now if it still has that content;
-if `task.md` has moved on to a different series, `git log --oneline --all --
-task.md` finds the commit that had it). Match that depth and rigor, and do
-not repeat the mistakes documented there.
+The canonical worked example is the `nestjs-media-platform` series. Its
+**permanent** record is the four pages themselves — `blog/build/nestjs-media-platform/part-{1..4}.html`
+— plus the commit range that produced and then repaired them:
+
+```bash
+git log --oneline 2745e04^..d8cdc2d
+```
+
+Read the commit subjects before planning: they are a compressed list of every
+correction the series needed, including the two late commits that fixed 21
+runtime bugs and a round of frontend↔backend integration bugs found only by
+building the project for real.
+
+`task.md` may also still hold that series' decision table and gotcha list —
+read it if so. Do **not** rely on it: `task.md` is a single shared slot at the
+repo root and `beginner-proof-series`'s `make-task.py` overwrites the entire
+file when run for another series. Anything worth keeping past this session
+belongs in a skill or a commit message, not only there.
 
 ## The house style (bake these in unless the user overrides)
 
@@ -75,6 +87,34 @@ way the NestJS series' own record does:
   "monolith, one DB, ACID guaranteed" → "split into services" → "the
   transaction breaks, and outbox pattern is the real fix"), the topic is not
   ready yet — keep narrowing it.
+
+## Every part must be followable as a sequence of actions
+
+This is the trait that defines the genre, and it is the one thing this
+project's owner corrected most sharply — the first draft of Part 1 explained
+architecture beautifully and never told the reader to type anything. The
+correction, verbatim in spirit: *blogs like this say `nest new media-forge`,
+then the dependency install, then create this file — then open it and here is
+what goes in it, and then you see the result.*
+
+So each part must read as a chain a reader can actually walk:
+
+1. **A command they run** (`nest new x`, `npm i a b`, `docker compose up -d db`)
+   — with the working directory unambiguous.
+2. **A file they create**, named in the code block's filename header, with
+   the path relative to the project root.
+3. **What goes in it**, and a sentence after the block on which line carried
+   the point.
+4. **What they should now see** — a server that boots, a table that exists, an
+   error that appears on purpose.
+
+Install only what the current part actually uses. A long dependency list in
+Part 1 for packages first used in Part 3 breaks the chain — the reader is
+typing on faith instead of following.
+
+Architecture prose, diagrams, and the naive→fix beats below all sit *inside*
+this chain. They are not a substitute for it. If a part contains no command
+and no new file, it is an essay about the system, not a build article.
 
 ## The core narrative technique
 
@@ -131,9 +171,14 @@ Two things reduce this while you write, instead of discovering it later:
 2. **Run `review-build-series` after every part**, not only at the end. It
    is a read-only pass built specifically to catch this category — cheap
    enough to run every time, and it writes findings straight into `task.md`
-   so nothing is lost between sessions. Treat a part as a draft, not done,
-   until that pass comes back clean or its findings are explicitly accepted
-   as intentional.
+   so nothing is lost between sessions.
+
+A clean static pass is not the same as "done". In this series it came before
+two further commits that fixed 21 runtime bugs and a set of frontend↔backend
+integration bugs — none of which reading could have found. What a clean pass
+buys is "no defect that reading can reach"; only building and running the
+project buys more. Say it that way rather than the shorter, more flattering
+version.
 
 If the project owner's constraint is "no real project gets scaffolded, text
 and listings only" (as it was here), say plainly that this means the series
@@ -161,7 +206,11 @@ familiar shape:
 - [ ] Step 5 — Operational constraints: confirm commit/publish policy with
       the user explicitly (this project's series stayed commit-local, no
       sitemap/search-index entry, until the owner decided to publish — do
-      not assume the same holds for a new series without asking)
+      not assume the same holds for a new series without asking). Whatever
+      the answer, write the four publish locations into `task.md` so the
+      later session does not have to rediscover them: a card in
+      `blog/index.html`, an `a.learn-card` in the root `index.html`, the URLs
+      in `sitemap.xml`, and entries in `blog/search-index.json` (7-key schema)
 - [ ] Step 6 — Write the `## Các quyết định ĐÃ CHỐT` table and the
       `## Gotcha đã gặp` / `## Giọng văn` sections into `task.md`, seeded
       from this repo's existing entries (3-level-deep relative paths, chrome
@@ -173,6 +222,26 @@ familiar shape:
 
 Each step's output is a section of `task.md`, appended as it's produced —
 not held in memory until the end.
+
+## The mechanical gate
+
+`CLAUDE.md` requires reading `check-lesson.md` before touching anything under
+`blog/`, and every `part-N.html` must pass:
+
+```bash
+node check-lesson.js blog/build/<slug>/part-N.html
+```
+
+Run it, plus `npx prettier --write`, before calling any part finished. This is
+not optional politeness — the highest-risk step in this workflow is cloning
+the page chrome from the previous part, and `check-lesson.js` is what catches
+the canonical URL, `og:url`, and hero title left pointing at part N-1. That
+mistake has already happened here more than once, and it is invisible when
+reading the prose.
+
+One check it does **not** cover: the `article-related` chain. After adding a
+part, the previous part's "next" link must stop being a `--locked` span and
+become a real `href` — verify that by hand across every part.
 
 ## Output
 
