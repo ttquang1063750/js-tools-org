@@ -415,7 +415,7 @@ message ChargeReply {
                 <span class="code-filename">Cài và sinh kiểu</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-bash">npm i @nestjs/microservices @grpc/grpc-js @grpc/proto-loader
+              <pre><code class="language-bash">npm i @nestjs/microservices @grpc/grpc-js @grpc/proto-loader @nestjs/event-emitter
 npm i -D ts-proto
 
 # ts-proto chi la plugin sinh kieu TypeScript cho protoc, khong thay the duoc
@@ -623,10 +623,39 @@ export class MediaGrpcController {
 
             <p>
               <code>this.progress</code> ở trên là <code>EventEmitter2</code> — nội bộ một tiến trình, không tự vượt
-              được ranh giới nào cả. Ai gọi <code>.emit('progress', ...)</code>? Worker chuyển mã của media-svc chỉ biết
-              publish lên Redis, y hệt Part 3 — nó không đổi khi tách dịch vụ, vì Redis giờ là hạ tầng riêng của
-              media-svc, không còn dùng chung với gateway nữa. Thiếu một mắt nối ở giữa hai thứ này, thì
-              <code>MediaGrpcController</code> ở trên không bao giờ nhận được gì, dù cú pháp biên dịch hoàn toàn đúng.
+              được ranh giới nào cả. Ai gọi <code>.emit('progress', ...)</code>? Worker chuyển mã vẫn publish lên Redis
+              như Part 3, nhưng SHAPE phải đổi. Part 3 báo tiến độ bằng hai tín hiệu tách biệt: kênh
+              <code>'progress'</code> mang <code>percent</code> chặn cứng ở 99 (mục 4.2), và một kênh
+              <code>'job:done'</code> riêng — không mang <code>percent</code> lẫn <code>status</code> — báo lúc thật sự
+              xong. Cách đó hợp lý khi đích đến là hai sự kiện WebSocket khác tên. Nhưng <code>rpc WatchJob</code> trả
+              về một luồng <code>JobProgress</code> DUY NHẤT, mọi thông điệp cùng một hình dạng — không có chỗ cho một
+              tín hiệu phụ đi ngoài luồng. Worker phải gộp lại thành một kênh, một hình dạng, đi tới
+              <code>status: 'completed'</code> ở <code>percent: 100</code> thay vì tách rời:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >Part 3 (hai tín hiệu tách biệt) so với worker của media-svc (một luồng)</span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">// Part 3 — hai kenh, hai hinh dang khac nhau:
+await this.redis.publish('progress', JSON.stringify({ userId, jobId, percent })); // percent toi da 99
+// ... roi rieng, sau khi that su xong:
+await this.redis.publish('job:done', JSON.stringify({ userId, jobId })); // khong percent, khong status
+
+// media-svc — mot kenh, mot hinh dang, di het toi 100:
+await this.redis.publish('progress', JSON.stringify({ jobId, percent: 0, status: 'processing' }));
+// ... trong luc chay, moi lan ffmpeg bao tien do:
+await this.redis.publish('progress', JSON.stringify({ jobId, percent, status: 'processing' }));
+// ... xong that (sau khi completeJob() da ghi outbox — muc 4.1):
+await this.redis.publish('progress', JSON.stringify({ jobId, percent: 100, status: 'completed' }));</code></pre>
+            </div>
+
+            <p>
+              Thiếu mắt nối kế tiếp thì <code>MediaGrpcController</code> ở trên không bao giờ nhận được gì, dù cú pháp
+              biên dịch hoàn toàn đúng:
             </p>
 
             <div class="code-window">
@@ -935,7 +964,8 @@ export class AuthController {
             <p>
               Kịch bản "đua hai tab" của Part 2 mục 3.3 kiểm lại được nguyên vẹn qua ranh giới gRPC mới: hai request
               <code>/auth/refresh</code> cùng lúc với cùng refresh token cũ — cả hai đều thành công (một xoay vòng bình
-              thường, một rơi vào nhánh ân hạn), đúng ba dòng trong bảng <code>refresh_tokens</code>. Gọi lại token gốc
+              thường, một rơi vào nhánh ân hạn), để lại đúng ba dòng trong bảng <code>refresh_tokens</code>: token gốc
+              (đã dùng), và hai token mới sinh ra từ hai nhánh của cuộc đua. Gọi lại token gốc
               <strong>sau 31 giây</strong> (ngoài khoảng ân hạn 30s) → <code>401</code>, và toàn bộ family bị thu hồi
               thật trong Postgres — <strong>0 dòng</strong> còn lại cho family đó. Đúng hành vi đã đo ở phiên rà lỗi đầu
               tiên của loạt bài (Part 2 mục 3.3), vẫn đúng sau khi đi qua thêm một tầng gRPC.
@@ -1062,6 +1092,32 @@ export class ProgressGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.subscriptions.get(clientId)?.delete(subscription);
   }
 }</code></pre>
+            </div>
+
+            <p>
+              Phía client cũng phải đổi theo — <code>useJobProgress.ts</code> ở Part 3 chỉ ngồi chờ thụ động, không bao
+              giờ nói cho gateway biết nó quan tâm job nào. Thêm đúng một dòng vào chỗ đã nhận danh sách job đang chạy:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/hooks/useJobProgress.ts — thêm job:subscribe cho gateway mới</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">socket.on('connect', () =&gt; {
+  void api('/jobs/active')
+    .then((res) =&gt; res.json() as Promise&lt;JobState[]&gt;)
+    .then((active) =&gt; {
+      setJobs(active);
+      // Gateway chi mo watchJob() cho job nao client CHU DONG hoi —
+      // thieu dong nay thi 'job:progress'/'job:done' khong bao gio toi.
+      for (const job of active) {
+        if (job.status === 'queued' || job.status === 'processing') {
+          socket.emit('job:subscribe', { jobId: job.id });
+        }
+      }
+    });
+});</code></pre>
             </div>
 
             <div class="callout callout--note">
@@ -1387,7 +1443,7 @@ export class OutboxRelay {
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">import { Injectable } from '@nestjs/common';
-import { RedisService } from '../../redis/redis.service';
+import { RedisService } from '../redis/redis.service';
 import { BillingClient } from '../billing.client';
 
 @Injectable()
