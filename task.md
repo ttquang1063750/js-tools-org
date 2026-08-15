@@ -618,8 +618,11 @@ chưa từng dựng 3 service thật). Xem chi tiết ở mục "⚠️ Việc c
 **Cleanup:** container Docker (`forge-postgres`/`forge-redis`) đã dừng+xoá
 sau khi đo xong; thư mục project trong scratchpad còn nguyên (không xoá),
 chỉ những file thật sự cần sửa mới bị đổi. Không commit gì trong scratchpad
-(không phải git repo). Chưa commit gì vào repo chính ở thời điểm viết mục
-này — xem "## Đã xong" phía trên/commit log cho commit thật của phiên này.
+(không phải git repo).
+
+**Commit:** `bf4ff7a` — `fix(blog): NestJS series — xu ly 32 phat hien tu
+review-build-series + build that`. Chỉ commit local, chưa push (đúng ràng
+buộc vận hành ở trên).
 
 ## Đã xuất bản ra ngoài (15/08/2026)
 
