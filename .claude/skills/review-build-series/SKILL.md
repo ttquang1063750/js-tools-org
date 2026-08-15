@@ -70,10 +70,10 @@ This produces four things:
 - `all-symbols.json` — per block: what it defines, and `is_full_definition`
   (does it declare anything at all, or is it a fragment of a class shown
   elsewhere).
-- `references.json` — the reverse direction, and the one that does the work
-  for check 1: every name the series **uses** (internal `import`,
-  `this.x.method(...)`, a typed class member) with `defined_somewhere` telling
-  you whether any block ever writes it out.
+- `references.json` — the reverse direction, and the starting point for
+  check 1: every name the series **uses** (internal `import`,
+  `this.x.method(...)`, `this.method(...)`, a typed class member) with
+  `defined_somewhere` telling you whether any block ever writes it out.
 
 The script prints the dangling names straight to stdout, so start there. Two
 things it does deliberately, both of which matter for reading the output:
@@ -88,6 +88,25 @@ things it does deliberately, both of which matter for reading the output:
 
 It does **not** decide anything. A dangling name is a *place to read*, not a
 bug: intentionally-omitted boilerplate and codegen output both land there.
+
+**And it under-reports — do not treat a short list as an all-clear.** On the
+NestJS series, a careful multi-agent reading pass found real check-1 defects
+the script cannot reach by construction:
+
+- A method **masked by a same-named method on another class**.
+  `BillingClient.getBalance()` was never written, but `BalanceCache` has its
+  own `getBalance()`, so the name looks defined. The script matches method
+  names globally, not per class.
+- A type used **only as a parameter or generic** (`(event: ProgressEvent)`),
+  never imported and never a class member.
+- A **bare function call** with no `this.` — `api('/jobs/active')`,
+  `bootstrap()` — where the name is simply never imported.
+- A code block that is **syntactically not a file at all** (three loose
+  statements under a filename header). Nothing is "missing"; the shape is
+  wrong.
+
+Run the script to narrow where to look, then read anyway. The script is a
+floor on what you find, never a ceiling.
 
 If the script warns that some blocks have no `<span class="code-filename">`,
 those blocks are **invisible** to every JSON file it produced — read them

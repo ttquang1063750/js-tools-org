@@ -454,6 +454,39 @@ mô tả, nên một số route/wiring không bao giờ bị chạm tới trong 
 | 30 | 4 | Mục 4.1, `@Interval(1000)` trong `outbox.relay.ts` | Mơ hồ | Cần `ScheduleModule.forRoot()` (đã biết là Bug P ở phiên 1, nhưng đó là fix cho `WorkerModule`/monolith — Part 4 là project microservice riêng, chưa chắc đã đăng ký lại) | can-xac-nhan |
 | 31 | — | `src/lib/upload.ts` (`uploadWithProgress`) đối chiếu `UploadController`/`Video` entity | Đứt mạch | `uploadWithProgress()` ép kiểu trả về `{ videoId: string }` và đọc `result.videoId`, nhưng backend trả nguyên `Video` entity — cột là `id`, không phải `videoId`. `result.videoId` sẽ luôn `undefined` phía client | can-xac-nhan, đáng ưu tiên cao vì ảnh hưởng trực tiếp luồng upload→transcode phía frontend |
 
+### Đối chiếu lại bảng trên bằng công cụ (15/08/2026, sau khi vá `extract-parts.py`)
+
+`review-build-series` lúc chạy bảng 31 dòng ở trên vẫn dùng bản script cũ —
+bản đó chỉ trích ĐỊNH NGHĨA, không trích THAM CHIẾU, nên toàn bộ nhóm "code
+được dùng mà không có định nghĩa" là do đọc tay mà ra. Script nay đã được vá
+(commit `4817cff` + bản vá tiếp theo) để đối chiếu hai chiều, lọc node_modules,
+theo được `class X extends <lớp thư viện>`, và bắt cả `this.method()` tự gọi.
+
+Chạy lại bản đã vá trên đúng 4 file HTML đó: **62 tên được dùng, 27 tên chưa
+thấy định nghĩa.** Bỏ đi các tên thuộc thư viện, còn 9 tên đáng đọc:
+
+| Tên | Bảng 31 dòng có bắt không |
+| --- | --- |
+| `ChargeDto`, `RedisModule`, `BillingModule`, `JobModule`, `transcode`, `dispatch` | ✅ có (dòng 8, 21, 27) |
+| `BillingServiceClient`, `ChargeReply`, `ChargeRequest` | ❌ không — xem dòng 32 dưới đây |
+
+Kết luận: **bảng 31 dòng gần như không sót gì ở nhóm "thiếu code"**, và còn bắt
+được 6 lỗi mà script *không thể* bắt kể cả sau khi vá — `getBalance` (bị che vì
+`BalanceCache` cũng có method trùng tên), `ProgressEvent` (chỉ xuất hiện làm
+kiểu tham số), `api()`/`bootstrap()` (gọi trần, không qua `this.`), và
+`correlation.interceptor.ts` (không phải file thiếu code mà là khối không có
+class/hàm bao quanh). Đọc tay vẫn hơn script ở nhóm này — đừng thay thế.
+
+Một dòng mới, script tìm ra mà bảng cũ chưa có:
+
+| # | Part | Vị trí | Loại | Mô tả | Trạng thái |
+|---|------|--------|------|-------|------------|
+| 32 | 4 | Mục 3, lệnh `npx protoc` đối chiếu mọi `import ... from '@app/proto-types/...'` | Mơ hồ | Codegen ghi ra `./libs/proto-types` nhưng mọi import lại dùng alias `@app/proto-types/...`, và Part 4 không có chỗ nào khai báo `paths` trong `tsconfig.json` — làm theo đúng bài thì TypeScript không phân giải được alias này | chưa xử lý |
+
+Ba tên `BillingServiceClient` / `ChargeReply` / `ChargeRequest` bản thân chúng
+là file sinh tự động, **không phải lỗi thiếu code** — nhưng chính vì đi qua
+alias chưa khai báo mà chúng nổi lên. Xử lý dòng 32 là xử lý luôn cả ba.
+
 ## Còn lại — khi chủ dự án quyết định xuất bản
 
 Cả 4 part đã viết xong và commit local. Chưa xuất hiện ở bất kỳ đâu ngoài chính

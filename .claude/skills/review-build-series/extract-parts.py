@@ -71,6 +71,12 @@ INTERNAL_IMPORT_RE = re.compile(
 ANY_IMPORT_RE = re.compile(r"import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]")
 # this.media.findPlayable(...) -> ('media', 'findPlayable')
 THIS_CALL_RE = re.compile(r'this\.([a-z][\w$]*)\.([a-zA-Z][\w$]*)\s*\(')
+# this.dispatch(msg) — tu goi phuong thuc cua chinh minh. Dang nay tung lam sot
+# `dispatch` va `processOne` khi chua bat.
+THIS_SELF_CALL_RE = re.compile(r'this\.([a-z][\w$]*)\s*\((?!\s*\))')
+# class RedisService extends Redis — neu lop cha den tu node_modules thi moi
+# phuong thuc ke thua deu hop le, khong duoc bao thieu.
+EXTENDS_RE = re.compile(r'class\s+([A-Z][\w$]*)\s+extends\s+([A-Z][\w$]*)')
 # Vua bat tham so constructor vua bat thuoc tinh cua class, lay CA ten CA kieu:
 #   private readonly media: MediaService     -> ('media', 'MediaService')
 #   private readonly idle: Worker[] = []     -> ('idle',  'Worker')
@@ -80,9 +86,14 @@ TYPED_MEMBER_RE = re.compile(
 )
 # Dinh nghia phuong thuc trong mot class: thut le, co the co async/private...,
 # ten, ngoac, roi than ham. Dung de biet findPlayable() co bao gio duoc viet ra.
+# Thut le co the la 0: cac khoi trong bai thuong la DOAN ROI cua mot class,
+# viet sat le trai. Bat buoc thut le >= 2 tung lam ca chargeForJob, pushDelayed,
+# logoutEverywhere bi bao thieu trong khi chung deu co than ham.
+CONTROL_KW = r'(?!(?:if|for|while|switch|catch|return|typeof|await|new|do|else)\b)'
 METHOD_DEF_RE = re.compile(
-    r'(?:^|\n)[ \t]{2,}(?:(?:private|public|protected|static|async|readonly)\s+)*'
-    r'([a-z][\w$]*)\s*(?:&lt;[^&]*&gt;)?\s*\([^)]*\)\s*(?::[^{;]+)?\{'
+    r'(?:^|\n)[ \t]*(?:(?:private|public|protected|static|async|readonly)\s+)*'
+    + CONTROL_KW +
+    r'([a-z][\w$]*)\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::[^{;=]+)?\{'
 )
 
 
@@ -120,6 +131,7 @@ BUILTIN_TYPES = {
 }
 external_types = set(BUILTIN_TYPES)  # ten den tu node_modules hoac san co
 pending_calls = []      # loc sau, khi da biet het external_types ca series
+inherits_from = {}      # lop -> lop cha, de bo qua phuong thuc ke thua tu thu vien
 pending_injects = []
 skipped_total = 0
 
@@ -190,19 +202,40 @@ for path in part_paths:
         # prop -> kieu, de biet this.<prop>.<method>() goi vao thu vien hay vao
         # code cua chinh bai.
         member_types = dict(TYPED_MEMBER_RE.findall(b['code']))
+        for cls, base in EXTENDS_RE.findall(b['code']):
+            inherits_from[cls] = base
+
         for prop, method in THIS_CALL_RE.findall(b['code']):
             owner = member_types.get(prop)
             pending_calls.append({**where, 'prop': prop, 'method': method, 'owner': owner})
+
+        for method in THIS_SELF_CALL_RE.findall(b['code']):
+            pending_calls.append({**where, 'prop': None, 'method': method, 'owner': '__self__'})
 
         for prop, cls in TYPED_MEMBER_RE.findall(b['code']):
             pending_injects.append({**where, 'type': cls})
 
 # Chi bay gio moi loc duoc: mot kieu co the duoc import tu node_modules o part 3
 # nhung dung o part 1 trong khoi khong co dong import nao.
+def inherits_external(cls, seen=()):
+    base = inherits_from.get(cls)
+    if base is None or cls in seen:
+        return False
+    return base in external_types or inherits_external(base, seen + (cls,))
+
+
 for c in pending_calls:
     if c['owner'] in external_types:
         continue  # this.jwt.signAsync() — jwt la JwtService cua @nestjs/jwt
+    if c['owner'] and inherits_external(c['owner']):
+        continue  # this.redis.xadd() — RedisService extends Redis cua ioredis
     if c['method'] in defined_methods:
+        continue
+    if c['owner'] == '__self__':
+        kind, detail = 'self', f"this.{c['method']}() — tu goi, khong thay than ham"
+        uses.setdefault(c['method'], []).append(
+            {'part': c['part'], 'filename': c['filename'], 'kind': kind, 'detail': detail}
+        )
         continue
     kind = 'method' if c['owner'] else 'method?'  # '?' = khong ro chu so huu
     detail = f"this.{c['prop']}.{c['method']}()"
