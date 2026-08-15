@@ -517,10 +517,15 @@ Chủ dự án quyết định đưa loạt bài ra hub. Đã làm đủ **4 ch�
 
 1. `blog/index.html` — nhóm mới **"Code thực chiến" / "Real-World Builds"** đặt
    ngay dưới "Programming Courses", 4 mục part-1..4, tag `--build`.
-   Nhân tiện đổi khối "Programming Courses" từ thẻ vuông sang **dạng danh sách**
-   (`.blog-grid--list` trong `blog/blog.css`) — chiều cao trang 6960 → 5050px ở
-   1280px, giảm 27%. Không đổi markup `.blog-card` nào, bỏ một class là quay lại
-   được dạng cũ.
+   Nhân tiện đổi **cả ba khối** ("Programming Courses", "Code thực chiến",
+   "Tool Guides") từ thẻ vuông sang **dạng danh sách** (`.blog-grid--list`
+   trong `blog/blog.css`) — chiều cao trang 6891 → 4489px ở 1280px, giảm 35%.
+   Không đổi markup `.blog-card` nào, bỏ một class là quay lại được dạng cũ.
+   Cột nhãn cố định 164px: mỗi `.blog-card` là một grid riêng nên phải cố định
+   mới thẳng hàng giữa các dòng, và 164px là bề rộng nhỏ nhất giữ được nhãn trên
+   một dòng (đo thật: 132px → 10/37 nhãn bị bẻ đôi, 150px → 5, 164px → 1).
+   Khối `#searchResultsGrid` vẫn để dạng thẻ — nó không bao giờ hiện cùng lúc
+   với ba khối trên, đổi hay không là tuỳ ý.
 2. `index.html` (gốc) — learn-card thứ 24 trỏ tới part-1, khoá
    `learn.build.title`/`learn.build.desc` ở cả hai ngôn ngữ trong `i18n.js`.
 3. `sitemap.xml` — 4 URL, `priority 0.8`, `lastmod 2026-08-15`.
