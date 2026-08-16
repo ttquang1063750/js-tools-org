@@ -538,6 +538,39 @@ phần ngẫu nhiên `60 + random(15)` đang chạy thật. Đúng cả hai kỹ
 `X-Correlation-Id`, và ID do client gửi sẵn (`theo-dau-vet-123`) được giữ nguyên
 thay vì bị sinh đè.
 
+## KHÉP PART 4 — 16/08/2026
+
+**Cả bốn part đã đi hết bằng cách làm theo.** 65 phát hiện, tất cả đã ghi và đã
+khép; `check-lesson.js` 11/11 cho cả 4 part; `extract-parts.py` 0 cảnh báo.
+
+### Ba dự án còn lại trên đĩa, chạy được ngay
+
+```
+~/Projects/Scratchpad/media-forge/            monolith Part 1-3 (git, commit từng mục)
+~/Projects/Scratchpad/media-forge-web/        frontend React, 3 mốc UI chạy thật
+~/Projects/Scratchpad/media-forge-services/   4 service Part 4 + 3 Postgres + Redis
+```
+
+### Khuôn mẫu lặp lại nhiều nhất, để lần viết sau tránh
+
+1. **Module/registration bị quên** — 6 lần: `RedisModule` (#23), `MediaModule`
+   (#25), `StreamController` (#31), `JobModule` (#45), `GatewayModule` (#54),
+   `BalanceCache` không ai gọi (#63)
+2. **Hạ tầng được dùng mà không bao giờ được tạo** — 5 lần: nginx (#18),
+   ffmpeg (#39), `Dockerfile` (#46), volume `media` (#48), `main.ts` của service
+   (#59), compose Part 4 (#62)
+3. **Khối code thiếu import** — 6 lần: #4, #10, #28, #33, #43, #55, #64
+4. **Mốc UI không có màn hình** — 3 lần, cả ba mốc: #7, #36, #56
+5. **Điểm nhấn của mục không có đường nào chạm tới** — #17, #60, #63
+
+### Điều đáng nói nhất
+
+Những lỗi nặng nhất đều **biên dịch sạch**: `hash.worker` + `worker-pool` không
+ghép được (#41), job mới vô hình trên bảng tiến độ (#58), `CorrelationInterceptor`
+làm mọi request trả 500 (#65), `X-Accel-Redirect` cho body 0 byte (#37). Không
+lỗi nào trong số đó đọc code mà thấy được — tất cả chỉ lộ ra khi chạy, và ba
+trong bốn cái chỉ lộ ra khi **mở trình duyệt thật**.
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**
@@ -574,10 +607,10 @@ client) trùng với đường `sync()` đã vá ở #58 và đã chạy đúng.
 - [x] **Part 4 §3.2** (auth-svc khoác vỏ gRPC) — bài đúng, `mapAuthError` cho `401`
 - [x] **Gateway đã chạy**, cả cụm 4 service + 3 database lên bằng Compose (#62).
       Luồng đầu-cuối HTTP → gRPC → service **đã xác nhận**
-- [ ] **Part 4 §5 (cache dồn toa), §6 (correlation ID), §7, §8 — chưa làm.**
-      §5 và §6 đều có code trong project nhưng chưa chạy phép thử nào:
-      §5 cần dựng kịch bản nhiều request cùng lúc vào một khoá cache đã hết hạn,
-      §6 cần theo một correlation ID xuyên qua log của cả bốn service
+- [x] **Part 4 §5** (cache dồn toa) — #63. Đo được: 50 GET / 1 SET, TTL 63
+- [x] **Part 4 §6** (correlation ID) — #64, #65
+- [x] **Part 4 §7, §8** — hai mục văn xuôi thuần (danh sách "cố ý không làm" và
+      nhìn lại cả bốn part), không có code để chạy. Đã đọc, không có phát hiện
 - [ ] **Chưa nối frontend vào cụm Part 4.** `media-forge-web` vẫn trỏ vào monolith
       (nginx 8443). Part 4 không yêu cầu đổi, nhưng nếu muốn kiểm rằng "trình duyệt
       không hề biết có chuyện gì xảy ra" thì đây là phép thử còn thiếu
