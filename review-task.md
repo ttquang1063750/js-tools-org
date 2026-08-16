@@ -227,6 +227,41 @@ hoàn toàn — chỉ thiếu đúng hai import.
 `stream.controller.ts` bản cuối **không còn một dòng nào** xử lý `Range` —
 nginx làm toàn bộ. Đó đúng là điều §7.1 hứa.
 
+## Đợt mười hai — Part 2 §8.2 (giao diện: upload + trình phát), 16/08/2026
+
+**Đính chính một chỗ của các đợt trước.** Các đợt trước ghi frontend "`tsc
+--noEmit` sạch". Sai — trong dự án Vite react-ts, `tsconfig.json` chỉ là file
+`references`, nên `npx tsc --noEmit` **không kiểm gì cả** và luôn im lặng. Lệnh
+thật là `npx tsc -b` (đúng lệnh `npm run build` dùng). Chạy đúng lệnh đó thì ra
+8 lỗi — tức là frontend chưa từng được kiểm kiểu thật sự.
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 33 | Part 2 §8.2, khối `src/components/VideoPlayer.tsx` | Thiếu code | Khối **không có một dòng import nào**. `useState`, `useEffect` và `api` đều không được import: `TS2304: Cannot find name 'useState'` / `'useEffect'` / `'api'`, kéo theo 2 lỗi `TS7006` implicit any. Cùng họ #4/#10/#28, nhưng đây là khối duy nhất không có import nào cả | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm 2 dòng import vào đầu khối. `tsc -b` sạch |
+| 34 | Part 2 §8, cả ba component (`App.tsx`, `LoginForm.tsx`, `VideoPlayer.tsx`) | Đứt mạch | Cả ba khai kiểu trả về `JSX.Element`. Với React 19 + `@types/react` 19 (đúng thứ `npm create vite@latest` cài hôm nay) **không còn namespace `JSX` toàn cục**: `TS2503: Cannot find namespace 'JSX'` ×3. Phải `import type { JSX } from 'react'` hoặc bỏ hẳn kiểu trả về. Lưu ý: `LoginForm.tsx` và `App.tsx` là phần **đợt sửa thứ ba tự viết thêm** cho #7/#8 — nên lỗi này một phần do lượt rà soát trước, không phải chỉ do bài gốc | ✅ **đã sửa, đã xác nhận bằng chạy** — `type JSX` thêm vào dòng import của cả ba khối, kèm callout giải thích React 19 bỏ namespace `JSX` toàn cục **và** cảnh báo `tsc --noEmit` là lệnh vô hiệu trong dự án Vite. `tsc -b` sạch |
+
+| 35 | Part 2 §8.2, `src/lib/upload.ts` đối chiếu `src/lib/api.ts` | Đứt mạch | `uploadWithProgress(file, token, onProgress)` **đòi một `token` truyền vào**, nhưng `api.ts` giữ `accessToken` là biến private của module và chỉ export `api()`, `login()`, `isLoggedIn()` — **không có đường nào lấy được token ra**. Người đọc gọi hàm này thì không biết truyền gì vào tham số thứ hai. Đây đúng là hình dạng của lỗi mà đợt sửa thứ ba đã gặp ở chiều ngược lại (không có đường *đặt* token); chiều *đọc* vẫn còn nguyên | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm khối `getAccessToken()` vào `api.ts` kèm câu giải thích vì sao XHR không đi qua `api()` |
+| 36 | Part 2 §8.2, toàn mục | Đứt mạch | **Mốc #2 không có màn hình nào**, y hệt #7 ở mốc #1. Bài đưa `upload.ts` và `VideoPlayer.tsx` rồi dừng: không có ô chọn file, không có thanh tiến trình (dù cả mục lấy tên là "upload có thanh tiến trình"), không có gì gọi `uploadWithProgress`, và không chỗ nào truyền `assetId` vào `VideoPlayer`. `App.tsx` sau mốc #1 vẫn dừng ở dòng "Đã đăng nhập." Câu chốt của mục — *"Kéo thanh tiến trình của trình phát này, mở tab Network"* — không thực hiện được vì không có trình phát nào trên màn hình | ✅ **đã sửa, đã xác nhận trong trình duyệt** — viết hẳn `src/components/UploadScreen.tsx` (ô chọn file, thanh tiến trình, báo lỗi, ráp `VideoPlayer`) và bản `App.tsx` thay dòng "Đã đăng nhập." |
+
+| 37 | Part 2 §8 đối chiếu §7.1 | Đứt mạch | **Chỉ lộ ra trong trình duyệt thật — đúng loại lỗi mà đọc code không bao giờ thấy.** §7.1 chuyển `play()` sang `X-Accel-Redirect`, tức là **chỉ nginx mới phục vụ được video**. Nhưng cả mục 8 không có một chữ nào nói giao diện phải đi qua nginx; bài chỉ nói *"gọi sang API qua nginx"* ở một câu dẫn rồi không bao giờ đưa cấu hình. Dev server của Vite trỏ thẳng vào Node cổng 3000 thì: `GET /media/<id>/play` trả **`200` với body 0 byte**, header `x-accel-redirect: /protected-media/<id>.bin` lọt thẳng ra trình duyệt (không ai xử lý nó), và thẻ `<video>` chết với `PipelineStatus::DEMUXER_ERROR_COULD_NOT_OPEN`. Trình phát hiện ra đầy đủ, có nút bấm, chỉ là **`0:00` và không phát được gì** — đúng cái bẫy mà chính §7 mở đầu đã cảnh báo ("thanh tiến trình vẫn hiện nhưng kéo không được"), lần này do chính bài gây ra. Câu chốt của §8.2 — *"kéo thanh tiến trình, mở tab Network sẽ thấy các request 206"* — không bao giờ xảy ra | ✅ **đã sửa, đã xác nhận trong trình duyệt** — thêm callout "Proxy phải trỏ vào nginx" mô tả đúng triệu chứng đánh lừa, kèm khối `vite.config.ts` bản đầy đủ trỏ vào `https://127.0.0.1:8443` với `secure: false` và `headers: { Host: 'media-forge.local' }` (khỏi phải sửa `/etc/hosts`) |
+
+### §8.2 đã chạy thật trong trình duyệt
+
+Trình duyệt thật, `http://localhost:5173`, backend + nginx + Postgres + Redis đang chạy:
+
+1. Nhập mật khẩu → màn hình đổi sang **"Tải video lên"**
+2. Chọn một file mp4 **9,8 MB** (1920×1080, 60 giây) → upload xong, hiện
+   **`Xong. videoId: 9cd8bbbd-...`**
+3. Trình phát hiện ra ngay dưới, đọc đúng độ dài: **`0:00 / 1:00`**
+4. Kéo tới giây 45 → `currentTime: 45`, `readyState: 4`, `error: null`
+5. Tab Network: các request `/media/<id>/play` trả **`206 Partial Content`** —
+   đúng câu chốt của mục 8.2, lần đầu tiên thực hiện được
+
+**Trước khi vá #37** cùng thao tác đó cho: `200` với **body 0 byte**, header
+`x-accel-redirect` lọt ra trình duyệt, `<video>` chết với
+`PipelineStatus::DEMUXER_ERROR_COULD_NOT_OPEN`, hiển thị `0:00` và không phát
+được gì.
+
 ## Việc còn lại của lượt rà soát này
 
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
