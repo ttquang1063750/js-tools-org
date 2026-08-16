@@ -543,13 +543,18 @@ client) trùng với đường `sync()` đã vá ở #58 và đã chạy đúng.
 
 - [x] **Part 4 §1 → §4.1** (tách microservice, gRPC, outbox) — #59, #60, #61.
       **Outbox đã chạy thật qua gRPC** với billing-svc tắt hẳn rồi bật lại
-- [ ] **Part 4 §3.1, §3.2, §3.3 — chưa đi kỹ.** Streaming + hạn chót, auth-svc
-      khoác vỏ gRPC, bắc cầu gRPC streaming sang WebSocket. Code có sẵn trong
-      project nhưng **chưa chạy `WatchJob` streaming thật lần nào**
-- [ ] **Part 4 §5 (cache dồn toa), §6 (correlation ID), §7, §8 — chưa làm**
-- [ ] **Gateway chưa chạy.** `apps/gateway` có code nhưng chưa khởi động lần nào,
-      nên chưa có đường HTTP nào đi xuyên xuống ba service — tức luồng đầu-cuối
-      của Part 4 (trình duyệt → gateway → gRPC → service) **chưa được xác nhận**
+- [x] **Part 4 §3.1 + §3.3** (streaming, bắc cầu) — bài đúng, `WatchJob` nhận
+      `10 → 55 → 100` và tự đóng ở 100%
+- [x] **Part 4 §3.2** (auth-svc khoác vỏ gRPC) — bài đúng, `mapAuthError` cho `401`
+- [x] **Gateway đã chạy**, cả cụm 4 service + 3 database lên bằng Compose (#62).
+      Luồng đầu-cuối HTTP → gRPC → service **đã xác nhận**
+- [ ] **Part 4 §5 (cache dồn toa), §6 (correlation ID), §7, §8 — chưa làm.**
+      §5 và §6 đều có code trong project nhưng chưa chạy phép thử nào:
+      §5 cần dựng kịch bản nhiều request cùng lúc vào một khoá cache đã hết hạn,
+      §6 cần theo một correlation ID xuyên qua log của cả bốn service
+- [ ] **Chưa nối frontend vào cụm Part 4.** `media-forge-web` vẫn trỏ vào monolith
+      (nginx 8443). Part 4 không yêu cầu đổi, nhưng nếu muốn kiểm rằng "trình duyệt
+      không hề biết có chuyện gì xảy ra" thì đây là phép thử còn thiếu
 - [ ] **Part 4 — chưa làm.** microservice, gRPC. (Ghi chú: #6 từng nghi Part 4 có
       khối code thiếu `code-filename` — đã khép ở đợt 13, đó là lỗi regex của
       `extract-parts.py` chứ không phải lỗi bài. Part 4 vẫn chưa được đọc.)
