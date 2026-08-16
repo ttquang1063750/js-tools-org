@@ -112,10 +112,31 @@ Part 2 §8.1 được viết bổ sung, không phải vá chữ:
 
 | # | Xác nhận bằng chạy? |
 |---|---|
-| 7 | ✅ một phần — form hiện ra, Tailwind ăn, nhập sai hiện đúng thông báo đỏ. **Đường thành công CHƯA xác nhận** vì `/auth/login` chưa tồn tại: `auth.service.ts` vẫn là 7 mảnh chưa ghép (#12) |
+| 7 | ✅ **đầy đủ** — xem "Đợt sửa thứ tư": đăng nhập thật trong trình duyệt, màn hình đổi sang "Đã đăng nhập." |
 | 8 | ✅ `App.tsx` gọi `LoginForm`, `LoginForm` gọi `login()` trong `api.ts` — không còn file mồ côi. `tsc --noEmit` sạch |
 
 Trang mẫu Vite đã biến mất — đó là mốc mà lượt rà soát trước không đạt được.
+
+## Đợt sửa thứ tư — ghép `auth.service.ts` và chạy đăng nhập thật (16/08/2026)
+
+Đã ghép 7 mảnh theo đúng tiêu đề vừa sửa ở #12 (bản CUỐI thay bản 1, constructor
+đầy đủ thay constructor khung, đoạn ân hạn đã nằm sẵn trong bản cuối). Ghép ra
+150 dòng và **biên dịch chỉ còn đúng một lỗi** — tức tiêu đề đã đủ để lần theo.
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 15 | Part 2 §3.3, khối `auth.service.ts — BẢN CUỐI` | Đứt mạch | Bản cuối của `refresh()` **dùng `GRACE_MS` nhưng không khai báo nó**. `const GRACE_MS = 30_000` chỉ nằm trong khối "đoạn thay cho nhánh..." — mà khối đó đã bị bản cuối thay thế. Ghép theo đúng chỉ dẫn: `TS2304: Cannot find name 'GRACE_MS'` | chưa xử lý |
+| 16 | Part 2 §3.1, đoạn nói về cột `replaced_by_hash` | Đứt mạch | Bài có nhắc `npm run migration:generate -- AddReplacedByHash` nhưng **lệnh thiếu đường dẫn** (Part 1 §7.4 dùng `-- src/database/migrations/InitSchema`) và **không hề nhắc `npm run migration:run`**. Làm đúng theo bài thì entity có cột còn bảng thì chưa, và `/auth/login` trả **500**: `column "replaced_by_hash" of relation "refresh_tokens" does not exist` — lỗi hiện ở chỗ khác hẳn chỗ vừa sửa | ✅ **đã sửa, đã xác nhận** — thay bằng khối Terminal hai lệnh đầy đủ + callout cảnh báo |
+
+### Đăng nhập đã chạy thật
+
+Sau khi vá #16 và tự thêm `const GRACE_MS` (#15 chưa vá vào bài):
+
+- `POST /auth/login` trả **201**
+- Trong trình duyệt: nhập mật khẩu → màn hình đổi sang **"Đã đăng nhập."**
+- Nhập sai → thông báo đỏ đúng như thiết kế
+
+**#7 giờ khép lại: đường thành công đã xác nhận bằng trình duyệt thật.**
 
 ## Việc còn lại của lượt rà soát này
 
