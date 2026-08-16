@@ -512,7 +512,15 @@ mạng thẳng trong transaction.
 đọc mà chưa dựng kịch bản rớt mạng để đo — phần code của nó (`progress.ts` phía
 client) trùng với đường `sync()` đã vá ở #58 và đã chạy đúng.
 
-- [ ] **Part 4 — chưa làm.** microservice, gRPC. Là part duy nhất còn nguyên
+- [x] **Part 4 §1 → §4.1** (tách microservice, gRPC, outbox) — #59, #60, #61.
+      **Outbox đã chạy thật qua gRPC** với billing-svc tắt hẳn rồi bật lại
+- [ ] **Part 4 §3.1, §3.2, §3.3 — chưa đi kỹ.** Streaming + hạn chót, auth-svc
+      khoác vỏ gRPC, bắc cầu gRPC streaming sang WebSocket. Code có sẵn trong
+      project nhưng **chưa chạy `WatchJob` streaming thật lần nào**
+- [ ] **Part 4 §5 (cache dồn toa), §6 (correlation ID), §7, §8 — chưa làm**
+- [ ] **Gateway chưa chạy.** `apps/gateway` có code nhưng chưa khởi động lần nào,
+      nên chưa có đường HTTP nào đi xuyên xuống ba service — tức luồng đầu-cuối
+      của Part 4 (trình duyệt → gateway → gRPC → service) **chưa được xác nhận**
 - [ ] **Part 4 — chưa làm.** microservice, gRPC. (Ghi chú: #6 từng nghi Part 4 có
       khối code thiếu `code-filename` — đã khép ở đợt 13, đó là lỗi regex của
       `extract-parts.py` chứ không phải lỗi bài. Part 4 vẫn chưa được đọc.)
