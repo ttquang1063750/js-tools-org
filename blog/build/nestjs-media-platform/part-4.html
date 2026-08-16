@@ -1710,6 +1710,56 @@ export class BalanceCache {
               </div>
             </div>
 
+            <p>
+              Còn thiếu đường vào: <code>BalanceCache</code> mới chỉ là một provider chưa ai gọi, và
+              <code>media.proto</code> chưa có RPC nào trả số dư. Thêm một RPC nữa, đi <strong>qua cache</strong> chứ
+              không gọi thẳng billing-svc:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">proto/media.proto + media.controller.ts — thêm đường vào cho cache</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">// proto/media.proto
+rpc GetBalance (GetBalanceRequest) returns (BalanceReply);
+
+// apps/media-svc/src/media.controller.ts
+@GrpcMethod('MediaService', 'GetBalance')
+async getBalance(request: GetBalanceRequest): Promise&lt;BalanceReply&gt; {
+  return { balance: await this.balances.getBalance(request.userId) };
+}</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — 50 request đồng thời vào một khoá vừa bị xoá</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># Xoa khoa de cache LANH, roi ban 50 loi goi GetBalance cung luc,
+# vua chay vua theo doi Redis:
+docker exec ...redis-1 redis-cli DEL "balance:$USER_ID"
+docker exec ...redis-1 redis-cli MONITOR &amp;
+
+# ...ban 50 request...
+
+# Dem lenh cham vao khoa do:
+# GET : 50      <-- ca 50 deu kiem cache
+# SET : 1       <-- nhung CHI MOT lan thuc su goi sang billing-svc
+#
+# va dong SET do:
+# "set" "balance:961EC050-..." "-10" "EX" "63"
+#                                          ^^ khong phai 60</code></pre>
+            </div>
+
+            <p>
+              Hai con số đó là toàn bộ mục này, đo được: <strong>50 lần đọc cache, đúng 1 lần nạp</strong> — 49 request
+              kia được <code>inFlight</code> gộp vào cùng một lời hứa thay vì mỗi đứa một lời gọi mạng. Và hạn dùng ghi
+              ra là <code>63</code> chứ không phải <code>60</code>, tức phần ngẫu nhiên
+              <code>60 + random(15)</code> đang thật sự hoạt động — nếu mọi khoá đều đúng 60 thì cả đám tạo cùng một đợt
+              sẽ lại cùng hết hạn một đợt, và ta quay về đúng chỗ vừa tránh.
+            </p>
+
             <h2>6. Gỡ lỗi khi lỗi nằm ở đâu đó</h2>
 
             <p>
@@ -1726,7 +1776,13 @@ export class BalanceCache {
                 <span class="code-filename">apps/gateway/src/common/correlation.middleware.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import { AsyncLocalStorage } from 'node:async_hooks';
+              <pre><code class="language-typescript">import { Injectable, NestMiddleware } from '@nestjs/common';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
+// PHAI lay tu 'express'. Thieu dong nay thi TypeScript im lang dung
+// Request/Response cua DOM, va bao loi o cho khac han: "Headers has no
+// index signature" va "Property 'setHeader' does not exist".
+import type { Request, Response, NextFunction } from 'express';
 
 export const requestContext = new AsyncLocalStorage&lt;{ correlationId: string }&gt;();
 
@@ -1745,24 +1801,36 @@ export class CorrelationMiddleware implements NestMiddleware {
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">apps/gateway/src/common/correlation.interceptor.ts</span>
+                <span class="code-filename">apps/gateway/src/common/correlation.metadata.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
-import { Metadata } from '@grpc/grpc-js';
+              <pre><code class="language-typescript">import { Metadata } from '@grpc/grpc-js';
 import { requestContext } from './correlation.middleware';
 
-@Injectable()
-export class CorrelationInterceptor implements NestInterceptor {
-  intercept(context: ExecutionContext, next: CallHandler) {
-    // Dinh correlation id vao metadata cua MOI loi goi gRPC di ra.
-    const metadata = new Metadata();
-    metadata.set('x-correlation-id', requestContext.getStore()?.correlationId ?? 'unknown');
-    context.switchToRpc().getContext().add(metadata);
-
-    return next.handle();
-  }
+// Dinh correlation id vao metadata cua moi loi goi gRPC di ra. Moi method
+// sinh tu ts-proto deu nhan Metadata lam THAM SO THU HAI:
+//   this.service.charge({ userId, amount, jobId }, correlationMetadata())
+export function correlationMetadata(): Metadata {
+  const metadata = new Metadata();
+  metadata.set('x-correlation-id', requestContext.getStore()?.correlationId ?? 'unknown');
+  return metadata;
 }</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Vì sao đây không phải một <code>NestInterceptor</code></div>
+              <div class="callout__content">
+                Cách trông tự nhiên hơn là viết một interceptor toàn cục rồi gọi
+                <code>context.switchToRpc().getContext().add(metadata)</code>. Nó
+                <strong>biên dịch hoàn toàn sạch</strong> — vì Nest khai <code>getContext()</code> trả về
+                <code>any</code> — nhưng gateway là ứng dụng <strong>HTTP</strong>, nên lúc chạy
+                <code>getContext()</code> trả về đối tượng request của Express, thứ không hề có method
+                <code>add()</code>.<br /><br />
+                Bật nó lên rồi gọi thử: <strong>mọi request trả <code>500</code></strong> kèm
+                <code>TypeError: context.switchToRpc(...).getContext(...).add is not a function</code>. Metadata của lời
+                gọi gRPC <em>đi ra</em> phải được gắn ở chỗ gọi client, không phải ở tầng xử lý request HTTP
+                <em>đi vào</em> — hai chiều khác nhau, và chỉ tầng đầu mới thấy được ngữ cảnh RPC.
+              </div>
             </div>
 
             <p>

@@ -512,6 +512,32 @@ Ghi chú: mật khẩu sai **dưới 8 ký tự** trả `400` chứ không phả
 `@MinLength(8)` của `LoginDto` chặn trước — không phải lỗi, nhưng dễ làm người
 kiểm nhầm là error mapping hỏng (tôi đã nhầm đúng một lần).
 
+## Đợt hai tư — Part 4 §5 (cache dồn toa) + §6 (correlation ID), 16/08/2026
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 63 | Part 4 §5, `BalanceCache` | Đứt mạch | **Không gì gọi `BalanceCache.getBalance()`** — nó chỉ được khai trong `providers`/`exports` rồi bỏ đó. Nặng hơn: §5 mở đầu bằng *"Mỗi lần media-svc trả về danh sách video, nó gọi sang billing-svc hỏi số dư"*, nhưng **`media.proto` không có RPC danh sách video nào cả** (chỉ `WatchJob`, và `CompleteJob` tôi vừa thêm ở #60). Tiền đề của cả mục không tồn tại trong code. Cùng hình dạng #60 — điểm nhấn của mục không có đường nào chạm tới, nên người đọc không thể thấy chống dồn toa hoạt động | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm `rpc GetBalance` vào `media.proto` + `@GrpcMethod('MediaService','GetBalance')` đi **qua `BalanceCache`**, kèm khối Terminal đo bằng `redis-cli MONITOR` |
+
+| 64 | Part 4 §6, khối `apps/gateway/src/common/correlation.middleware.ts` | Thiếu code | Khối chỉ import `AsyncLocalStorage`, thiếu **năm** thứ còn lại: `Injectable`, `NestMiddleware`, `randomUUID`, và kiểu `Request`/`Response`/`NextFunction` của Express. Riêng cái cuối gây hiểu lầm nặng: không import từ `express` thì TypeScript **lặng lẽ dùng `Request`/`Response` của DOM**, cho ra hai lỗi trỏ sai hướng hoàn toàn — `Element implicitly has an 'any' type because type 'Headers' has no index signature` và `Property 'setHeader' does not exist on type 'Response'`. Bài *có* biết về lớp lỗi này (§3.1 có chú thích đặt tên riêng `JobProgressEvent` để tránh đụng `ProgressEvent` của DOM) nhưng không áp dụng ở đây | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm đủ 4 dòng import kèm chú thích cảnh báo riêng về bẫy `Request`/`Response` của DOM. `tsc:gateway` sạch |
+| 65 | Part 4 §6, khối `apps/gateway/src/common/correlation.interceptor.ts` | Đứt mạch | **Interceptor này đặt sai phía, và bật nó lên là hỏng mọi request của gateway.** Nó gọi `context.switchToRpc().getContext().add(metadata)` — nhưng gateway là ứng dụng **HTTP**, nên `getContext()` trả về đối tượng request của Express, thứ không có method `add()`. Đăng ký nó làm interceptor toàn cục rồi gọi thử: **`500`** cho mọi request, kèm `TypeError: context.switchToRpc(...).getContext(...).add is not a function`. **Biên dịch hoàn toàn sạch** vì `getContext()` được Nest khai kiểu `any`. Muốn gắn metadata cho lời gọi gRPC *đi ra* thì phải làm ở chỗ gọi client (truyền `Metadata` làm tham số thứ hai của method gRPC), không phải bằng một interceptor HTTP. Thêm nữa, bài viết *"Bên nhận đọc metadata đó và mở AsyncLocalStorage của chính nó"* mà **không đưa code phía nhận** ở đâu cả | ✅ **đã sửa, đã xác nhận bằng chạy** — đổi thành `correlation.metadata.ts` xuất một hàm `correlationMetadata()` gắn ở **chỗ gọi client** (tham số thứ hai của method ts-proto), kèm callout giải thích vì sao interceptor HTTP không làm được việc này. Sau khi sửa: `POST /auth/login` trả `201` với header `X-Correlation-Id`, và ID do client gửi (`theo-dau-vet-123`) được giữ nguyên. (Phần "code phía nhận" vẫn là khoảng trống của bài — đã nêu trong mô tả, chưa viết bù vì nằm ngoài phạm vi vá) |
+
+### §5 và §6 đã đo được
+
+**§5 — chống dồn toa, 50 request đồng thời vào khoá vừa xoá:**
+
+```
+GET : 50      <-- ca 50 deu kiem cache
+SET : 1       <-- chi MOT lan thuc su goi sang billing-svc
+"set" "balance:961EC050-..." "-10" "EX" "63"     <-- 63, khong phai 60
+```
+
+`inFlight` gộp 49 request còn lại vào cùng một lời hứa, và TTL `63` chứng minh
+phần ngẫu nhiên `60 + random(15)` đang chạy thật. Đúng cả hai kỹ thuật §5 nêu.
+
+**§6 — correlation ID:** sau khi vá #65, `POST /auth/login` trả `201` kèm
+`X-Correlation-Id`, và ID do client gửi sẵn (`theo-dau-vet-123`) được giữ nguyên
+thay vì bị sinh đè.
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**
