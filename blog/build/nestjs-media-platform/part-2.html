@@ -2504,6 +2504,26 @@ export async function api(path: string, init: RequestInit = {}): Promise&lt;Resp
 
   await refreshOnce();
   return call(); // thu lai dung mot lan
+}
+
+// Dang nhap: doi email/mat khau lay access token, va giu no trong bien tren.
+// Refresh token khong di qua day — server dat no vao cookie httpOnly.
+export async function login(email: string, password: string): Promise&lt;void&gt; {
+  const res = await fetch('/auth/login', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!res.ok) throw new Error('Email hoac mat khau khong dung');
+
+  const data = (await res.json()) as { accessToken: string };
+  accessToken = data.accessToken;
+}
+
+export function isLoggedIn(): boolean {
+  return accessToken !== null;
 }</code></pre>
             </div>
 
@@ -2513,6 +2533,112 @@ export async function api(path: string, init: RequestInit = {}): Promise&lt;Resp
               bắn mười refresh song song với cùng một token — đúng cái mà server ở mục 3.3 phải dựng khoảng ân hạn để
               tha thứ.
             </p>
+
+            <p>
+              Chú ý <code>accessToken</code> là biến trong module, không phải <code>localStorage</code>. Mất tab là mất
+              nó — và không sao, vì refresh token nằm trong cookie <code>httpOnly</code> nên lần gọi
+              <code>api()</code> đầu tiên sau khi tải lại trang sẽ nhận 401, tự refresh, rồi chạy tiếp. Đổi lại, một
+              script chèn được vào trang cũng không đọc được token bằng JavaScript.
+            </p>
+
+            <p>Giờ mới tới cái form. Nó không có gì đặc biệt, và đó là chủ ý — mọi thứ khó đã nằm ở trên:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/components/LoginForm.tsx</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { useState, type FormEvent } from 'react';
+import { login } from '../lib/api';
+
+export function LoginForm({ onDone }: { onDone: () =&gt; void }): JSX.Element {
+  const [email, setEmail] = useState('demo@test.local');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState&lt;string | null&gt;(null);
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(event: FormEvent): Promise&lt;void&gt; {
+    event.preventDefault(); // khong de trinh duyet tu nap lai trang
+    setBusy(true);
+    setError(null);
+    try {
+      await login(email, password);
+      onDone();
+    } catch (err) {
+      // useUnknownInCatchVariables (Part 1 muc 5) buoc thu hep kieu o day
+      setError(err instanceof Error ? err.message : 'Dang nhap that bai');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    &lt;form onSubmit={handleSubmit} className="mx-auto mt-24 w-80 space-y-3"&gt;
+      &lt;h1 className="text-lg font-semibold"&gt;Đăng nhập&lt;/h1&gt;
+
+      &lt;input
+        type="email"
+        value={email}
+        onChange={(e) =&gt; setEmail(e.target.value)}
+        className="w-full rounded border border-slate-300 px-3 py-2"
+      /&gt;
+      &lt;input
+        type="password"
+        value={password}
+        onChange={(e) =&gt; setPassword(e.target.value)}
+        placeholder="Mật khẩu"
+        className="w-full rounded border border-slate-300 px-3 py-2"
+      /&gt;
+
+      {error !== null &amp;&amp; &lt;p className="text-sm text-red-600"&gt;{error}&lt;/p&gt;}
+
+      &lt;button
+        type="submit"
+        disabled={busy}
+        className="w-full rounded bg-slate-900 py-2 text-white disabled:opacity-50"
+      &gt;
+        {busy ? 'Đang gửi…' : 'Đăng nhập'}
+      &lt;/button&gt;
+    &lt;/form&gt;
+  );
+}</code></pre>
+            </div>
+
+            <p>
+              Còn một mảnh nữa mà thiếu nó thì cả ba file trên chỉ nằm im trên đĩa: một chỗ ráp chúng lại. Vite sinh sẵn
+              <code>src/App.tsx</code> để in trang mẫu — thay toàn bộ nội dung của nó:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/App.tsx — thay toàn bộ file Vite sinh sẵn</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { useState } from 'react';
+import { LoginForm } from './components/LoginForm';
+
+export default function App(): JSX.Element {
+  const [ready, setReady] = useState(false);
+
+  if (!ready) return &lt;LoginForm onDone={() =&gt; setReady(true)} /&gt;;
+
+  // Muc 8.2 se thay dong nay bang man upload + trinh phat.
+  return &lt;p className="mt-24 text-center"&gt;Đã đăng nhập.&lt;/p&gt;;
+}</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">🔍 Chạy thử ngay — đây là lần đầu nhìn thấy sản phẩm</div>
+              <div class="callout__content">
+                Backend phải đang chạy ở cổng 3000, và <code>vite.config.ts</code> cần chuyển tiếp lời gọi API sang đó,
+                nếu không trình duyệt sẽ chặn vì khác origin: <br /><br />
+                <code>server: { proxy: { '/auth': 'http://localhost:3000', '/media': 'http://localhost:3000' } }</code>
+                <br /><br />
+                Chạy <code>npm run dev</code>, mở <code>http://localhost:5173</code>: phải thấy form đăng nhập. Nhập sai
+                mật khẩu thì hiện đúng thông báo màu đỏ; nhập đúng thì đổi sang "Đã đăng nhập." Chưa thấy chữ nào của
+                trang mẫu Vite nữa là đúng.
+              </div>
+            </div>
 
             <h3>8.2. Mốc #2 — upload có thanh tiến trình và trình phát</h3>
 

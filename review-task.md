@@ -94,6 +94,29 @@ lại đúng lệnh trong bài: 5×201, 5×400, số dư dừng ở 0 — khớp
 | 9 | Part 1 §3 — nói rõ giao diện là dự án **riêng nằm cạnh** `media-forge/`, tên `media-forge-web/` | — |
 | 14 | **Mới.** UUID mẫu `11111111-1111-1111-1111-111111111111` dùng suốt §8 **không hợp lệ với `@IsUUID()`** — nibble variant sai RFC 4122. Sau khi #2 bật `ValidationPipe`, chính lệnh curl của bài trả `400 userId must be a UUID`, demo không bao giờ chạy. Đã đổi cả 4 chỗ sang `11111111-1111-4111-8111-111111111111` | ✅ 5×201, 5×400, số dư 0 |
 
+## Đợt sửa thứ ba — #7, #8 (16/08/2026)
+
+Part 2 §8.1 được viết bổ sung, không phải vá chữ:
+
+- `src/lib/api.ts` — thêm `login(email, password)` và `isLoggedIn()`. Trước đó
+  `accessToken` là biến private mà **chỉ `refreshOnce()` mới ghi được** — không
+  có đường nào đặt token sau khi đăng nhập, nên mốc #1 không thể hoàn thành kể
+  cả khi người đọc tự viết form
+- `src/components/LoginForm.tsx` — form thật, có trạng thái `busy`, hiện lỗi,
+  và `event.preventDefault()`. Bắt lỗi bằng `err instanceof Error` để nối lại
+  với cờ `useUnknownInCatchVariables` đã dạy ở Part 1 §5
+- `src/App.tsx` — chỗ ráp, thay trọn file Vite sinh sẵn. Đây là mảnh thiếu khiến
+  cả ba file trước đó nằm im trên đĩa (#8)
+- Một callout "Chạy thử ngay" kèm cấu hình `server.proxy` trong `vite.config.ts`
+  — thiếu nó thì trình duyệt chặn vì khác origin, và bài trước đây không hề nhắc
+
+| # | Xác nhận bằng chạy? |
+|---|---|
+| 7 | ✅ một phần — form hiện ra, Tailwind ăn, nhập sai hiện đúng thông báo đỏ. **Đường thành công CHƯA xác nhận** vì `/auth/login` chưa tồn tại: `auth.service.ts` vẫn là 7 mảnh chưa ghép (#12) |
+| 8 | ✅ `App.tsx` gọi `LoginForm`, `LoginForm` gọi `login()` trong `api.ts` — không còn file mồ côi. `tsc --noEmit` sạch |
+
+Trang mẫu Vite đã biến mất — đó là mốc mà lượt rà soát trước không đạt được.
+
 ## Việc còn lại của lượt rà soát này
 
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
