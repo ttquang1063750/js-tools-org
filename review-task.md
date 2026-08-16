@@ -61,8 +61,37 @@ dev` lên ở cổng 5173.
 | 11 | Part 2 §2, khối `src/config/configuration.ts — thêm biến cho auth` | Mơ hồ | Header là đường dẫn file đầy đủ nhưng nội dung chỉ có `const configSchema` — mất `import { z }`, mất `export type AppConfig`, mất `validateEnv`. Người đọc hiểu header theo nghĩa "đây là file" và thay cả file thì lập tức vỡ: `TS2305: Module has no exported member 'AppConfig'` ở 4 file khác nhau. Chữ "— thêm biến cho auth" là gợi ý duy nhất rằng đây là mảnh, và nó nằm ở tiêu đề chứ không phải trong văn bản | chưa xử lý |
 | 12 | Part 2, `src/auth/auth.service.ts` — 7 khối rời (block 5, 17, 18, 19, 20, 21, 22) | Đứt mạch | Một file được đưa thành **7 mảnh** mà không có bản hoàn chỉnh nào. Tệ hơn: **`async refresh()` xuất hiện HAI lần** (block 18 "xoay vòng", rồi block 20 "tách tín hiệu ra khỏi transaction") — bản sau thay bản trước nhưng bài không nói rõ là thay. Block 19 (`const GRACE_MS = 30_000;` + một khối `if`) không phải file cũng không phải method, phải chèn vào giữa `refresh()`, không nói chèn ở đâu. Block 22 là "constructor đầy đủ", tức constructor ở block 5 đã lỗi thời. Ghép lại đúng chỉ có thể bằng cách đoán | chưa xử lý |
 
+## Đã sửa vào bài (16/08/2026)
+
+| # | Đã sửa gì | Xác nhận bằng chạy? |
+|---|---|---|
+| 1 | Part 1 §8.2 — thêm `"reason":"transcode"` vào body `curl` | **CHƯA** — xem ghi chú dưới |
+| 4 | Part 1 §5 — thêm 2 dòng `import` vào đoạn vá `main.ts` | ✅ biên dịch sạch |
+| 10 | Part 2 §1 — thêm `import type { NestExpressApplication }` | ✅ biên dịch sạch |
+| 11 | Part 2 §2 — đổi tiêu đề khối thành "CHỈ thay khối configSchema, giữ nguyên phần còn lại của file" | ✅ ghép đúng thì biên dịch sạch |
+| 12 | Part 2 — sửa 7 tiêu đề khối `auth.service.ts` để nói rõ quan hệ: khối nào THAY khối nào, khối nào là đoạn chèn chứ không phải file, constructor nào lỗi thời | chưa ghép lại để chạy |
+
+`check-lesson.js` 11/11 cho cả part-1 và part-2 sau khi sửa.
+
+**Ghi chú trung thực về #1:** lần chạy xác nhận cuối cho 10×400 chứ không phải
+5×201/5×400. Nguyên nhân gần như chắc chắn là project đang ở trạng thái LAI —
+`configuration.ts` và `main.ts` đã là bản Part 2, còn `billing.controller.ts` /
+`charge.dto.ts` bị đưa về bản Part 1 để dựng lại bối cảnh §8.2. Chưa truy ra
+nguyên nhân chính xác. **Không được coi #1 là đã xác nhận.** Phiên sau phải
+dựng lại đúng trạng thái cuối Part 1 (không lẫn file Part 2) rồi chạy lại.
+
+## Phát hiện mới trong lúc sửa
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 13 | Part 2 §2, khối `configuration.ts` đối chiếu Part 1 §4.4 (`.env.example`) | Thiếu code | Schema thêm `JWT_SECRET: z.string().min(32)` **bắt buộc** (cùng `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL_DAYS`, `REDIS_URL`) nhưng **không mục nào bảo thêm chúng vào `.env` / `.env.example`**. Làm đúng theo bài xong chạy `npm run start:dev`: app từ chối khởi động — `JWT_SECRET: Invalid input: expected string, received undefined`. Chặn hoàn toàn phần còn lại của Part 2 | chưa xử lý |
+
 ## Việc còn lại của lượt rà soát này
 
+- [ ] Xác nhận lại #1 trên project sạch đúng trạng thái cuối Part 1
+- [ ] Sửa #13 (bổ sung khối `.env` cho Part 2)
+- [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
+- [ ] Quyết #7/#8 (giao diện Part 2 không có màn đăng nhập)
 - [ ] Ghép xong `auth.service.ts` rồi chạy thật luồng đăng nhập / refresh — **chưa làm**
 - [ ] Part 2 §3 → §7 (nginx, rate limit, streaming) — **chưa làm**
 - [ ] Part 2 §8.2 (upload + player chạy thật trong trình duyệt) — **chưa làm**
