@@ -298,8 +298,9 @@ còn để trống ở các đợt trước, và dọn hai thứ chính tôi là
       `docker-compose.yml` mục 4.3 dùng `DATABASE_URL: postgres://app:secret@postgres:5432/media`
       **lệch hẳn** với Compose của Part 1 (`forge/forge/media_forge`); và `build: .`
       cần một `Dockerfile` mà chưa part nào đưa ra
-- [ ] **Part 4 — chưa làm.** microservice, gRPC. #6 (khối code thiếu
-      `code-filename`) nằm ở đây, chưa đọc tới nên chưa biết là khối gì
+- [ ] **Part 4 — chưa làm.** microservice, gRPC. (Ghi chú: #6 từng nghi Part 4 có
+      khối code thiếu `code-filename` — đã khép ở đợt 13, đó là lỗi regex của
+      `extract-parts.py` chứ không phải lỗi bài. Part 4 vẫn chưa được đọc.)
 
 ### Trạng thái môi trường để phiên sau chạy tiếp ngay
 
