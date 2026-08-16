@@ -1,11 +1,13 @@
 ---
 name: review-build-series
 description: >-
-  Read a "code thuc chien" (hands-on build) series under `blog/build/<du-an>/part-N.html`
-  with the mindset of a complete newcomer, and write every gap found into
-  `review-task.md` for a later session to verify and fix. This skill only
-  reads and writes findings — it never edits the article's code, never
-  installs anything, never runs Docker or a dev server. It looks for three
+  Review a "code thuc chien" (hands-on build) series under
+  `blog/build/<du-an>/part-N.html` by BECOMING its reader: do literally what
+  each part tells you to do, in order, and treat every place you could not
+  follow it as a finding. Runs in two modes — a cheap read-only pass that
+  cross-checks symbols and prose, and the real pass that actually builds and
+  runs what the series says to build, including its frontend. It never edits
+  the article itself; findings go to `review-task.md`. It looks for three
   kinds of defect: code that is used somewhere but never fully defined
   anywhere in the series, prose that is vague or drops a term/decision
   without explaining it, and code shown as disconnected fragments that do not
@@ -14,9 +16,10 @@ description: >-
   for the continuous, Vietnamese-only "code thuc chien" build format (no
   lessons, no quiz, no translation). Use whenever the user asks to review, rà
   soát, or audit a code-thực-chiến / build series for completeness, asks "làm
-  theo bài này có chạy được không" without wanting code actually run yet, or
-  after a part in such a series gets marked "ĐÃ VIẾT XONG" in design-task.md
-  (or task.md, for a series predating the design-task.md/review-task.md split).
+  theo bài này có chạy được không", asks whether a reader could actually
+  follow it, or after a part in such a series gets marked "ĐÃ VIẾT XONG" in
+  design-task.md (or task.md, for a series predating the
+  design-task.md/review-task.md split).
 ---
 
 # Review a "code thực chiến" series as a first-time reader
@@ -31,18 +34,57 @@ engineer explains a system to a colleague, which means the same failure mode
 recurs: **things that are obvious to the author are invisible gaps to anyone
 following along for the first time.**
 
-This skill is the read-only diagnostic pass. It finds three kinds of gap and
-writes every one of them into `review-task.md`, with enough location detail
-that whoever picks up the file next does not need to re-read the series to
-find what you found.
+The question this skill answers is not "is this technically impressive". It is
+**"can someone who has only this article actually build the thing it promises"**.
+Everything below serves that one question.
 
-**It never fixes anything, never runs anything.** No `npm install`, no
-Docker, no dev server, no editing the article's HTML. A gap that turns out
-to be a real bug still needs someone to build the project for real and watch
-it fail — that is a separate, much more expensive pass (see "What this is
-not" below). This skill's job ends at a clear, located, written-down finding.
+Findings go into `review-task.md` with enough location detail that whoever
+picks up the file next does not need to re-read the series to find what you
+found. **This skill never edits the article itself** — writing the fix is a
+separate job for a session that has decided what to do about the finding.
 
-## The three things to look for
+## The one rule everything else follows: do exactly what the article says
+
+You are standing in for a reader who has the article and nothing else. So:
+
+1. **Do what each part tells you to do — all of it.** If Part 2 says to
+   create a React app and build a login screen, you create a React app and
+   build a login screen, at Part 2. Reaching Part 4 with no frontend is not a
+   scheduling detail; it means three parts were never actually tested.
+2. **In the order the article gives.** Do not read ahead and pre-solve, do not
+   reorder steps because a later part makes an earlier one look pointless. The
+   reader cannot do that, so neither can you.
+3. **Do not substitute your own tools for what the article asks for.** Do not
+   reach for `curl` to poke an endpoint that the article says to call from the
+   UI — unless the article itself hands you that `curl` command. Do not write
+   a script that calls a service class directly when the article routes it
+   through HTTP. Do not stub a dependency the article expects to be real.
+4. **Do not invent, patch, or quietly improve.** Adding an import the article
+   forgot, renaming a field so two blocks line up, filling in a method that
+   was never written — each of those erases a finding. Type what the article
+   gives you and let it fail.
+5. **Every deviation is itself a finding.** If you genuinely cannot proceed
+   without adding something, that is the most valuable thing this pass
+   produces. Write down what was missing, what you had to add, and where — do
+   not fix it silently and move on.
+
+**Why this is not pedantry.** On the NestJS series, the first two build passes
+verified the backend with scripts that called service classes directly instead
+of going through the HTTP endpoints the article describes. Everything "passed".
+A later reading pass then found 31 defects — several of them routes and wiring
+that were never touched precisely because the shortcut had bypassed them. The
+substitution did not save time; it produced a false all-clear and cost a whole
+extra round.
+
+**A reviewer's convenience is the reader's blind spot.** Anything you do
+because it is faster for you is a part of the article nobody has checked.
+
+## Pass 1 (reading): the three things to look for
+
+This is the cheap pass. It costs minutes, it needs nothing installed, and it
+finds the contract-level gaps fast. It does **not** end the review — a clean
+pass 1 means "no defect that reading can reach", never "the series works".
+Pass 2 below is what earns that sentence.
 
 Work through **every part, in order, start to finish, without skipping**.
 Skimming for keyword hits misses exactly the kind of gap this skill exists to
@@ -253,30 +295,26 @@ both problems. (A series predating this split may still have its review
 history recorded inside a shared `task.md` — that's a historical record, not
 a reason to write new findings there; start `review-task.md` going forward.)
 
-## What this is not
+## What pass 1 must never claim
 
-This skill stops at "here is what a careful reading turns up." It
-deliberately does **not**:
+Reading can show that something is _used without being defined_. Only building
+and running proves it actually fails, and proves a fix works.
 
-- Scaffold a project, run `npm install`, start Docker, or execute any code.
-- Edit the article's HTML to fix anything it finds.
-- Claim a finding is a confirmed bug — reading can show something is *used
-  without being defined*, but only actually compiling and running the
-  project proves it fails, and proves the fix works. That is a distinct,
-  much heavier follow-up pass (build a real project from the series' code,
-  run it against real Postgres/Redis/whatever the stack needs, fix what
-  breaks, re-verify by running again) — do that only when asked, separately,
-  and expect it to take substantially longer than this pass.
+So while only pass 1 has run, do not write "đã kiểm", do not mark a finding
+confirmed, and do not answer "is this actually broken?" with anything stronger
+than: _reading says X is never defined — confirming it means building it, which
+this pass has not done._
 
-If asked mid-review whether something is "actually broken," the honest
-answer at this stage is "reading says X is never defined — confirming it
-requires building it, which this pass does not do."
+Pass 1 also never edits the article. Writing the fix belongs to a session that
+has decided what to do about the finding.
 
-## Where the build-for-real project must live
+## Pass 2 (following along): build it and run it
 
-When that follow-up pass does happen — or any time a session writes code to
-test what the article claims — **put the project under `~/Projects/Scratchpad/`,
-never in the session's own temporary scratchpad directory.**
+This is the real review. Apply "The one rule everything else follows" above to
+every step of it.
+
+**Put the project under `~/Projects/Scratchpad/`, never in the session's own
+temporary scratchpad directory.**
 
 The per-session scratchpad is thrown away when the session ends. The next
 session that picks up `review-task.md` then has a list of findings and no
@@ -315,6 +353,30 @@ architecture enough that the old tree no longer represents it, start a
 sibling directory rather than mutating the old one — the earlier parts still
 need something that matches what they describe.
 
+### Finish each part before opening the next one
+
+Walk the series the way a reader does: part 1 first, and a part is not done
+until **everything that part told the reader to produce exists and has been
+seen working.** Only then open part N+1.
+
+Concretely, before leaving a part, ask:
+
+- Did I create every file it named, with the contents it gave?
+- Did I run every command it printed, in that order, from the directory it
+  implied?
+- Did I see the result it promised — the server booting, the table existing,
+  the error it said would appear, the screen rendering?
+- **If it added anything to the UI, is that on screen in a browser right now?**
+
+The last one is where this goes wrong most often, because the UI usually
+arrives as a small section at the end of a part and looks postponable. It is
+not. Skipping it at part 2 means parts 2, 3 and 4 all get reviewed against a
+system the article never actually describes.
+
+Keep a short running log per part — what you ran, what you saw, what you had
+to add — and carry it into `review-task.md`. Findings written days later from
+memory lose the location detail that makes them actionable.
+
 Record the path in `review-task.md` next to the findings, and say plainly
 which findings were confirmed by running that project and which are still
 reading-only. A finding marked "đã sửa" with no project behind it is a claim,
@@ -326,8 +388,12 @@ stays reproducible on disk for whoever continues.
 
 ## After the review
 
-Report to the user: how many findings, roughly how they break down across
-the three categories, and point at the `review-task.md` table. Do not editorialize
+Report to the user: which pass ran (reading only, or reading + following
+along), how far along the series you actually got, how many findings and
+roughly how they break down across the three categories, and point at the
+`review-task.md` table. State plainly anything the article asked for that you
+did not build — an unbuilt frontend is a hole in the review, not a footnote.
+Never let "I read all four parts" sound like "I followed all four parts". Do not editorialize
 about which ones matter most — that is the next session's call, informed by
 what they intend to do about it (some series stay draft-only for a long
 time; not every gap needs fixing before anyone reads it).
