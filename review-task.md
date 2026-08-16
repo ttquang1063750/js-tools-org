@@ -27,12 +27,12 @@ lệnh và đúng các khối code bài đưa, theo thứ tự bài đưa, khôn
 
 | # | Vị trí | Loại | Mô tả | Trạng thái |
 |---|--------|------|-------|------------|
-| 1 | Part 1 §8.2, khối `Terminal` chứa `seq 1 10 \| xargs -P 10` | Đứt mạch | **Demo trung tâm của Part 1 không chạy được như viết.** Body của `curl` chỉ có `userId` và `amount`, thiếu `reason`. Nhưng `ChargeDto` (§8.4) khai `reason!: CreditReason` kèm `@IsIn([...])`, controller truyền `dto.reason`, và cột `reason` trong `credit-entry.entity.ts` là `NOT NULL`. Kết quả chạy thật: **10/10 request trả 500**, `null value in column "reason" violates not-null constraint`, số dư đứng nguyên 50, không trừ đồng nào. Người đọc làm đúng theo bài sẽ không bao giờ thấy được lỗi double-spend mà cả mục 8 dựng lên để dạy. Thêm `"reason":"transcode"` vào body thì ra đúng kết quả bài mô tả (9×201, 1×400, số dư `-40`) | chưa xử lý |
-| 2 | Part 1 §5 ("Quy ước còn lại") đối chiếu Part 2 §1 | Đứt mạch | Part 1 viết *"Dữ liệu vào từ bên ngoài luôn phải qua DTO + validation"*, cài `class-validator` và dùng `ChargeDto` — nhưng `app.useGlobalPipes(new ValidationPipe())` chỉ xuất hiện ở **Part 2 §1**. Suốt cả Part 1, mọi DTO là trang trí: đo thật thì thiếu trường bắt buộc không bị chặn ở 400 mà lọt xuống Postgres rồi bật ra 500 (xem phát hiện 1). Không phải "thiếu hẳn" — là **đặt sai thứ tự**, và Part 1 tự nhận có thứ mà nó chưa dựng | chưa xử lý |
-| 3 | Part 1 §5, khối `Kết quả chạy thật: npx tsc --noEmit` | Mơ hồ | Bài liệt kê đúng 4 lỗi. Chạy thật với chính `tsconfig.json` bài đưa ra **8 lỗi** — thêm 4 lỗi `TS6133`/`TS6196` (biến khai mà không dùng) do `noUnusedLocals`/`noUnusedParameters` cũng nằm trong khối cấu hình đó. Không sai, nhưng output đã được lọc mà không nói là lọc; người đọc thấy 8 dòng sẽ tưởng mình làm sai | chưa xử lý |
-| 4 | Part 1 §5, khối vá `src/main.ts` (2 dòng) | Thiếu code | Đoạn vá dùng `ConfigService` và `AppConfig` nhưng không kèm hai dòng `import`. Gõ đúng như bài: `TS2304: Cannot find name 'ConfigService'` và `TS2304: Cannot find name 'AppConfig'`. (Cú pháp `app.get(ConfigService<AppConfig, true>)` thì **hợp lệ** — instantiation expression của TS 5 — không phải lỗi) | chưa xử lý |
-| 5 | Part 1 §4.1, khối `npm i ...` | Mơ hồ | Không ghim phiên bản nào. Chạy hôm nay nhận `typeorm@1.1.0` và `zod@4.4.3` — đều là major mới hơn thời điểm viết bài. Lần này cả hai vẫn chạy đúng (đã kiểm), nhưng bài dựa vào API của TypeORM 0.3 (`DataSource`, `typeorm-ts-node-commonjs`) nên rủi ro vỡ theo thời gian là thật. Cần xác nhận: có nên ghim phiên bản trong lệnh `npm i` không | chưa xử lý |
-| 6 | Part 4, một khối code không có `<span class="code-filename">` | Mơ hồ | `extract-parts.py` cảnh báo: Part 4 có 32 khối code nhưng chỉ 31 khối có tên file. Khối còn lại vô hình với mọi công cụ đối chiếu. Chưa đọc tới Part 4 nên chưa biết nó là gì | chưa xử lý |
+| 1 | Part 1 §8.2, khối `Terminal` chứa `seq 1 10 \| xargs -P 10` | Đứt mạch | **Demo trung tâm của Part 1 không chạy được như viết.** Body của `curl` chỉ có `userId` và `amount`, thiếu `reason`. Nhưng `ChargeDto` (§8.4) khai `reason!: CreditReason` kèm `@IsIn([...])`, controller truyền `dto.reason`, và cột `reason` trong `credit-entry.entity.ts` là `NOT NULL`. Kết quả chạy thật: **10/10 request trả 500**, `null value in column "reason" violates not-null constraint`, số dư đứng nguyên 50, không trừ đồng nào. Người đọc làm đúng theo bài sẽ không bao giờ thấy được lỗi double-spend mà cả mục 8 dựng lên để dạy. Thêm `"reason":"transcode"` vào body thì ra đúng kết quả bài mô tả (9×201, 1×400, số dư `-40`) | ✅ đã sửa (đợt 1) — ✅ chạy: 5×201, 5×400, số dư 0 |
+| 2 | Part 1 §5 ("Quy ước còn lại") đối chiếu Part 2 §1 | Đứt mạch | Part 1 viết *"Dữ liệu vào từ bên ngoài luôn phải qua DTO + validation"*, cài `class-validator` và dùng `ChargeDto` — nhưng `app.useGlobalPipes(new ValidationPipe())` chỉ xuất hiện ở **Part 2 §1**. Suốt cả Part 1, mọi DTO là trang trí: đo thật thì thiếu trường bắt buộc không bị chặn ở 400 mà lọt xuống Postgres rồi bật ra 500 (xem phát hiện 1). Không phải "thiếu hẳn" — là **đặt sai thứ tự**, và Part 1 tự nhận có thứ mà nó chưa dựng | ✅ đã sửa (đợt 2) — ✅ chạy: thiếu `reason` ra 400 đúng tên trường |
+| 3 | Part 1 §5, khối `Kết quả chạy thật: npx tsc --noEmit` | Mơ hồ | Bài liệt kê đúng 4 lỗi. Chạy thật với chính `tsconfig.json` bài đưa ra **8 lỗi** — thêm 4 lỗi `TS6133`/`TS6196` (biến khai mà không dùng) do `noUnusedLocals`/`noUnusedParameters` cũng nằm trong khối cấu hình đó. Không sai, nhưng output đã được lọc mà không nói là lọc; người đọc thấy 8 dòng sẽ tưởng mình làm sai | ✅ đã sửa (đợt 2) — ✅ đối chiếu `tsc` thật |
+| 4 | Part 1 §5, khối vá `src/main.ts` (2 dòng) | Thiếu code | Đoạn vá dùng `ConfigService` và `AppConfig` nhưng không kèm hai dòng `import`. Gõ đúng như bài: `TS2304: Cannot find name 'ConfigService'` và `TS2304: Cannot find name 'AppConfig'`. (Cú pháp `app.get(ConfigService<AppConfig, true>)` thì **hợp lệ** — instantiation expression của TS 5 — không phải lỗi) | ✅ đã sửa (đợt 1) — ✅ biên dịch sạch |
+| 5 | Part 1 §4.1, khối `npm i ...` | Mơ hồ | Không ghim phiên bản nào. Chạy hôm nay nhận `typeorm@1.1.0` và `zod@4.4.3` — đều là major mới hơn thời điểm viết bài. Lần này cả hai vẫn chạy đúng (đã kiểm), nhưng bài dựa vào API của TypeORM 0.3 (`DataSource`, `typeorm-ts-node-commonjs`) nên rủi ro vỡ theo thời gian là thật. Cần xác nhận: có nên ghim phiên bản trong lệnh `npm i` không | ✅ đã sửa (đợt 13) — ✅ **đã quyết: KHÔNG ghim**, xem đợt 13 |
+| 6 | Part 4, một khối code không có `<span class="code-filename">` | Mơ hồ | `extract-parts.py` cảnh báo: Part 4 có 32 khối code nhưng chỉ 31 khối có tên file. Khối còn lại vô hình với mọi công cụ đối chiếu. Chưa đọc tới Part 4 nên chưa biết nó là gì | ✅ đã khép (đợt 2) — ✅ không phải lỗi bài, là lỗi regex `extract-parts.py`; đợt 13 chạy lại: 0 cảnh báo |
 
 ## Part 1 §8.3 — ĐÃ LÀM, bài đúng hoàn toàn
 
@@ -49,17 +49,17 @@ dev` lên ở cổng 5173.
 
 | # | Vị trí | Loại | Mô tả | Trạng thái |
 |---|--------|------|-------|------------|
-| 7 | Part 2 §8.1 "Mốc #1 — đăng nhập và tự làm mới token" | Đứt mạch | **Mốc này không tạo ra màn đăng nhập nào.** Bài nói *"Phần đáng nói không phải cái form"* rồi chỉ đưa `src/lib/api.ts`. Không có component form, không có `App.tsx`, không sửa `main.tsx`, không có gì gọi `api()` với email/mật khẩu. Làm đúng theo bài xong mở trình duyệt: **hiện nguyên trang mẫu Vite** ("Edit src/App.tsx and save to test HMR"). Mốc mang tên "đăng nhập" nhưng người đọc không đăng nhập được | chưa xử lý |
-| 8 | Part 2 §8, cả ba file `api.ts` / `upload.ts` / `VideoPlayer.tsx` | Đứt mạch | Cả ba là file mồ côi — không file nào import file nào, và không có cây component nào gắn chúng vào trang. `VideoPlayer` cần prop `assetId` nhưng không chỗ nào trong bài truyền nó vào. Biên dịch sạch chính vì chưa ai dùng tới | chưa xử lý |
-| 9 | Part 2 §8, đối chiếu Part 1 §3 (cây thư mục) | Mơ hồ | Part 1 ghi `web/` là "giao diện React, thêm ở Part 2" — nằm **trong** `media-forge/`. Part 2 lại bảo `npm create vite@latest media-forge-web` thành một dự án **anh em** ở ngoài. Hai chỗ mô tả hai vị trí khác nhau, không chỗ nào nhắc chỗ kia | chưa xử lý |
+| 7 | Part 2 §8.1 "Mốc #1 — đăng nhập và tự làm mới token" | Đứt mạch | **Mốc này không tạo ra màn đăng nhập nào.** Bài nói *"Phần đáng nói không phải cái form"* rồi chỉ đưa `src/lib/api.ts`. Không có component form, không có `App.tsx`, không sửa `main.tsx`, không có gì gọi `api()` với email/mật khẩu. Làm đúng theo bài xong mở trình duyệt: **hiện nguyên trang mẫu Vite** ("Edit src/App.tsx and save to test HMR"). Mốc mang tên "đăng nhập" nhưng người đọc không đăng nhập được | ✅ đã sửa (đợt 3+4) — ✅ đăng nhập thật trong trình duyệt |
+| 8 | Part 2 §8, cả ba file `api.ts` / `upload.ts` / `VideoPlayer.tsx` | Đứt mạch | Cả ba là file mồ côi — không file nào import file nào, và không có cây component nào gắn chúng vào trang. `VideoPlayer` cần prop `assetId` nhưng không chỗ nào trong bài truyền nó vào. Biên dịch sạch chính vì chưa ai dùng tới | ✅ đã sửa (đợt 3) — ✅ hết file mồ côi |
+| 9 | Part 2 §8, đối chiếu Part 1 §3 (cây thư mục) | Mơ hồ | Part 1 ghi `web/` là "giao diện React, thêm ở Part 2" — nằm **trong** `media-forge/`. Part 2 lại bảo `npm create vite@latest media-forge-web` thành một dự án **anh em** ở ngoài. Hai chỗ mô tả hai vị trí khác nhau, không chỗ nào nhắc chỗ kia | ✅ đã sửa (đợt 2) — ✅ đợt 13 đối chiếu lại: Part 1 §3 và Part 2 §8 khớp tên `media-forge-web/` |
 
 ## Part 2 §1–§2 (auth) — đã làm, dừng giữa chừng ở `auth.service.ts`
 
 | # | Vị trí | Loại | Mô tả | Trạng thái |
 |---|--------|------|-------|------------|
-| 10 | Part 2 §1, khối `src/main.ts — bật validate toàn cục` | Thiếu code | Dùng `NestFactory.create<NestExpressApplication>(...)` nhưng không kèm `import type { NestExpressApplication } from '@nestjs/platform-express'`. Gõ đúng như bài: `TS2304: Cannot find name 'NestExpressApplication'`. Cùng họ với phát hiện 4 | chưa xử lý |
-| 11 | Part 2 §2, khối `src/config/configuration.ts — thêm biến cho auth` | Mơ hồ | Header là đường dẫn file đầy đủ nhưng nội dung chỉ có `const configSchema` — mất `import { z }`, mất `export type AppConfig`, mất `validateEnv`. Người đọc hiểu header theo nghĩa "đây là file" và thay cả file thì lập tức vỡ: `TS2305: Module has no exported member 'AppConfig'` ở 4 file khác nhau. Chữ "— thêm biến cho auth" là gợi ý duy nhất rằng đây là mảnh, và nó nằm ở tiêu đề chứ không phải trong văn bản | chưa xử lý |
-| 12 | Part 2, `src/auth/auth.service.ts` — 7 khối rời (block 5, 17, 18, 19, 20, 21, 22) | Đứt mạch | Một file được đưa thành **7 mảnh** mà không có bản hoàn chỉnh nào. Tệ hơn: **`async refresh()` xuất hiện HAI lần** (block 18 "xoay vòng", rồi block 20 "tách tín hiệu ra khỏi transaction") — bản sau thay bản trước nhưng bài không nói rõ là thay. Block 19 (`const GRACE_MS = 30_000;` + một khối `if`) không phải file cũng không phải method, phải chèn vào giữa `refresh()`, không nói chèn ở đâu. Block 22 là "constructor đầy đủ", tức constructor ở block 5 đã lỗi thời. Ghép lại đúng chỉ có thể bằng cách đoán | chưa xử lý |
+| 10 | Part 2 §1, khối `src/main.ts — bật validate toàn cục` | Thiếu code | Dùng `NestFactory.create<NestExpressApplication>(...)` nhưng không kèm `import type { NestExpressApplication } from '@nestjs/platform-express'`. Gõ đúng như bài: `TS2304: Cannot find name 'NestExpressApplication'`. Cùng họ với phát hiện 4 | ✅ đã sửa (đợt 1) — ✅ biên dịch sạch |
+| 11 | Part 2 §2, khối `src/config/configuration.ts — thêm biến cho auth` | Mơ hồ | Header là đường dẫn file đầy đủ nhưng nội dung chỉ có `const configSchema` — mất `import { z }`, mất `export type AppConfig`, mất `validateEnv`. Người đọc hiểu header theo nghĩa "đây là file" và thay cả file thì lập tức vỡ: `TS2305: Module has no exported member 'AppConfig'` ở 4 file khác nhau. Chữ "— thêm biến cho auth" là gợi ý duy nhất rằng đây là mảnh, và nó nằm ở tiêu đề chứ không phải trong văn bản | ✅ đã sửa (đợt 1) — ✅ ghép đúng thì biên dịch sạch |
+| 12 | Part 2, `src/auth/auth.service.ts` — 7 khối rời (block 5, 17, 18, 19, 20, 21, 22) | Đứt mạch | Một file được đưa thành **7 mảnh** mà không có bản hoàn chỉnh nào. Tệ hơn: **`async refresh()` xuất hiện HAI lần** (block 18 "xoay vòng", rồi block 20 "tách tín hiệu ra khỏi transaction") — bản sau thay bản trước nhưng bài không nói rõ là thay. Block 19 (`const GRACE_MS = 30_000;` + một khối `if`) không phải file cũng không phải method, phải chèn vào giữa `refresh()`, không nói chèn ở đâu. Block 22 là "constructor đầy đủ", tức constructor ở block 5 đã lỗi thời. Ghép lại đúng chỉ có thể bằng cách đoán | ✅ đã sửa (đợt 1+4) — ✅ đợt 13 chạy lại: file ghép 151 dòng, `tsc` sạch, login + refresh đều 201 |
 
 ## Đã sửa vào bài (16/08/2026)
 
@@ -69,7 +69,7 @@ dev` lên ở cổng 5173.
 | 4 | Part 1 §5 — thêm 2 dòng `import` vào đoạn vá `main.ts` | ✅ biên dịch sạch |
 | 10 | Part 2 §1 — thêm `import type { NestExpressApplication }` | ✅ biên dịch sạch |
 | 11 | Part 2 §2 — đổi tiêu đề khối thành "CHỈ thay khối configSchema, giữ nguyên phần còn lại của file" | ✅ ghép đúng thì biên dịch sạch |
-| 12 | Part 2 — sửa 7 tiêu đề khối `auth.service.ts` để nói rõ quan hệ: khối nào THAY khối nào, khối nào là đoạn chèn chứ không phải file, constructor nào lỗi thời | chưa ghép lại để chạy |
+| 12 | Part 2 — sửa 7 tiêu đề khối `auth.service.ts` để nói rõ quan hệ: khối nào THAY khối nào, khối nào là đoạn chèn chứ không phải file, constructor nào lỗi thời | ✅ **đã ghép lại và chạy** (đợt 4 + đợt 13) — 151 dòng, `tsc` sạch, `/auth/login` và `/auth/refresh` đều 201 |
 
 `check-lesson.js` 11/11 cho cả part-1 và part-2 sau khi sửa.
 
@@ -89,9 +89,9 @@ lại đúng lệnh trong bài: 5×201, 5×400, số dư dừng ở 0 — khớp
 |---|---|---|
 | 2 | Part 1 §8.4 — thêm bước đăng ký `ValidationPipe` ngay sau khi giới thiệu `ChargeDto`, kèm callout nói rõ quên nó thì DTO thành đồ trang trí (500 từ Postgres thay vì 400 từ validation) | ✅ thiếu `reason` giờ ra `400` kèm đúng tên trường |
 | 3 | Part 1 §5 — tiêu đề khối ghi rõ "đã lược các lỗi biến-không-dùng", thêm đoạn nói chạy thật ra **8** dòng chứ không phải 4 | ✅ đối chiếu với `tsc` thật |
-| 5 | Part 1 §4.1 — thêm chú thích phiên bản đã dùng để viết bài (`typeorm@0.3`, `zod@3`, …) | — |
+| 5 | Part 1 §4.1 — thêm chú thích phiên bản đã dùng để viết bài (`typeorm@0.3`, `zod@3`, …) | ⚠️ **đợt 13 viết lại hẳn** — chú thích cũ nêu sai bộ phiên bản (xem đợt 13) |
 | 6 | **Không phải lỗi của bài.** Là lỗi `extract-parts.py`: prettier ngắt dòng thẻ `<span class="code-filename">` nên regex trượt. Đã sửa regex; cũng sửa một tiêu đề tôi lỡ nhét `<code>` vào khi vá #12 | ✅ extractor không còn cảnh báo |
-| 9 | Part 1 §3 — nói rõ giao diện là dự án **riêng nằm cạnh** `media-forge/`, tên `media-forge-web/` | — |
+| 9 | Part 1 §3 — nói rõ giao diện là dự án **riêng nằm cạnh** `media-forge/`, tên `media-forge-web/` | ✅ **đợt 13 đối chiếu lại** — Part 1 §3 và Part 2 §8 dùng đúng cùng một tên, không còn mâu thuẫn |
 | 14 | **Mới.** UUID mẫu `11111111-1111-1111-1111-111111111111` dùng suốt §8 **không hợp lệ với `@IsUUID()`** — nibble variant sai RFC 4122. Sau khi #2 bật `ValidationPipe`, chính lệnh curl của bài trả `400 userId must be a UUID`, demo không bao giờ chạy. Đã đổi cả 4 chỗ sang `11111111-1111-4111-8111-111111111111` | ✅ 5×201, 5×400, số dư 0 |
 
 ## Đợt sửa thứ ba — #7, #8 (16/08/2026)
@@ -125,7 +125,7 @@ Trang mẫu Vite đã biến mất — đó là mốc mà lượt rà soát trư
 
 | # | Vị trí | Loại | Mô tả | Trạng thái |
 |---|--------|------|-------|------------|
-| 15 | Part 2 §3.3, khối `auth.service.ts — BẢN CUỐI` | Đứt mạch | Bản cuối của `refresh()` **dùng `GRACE_MS` nhưng không khai báo nó**. `const GRACE_MS = 30_000` chỉ nằm trong khối "đoạn thay cho nhánh..." — mà khối đó đã bị bản cuối thay thế. Ghép theo đúng chỉ dẫn: `TS2304: Cannot find name 'GRACE_MS'` | chưa xử lý |
+| 15 | Part 2 §3.3, khối `auth.service.ts — BẢN CUỐI` | Đứt mạch | Bản cuối của `refresh()` **dùng `GRACE_MS` nhưng không khai báo nó**. `const GRACE_MS = 30_000` chỉ nằm trong khối "đoạn thay cho nhánh..." — mà khối đó đã bị bản cuối thay thế. Ghép theo đúng chỉ dẫn: `TS2304: Cannot find name 'GRACE_MS'` | ✅ đã sửa (đợt 5) — ✅ ghép ra biên dịch sạch |
 | 16 | Part 2 §3.1, đoạn nói về cột `replaced_by_hash` | Đứt mạch | Bài có nhắc `npm run migration:generate -- AddReplacedByHash` nhưng **lệnh thiếu đường dẫn** (Part 1 §7.4 dùng `-- src/database/migrations/InitSchema`) và **không hề nhắc `npm run migration:run`**. Làm đúng theo bài thì entity có cột còn bảng thì chưa, và `/auth/login` trả **500**: `column "replaced_by_hash" of relation "refresh_tokens" does not exist` — lỗi hiện ở chỗ khác hẳn chỗ vừa sửa | ✅ **đã sửa, đã xác nhận** — thay bằng khối Terminal hai lệnh đầy đủ + callout cảnh báo |
 
 ### Đăng nhập đã chạy thật
@@ -262,6 +262,26 @@ Trình duyệt thật, `http://localhost:5173`, backend + nginx + Postgres + Red
 `PipelineStatus::DEMUXER_ERROR_COULD_NOT_OPEN`, hiển thị `0:00` và không phát
 được gì.
 
+## Đợt mười ba — khép nhóm còn treo (#5, #6, #9, #12) + hai lỗi tự gây, 16/08/2026
+
+Không có mục nào của bài được đọc mới ở đợt này; đây là đợt đóng sổ những dòng
+còn để trống ở các đợt trước, và dọn hai thứ chính tôi làm hỏng.
+
+| # | Việc | Kết quả |
+|---|---|---|
+| 5 | **Đã quyết: KHÔNG ghim phiên bản.** Chú thích cũ trong khối `npm i` nêu `typeorm@0.3 zod@3 class-validator@0.14` như thể đó là bộ đã kiểm — nhưng toàn bộ Part 1 + Part 2 vừa được dựng và chạy thật hôm nay trên **typeorm 1.1, zod 4.4, class-validator 0.15, @nestjs/* 11, Node 24**, tức là các major MỚI hơn. Chú thích cũ chỉ người đọc về một bộ mà không ai xác nhận gần đây. Đã thay bằng callout ghi đúng bộ đã chạy thật, kèm lý do vì sao ghim là đổi rủi ro này lấy rủi ro khác | ✅ **đã xác nhận bằng chạy** — cả `typeorm-ts-node-commonjs` lẫn `migration:show` chạy đúng trên typeorm 1.1: `[X] InitSchema`, `[X] AddReplacedByHash` |
+| 6 | Chạy lại `extract-parts.py` trên cả 4 part | ✅ **0 cảnh báo**, 184 khối code, tất cả đều có tên file. Khép lại: không phải lỗi của bài |
+| 9 | Đối chiếu lại Part 1 §3 với Part 2 §8 | ✅ khớp — Part 1 gọi đúng `media-forge-web/` "nằm cạnh, không nằm trong", Part 2 `npm create vite@latest media-forge-web`. Không còn mâu thuẫn |
+| 12 | Ghép lại `auth.service.ts` từ 7 khối theo đúng tiêu đề đã sửa, rồi chạy | ✅ **151 dòng, `tsc --noEmit` sạch**, `/auth/login` → `201`, `/auth/refresh` (xoay vòng) → `201` |
+
+### Hai lỗi do chính lượt rà soát này gây ra, đã sửa
+
+| Lỗi | Sửa gì |
+|---|---|
+| **4 khối code trong Part 2 biến mất khỏi mọi công cụ đối chiếu** — tôi nhét `<code>` vào trong `<span class="code-filename">` khi viết các tiêu đề "THÊM/CHÈN/CHỈ". Đúng cái bẫy mà lịch sử #6 đã ghi lại một lần rồi | Bỏ thẻ `<code>` khỏi cả 4 tiêu đề. `extract-parts.py` trích đủ **80/80** khối của Part 2 |
+| **Part 1 trượt Prettier** sau khi sửa #5 | `npx prettier --write`. `check-lesson.js` **11/11 cho cả 4 part** |
+| **Cây thư mục Part 1 §3 nói sai thời điểm** — ghi `docker-compose.yml # chỉ Postgres — redis thêm ở Part 3`, nhưng bản vá #22 đã đưa redis về Part 2 | Đổi thành "nginx và redis thêm ở Part 2" |
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**
@@ -271,8 +291,8 @@ Trình duyệt thật, `http://localhost:5173`, backend + nginx + Postgres + Red
 - [x] Part 2 §6 + §6.2 (upload stream, upload nối tiếp) — #25–#29
 - [x] Part 2 §7 (download, Range, X-Accel-Redirect) — #30–#32
 - [x] Part 2 §8.2 (upload + player trong trình duyệt) — #33–#37
-- [ ] Nhóm không chặn còn treo từ đợt đầu: **#2, #3, #5, #6, #9** (đã sửa vào bài
-      nhưng chưa chạy lại để xác nhận, trừ #2 và #3)
+- [x] Nhóm không chặn treo từ đợt đầu — **#2, #3, #5, #6, #9, #12 đã khép hết**
+      ở đợt 13. **Không còn dòng nào mang trạng thái "chưa xử lý" trong file này.**
 - [ ] **Part 3 — chưa làm.** worker, ffmpeg, cluster, hàng đợi Redis Streams,
       WebSocket. Đã thấy trước hai chỗ đáng ngờ khi grep, cần kiểm khi làm tới:
       `docker-compose.yml` mục 4.3 dùng `DATABASE_URL: postgres://app:secret@postgres:5432/media`
