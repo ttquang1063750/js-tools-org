@@ -2379,12 +2379,115 @@ export class MediaService {
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">src/config/configuration.ts — thêm biến cho upload</span>
+                <span class="code-filename"
+                  >src/config/configuration.ts — CHỈ thêm hai dòng vào <code>configSchema</code>, giữ nguyên phần còn
+                  lại của file</span
+                >
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">UPLOAD_DIR: z.string().default('./uploads'),
 TEMP_UPLOAD_DIR: z.string().default('./uploads/tmp'),</code></pre>
             </div>
+
+            <p>
+              Hai biến này có <code>.default()</code> nên không phải sửa <code>.env</code>, nhưng
+              <code>createWriteStream</code> thì <strong>không tự tạo thư mục</strong>. Thiếu nó, lỗi
+              <code>ENOENT</code> nổ ra ở giữa lúc đang đọc body — tức là người dùng đợi hết cả file rồi mới nhận 500,
+              chứ không phải một lỗi cấu hình gọn gàng lúc khởi động. Tạo trước một lần:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">mkdir -p uploads/tmp</code></pre>
+            </div>
+
+            <p>
+              Còn thiếu mảnh cuối: cả controller lẫn service ở trên đều chưa thuộc module nào, nên NestJS không hề biết
+              chúng tồn tại. Module này có một chi tiết dễ vấp — nó phải import <code>AuthModule</code>:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/media/media.module.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Video } from './video.entity';
+import { MediaService } from './media.service';
+import { UploadController } from './upload.controller';
+import { AuthModule } from '../auth/auth.module';
+
+@Module({
+  // forFeature: cong bo repository cua Video cho MediaService tiem vao.
+  // AuthModule: vi JwtAuthGuard tiem JwtService — guard duoc phan giai trong
+  // module DUNG no, khong phai module khai no.
+  imports: [TypeOrmModule.forFeature([Video]), AuthModule],
+  controllers: [UploadController],
+  providers: [MediaService],
+  exports: [MediaService],
+})
+export class MediaModule {}</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Guard được phân giải ở module dùng nó</div>
+              <div class="callout__content">
+                Bỏ <code>AuthModule</code> khỏi <code>imports</code> thì ứng dụng <strong>không khởi động nổi</strong>,
+                với thông báo dễ gây hiểu lầm:
+                <code
+                  >Nest can't resolve dependencies of the JwtAuthGuard (?)... argument JwtService at index [0] is
+                  available in the MediaModule module</code
+                >. Lỗi chỉ vào <code>MediaModule</code> dù <code>JwtAuthGuard</code> nằm trong thư mục
+                <code>auth/</code> — vì decorator <code>@UseGuards</code> nằm ở <code>UploadController</code>, nên
+                NestJS đi tìm <code>JwtService</code> trong ngữ cảnh của <code>MediaModule</code>.
+                <code>AuthModule</code> đã <code>exports: [AuthService, JwtModule]</code> từ mục 2 chính là để chỗ này
+                dùng được.
+              </div>
+            </div>
+
+            <p>Thêm <code>MediaModule</code> vào <code>imports</code> của <code>AppModule</code> rồi thử thật:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — upload thật, và đo bộ nhớ trong lúc upload</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">head -c 838860800 /dev/urandom &gt; /tmp/big.bin      # mot file 800MB
+
+TOK=$(curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+  -X POST https://media-forge.local:8443/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@test.local","password":"matkhau123"}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessToken"])')
+
+PID=$(lsof -ti:3000 | head -1)
+ps -o rss= -p $PID                                 # bo nho TRUOC khi upload
+
+curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+  -X POST https://media-forge.local:8443/media/upload \
+  -H "Authorization: Bearer $TOK" \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @/tmp/big.bin -D- -w '\nhttp=%{http_code}\n'
+
+ps -o rss= -p $PID                                 # va SAU khi upload xong</code></pre>
+            </div>
+
+            <p>
+              Kết quả đo trên máy viết bài: file 800&nbsp;MB đi trọn vẹn, trả về
+              <code>{"videoId":"5df79e85-..."}</code> với <code>http=201</code>, và bộ nhớ tiến trình đi từ
+              <strong>212&nbsp;MB lên đỉnh 262&nbsp;MB</strong> — tăng khoảng 50&nbsp;MB, không phải 800. Đó là toàn bộ
+              luận điểm của mục này gói trong một con số: cách sai sẽ cho ra một tiến trình phình đúng bằng kích thước
+              file.
+            </p>
+            <p>
+              Trong đống header trả về còn một dòng đáng chú ý: <code>x-ratelimit-remaining: 19</code>. Nó chứng minh
+              <code>RateLimitGuard</code> ở mục 5.1 đã chạy thật — gáo token 20 của gói <code>free</code> vừa bị múc mất
+              một, và con số đó đi qua Redis chứ không nằm trong bộ nhớ tiến trình.
+            </p>
 
             <h3>6.1. Backpressure, nói cho gọn</h3>
 

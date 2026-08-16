@@ -176,6 +176,21 @@ Làm theo bài: tạo `nginx/media-forge.conf` đúng nội dung bài đưa, áp
 |---|--------|------|-------|------------|
 | 24 | Part 2 §5.2, khối `Ngân sách thời gian, tính từ trong ra ngoài` | Thiếu code | Bài đưa bốn con số như một cấu hình đã chốt (`statement_timeout` 5s, interceptor 10s, `proxy_read_timeout` 15s, client 20s) và một nguyên tắc rất rõ. Nhưng **ba trong bốn tầng không bao giờ được cài đặt ở bất kỳ part nào**: `statement_timeout` không xuất hiện trong `typeorm.options.ts` hay chuỗi `DATABASE_URL`; không có interceptor timeout nào trong cả loạt bài (grep cả 4 part: chỉ Part 4 có `correlation.interceptor.ts`, việc khác hẳn); `fetch` ở §8 không có `AbortController` nào (hai `AbortController` ở Part 3 là để giết tiến trình ffmpeg, không liên quan). Chỉ `proxy_read_timeout 15s` là thật, vì nó nằm trong file nginx. Người đọc muốn dựng đúng cái ngân sách này không có chỗ nào để bắt đầu | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm đoạn nói rõ chỉ 1/4 con số là thật, rồi đưa `extra: { statement_timeout: 5_000 }` vào `typeorm.options.ts`, viết hẳn `src/common/timeout/timeout.interceptor.ts` + dòng `useGlobalInterceptors`, và callout chỉ cách tự kiểm. Chạy thật: `SHOW statement_timeout` → `5s`, `SELECT pg_sleep(7)` → `canceling statement due to statement timeout`; app vẫn khởi động và phục vụ qua nginx. Tầng thứ tư (`AbortController`) chuyển sang §8 vì thuộc giao diện |
 
+## Đợt chín — Part 2 §6 (upload), 16/08/2026
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 25 | Part 2 §6, `src/media/upload.controller.ts` + `media.service.ts` | Thiếu code | **Không có `MediaModule` ở bất kỳ đâu trong loạt bài.** Gõ đủ cả hai file, `tsc --noEmit` sạch, khởi động lại: NestJS map đúng 5 route cũ (`/auth/*`, `/billing/charge`) và **không có `/media/upload`**. Controller nằm im trên đĩa y hệt ba file frontend ở #8. Ngoài `@Module` ra còn thiếu cả `TypeOrmModule.forFeature([Video])` — không có nó thì `@InjectRepository(Video)` cũng không phân giải được. Cùng họ với #23 nhưng nặng hơn: đây là điểm vào của toàn bộ mục 6 và mục 7 | ✅ **đã sửa, đã xác nhận bằng chạy** — viết hẳn khối `src/media/media.module.ts`. Sau khi thêm: `Mapped {/media/upload, POST} route` |
+| 26 | Part 2 §6, `UPLOAD_DIR: z.string().default('./uploads')` | Thiếu code | Không mục nào bảo tạo thư mục đó, và không code nào tự tạo. `createWriteStream(join(uploadDir, ...))` gặp thư mục không tồn tại thì ném `ENOENT` — nhưng vì lỗi xảy ra **giữa chừng một `pipeline` đang đọc body**, người đọc nhận được lỗi 500 ở giữa lúc upload chứ không phải một thông báo cấu hình rõ ràng. `TEMP_UPLOAD_DIR` khai ra nhưng ngoài `this.tempDir = ...` thì cả loạt bài không dùng tới nó ở đâu | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm đoạn giải thích vì sao `createWriteStream` không tự tạo thư mục (và vì sao lỗi nổ ra giữa chừng chứ không phải lúc khởi động) kèm khối `mkdir -p uploads/tmp`. `TEMP_UPLOAD_DIR` chưa dùng tới: để nguyên, Part 3 mới dùng |
+
+| 27 | Part 2 §6, `upload.controller.ts` dòng `@UseGuards(JwtAuthGuard, RateLimitGuard)` | Đứt mạch | **Mới, chỉ lộ ra khi chạy.** Sau khi thêm `MediaModule`, app vẫn không khởi động nổi: `Nest can't resolve dependencies of the JwtAuthGuard (?). Please make sure that the argument JwtService at index [0] is available in the MediaModule module`. Guard được phân giải trong module **dùng** nó chứ không phải module **khai** nó, nên `MediaModule` phải `imports: [AuthModule]`. Bài không nhắc một chữ nào — và thông báo lỗi lại chỉ vào `MediaModule` trong khi `JwtAuthGuard` nằm ở thư mục `auth/`, đủ để người đọc đi sai hướng khá lâu | ✅ **đã sửa, đã xác nhận bằng chạy** — `AuthModule` đưa vào `imports` của `MediaModule` (kèm callout giải thích thông báo lỗi gây hiểu lầm). Khởi động sạch |
+
+### §6 đã chạy thật
+
+- Upload **50 MB** qua nginx → `201` + `{"videoId":"..."}`, file nằm đúng `uploads/<uuid>.bin`
+- Upload **800 MB** → `201`, RSS tiến trình **212 MB → đỉnh 262 MB** (tăng ~50 MB, không phải 800) — đúng luận điểm trung tâm của mục 6
+- Header trả về có `x-ratelimit-remaining: 19` → **xác nhận #21/#22/#23 bằng chạy**: `RateLimitGuard` gọi script Lua qua Redis thật
+
 ## Việc còn lại của lượt rà soát này
 
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
