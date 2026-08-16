@@ -2146,6 +2146,81 @@ cho mot ket qua khong con ai doi, va nhat ky ghi "thanh cong" cho mot request
 ma nguoi dung da thay bao loi.</code></pre>
             </div>
 
+            <p>
+              Trong bốn con số đó mới có đúng một cái là thật: <code>proxy_read_timeout 15s</code> đã nằm trong
+              <code>media-forge.conf</code> từ mục 4. Ba cái còn lại phải tự đặt, và mỗi cái đặt ở một chỗ khác nhau.
+              Tầng trong cùng là một dòng trong tuỳ chọn TypeORM — Postgres tự huỷ truy vấn quá hạn, không cần ai canh:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >src/database/typeorm.options.ts — THÊM một dòng vào <code>sharedOptions</code></span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">  // Bat buoc false. Xem canh bao ben duoi.
+  synchronize: false,
+
+  // Tang trong cung cua ngan sach thoi gian. Postgres tu huy truy van qua 5s,
+  // thay vi de no chay tiep khi khong con ai doi ket qua nua.
+  extra: { statement_timeout: 5_000 },</code></pre>
+            </div>
+
+            <p>
+              Tầng giữa là một interceptor toàn cục. Nó dùng <code>rxjs</code>, vốn đã có sẵn cùng NestJS nên không phải
+              cài thêm gì:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/common/timeout/timeout.interceptor.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { CallHandler, ExecutionContext, Injectable, NestInterceptor, RequestTimeoutException } from '@nestjs/common';
+import { Observable, TimeoutError, throwError } from 'rxjs';
+import { catchError, timeout } from 'rxjs/operators';
+
+// Dai hon statement_timeout (5s) de truy van kip bao loi truoc, va ngan hon
+// proxy_read_timeout (15s) de nginx khong bo cuoc truoc ung dung.
+const HANDLER_TIMEOUT_MS = 10_000;
+
+@Injectable()
+export class TimeoutInterceptor implements NestInterceptor {
+  intercept(_context: ExecutionContext, next: CallHandler): Observable&lt;unknown&gt; {
+    return next.handle().pipe(
+      timeout(HANDLER_TIMEOUT_MS),
+      catchError((error: unknown) =&gt;
+        throwError(() =&gt; (error instanceof TimeoutError ? new RequestTimeoutException() : error)),
+      ),
+    );
+  }
+}</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >src/main.ts — CHÈN một dòng sau <code>useGlobalPipes</code>, giữ nguyên phần còn lại</span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">app.useGlobalInterceptors(new TimeoutInterceptor());</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">📝 Kiểm rằng tầng trong cùng có thật</div>
+              <div class="callout__content">
+                <code>extra</code> của TypeORM đi thẳng xuống driver <code>pg</code>, nên dễ tưởng đã đặt mà thực ra
+                không. Cách nhanh nhất để biết chắc là hỏi thẳng Postgres qua chính <code>AppDataSource</code> đã viết ở
+                Part 1 mục 7: <code>SHOW statement_timeout</code> phải trả về <code>5s</code>, và
+                <code>SELECT pg_sleep(7)</code> phải chết với
+                <code>canceling statement due to statement timeout</code> thay vì chạy đủ bảy giây. <br /><br />
+                Tầng ngoài cùng — <code>AbortController</code> phía trình duyệt — thuộc về giao diện, nên nó nằm ở mục 8
+                cùng với <code>api.ts</code>.
+              </div>
+            </div>
+
             <h2>6. Upload: nhận file 2 GB mà không phình bộ nhớ</h2>
 
             <p>
