@@ -84,12 +84,11 @@ dựng lại đúng trạng thái cuối Part 1 (không lẫn file Part 2) rồi
 
 | # | Vị trí | Loại | Mô tả | Trạng thái |
 |---|--------|------|-------|------------|
-| 13 | Part 2 §2, khối `configuration.ts` đối chiếu Part 1 §4.4 (`.env.example`) | Thiếu code | Schema thêm `JWT_SECRET: z.string().min(32)` **bắt buộc** (cùng `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL_DAYS`, `REDIS_URL`) nhưng **không mục nào bảo thêm chúng vào `.env` / `.env.example`**. Làm đúng theo bài xong chạy `npm run start:dev`: app từ chối khởi động — `JWT_SECRET: Invalid input: expected string, received undefined`. Chặn hoàn toàn phần còn lại của Part 2 | chưa xử lý |
+| 13 | Part 2 §2, khối `configuration.ts` đối chiếu Part 1 §4.4 (`.env.example`) | Thiếu code | Schema thêm `JWT_SECRET: z.string().min(32)` **bắt buộc** (cùng `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL_DAYS`, `REDIS_URL`) nhưng **không mục nào bảo thêm chúng vào `.env` / `.env.example`**. Làm đúng theo bài xong chạy `npm run start:dev`: app từ chối khởi động — `JWT_SECRET: Invalid input: expected string, received undefined`. Chặn hoàn toàn phần còn lại của Part 2 | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm một đoạn văn nói rõ 3/4 biến có `.default()` nên chỉ `JWT_SECRET` là bắt buộc, kèm khối Terminal sinh khoá bằng `openssl rand -hex 32` và bổ sung `.env.example`. Chạy lại đúng lệnh đó: khoá dài 64 ký tự, app khởi động bình thường |
 
 ## Việc còn lại của lượt rà soát này
 
 - [ ] Xác nhận lại #1 trên project sạch đúng trạng thái cuối Part 1
-- [ ] Sửa #13 (bổ sung khối `.env` cho Part 2)
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
 - [ ] Quyết #7/#8 (giao diện Part 2 không có màn đăng nhập)
 - [ ] Ghép xong `auth.service.ts` rồi chạy thật luồng đăng nhập / refresh — **chưa làm**
