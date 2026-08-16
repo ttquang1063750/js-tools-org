@@ -1745,28 +1745,105 @@ app.set('trust proxy', 1);</code></pre>
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">nginx — chặn theo IP, ở tầng ngoài cùng</span>
+                <span class="code-filename">nginx/media-forge.conf — bản đầy đủ sau khi thêm giới hạn theo IP</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-bash"># 10MB bo nho giu duoc khoang 160.000 dia chi IP.
+              <pre><code class="language-bash">upstream app {
+    server app:3000;
+    keepalive 32;
+}
+
+# NGU CANH `http` — hai dong nay phai nam NGOAI moi khoi server.
+# 10MB bo nho giu duoc khoang 160.000 dia chi IP.
 limit_req_zone $binary_remote_addr zone=general:10m rate=30r/s;
 limit_req_zone $binary_remote_addr zone=login:10m   rate=5r/m;
 
-location /auth/login {
-    limit_req zone=login burst=3 nodelay;
-    proxy_pass http://app;
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name media-forge.local;
+
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    client_max_body_size 2g;
+    client_body_timeout  300s;
+
+    # DOI CHO so voi muc 4: bon dong header gio dat o muc `server` chu khong
+    # trong `location`, nen CA HAI location duoi day deu thua ke chung.
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 15s;
+
+    location /auth/login {
+        limit_req zone=login burst=3 nodelay;
+        proxy_pass http://app;
+    }
+
+    location / {
+        limit_req zone=general burst=60 nodelay;
+        proxy_pass http://app;
+    }
 }
 
-location / {
-    limit_req zone=general burst=60 nodelay;
-    proxy_pass http://app;
+server {
+    listen 80;
+    server_name media-forge.local;
+    return 301 https://$host$request_uri;
 }</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Hai ngữ cảnh khác nhau, và cái bẫy khi ghép</div>
+              <div class="callout__content">
+                <code>limit_req_zone</code> khai báo vùng nhớ dùng chung nên nó thuộc ngữ cảnh <code>http</code> — đặt
+                nhầm vào trong <code>server</code> thì nginx từ chối nạp. Còn <code>limit_req</code> là chỗ
+                <em>sử dụng</em> vùng đó nên nằm trong <code>location</code>. Nhét cả hai vào cùng một chỗ là lỗi
+                <code>"location" directive is not allowed here</code>. <br /><br />
+                Cái bẫy thứ hai tinh vi hơn: mục 4 để bốn dòng <code>proxy_set_header</code> bên trong
+                <code>location /</code>. Giờ có thêm <code>location /auth/login</code>, mà nginx
+                <strong>không</strong> cho location con thừa kế từ location anh em — chép thiếu là endpoint đăng nhập
+                mất sạch <code>X-Forwarded-For</code>, và <code>trust proxy</code> vừa đặt ở mục 4.2 lại đọc ra IP của
+                nginx. Đẩy chúng lên mức <code>server</code> như trên là cách gọn nhất để không bao giờ quên.
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — nhìn thấy nó chặn thật</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">docker exec forge-nginx nginx -t &amp;&amp; docker exec forge-nginx nginx -s reload
+
+# rate=5r/m + burst=3 -> vai request dau lot, phan con lai bi chan ngay tai nginx
+for i in $(seq 1 8); do
+  curl -sk --resolve media-forge.local:8443:127.0.0.1 -o /dev/null -w '%{http_code} ' \
+    -X POST https://media-forge.local:8443/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"demo@test.local","password":"sai"}'
+done; echo
+# -> 400 400 400 400 503 503 503 503</code></pre>
             </div>
 
             <p>
               <code>rate=5r/m</code> ở endpoint đăng nhập là để chống dò mật khẩu. <code>burst=3</code> cho phép dồn ba
               request vượt mức trước khi từ chối, còn <code>nodelay</code> nghĩa là phục vụ chúng ngay chứ không xếp
               hàng cho đều — người gõ sai mật khẩu rồi thử lại ngay không phải chờ vô cớ.
+            </p>
+            <p>
+              Chú ý mã trả về là <strong>503</strong> chứ không phải 429. Đó là mặc định của <code>limit_req</code>, và
+              nó khác hẳn mã 429 mà tầng ứng dụng sẽ trả ở mục 5.1 ngay dưới đây — hai con số khác nhau là dấu hiệu rất
+              tiện để biết request bị chặn ở tầng nào. Muốn nginx cũng trả 429 thì thêm
+              <code>limit_req_status 429;</code>, nhưng giữ nguyên 503 thì đọc log dễ hơn.
+            </p>
+            <p>
+              Số request lọt qua ở lần chạy đầu có thể không đúng bằng 4: gáo của nginx được tính theo thời gian thật,
+              nên nếu vừa gọi <code>/auth/login</code> ở mục 4 xong thì ngân sách còn ít hơn. Chờ một phút rồi chạy lại
+              sẽ thấy đúng bốn request đầu lọt.
             </p>
             <p>
               Nhưng nginx chỉ biết địa chỉ IP. Nó không biết người dùng này gói miễn phí hay trả tiền, không biết hôm
@@ -1827,10 +1904,61 @@ return { allowed, math.floor(tokens) }</code></pre>
             </p>
 
             <p>
-              File Lua ở trên cần một nơi nạp và chạy nó. <code>RedisService</code> kế thừa thẳng từ client
-              <code>ioredis</code> — mọi lệnh Redis thô (<code>xadd</code>, <code>publish</code>,
-              <code>duplicate()</code>...) dùng ở Part 3 đều là method có sẵn từ lớp cha, chỉ
-              <code>runTokenBucket()</code> là method riêng thêm vào cho gáo token ở đây:
+              File Lua ở trên cần một nơi nạp và chạy nó, mà trước đó thì cần hai thứ chưa hề có trong dự án: thư viện
+              client và một Redis đang chạy. Cả hai đều thêm vào lúc này.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">npm i ioredis   # bai nay viet voi ioredis@5</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >docker/docker-compose.yml — THÊM dịch vụ redis, giữ nguyên postgres và nginx đã có</span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-yaml">services:
+  # ... postgres (Part 1 muc 4.5) va nginx (muc 4) giu nguyen ...
+
+  redis:
+    image: redis:7-alpine
+    container_name: forge-redis
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">docker compose -f docker/docker-compose.yml up -d redis
+docker exec forge-redis redis-cli ping
+# -> PONG</code></pre>
+            </div>
+
+            <p>
+              Biến <code>REDIS_URL</code> đã khai ở mục 2 với <code>.default('redis://localhost:6379')</code>, nên không
+              phải sửa <code>.env</code>. Mặt trái của cái mặc định đó: thiếu Redis thì ứng dụng vẫn khởi động bình
+              thường rồi mới chết lúc guard chạy request đầu tiên — khác hẳn kiểu dừng ngay từ đầu của
+              <code>JWT_SECRET</code>.
+            </p>
+
+            <p>
+              Giờ mới tới chỗ nạp file Lua. <code>RedisService</code> kế thừa thẳng từ client <code>ioredis</code> — mọi
+              lệnh Redis thô (<code>xadd</code>, <code>publish</code>, <code>duplicate()</code>...) dùng ở Part 3 đều là
+              method có sẵn từ lớp cha, chỉ <code>runTokenBucket()</code> là method riêng thêm vào cho gáo token ở đây:
             </p>
 
             <div class="code-window">
@@ -1901,6 +2029,34 @@ export class RedisService extends Redis implements OnModuleDestroy {
                 nguyên, chỉ khác đường dẫn báo lỗi.
               </div>
             </div>
+
+            <p>
+              <code>RedisService</code> là một provider, nên nó cần một module công bố mình ra. Module này rất ngắn
+              nhưng bỏ nó đi thì mọi thứ dựa vào Redis từ đây tới hết Part 3 đều không tiêm được:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/redis/redis.module.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Global, Module } from '@nestjs/common';
+import { RedisService } from './redis.service';
+
+// @Global vi gan nhu module nao cung can Redis (rate limit o day, hang doi va
+// WebSocket o Part 3) — khai bao mot lan, khoi import lai o khap noi.
+@Global()
+@Module({
+  providers: [RedisService],
+  exports: [RedisService],
+})
+export class RedisModule {}</code></pre>
+            </div>
+
+            <p>
+              Rồi thêm <code>RedisModule</code> vào mảng <code>imports</code> của <code>AppModule</code>, đúng chỗ đã
+              thêm <code>AuthModule</code> ở mục 2.
+            </p>
 
             <div class="code-window">
               <div class="code-header">
