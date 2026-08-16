@@ -300,6 +300,34 @@ còn để trống ở các đợt trước, và dọn hai thứ chính tôi là
 | 43 | Part 3 §2.3, khối `Dừng hai bước: xin tử tế rồi mới ép` | Thiếu code | `function stop(child: ChildProcess)` dùng kiểu `ChildProcess` mà **không import** nó: `TS2304: Cannot find name 'ChildProcess'`. Cùng họ #4/#10/#28/#33 — đây là lần thứ năm cùng một loại thiếu sót trong loạt bài | ✅ **đã sửa** — khối được viết lại thành đoạn chèn vào trong `transcode()` nên không còn cần kiểu `ChildProcess` nữa (xem #44). `tsc` sạch |
 | 44 | Part 3 §2.3, `stop()` đối chiếu `transcode()` ở §2.2 | Đứt mạch | **`stop()` không bao giờ dùng được với `transcode()`.** Nó nhận tham số `child: ChildProcess`, nhưng `transcode()` tạo `child` bằng biến cục bộ và **không trả về, không phơi ra ở đâu cả** — người gọi không có cách nào lấy được `child` để truyền vào. Bài dẫn dắt rất thuyết phục ("`signal` gửi `SIGTERM`… nếu quá trình dừng cũng bị treo, cần một tầng nữa") rồi đưa một hàm mà chính kiến trúc ở mục trên làm cho không gọi được. Tầng leo thang SIGKILL — thứ mà cả mục dựng lên để dạy — trên thực tế không bao giờ chạy | ✅ **đã sửa, đã xác nhận bằng chạy** — chuyển thành đoạn `options.signal.addEventListener('abort', ...)` đặt **bên trong** `transcode()`, nơi `child` đang sống, kèm callout giải thích vì sao hàm rời không gọi được. Thêm khối Terminal đếm tiến trình bằng `ps`. Đo thật: đang chạy **1** ffmpeg → `abort()` → `AbortError` → 3 giây sau còn **0**, không tiến trình mồ côi |
 
+## Đợt mười sáu — Part 3 §4 (hàng đợi Redis Streams), 16/08/2026
+
+**Ghi nhận:** §4 là mục bài **tự phát hiện thiếu sót của chính mình** — hai callout
+"`JobController` và `JobService` chưa từng xuất hiện" và "`TranscodeJob`, `parseMessage`
+và lớp bao quanh không có sẵn" nói thẳng ra và viết bù ngay. Đó là cách xử lý đúng,
+và là lý do §4 gõ vào biên dịch sạch ngay lần đầu.
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 45 | Part 3 §4.3, dòng `import { JobModule } from '../job/job.module'` | Thiếu code | **`JobModule` không bao giờ được định nghĩa.** Cả Part 3 chỉ có **đúng một** khối `@Module` — `WorkerModule` ở §4.3 — và chính nó `imports: [..., JobModule]`. Không khối nào trong bốn part viết ra `job.module.ts`, mà thiếu nó thì `JobController`/`JobService`/`JobQueue` không được đăng ký, `@InjectRepository(Job)` không phân giải, và hai route `POST /media/:videoId/transcode` + `GET /jobs/active` không tồn tại. Đây là **lần thứ tư** cùng một loại thiếu sót (#23 `RedisModule`, #25 `MediaModule`, #31 `StreamController`) — đủ thành một khuôn mẫu chứ không phải sơ suất lẻ | ✅ **đã sửa, đã xác nhận bằng chạy** — viết hẳn khối `src/job/job.module.ts` + khối Terminal đẩy job thật. Sau khi thêm: `Mapped {/media/:videoId/transcode, POST}` và `Mapped {/jobs/active, GET}`; `POST` trả **202** kèm `jobId`, `XLEN jobs:transcode` = **1**, `GET /jobs/active` trả đúng job ở trạng thái `queued` |
+
+### §4.2 — lời hứa trung tâm đã đo được
+
+Gọi `chargeForJob()` **ba lần** với cùng một `jobId`:
+
+```
+lan 1: { charged: true,  balance: -10 }
+lan 2: { charged: false, balance: -10 }
+lan 3: { charged: false, balance: -10 }
+```
+
+Đúng nguyên văn điều §4.2 hứa: chạy nhiều lần cho kết quả giống hệt chạy một lần.
+Đáng ghi nhận là **Part 1 đã chuẩn bị sẵn** cho chỗ này — `credit-entry.entity.ts`
+có `@Index(['jobId'], { unique: true, where: '"job_id" IS NOT NULL' })` từ Part 1,
+và chỉ mục đó có thật trong database (`IDX_09b17a596bc44b823294cee00e UNIQUE ...
+WHERE job_id IS NOT NULL`). Đây là chỗ loạt bài nối các part lại với nhau tốt nhất
+mà tôi gặp cho tới giờ.
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**
