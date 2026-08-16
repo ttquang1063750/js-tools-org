@@ -38,8 +38,13 @@ if len(sys.argv) != 3:
 SERIES_DIR, OUT_DIR = sys.argv[1].rstrip('/'), sys.argv[2].rstrip('/')
 os.makedirs(OUT_DIR, exist_ok=True)
 
+# Prettier ngat dong the mo khi dong qua dai:
+#     <span\n  class="code-filename"\n  >Ten file</span\n>
+# nen KHONG duoc gia dinh '<span class="code-filename">' lien mach. Thieu cho nay
+# thi khoi bi gan nham cho ten file phia tren va bao "thieu ten file" oan cho bai.
 CODE_BLOCK_RE = re.compile(
-    r'<span class="code-filename">([^<]+)</span>.*?<code class="language-(\w+)">(.*?)</code></pre>',
+    r'<span\s[^>]*?class="code-filename"[^>]*?>\s*([^<]+?)\s*</span'
+    r'.*?<code class="language-(\w+)">(.*?)</code></pre>',
     re.S,
 )
 # Dem tong so khoi code that su co trong trang, de canh bao khi co khoi bi bo qua.

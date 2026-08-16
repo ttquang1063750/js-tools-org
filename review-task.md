@@ -65,7 +65,7 @@ dev` lên ở cổng 5173.
 
 | # | Đã sửa gì | Xác nhận bằng chạy? |
 |---|---|---|
-| 1 | Part 1 §8.2 — thêm `"reason":"transcode"` vào body `curl` | **CHƯA** — xem ghi chú dưới |
+| 1 | Part 1 §8.2 — thêm `"reason":"transcode"` vào body `curl` | ✅ **đã xác nhận bằng chạy** — 5×201, 5×400, số dư 0 |
 | 4 | Part 1 §5 — thêm 2 dòng `import` vào đoạn vá `main.ts` | ✅ biên dịch sạch |
 | 10 | Part 2 §1 — thêm `import type { NestExpressApplication }` | ✅ biên dịch sạch |
 | 11 | Part 2 §2 — đổi tiêu đề khối thành "CHỈ thay khối configSchema, giữ nguyên phần còn lại của file" | ✅ ghép đúng thì biên dịch sạch |
@@ -73,12 +73,9 @@ dev` lên ở cổng 5173.
 
 `check-lesson.js` 11/11 cho cả part-1 và part-2 sau khi sửa.
 
-**Ghi chú trung thực về #1:** lần chạy xác nhận cuối cho 10×400 chứ không phải
-5×201/5×400. Nguyên nhân gần như chắc chắn là project đang ở trạng thái LAI —
-`configuration.ts` và `main.ts` đã là bản Part 2, còn `billing.controller.ts` /
-`charge.dto.ts` bị đưa về bản Part 1 để dựng lại bối cảnh §8.2. Chưa truy ra
-nguyên nhân chính xác. **Không được coi #1 là đã xác nhận.** Phiên sau phải
-dựng lại đúng trạng thái cuối Part 1 (không lẫn file Part 2) rồi chạy lại.
+**#1 đã khép:** lần chạy đầu cho 10×400 không phải do project ở trạng thái lai như
+tôi đoán, mà do **phát hiện #14** dưới đây. Sau khi vá cả ba (#1, #2, #14), chạy
+lại đúng lệnh trong bài: 5×201, 5×400, số dư dừng ở 0 — khớp bài.
 
 ## Phát hiện mới trong lúc sửa
 
@@ -86,9 +83,19 @@ dựng lại đúng trạng thái cuối Part 1 (không lẫn file Part 2) rồi
 |---|--------|------|-------|------------|
 | 13 | Part 2 §2, khối `configuration.ts` đối chiếu Part 1 §4.4 (`.env.example`) | Thiếu code | Schema thêm `JWT_SECRET: z.string().min(32)` **bắt buộc** (cùng `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL_DAYS`, `REDIS_URL`) nhưng **không mục nào bảo thêm chúng vào `.env` / `.env.example`**. Làm đúng theo bài xong chạy `npm run start:dev`: app từ chối khởi động — `JWT_SECRET: Invalid input: expected string, received undefined`. Chặn hoàn toàn phần còn lại của Part 2 | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm một đoạn văn nói rõ 3/4 biến có `.default()` nên chỉ `JWT_SECRET` là bắt buộc, kèm khối Terminal sinh khoá bằng `openssl rand -hex 32` và bổ sung `.env.example`. Chạy lại đúng lệnh đó: khoá dài 64 ký tự, app khởi động bình thường |
 
+## Đợt sửa thứ hai (16/08/2026)
+
+| # | Sửa gì | Xác nhận bằng chạy? |
+|---|---|---|
+| 2 | Part 1 §8.4 — thêm bước đăng ký `ValidationPipe` ngay sau khi giới thiệu `ChargeDto`, kèm callout nói rõ quên nó thì DTO thành đồ trang trí (500 từ Postgres thay vì 400 từ validation) | ✅ thiếu `reason` giờ ra `400` kèm đúng tên trường |
+| 3 | Part 1 §5 — tiêu đề khối ghi rõ "đã lược các lỗi biến-không-dùng", thêm đoạn nói chạy thật ra **8** dòng chứ không phải 4 | ✅ đối chiếu với `tsc` thật |
+| 5 | Part 1 §4.1 — thêm chú thích phiên bản đã dùng để viết bài (`typeorm@0.3`, `zod@3`, …) | — |
+| 6 | **Không phải lỗi của bài.** Là lỗi `extract-parts.py`: prettier ngắt dòng thẻ `<span class="code-filename">` nên regex trượt. Đã sửa regex; cũng sửa một tiêu đề tôi lỡ nhét `<code>` vào khi vá #12 | ✅ extractor không còn cảnh báo |
+| 9 | Part 1 §3 — nói rõ giao diện là dự án **riêng nằm cạnh** `media-forge/`, tên `media-forge-web/` | — |
+| 14 | **Mới.** UUID mẫu `11111111-1111-1111-1111-111111111111` dùng suốt §8 **không hợp lệ với `@IsUUID()`** — nibble variant sai RFC 4122. Sau khi #2 bật `ValidationPipe`, chính lệnh curl của bài trả `400 userId must be a UUID`, demo không bao giờ chạy. Đã đổi cả 4 chỗ sang `11111111-1111-4111-8111-111111111111` | ✅ 5×201, 5×400, số dư 0 |
+
 ## Việc còn lại của lượt rà soát này
 
-- [ ] Xác nhận lại #1 trên project sạch đúng trạng thái cuối Part 1
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
 - [ ] Quyết #7/#8 (giao diện Part 2 không có màn đăng nhập)
 - [ ] Ghép xong `auth.service.ts` rồi chạy thật luồng đăng nhập / refresh — **chưa làm**
