@@ -191,6 +191,38 @@ is shipping unverified until someone actually builds it — that trade-off is
 the owner's to accept, not yours to hide by asserting confidence a listing
 alone cannot earn.
 
+## Where the real project lives — decide this at design time
+
+"No project gets scaffolded" holds only until the first session that actually
+tries to run the code, and on this series that session found 21 runtime bugs
+in one pass. So the plan should name the location up front rather than leaving
+each session to invent one.
+
+**The project goes under `~/Projects/Scratchpad/<slug>/`, never in a session's
+own temporary scratchpad directory.** The per-session scratchpad is deleted
+when the session ends; a later session then inherits a list of findings with
+nothing to check them against, and the cheapest wrong move — re-reading the
+article and calling that verification — is exactly what the writing process is
+supposed to be protected from.
+
+The shape already in use, follow it:
+
+```
+~/Projects/Scratchpad/media-forge/            # monolith, Part 1-3
+~/Projects/Scratchpad/media-forge-services/   # microservices, Part 4
+```
+
+When a later part changes the architecture enough that the old tree no longer
+represents what the text describes, open a **sibling** directory instead of
+mutating the old one — the earlier parts still need something that matches
+them. If the architecture arc above says the series will split, plan for two
+directories from the start and write both paths into the plan.
+
+These directories sit outside the repo and are never committed. The article
+ships as text; the thing proving the text runs stays on disk, reproducible,
+for whoever continues. `review-build-series` states the same rule for the
+review side — keep the two in step.
+
 ## The procedure
 
 Checkpoint after each step — do not produce the whole plan in one turn. Show
@@ -215,7 +247,10 @@ read a familiar shape:
       the answer, write the four publish locations into `design-task.md` so
       the later session does not have to rediscover them: a card in
       `blog/index.html`, an `a.learn-card` in the root `index.html`, the URLs
-      in `sitemap.xml`, and entries in `blog/search-index.json` (7-key schema)
+      in `sitemap.xml`, and entries in `blog/search-index.json` (7-key schema).
+      Also fix the build directory now — `~/Projects/Scratchpad/<slug>/`, see
+      "Where the real project lives" above — and write it into the plan, even
+      if the owner's answer today is "no project gets built".
 - [ ] Step 6 — Write the `## Các quyết định ĐÃ CHỐT` table and the
       `## Gotcha đã gặp` / `## Giọng văn` sections into `design-task.md`, seeded
       from this repo's existing entries (3-level-deep relative paths, chrome
