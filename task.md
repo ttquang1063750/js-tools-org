@@ -49,10 +49,45 @@ code — đó là phong cách của series, không phải lỗi.
 - [x] **Bài 1 `c-environment-setup` — VI deep pass XONG** (16/08/2026).
       F1–F5 đã sửa hết; `check-lesson.js` 11/11, prettier sạch, thời gian đọc
       cập nhật 10 → 19 phút cho khớp 3164 từ.
-- [ ] **Bài 1 — bản EN thật: CHƯA LÀM.** Cần dựng `series/c/` từ đầu
-      (`config.json`, `hub-body-en.html`, `hub-lessons-en.json`,
-      `lessons/c-environment-setup.body-en.html` + `.meta-en.json`).
-      Bản EN hiện tại vẫn là **stub 50 từ** — chưa đụng tới.
+- [~] **Bài 1 — bản EN: ĐANG DỞ.** Đã xong phần khung, còn đúng một việc:
+      - [x] `series/c/config.json`
+      - [x] `series/c/lessons/c-environment-setup.meta-en.json` (title/desc/
+            chromeSubs/tailSubs/codeTitles — next-link đã khoá thành `--locked`
+            vì Bài 2 chưa có bản EN)
+      - [x] Phía VI đã đủ hợp đồng song ngữ: `hreflang` vi/en/x-default, link
+            "Read in English" trong hero, H1 + title + og sửa lại cho khớp việc
+            đã thêm Windows
+      - [ ] **CÒN LẠI: `lessons/c-environment-setup.body-en.html`** — bản dịch
+            ~3200 từ, dùng placeholder. Bản đồ placeholder đã dò sẵn, dùng đúng
+            các khoá dưới đây (builder sẽ BÁO LỖI và không ghi file nếu sót/sai):
+
+        ```
+        {{CODE:Terminal}}                    xcode-select --install
+        {{CODE:Terminal (Ubuntu/Debian)}}    apt install build-essential
+        {{CODE:Terminal (Fedora)}}           dnf groupinstall
+        {{CODE:PowerShell (quyền quản trị)}} wsl --install
+        {{CODE:Terminal#2}}                  gcc --version
+        {{CODE:hello.c}}                     chuong trinh dau tien
+        {{CODE:Terminal#3}}                  gcc hello.c -o hello
+        {{CODE:Terminal#4}}                  ./hello
+        {{CODE:Terminal#5}}                  lenh bien dich khi phat trien (muc 7)
+        {{CODE:Terminal#6}}                  lenh bien dich khi phat hanh (muc 7)
+        {{CODE:Makefile}}
+        {{CODE:Terminal#7}}                  make / make clean
+        {{CODE:debug_demo.c}}
+        {{CODE:Terminal#8}}                  gcc -g -O0 debug_demo.c
+        {{CODE:Terminal#9}}                  gdb ./debug_demo
+        {{CODE:Phiên GDB mẫu}}
+        ```
+
+        Lưu ý khi viết template:
+        - 5 khối `<pre>` KHÔNG nằm trong code-window (sơ đồ ASCII ở mục 1 và 4
+          lệnh `gcc -E/-S/-c` ở mục 5) **không có placeholder** — phải chép
+          nguyên văn vào template.
+        - Thân bài = từ `<div class="article-body">` tới `<div class="article-related">`,
+          nên **khối quiz nằm trong thân bài** và phải dịch trong template.
+        - Bản EN hiện tại vẫn là stub 50 từ cho tới khi chạy được
+          `build-lesson-en.py`.
 - [ ] Bài 2 → 12 (cả VI lẫn EN)
 
 ### Nợ kỹ thuật cần biết
