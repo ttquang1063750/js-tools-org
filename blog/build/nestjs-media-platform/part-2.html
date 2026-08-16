@@ -1600,6 +1600,95 @@ server {
 }</code></pre>
             </div>
 
+            <p>
+              File cấu hình nằm đó thì chưa có gì chạy cả. Cần ba thứ nữa để thật sự thấy tầng này hoạt động: một chứng
+              chỉ, một dịch vụ nginx trong Compose, và một cách để hostname <code>app</code> trong khối
+              <code>upstream</code> trỏ về đúng tiến trình NestJS đang chạy.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — chứng chỉ tự ký để chạy máy mình</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">mkdir -p docker/certs
+
+# Chung chi tu ky, chi dung o may minh. Tren may chu that thi day la cho
+# Let's Encrypt ghi vao, va do la ly do duong dan nam ngoai ung dung.
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout docker/certs/privkey.pem -out docker/certs/fullchain.pem \
+  -subj "/CN=media-forge.local" -addext "subjectAltName=DNS:media-forge.local"</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename"
+                  >docker/docker-compose.yml — THÊM dịch vụ nginx, giữ nguyên dịch vụ postgres đã có</span
+                >
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-yaml">services:
+  # ... dich vu postgres da chot o Part 1 muc 4.5, giu nguyen ...
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: forge-nginx
+    ports:
+      - '8080:80'
+      - '8443:443'
+    volumes:
+      - ../nginx/media-forge.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    # Cho hostname `app` trong khoi upstream tro ve may that, noi
+    # `npm run start:dev` dang chay. Part 3 dong goi ung dung thanh container
+    # ten `app` thi bo dong nay di, con file cau hinh khong phai sua mot chu.
+    extra_hosts:
+      - 'app:host-gateway'</code></pre>
+            </div>
+
+            <div class="callout callout--tip">
+              <div class="callout__title">💡 Vì sao cổng 8080/8443 chứ không phải 80/443</div>
+              <div class="callout__content">
+                Cổng dưới 1024 cần quyền quản trị trên máy cá nhân, và cổng 443 thường đã có thứ khác chiếm. Ánh xạ ra
+                8080/8443 là chuyện của riêng máy mình — bên trong container nginx vẫn nghe đúng 80 và 443 như file cấu
+                hình viết, nên không có dòng nào trong <code>media-forge.conf</code> phải đổi.
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — dựng lên và kiểm ba thứ</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">docker compose -f docker/docker-compose.yml up -d nginx
+npm run start:dev            # o mot cua so khac, van chay tren host nhu truoc
+
+# 1. Cong 80 phai day sang HTTPS
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+  --resolve media-forge.local:8080:127.0.0.1 \
+  http://media-forge.local:8080/auth/login
+# -> 301 https://media-forge.local/auth/login
+
+# 2. Di xuyen qua nginx toi NestJS. -k vi chung chi tu ky.
+curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+  -X POST https://media-forge.local:8443/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@test.local","password":"matkhau123"}'
+# -> {"accessToken":"eyJhbGciOi..."} — dung request da di qua ca hai tang
+
+# 3. http2 on da co tac dung chua
+curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+  -o /dev/null -w 'http=%{http_version}\n' https://media-forge.local:8443/
+# -> http=2</code></pre>
+            </div>
+
+            <p>
+              Từ đây trở đi mọi thứ trong Part 2 đều đi qua cổng 8443 chứ không gọi thẳng cổng 3000 nữa — đó là điều
+              kiện để những mục sau có nghĩa, vì <code>limit_req</code> ở mục 5, header <code>X-Forwarded-For</code> ở
+              mục 4.2 và <code>X-Accel-Redirect</code> ở mục 7.1 đều là việc của nginx. Gọi thẳng 3000 thì cả ba đơn
+              giản là không tồn tại.
+            </p>
+
             <h3>4.1. Vì sao TLS dừng lại ở nginx</h3>
 
             <p>
@@ -1624,7 +1713,9 @@ server {
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">src/main.ts</span>
+                <span class="code-filename"
+                  >src/main.ts — CHÈN một dòng ngay sau dòng tạo app, giữ nguyên phần còn lại của file</span
+                >
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">const app = await NestFactory.create&lt;NestExpressApplication&gt;(AppModule);

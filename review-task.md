@@ -151,6 +151,16 @@ Sau khi vá #16 và tự thêm `const GRACE_MS` (#15 chưa vá vào bài):
 - Sau `sleep 33`, dùng lại token cũ: `401 "Phien dang nhap da bi thu hoi"`
 - Token **mới** cùng family cũng chết theo: `401 "Refresh token khong hop le"` — đúng nghĩa "thu hồi cả family"
 
+## Đợt sáu — Part 2 §4 (nginx), 16/08/2026
+
+Làm theo bài: tạo `nginx/media-forge.conf` đúng nội dung bài đưa, áp đoạn vá
+`src/main.ts` (`app.set('trust proxy', 1)`). `tsc --noEmit` sạch.
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 18 | Part 2 §4, khối `nginx/media-forge.conf` | Đứt mạch | **nginx không bao giờ được dựng lên, ở bất kỳ part nào.** Bài đưa một file cấu hình hoàn chỉnh rồi dừng: không có dịch vụ `nginx` trong `docker-compose.yml`, không có dịch vụ `app` (mà `upstream app { server app:3000; }` trỏ tới — hiện NestJS chạy `npm run start:dev` trên host, chỉ Postgres ở trong Docker), không có bước sinh chứng chỉ cho `ssl_certificate /etc/nginx/certs/fullchain.pem`, không có `nginx -t`, không có một lệnh nào để thấy nó chạy. Đối chiếu Part 3: §5.1 và §6.1 tiếp tục *mở rộng* chính file này (`upstream`, khối WebSocket) mà vẫn không part nào dựng nó. Hệ quả dây chuyền: §4.2 (`trust proxy`), §5 (`limit_req`), §7.1 (`X-Accel-Redirect`, `internal` + `alias /var/media/`) đều là những thứ **chỉ có tác dụng khi có nginx thật** — người đọc không có cách nào nhìn thấy bất kỳ cái nào trong số đó hoạt động | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm khối `openssl` sinh chứng chỉ tự ký, khối `docker-compose.yml` thêm dịch vụ nginx (cổng 8080/8443, mount conf + certs, `extra_hosts: app:host-gateway` để hostname `app` trỏ về tiến trình Node trên host — nhờ vậy **không phải sửa một chữ nào** trong `media-forge.conf`), và khối Terminal 3 lệnh kiểm chứng. Chạy lại từ đầu đúng các lệnh đó: `301` sang HTTPS, đăng nhập thật xuyên qua nginx trả `accessToken`, `http=2` |
+| 19 | Part 2 §4.2, khối `src/main.ts` | Mơ hồ | Khối chỉ có 2 dòng (`NestFactory.create` + `app.set`) dưới header đường dẫn file đầy đủ — cùng họ với phát hiện #11 đã sửa. Ở đây hậu quả nhẹ hơn (người đọc khó hiểu nhầm là cả file vì thiếu cả `bootstrap()`), nhưng vẫn không nói rõ là đoạn chèn. Không chặn: gõ vào đúng chỗ thì biên dịch sạch | ✅ **đã sửa** — đổi tiêu đề thành "CHÈN một dòng ngay sau dòng tạo app, giữ nguyên phần còn lại của file". `tsc --noEmit` sạch |
+
 ## Việc còn lại của lượt rà soát này
 
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
