@@ -55,7 +55,31 @@ code — đó là phong cách của series, không phải lỗi.
       canonical/og trỏ `/en/`, `hreflang` vi/en/x-default đúng, đường dẫn tương
       đối đã lùi thêm một cấp, đã đăng ký vào `sitemap.xml` và `search-index.json`.
       Next-link khoá `--locked` vì Bài 2 chưa có bản EN.
-- [ ] Bài 2 → 12 (cả VI lẫn EN)
+- [ ] **Bài 2 `c-basics-and-bitwise`** — ĐÃ ĐỌC HẾT, đã ghi phát hiện (dưới),
+      **chưa sửa dòng nào**. Cố ý dừng trước khi sửa: làm VI mà không kịp dịch EN
+      là lặp lại đúng lỗi của Bài 1.
+- [ ] Bài 3 → 12 (cả VI lẫn EN)
+
+---
+
+## Bài 2 — `c-basics-and-bitwise` — PHÁT HIỆN (đọc 16/08/2026, chưa sửa)
+
+| # | Vị trí | Loại | Mô tả |
+|---|--------|------|-------|
+| G1 | 5/6 khối code | Code không có dẫn đề lẫn hạ cánh | **Defect trội nhất của bài.** Chỉ `hello.c` có phần giải thích. Còn lại đều bị thả trơ: `variables.c` (13 dòng) → đi thẳng sang H2 §3; `sizeof_demo.c` (30 dòng) → thẳng sang callout stdint.h; `const_vs_define.c` (25 dòng) → thẳng sang H3 Enum; `enum_demo.c` (24 dòng) → thẳng sang H3 Ép kiểu; **`type_casting.c` (41 dòng) → đi thẳng vào quiz**. Không khối nào có câu nói trước "sắp xem gì, vì sao lúc này", cũng không có câu sau "vừa xảy ra gì, dòng nào mang điểm mấu chốt" |
+| G2 | Cả 6 file code | Vi phạm quy tắc code dùng chung locale | **48 dòng** có tiếng Việt: comment (`// %d dung cho so nguyen`, `// === Ép kiểu ngầm định ===`, `// ⚠️ CẢNH BÁO: ...`) và cả chuỗi `printf` in nhãn trạng thái (`"Tuoi: %d"`, `"Diem"`, `"Xep loai"`). Skill quy định comment + chuỗi trạng thái LUÔN tiếng Anh vì khối code dùng chung hai locale (chỉ *dữ liệu mẫu* mới được giữ tiếng Việt — ở đây không phải). **Phải sửa TRƯỚC khi dịch**, nếu không builder sẽ báo sót tiếng Việt. Cùng loại lỗi đã sửa ở Bài 1 (9 comment Makefile/GDB) |
+| G3 | §3 (scanf) | Thuật ngữ dùng trước khi định nghĩa | Với mức "từ số 0", ba thuật ngữ được dùng như đã biết: **Segmentation Fault**, **Undefined Behavior**, và **bộ đệm stdin / buffer**. Cả ba đều xuất hiện lần đầu ở đây, đều không có một câu giải thích nào |
+| G4 | Slug `c-basics-and-bitwise` | Ghi nhận, **không sửa** | Slug hứa "bitwise" nhưng thân bài **0 nội dung bitwise** (đếm: `bitwise` 1 lần, `<<`/`>>`/xor = 0) — nội dung đó nằm ở Bài 3 `c-operators-and-bitwise` (26 lần). Tuy nhiên **`<h1>` và `<title>` đều trung thực** ("Cú pháp C cơ bản, Biến, Kiểu dữ liệu & Nhập xuất"), người đọc không thấy slug ở đâu ngoài URL. Đổi tên file sẽ phá URL đã index → **để nguyên**, chỉ ghi nhận |
+
+### Thứ tự làm cho Bài 2 (đề xuất)
+
+1. **G2 trước tiên** — 48 dòng comment/chuỗi sang tiếng Anh. Làm trước vì nó chặn khâu dịch.
+2. G1 — viết dẫn đề + hạ cánh cho 5 khối. Đây là phần viết nhiều nhất.
+3. G3 — định nghĩa 3 thuật ngữ ngay lần dùng đầu.
+4. Dịch EN: đã có sẵn `series/c/config.json`, chỉ cần thêm
+   `lessons/c-basics-and-bitwise.{body-en.html,meta-en.json}`.
+   Nhớ: thân bài mở bằng một `<div>` trơn (Bài 1 vấp chỗ này), và khối quiz
+   nằm TRONG thân bài.
 
 ### Nợ kỹ thuật cần biết
 
