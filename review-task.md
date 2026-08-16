@@ -138,12 +138,24 @@ Sau khi vá #16 và tự thêm `const GRACE_MS` (#15 chưa vá vào bài):
 
 **#7 giờ khép lại: đường thành công đã xác nhận bằng trình duyệt thật.**
 
+## Đợt sửa thứ năm — #15 và Part 2 §3 (16/08/2026)
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 15 | Part 2 §3.3, khối `auth.service.ts — BẢN CUỐI` | Đứt mạch | Bản cuối dùng `GRACE_MS` nhưng không khai báo — `const GRACE_MS = 30_000` chỉ nằm trong khối đã bị chính nó thay thế | ✅ **đã sửa** — đưa dòng khai báo vào đầu khối BẢN CUỐI kèm chú thích vì sao nó phải có mặt ở đây |
+| 17 | Part 2 §3.3, sau đoạn giải thích khoảng ân hạn | Mơ hồ | §3.3 dựng lên lời hứa trung tâm của cả mục — "dùng lại token cũ thì thu hồi cả family" — nhưng **không cho người đọc cách nào nhìn thấy nó**, khác hẳn Part 1 §8.2 vốn đưa hẳn lệnh. Tệ hơn: thử ngay lập tức sẽ nhận **201** (do khoảng ân hạn 30 giây), trông y như cơ chế phát hiện tái sử dụng bị hỏng. Bài không hề nhắc phải chờ hết ân hạn | ✅ **đã sửa** — thêm khối Terminal 5 bước có `sleep 33`, kèm đoạn giải thích vì sao bước chờ là bước dễ bỏ nhất |
+
+### §3 đã chạy thật, đúng như bài mô tả
+
+- Đăng nhập → xoay vòng một lần → dùng lại token cũ **trong** 30 giây: `201` + access token (đường ân hạn, đúng thiết kế)
+- Sau `sleep 33`, dùng lại token cũ: `401 "Phien dang nhap da bi thu hoi"`
+- Token **mới** cùng family cũng chết theo: `401 "Refresh token khong hop le"` — đúng nghĩa "thu hồi cả family"
+
 ## Việc còn lại của lượt rà soát này
 
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
 - [ ] Quyết #7/#8 (giao diện Part 2 không có màn đăng nhập)
-- [ ] Ghép xong `auth.service.ts` rồi chạy thật luồng đăng nhập / refresh — **chưa làm**
-- [ ] Part 2 §3 → §7 (nginx, rate limit, streaming) — **chưa làm**
+- [ ] Part 2 §4 → §7 (nginx, rate limit, streaming) — **chưa làm** (§3 đã xong)
 - [ ] Part 2 §8.2 (upload + player chạy thật trong trình duyệt) — **chưa làm**
 - [ ] Part 3 — worker, ffmpeg, WebSocket — **chưa làm**
 - [ ] Part 4 — microservice, gRPC — **chưa làm**
