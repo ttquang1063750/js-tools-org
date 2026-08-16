@@ -1654,13 +1654,28 @@ export class JobRunner implements OnApplicationShutdown {
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">src/main.ts — bọc bootstrap để cluster.ts import lại</span>
+                <span class="code-filename">src/main.ts — BẢN ĐẦY ĐỦ sau khi bọc, giữ nguyên mọi thứ đã dựng</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">export async function bootstrap(): Promise&lt;void&gt; {
+              <pre><code class="language-typescript">import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
+import { TimeoutInterceptor } from './common/timeout/timeout.interceptor';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import type { AppConfig } from './config/configuration';
+
+export async function bootstrap(): Promise&lt;void&gt; {
   const app = await NestFactory.create&lt;NestExpressApplication&gt;(AppModule);
-  app.set('trust proxy', 1); // xem Part 2, muc 4.2
-  await app.listen(process.env.PORT ?? 3000);
+
+  app.set('trust proxy', 1); // Part 2, muc 4.2
+  app.useGlobalPipes(
+    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+  ); // Part 2, muc 1
+  app.useGlobalInterceptors(new TimeoutInterceptor()); // Part 2, muc 5.2
+
+  const config = app.get(ConfigService&lt;AppConfig, true&gt;);
+  await app.listen(config.get('PORT', { infer: true }));
 }
 
 // Chi tu chay khi file nay la entry point that su (npm run start:dev goi
@@ -1668,6 +1683,23 @@ export class JobRunner implements OnApplicationShutdown {
 if (require.main === module) {
   void bootstrap();
 }</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Bọc lại, đừng viết lại</div>
+              <div class="callout__content">
+                Thay đổi thật sự của mục này chỉ có <strong>hai</strong>: thêm chữ <code>export</code> trước
+                <code>async function bootstrap</code>, và bọc lời gọi tự động trong
+                <code>if (require.main === module)</code>. Mọi thứ khác trong <code>main.ts</code> phải
+                <strong>giữ nguyên</strong> — bỏ <code>ValidationPipe</code> là mọi DTO thành đồ trang trí trở lại (Part
+                2 mục 1), bỏ <code>TimeoutInterceptor</code> là mất tầng giữa của ngân sách thời gian (Part 2 mục
+                5.2).<br /><br />
+                Và đọc cổng vẫn phải qua <code>ConfigService</code>, <strong>không</strong> quay lại
+                <code>process.env.PORT</code>: cờ <code>noPropertyAccessFromIndexSignature</code> bật từ Part 1 mục 5
+                khiến đúng dòng đó không biên dịch được —
+                <code>TS4111: Property 'PORT' comes from an index signature</code>. Đó chính là lỗi mẫu mà Part 1 đã
+                dùng để giới thiệu cờ này.
+              </div>
             </div>
 
             <div class="code-window">
@@ -1701,6 +1733,36 @@ if (cluster.isPrimary) {
   void bootstrap();
 }</code></pre>
             </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — chạy cluster và đo lại đúng thí nghiệm ở mục 1</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">npx nest build
+node dist/cluster.js
+
+# Bao nhieu ban NestJS da khoi dong?
+# -> mot dong "Nest application successfully started" cho MOI nhan CPU
+
+# Va bay gio lam lai dung phep thu o muc 1:
+( curl -s -o /dev/null -w 'block: %{time_total}s\n' http://localhost:3000/block &amp; ); sleep 0.5
+curl -s -o /dev/null -w 'ping:  %{time_total}s\n' http://localhost:3000/ping
+# -> ping:  0.004s      <-- muc 1 la 4,6 giay
+# -> block: 5.004s</code></pre>
+            </div>
+
+            <p>
+              Đây là chỗ mục 1 và mục 5 khép lại thành một vòng. Cùng hai endpoint đó, cùng cách gọi đó: ở mục 1
+              <code>/ping</code> phải chờ <strong>4,6 giây</strong> vì chỉ có một event loop, còn bây giờ nó trả lời
+              trong <strong>0,004 giây</strong> — vì hệ điều hành đưa request sang một tiến trình con khác, tiến trình
+              đang không bận quay vòng.
+            </p>
+            <p>
+              Lưu ý cái này <em>không</em> chữa được nguyên nhân gốc: tiến trình bị chiếm vẫn đứng hình đúng năm giây,
+              và nếu đủ người gọi <code>/block</code> cùng lúc thì cả tám tiến trình đều tắc. <code>cluster</code> mua
+              thêm chỗ chịu tải, không xoá bỏ việc phải đẩy việc nặng ra ngoài như mục 2 và mục 3 đã làm.
+            </p>
 
             <p>Nhưng khi có nhiều tiến trình, ba thứ trước đây đúng bỗng thành sai:</p>
 

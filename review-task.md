@@ -371,6 +371,30 @@ Sau khi vá #46–#49, chạy đúng luồng bài mô tả (API + worker + `POST
 
 Toàn bộ chuỗi §2.2 → §4 → §4.2 nối được với nhau và chạy thật.
 
+## Đợt mười chín — Part 3 §5 (cluster), 16/08/2026
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 51 | Part 3 §5, khối `src/main.ts — bọc bootstrap để cluster.ts import lại`, dòng `app.listen(process.env.PORT ?? 3000)` | Đứt mạch | **Bài tự mâu thuẫn với chính bài học của mình.** Part 1 §5 dành hẳn một mục dạy cờ `noPropertyAccessFromIndexSignature`, và lỗi mẫu nổi tiếng nhất của mục đó chính là `src/main.ts(6,32): TS4111` ở `process.env.PORT`. Gõ khối §5 vào: **`TS4111: Property 'PORT' comes from an index signature`** — đúng lỗi đó, đúng file đó, hai part sau. Ngoài ra nó bỏ luôn `ConfigService` mà Part 1 §5 đã dựng riêng để thay thế cách đọc env này | ✅ **đã sửa, đã xác nhận bằng chạy** — trả lại `config.get('PORT', { infer: true })`, kèm callout nhắc thẳng rằng đây đúng là lỗi mẫu Part 1 §5 dùng để giới thiệu cờ `noPropertyAccessFromIndexSignature`. `tsc` sạch |
+| 52 | Part 3 §5, cùng khối trên | Đứt mạch | Khối trình bày như **bản `bootstrap()` mới đầy đủ** (có `create`, `trust proxy`, `listen`) nên người đọc sẽ thay cả hàm — và **đánh rơi ba thứ các part trước đã dựng**: `app.useGlobalPipes(new ValidationPipe(...))` (Part 2 §1 — thiếu nó thì mọi DTO thành đồ trang trí, đúng phát hiện #2), `app.useGlobalInterceptors(new TimeoutInterceptor())` (Part 2 §5.2), và cách đọc cổng qua `ConfigService`. Đo thật: 4 lỗi `TS6133` cho `ConfigService`, `ValidationPipe`, `TimeoutInterceptor`, `AppConfig` — tức trình biên dịch chỉ thẳng ra rằng ba thứ đó vừa bị bỏ rơi | ✅ **đã sửa, đã xác nhận bằng chạy** — đổi khối thành **BẢN ĐẦY ĐỦ** giữ nguyên `ValidationPipe`, `TimeoutInterceptor`, `ConfigService`, kèm callout "Bọc lại, đừng viết lại" nói rõ thay đổi thật chỉ có hai: thêm `export` và bọc `if (require.main === module)` |
+
+### §5 đã chạy thật — và khép vòng với §1
+
+`node dist/cluster.js` trên máy 10 nhân: **10 tiến trình con** fork ra, mỗi cái
+in một dòng `Nest application successfully started`, tổng 11 tiến trình.
+
+Rồi làm lại **đúng thí nghiệm của §1**, cùng hai endpoint, cùng cách gọi:
+
+| | §1 (một tiến trình) | §5 (cluster) |
+|---|---|---|
+| `/block` | 5,005 s | 5,004 s |
+| `/ping` gọi cùng lúc | **4,600 s** | **0,004 s** |
+
+Chênh lệch hơn **1000 lần** là toàn bộ giá trị của mục 5, đo được bằng đúng hai
+lệnh `curl`. Bài không hề đưa phép thử này dù nó là cách hiển nhiên nhất để thấy
+mục 5 có tác dụng — đã thêm vào, cùng một đoạn nói rõ `cluster` **không** chữa
+nguyên nhân gốc (tiến trình bị chiếm vẫn đứng hình đủ 5 giây).
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**
