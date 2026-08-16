@@ -328,6 +328,49 @@ và chỉ mục đó có thật trong database (`IDX_09b17a596bc44b823294cee00e 
 WHERE job_id IS NOT NULL`). Đây là chỗ loạt bài nối các part lại với nhau tốt nhất
 mà tôi gặp cho tới giờ.
 
+## Đợt mười bảy — Part 3 §4.3 (worker là tiến trình riêng), 16/08/2026
+
+Hai chỗ đã đoán trước từ đợt trước, giờ xác nhận, cộng thêm một chỗ nữa. Cả ba
+nằm trong **cùng một khối** `docker-compose.yml — dịch vụ worker`.
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 46 | Part 3 §4.3, khối compose, dòng `build: .` | Thiếu code | **`Dockerfile` không tồn tại ở bất kỳ đâu trong bốn part** — grep cả loạt bài: 0 kết quả. `build: .` không chạy được, và cả loạt bài chưa từng đóng gói ứng dụng thành image. Cùng họ #39 (ffmpeg không bao giờ được cài) và #18 (nginx không bao giờ được dựng): phụ thuộc hạ tầng được *dùng* mà không bao giờ được *tạo*. Nặng thêm vì worker cần ffmpeg **bên trong** image, tức Dockerfile này không phải loại `FROM node` một dòng | ✅ **đã sửa** — thêm callout kèm `Dockerfile` mẫu có `apk add --no-cache ffmpeg`, và nói rõ lối tắt: bỏ qua cả khối Compose, chạy `npm run start:worker:dev` trên máy thì mục 4 và mục 6 vẫn hoạt động y hệt (đó cũng chính là cách tôi chạy để xác nhận) |
+| 47 | Part 3 §4.3, khối compose, dòng `DATABASE_URL` | Đứt mạch | `postgres://app:secret@postgres:5432/media` — **cả ba thành phần đều lệch** với Compose mà Part 1 §4.5 dựng và người đọc đang chạy: user `forge`, mật khẩu `forge`, database `media_forge`. Dùng đúng như bài thì worker không kết nối nổi. Không mục nào nhắc rằng thông tin kết nối đã đổi, và Part 1 cũng không dùng tên `app`/`secret`/`media` ở đâu cả — đây là dấu vết của một bản nháp khác | ✅ **đã sửa** — đổi thành `postgres://forge:forge@postgres:5432/media_forge` kèm chú thích chỉ thẳng về Part 1 §4.5, và thêm `UPLOAD_DIR: /var/media` để trả lời câu hỏi ở #48 |
+| 48 | Part 3 §4.3, khối compose, dòng `volumes: - media:/var/media` | Thiếu code | Tham chiếu một named volume tên `media` **chưa từng được khai báo** trong khối `volumes:` cấp trên cùng của bất kỳ file compose nào trong loạt bài (Part 1 chỉ khai `forge-pgdata`). Compose sẽ từ chối. Ngoài ra nó mâu thuẫn với đường đi thật của file ở Part 2: ở đó `UPLOAD_DIR` là `./uploads` trên host và nginx mount `../uploads:/var/media:ro` — bài chưa bao giờ nói lúc nào thì `UPLOAD_DIR` đổi thành `/var/media` | ✅ **đã sửa** — thêm khối `volumes:` cấp cao nhất khai báo cả `forge-pgdata` (đã có từ Part 1) và `media` (mới), kèm chú thích vì sao thiếu nó thì Compose từ chối; và đặt `UPLOAD_DIR: /var/media` ngay trong `environment` của worker |
+
+## Đợt mười tám — Part 3 §4.3/§4.4 (chạy worker thật), 16/08/2026
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 49 | Part 3 §4.3, khối `package.json — thêm hai lệnh` | Đứt mạch | **Chạy API và worker cùng lúc ở chế độ dev thì API chết.** Bài đưa `start:dev` (`nest start --watch`) và `start:worker:dev` (`nest start --watch --entryFile worker/main`) rồi để người đọc chạy song song — đó là cách duy nhất để thử hàng đợi. Nhưng cả hai build vào **cùng một `dist/`**, mà `nest-cli.json` (Part 1) đặt `"deleteOutDir": true`. Worker khởi động xoá sạch `dist/`, và tiến trình API đang chạy chết ngay: `Error: Cannot find module '.../dist/main'`. Đo thật: sau khi bật worker, mọi request qua nginx trả **`502 Bad Gateway`**. Bài không hề nhắc, và triệu chứng (502 từ nginx) chỉ về phía nginx chứ không về phía cái vừa bật | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm callout mô tả đúng triệu chứng (`502` từ nginx, `Cannot find module .../dist/main`) kèm cách chữa `"deleteOutDir": false`. Sau khi tắt cờ: API và worker chạy song song ổn định, API trả `401` bình thường thay vì `502` |
+| 50 | Part 3 §4.3/§4.1, cột `attempts` của bảng `jobs` | Mơ hồ | Part 1 tạo cột `attempts integer DEFAULT 0` trong `job.entity.ts` với chú thích rõ ràng, nhưng **không code nào trong Part 3 tăng nó**. Số lần thử chỉ sống trong trường `attempt` của thông điệp Redis. Đo thật sau khi một job thất bại và đi hết vòng thử lại rồi vào hàng đợi chết: `attempts` trong Postgres vẫn là **0**. Không sai về chức năng (Redis giữ đủ thông tin), nhưng cột trong CSDL nói dối người đọc SQL, và đây đúng là chỗ người ta sẽ nhìn đầu tiên khi điều tra job hỏng | chưa xử lý |
+
+### §4.1 — đường thất bại đã chạy thật (ngoài dự kiến)
+
+Job đầu tiên tôi đẩy trỏ vào một file `.bin` **toàn byte ngẫu nhiên** (từ phần thử
+upload ở Part 2), nên ffmpeg thất bại thật — vô tình chạy đúng nhánh mà §4.1 dựng lên:
+
+- `jobs.status` = **`failed`**, `error` = `Error: ffmpeg thoat voi ma 183`
+- `XLEN jobs:dead` = **1** → job đã vào hàng đợi chết đúng như thiết kế
+- `ZCARD jobs:delayed` = 0 → đã đi hết 3 lượt thử rồi mới bị đẩy sang
+
+Cơ chế thử lại + DLQ của §4.1 hoạt động đúng như bài mô tả.
+
+### §4.3 + §4.4 — chuyển mã thật, từ đầu tới cuối
+
+Sau khi vá #46–#49, chạy đúng luồng bài mô tả (API + worker + `POST /transcode`):
+
+| Dấu vết | Kết quả |
+|---|---|
+| `POST /media/:id/transcode` | **`202`** + `{"jobId":"1639da5a-..."}` |
+| Redis pub/sub kênh `progress` | **5 tin**, `percent` 22 → 47 → 70 → … |
+| `jobs.status` | **`completed`**, `started_at` và `finished_at` đều có |
+| File đầu ra | `9cd8bbbd-...-720p.mp4`, **807 KB** |
+| `credit_entries` | `delta = -10`, `reason = transcode`, có `job_id` — đúng giá 720p |
+
+Toàn bộ chuỗi §2.2 → §4 → §4.2 nối được với nhau và chạy thật.
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**

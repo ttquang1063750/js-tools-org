@@ -1302,27 +1302,110 @@ void bootstrap();</code></pre>
 }</code></pre>
             </div>
 
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Hai tiến trình <code>--watch</code> dùng chung một <code>dist/</code></div>
+              <div class="callout__content">
+                Từ đây trở đi phải chạy <strong>hai</strong> tiến trình cùng lúc — API ở một cửa sổ, worker ở cửa sổ
+                khác — vì đó là cách duy nhất để thử hàng đợi. Nhưng cả hai lệnh <code>--watch</code> đều build vào cùng
+                thư mục <code>dist/</code>, mà <code>nest-cli.json</code> từ Part 1 đang đặt
+                <code>"deleteOutDir": true</code>. Bật worker lên là nó <strong>xoá sạch <code>dist/</code></strong> và
+                giết luôn tiến trình API đang chạy: <code>Error: Cannot find module '.../dist/main'</code>.<br /><br />
+                Triệu chứng dễ đi lạc: mọi request sau đó trả <strong><code>502 Bad Gateway</code></strong> từ nginx,
+                nên thoạt nhìn giống lỗi nginx chứ không giống lỗi của cái vừa bật. Cách chữa gọn nhất là tắt cờ đó
+                đi:<br /><br />
+                <code
+                  >// nest-cli.json<br />
+                  "compilerOptions": { "deleteOutDir": <strong>false</strong>, ... }</code
+                >
+              </div>
+            </div>
+
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">docker-compose.yml — dịch vụ worker</span>
+                <span class="code-filename">docker-compose.yml — dịch vụ worker (bước đóng gói, xem callout dưới)</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-yaml">services:
   worker:
-    build: .
+    build: . # can mot Dockerfile — xem callout ngay duoi
     command: npm run start:worker
     init: true # PID 1 tu te — don tien trinh ffmpeg mo coi, xem canh bao muc 2.3
     environment:
-      DATABASE_URL: postgres://app:secret@postgres:5432/media
+      # PHAI khop voi dich vu postgres da dung o Part 1 muc 4.5:
+      # user forge, mat khau forge, database media_forge.
+      DATABASE_URL: postgres://forge:forge@postgres:5432/media_forge
       REDIS_URL: redis://redis:6379
+      UPLOAD_DIR: /var/media # trong container, khac ./uploads o may minh
     volumes:
       - media:/var/media # dung chung thu muc voi API
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
     deploy:
-      replicas: 2 # hai worker chay song song, Redis Streams tu chia viec</code></pre>
+      replicas: 2 # hai worker chay song song, Redis Streams tu chia viec
+
+# Khai bao o cap cao nhat, ngang hang voi `services:` — thieu khoi nay thi
+# Compose bao volume `media` khong ton tai.
+volumes:
+  forge-pgdata: # da co tu Part 1
+  media: # moi, dung chung giua API va worker</code></pre>
             </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚠️ <code>build: .</code> cần một <code>Dockerfile</code>, và nó phải có ffmpeg
+              </div>
+              <div class="callout__content">
+                Cho tới đây loạt bài vẫn chạy ứng dụng thẳng trên máy (<code>npm run start:dev</code>) và chỉ để
+                Postgres, Redis, nginx trong Docker — nên chưa có <code>Dockerfile</code> nào cả.
+                <code>build: .</code> cần một file như vậy, và điểm đáng lưu ý là image của worker
+                <strong>phải có ffmpeg bên trong</strong>, không chỉ Node:<br /><br />
+                <code
+                  >FROM node:24-alpine<br />
+                  RUN apk add --no-cache ffmpeg &nbsp;# BAT BUOC cho worker<br />
+                  WORKDIR /app<br />
+                  COPY package*.json ./<br />
+                  RUN npm ci<br />
+                  COPY . .<br />
+                  RUN npm run build</code
+                >
+                <br /><br />
+                Nếu chỉ muốn thử hàng đợi chứ chưa cần đóng gói, cách nhanh hơn nhiều là bỏ qua cả khối Compose này và
+                chạy worker thẳng trên máy bằng <code>npm run start:worker:dev</code> — phần còn lại của mục 4 và mục 6
+                đều hoạt động y hệt.
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — chạy worker trên máy và xem nó ăn việc thật</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># Cua so 1: API (nhu tu truoc toi gio)
+npm run start:dev
+
+# Cua so 2: worker
+npm run start:worker:dev
+
+# Cua so 3: day mot job cho video da upload o Part 2
+curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+  -X POST "https://media-forge.local:8443/media/$VID/transcode" \
+  -H "Authorization: Bearer $TOK"
+# -> {"jobId":"1639da5a-..."}  http=202
+
+# Nghe tien do worker phat ra, trong luc no chay
+docker exec forge-redis redis-cli SUBSCRIBE progress
+# -> {"userId":"...","jobId":"1639da5a-...","percent":22}
+# -> {"userId":"...","jobId":"1639da5a-...","percent":47}
+# -> {"userId":"...","jobId":"1639da5a-...","percent":70}</code></pre>
+            </div>
+
+            <p>
+              Xong thì có ba dấu vết kiểm được: <code>jobs.status</code> chuyển sang <code>completed</code> với cả
+              <code>started_at</code> lẫn <code>finished_at</code>; một file <code>&lt;videoId&gt;-720p.mp4</code> xuất
+              hiện trong <code>uploads/</code>; và một dòng <code>credit_entries</code> với <code>delta = -10</code> kèm
+              <code>job_id</code> — đúng giá 720p trong <code>PRICE_BY_HEIGHT</code>.
+            </p>
 
             <div class="code-window">
               <div class="code-header">
