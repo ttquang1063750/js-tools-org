@@ -1521,6 +1521,100 @@ export class OutboxRelay {
               </div>
             </div>
 
+            <h3>4.2. Dựng cả cụm lên</h3>
+
+            <p>
+              Mọi <code>@Client({ url: 'billing-svc:50051' })</code> ở trên chỉ phân giải được nhờ đúng một thứ: tên
+              dịch vụ trong Compose. Đây cũng chính là lý do mục 7 nói không cần service discovery — nhưng cái file làm
+              điều đó thành sự thật thì phải có mặt.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">docker-compose.yml — rút gọn, mỗi service một database riêng</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-yaml">services:
+  billing-db: { image: postgres:17-alpine, environment: { POSTGRES_USER: billing, POSTGRES_PASSWORD: billing, POSTGRES_DB: billing } }
+  media-db:   { image: postgres:17-alpine, environment: { POSTGRES_USER: media,   POSTGRES_PASSWORD: media,   POSTGRES_DB: media } }
+  auth-db:    { image: postgres:17-alpine, environment: { POSTGRES_USER: auth,    POSTGRES_PASSWORD: auth,    POSTGRES_DB: auth } }
+  redis:      { image: redis:7-alpine }
+
+  billing-svc:
+    build: .
+    command: ['node', '-r', 'ts-node/register', '-r', 'tsconfig-paths/register', 'apps/billing-svc/src/main.ts']
+    environment:
+      DATABASE_URL: postgres://billing:billing@billing-db:5432/billing
+      GRPC_URL: '0.0.0.0:50051'
+    depends_on: { billing-db: { condition: service_healthy } }
+
+  media-svc:
+    build: .
+    command: ['node', '-r', 'ts-node/register', '-r', 'tsconfig-paths/register', 'apps/media-svc/src/main.ts']
+    environment:
+      DATABASE_URL: postgres://media:media@media-db:5432/media
+      BILLING_GRPC_URL: 'billing-svc:50051'   # ten dich vu = ten host
+      GRPC_URL: '0.0.0.0:50052'
+    depends_on: { media-db: { condition: service_healthy } }
+
+  auth-svc:
+    build: .
+    command: ['node', '-r', 'ts-node/register', '-r', 'tsconfig-paths/register', 'apps/auth-svc/src/main.ts']
+    environment:
+      DATABASE_URL: postgres://auth:auth@auth-db:5432/auth
+      JWT_SECRET: ${JWT_SECRET}    # PHAI giong het gateway
+      GRPC_URL: '0.0.0.0:50053'
+    depends_on: { auth-db: { condition: service_healthy } }
+
+  gateway:
+    build: .
+    command: ['node', '-r', 'ts-node/register', '-r', 'tsconfig-paths/register', 'apps/gateway/src/main.ts']
+    environment:
+      JWT_SECRET: ${JWT_SECRET}    # PHAI giong het auth-svc
+      PORT: '3000'
+    ports:
+      - '3000:3000'                # dich vu DUY NHAT mo cong ra ngoai
+    depends_on: [auth-svc, media-svc]</code></pre>
+            </div>
+
+            <div class="callout callout--note">
+              <div class="callout__title">📝 Chỉ gateway mở cổng ra ngoài</div>
+              <div class="callout__content">
+                Ba dịch vụ gRPC không cần khối <code>ports:</code> nào cả — chúng chỉ nói chuyện với nhau trong mạng nội
+                bộ của Compose, và đó là điều đúng: gRPC ở đây không có TLS lẫn xác thực ở tầng vận chuyển. Ánh xạ chúng
+                ra ngoài chỉ nên làm tạm lúc gỡ lỗi.<br /><br />
+                <code>JWT_SECRET</code> phải <strong>giống hệt</strong> giữa auth-svc và gateway: auth-svc ký token,
+                gateway tự xác thực chữ ký mà không gọi ngược lại (mục 3.2). Lệch nhau thì mọi request có token đều trả
+                401 và không có gì trong log chỉ ra lý do.
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — đăng nhập đi xuyên qua cả hai tầng</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">export JWT_SECRET=$(openssl rand -hex 32)
+docker compose up -d --build
+
+curl -s -X POST http://localhost:3000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@test.local","password":"matkhau123"}'
+# -> {"accessToken":"eyJhbGciOi..."}  + Set-Cookie: refresh_token=...
+
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@test.local","password":"saibetbet"}'
+# -> 401   (GrpcStatus.UNAUTHENTICATED -> UnauthorizedException, muc 3.2)</code></pre>
+            </div>
+
+            <p>
+              Request đó đi qua đúng hai tầng: HTTP tới gateway, rồi gRPC xuống auth-svc, rồi ngược lại. Trình duyệt
+              không biết gì về chuyện đó — đúng lời hứa ở mục 2. Và mã <code>401</code> ở lệnh thứ hai là bằng chứng cụ
+              thể rằng <code>mapAuthError</code> của mục 3.2 làm đúng việc: một mã lỗi gRPC đã được dịch lại thành một
+              mã lỗi HTTP đúng nghĩa, thay vì rơi ra thành <code>500</code>.
+            </p>
+
             <h2>5. Cache: nhanh hơn, và cái bẫy dồn toa</h2>
 
             <p>

@@ -483,6 +483,35 @@ Khoản trừ tiền không mất đi đâu qua một lần chết hoàn toàn c
 đúng điều outbox hứa, và đúng cái mà "hỏng 1" ở đầu §4 mô tả sẽ xảy ra nếu gọi
 mạng thẳng trong transaction.
 
+## Đợt hai ba — Part 4 §3.1–§3.3 + gateway, 16/08/2026
+
+**§3.1 và §3.3 đúng, đã xác nhận bằng chạy.** Gọi `WatchJob` qua gRPC rồi
+`PUBLISH progress` vào Redis của cụm service: client nhận đủ ba mốc
+`10 → 55 → 100` và **stream tự đóng ở 100%** — đúng thiết kế `subscriber.complete()`
+khi `percent === 100`, và đúng quyết định "một luồng, một hình dạng, đi hết tới
+100" mà §3.1 nêu ra để thay cho hai kênh tách biệt của Part 3. Cầu nối
+Redis → `ProgressBridge` → `EventEmitter2` → gRPC stream hoạt động nguyên vẹn.
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 62 | Part 4, cả part | Thiếu code | **Không có file `docker-compose.yml` nào cho Part 4.** Cả part nhắc chữ "docker-compose" đúng một lần, trong một câu ở §7 (*"Ba dich vu voi ten co dinh trong docker-compose la du"*) — tức bài *dựa vào* nó để biện minh cho việc bỏ qua service discovery, mà không bao giờ đưa nó ra. Mọi `@Client({ url: 'billing-svc:50051' })`, `'media-svc:50052'`, `'auth-svc:50053'` đều chỉ phân giải được nhờ đúng file đó. Ngoài ra mỗi service cần một Postgres riêng (§2 nói rõ ba database tách biệt) mà không mục nào dựng chúng. Cùng họ #18, #46, #48, #59 — đây là lần thứ năm hạ tầng được *dùng* mà không bao giờ được *tạo* | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm hẳn mục **§4.2 "Dựng cả cụm lên"** với khối `docker-compose.yml` đủ 4 service + 3 database + redis, callout giải thích chỉ gateway mở cổng ra ngoài và `JWT_SECRET` phải khớp giữa auth-svc/gateway, kèm khối Terminal đăng nhập xuyên hai tầng |
+
+### Luồng đầu-cuối của Part 4 đã chạy thật (lần đầu tiên)
+
+Dựng đủ **4 service + 3 Postgres riêng + Redis**, rồi gọi qua HTTP:
+
+| Phép thử | Kết quả |
+|---|---|
+| `POST /auth/login` qua gateway → gRPC → auth-svc | **`201`** + `accessToken` + `Set-Cookie: refresh_token` |
+| Mật khẩu sai (đủ dài) | **`401`** `{"message":"Email hoac mat khau khong dung"}` — `mapAuthError` của §3.2 dịch `UNAUTHENTICATED` thành `UnauthorizedException` đúng |
+| `POST /auth/refresh` (xoay vòng) qua gateway | **`201`** |
+| `WatchJob` streaming (§3.1/§3.3) | nhận `10 → 55 → 100`, **stream tự đóng ở 100%** |
+
+Trình duyệt/client không biết gì về việc có ba dịch vụ phía sau — đúng lời hứa §2.
+Ghi chú: mật khẩu sai **dưới 8 ký tự** trả `400` chứ không phải `401`, do
+`@MinLength(8)` của `LoginDto` chặn trước — không phải lỗi, nhưng dễ làm người
+kiểm nhầm là error mapping hỏng (tôi đã nhầm đúng một lần).
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**
