@@ -264,9 +264,32 @@ Trình duyệt thật, `http://localhost:5173`, backend + nginx + Postgres + Red
 
 ## Việc còn lại của lượt rà soát này
 
-- [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
-- [ ] Quyết #7/#8 (giao diện Part 2 không có màn đăng nhập)
-- [ ] Part 2 §4 → §7 (nginx, rate limit, streaming) — **chưa làm** (§3 đã xong)
-- [ ] Part 2 §8.2 (upload + player chạy thật trong trình duyệt) — **chưa làm**
-- [ ] Part 3 — worker, ffmpeg, WebSocket — **chưa làm**
-- [ ] Part 4 — microservice, gRPC — **chưa làm**
+**Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**
+
+- [x] Part 2 §4 (nginx) — #18, #19
+- [x] Part 2 §5 + §5.2 (rate limit, ngân sách thời gian) — #20–#24
+- [x] Part 2 §6 + §6.2 (upload stream, upload nối tiếp) — #25–#29
+- [x] Part 2 §7 (download, Range, X-Accel-Redirect) — #30–#32
+- [x] Part 2 §8.2 (upload + player trong trình duyệt) — #33–#37
+- [ ] Nhóm không chặn còn treo từ đợt đầu: **#2, #3, #5, #6, #9** (đã sửa vào bài
+      nhưng chưa chạy lại để xác nhận, trừ #2 và #3)
+- [ ] **Part 3 — chưa làm.** worker, ffmpeg, cluster, hàng đợi Redis Streams,
+      WebSocket. Đã thấy trước hai chỗ đáng ngờ khi grep, cần kiểm khi làm tới:
+      `docker-compose.yml` mục 4.3 dùng `DATABASE_URL: postgres://app:secret@postgres:5432/media`
+      **lệch hẳn** với Compose của Part 1 (`forge/forge/media_forge`); và `build: .`
+      cần một `Dockerfile` mà chưa part nào đưa ra
+- [ ] **Part 4 — chưa làm.** microservice, gRPC. #6 (khối code thiếu
+      `code-filename`) nằm ở đây, chưa đọc tới nên chưa biết là khối gì
+
+### Trạng thái môi trường để phiên sau chạy tiếp ngay
+
+```
+~/Projects/Scratchpad/media-forge/       backend, xong hết Part 2. git có commit từng mục
+~/Projects/Scratchpad/media-forge-web/   frontend, đăng nhập + upload + player chạy thật
+docker: forge-postgres, forge-redis, forge-nginx (cổng 8080/8443)
+.env đã có JWT_SECRET và SIGNED_URL_SECRET
+người dùng demo: demo@test.local / matkhau123
+```
+
+Chạy lại: `docker compose -f docker/docker-compose.yml up -d` trong `media-forge/`,
+rồi `npm run start:dev`; frontend `npm run dev` ở `media-forge-web/`.
