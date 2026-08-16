@@ -2538,10 +2538,13 @@ await pipeline(request, createWriteStream(target));</code></pre>
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">src/media/upload.controller.ts — nhận từng mảnh</span>
+                <span class="code-filename">src/media/upload.controller.ts — THÊM method vào class đã có ở mục 6</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">import { mkdir, readdir } from 'node:fs/promises';
+
+// Va bo sung `Get` cung `Param` vao dong import @nestjs/common da co san:
+// import { Controller, Post, Get, Param, Req, UseGuards, BadRequestException } from '@nestjs/common';
 
 // Client chia file thanh cac manh 5MB va gui lan luot.
 @Post('upload/:uploadId/chunk/:index')
@@ -2572,7 +2575,9 @@ async status(@Param('uploadId') uploadId: string) {
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">src/media/upload.controller.ts — ghép mảnh thành file hoàn chỉnh</span>
+                <span class="code-filename"
+                  >src/media/upload.controller.ts — THÊM method ghép mảnh vào cùng class đó</span
+                >
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-typescript">import { createReadStream } from 'node:fs';
@@ -2605,6 +2610,69 @@ async completeUpload(
   const video = await this.media.registerUpload(videoId, user.sub, target, null);
   return { videoId: video.id };
 }</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — đứt giữa chừng rồi gửi tiếp, đúng kịch bản ở trên</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">head -c 26214400 /dev/urandom &gt; /tmp/chunky.bin   # 25MB
+split -b 5242880 /tmp/chunky.bin /tmp/part-       # thanh 5 manh 5MB
+UP=$(uuidgen)
+
+# Gui 3 manh dau roi dung lai — gia lam mat mang
+i=0; for f in $(ls /tmp/part-* | head -3); do
+  curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+    -X POST "https://media-forge.local:8443/media/upload/$UP/chunk/$i" \
+    -H "Authorization: Bearer $TOK" -H 'Content-Type: application/octet-stream' \
+    --data-binary @$f; i=$((i+1));
+done
+# -> {"received":0} {"received":1} {"received":2}
+
+# Mo lai trang: toi da gui toi dau roi?
+curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+  "https://media-forge.local:8443/media/upload/$UP/status" -H "Authorization: Bearer $TOK"
+# -> {"received":[0,1,2]}   -> gui tiep tu manh 3
+
+i=3; for f in $(ls /tmp/part-* | tail -2); do
+  curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+    -X POST "https://media-forge.local:8443/media/upload/$UP/chunk/$i" \
+    -H "Authorization: Bearer $TOK" -H 'Content-Type: application/octet-stream' \
+    --data-binary @$f; i=$((i+1));
+done
+
+curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+  -X POST "https://media-forge.local:8443/media/upload/$UP/complete" \
+  -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json'
+# -> {"videoId":"33003ecf-..."}
+
+# Phep thu that su: file ghep lai co dung tung byte khong?
+shasum -a 256 /tmp/chunky.bin
+shasum -a 256 uploads/&lt;videoId&gt;.bin
+# -> hai chuoi bam GIONG HET nhau</code></pre>
+            </div>
+
+            <p>
+              Hai chuỗi băm khớp nhau là bằng chứng gọn nhất rằng thứ tự ghép đúng và
+              <code>{ end: false }</code> đã làm đúng việc của nó — sai một trong hai thì file vẫn tạo ra được, vẫn đúng
+              dung lượng, chỉ có nội dung là hỏng. Thư mục <code>uploads/tmp/&lt;uploadId&gt;</code> cũng biến mất sau
+              lệnh cuối, đúng như <code>rm</code> ở cuối method.
+            </p>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Hai lỗ hổng cố tình để trống ở đây</div>
+              <div class="callout__content">
+                <code>uploadId</code> đi thẳng từ URL vào <code>join(this.media.tempDir, uploadId)</code>. Mà
+                <code>join</code> chuẩn hoá <code>..</code>, nên một <code>uploadId</code> kiểu
+                <code>../../something</code> ghi được ra ngoài <code>tempDir</code>. Trong dự án thật, phải ép
+                <code>uploadId</code> là UUID hợp lệ trước khi ghép đường dẫn — chính là việc mà
+                <code>ParseUUIDPipe</code> làm. <br /><br />
+                Thứ hai: không endpoint nào trong ba endpoint kiểm <code>uploadId</code> có thuộc về người gọi hay
+                không. Ai biết được <code>uploadId</code> của người khác thì gọi <code>complete</code> được, và video sẽ
+                về tài khoản của họ. Cách chữa đúng là lưu chủ sở hữu của <code>uploadId</code> ngay từ mảnh đầu tiên
+                rồi đối chiếu ở mọi mảnh sau — cùng một tinh thần với <code>findPlayable(id, userId)</code> ở mục 6.
+              </div>
             </div>
 
             <h2>7. Download: tua được, mà Node gần như không làm gì</h2>

@@ -191,6 +191,20 @@ Làm theo bài: tạo `nginx/media-forge.conf` đúng nội dung bài đưa, áp
 - Upload **800 MB** → `201`, RSS tiến trình **212 MB → đỉnh 262 MB** (tăng ~50 MB, không phải 800) — đúng luận điểm trung tâm của mục 6
 - Header trả về có `x-ratelimit-remaining: 19` → **xác nhận #21/#22/#23 bằng chạy**: `RateLimitGuard` gọi script Lua qua Redis thật
 
+## Đợt mười — Part 2 §6.2 (upload nối tiếp), 16/08/2026
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 28 | Part 2 §6.2, hai khối `upload.controller.ts — nhận từng mảnh` và `— ghép mảnh` | Thiếu code | Hai khối rất cẩn thận liệt kê các import `node:fs` mà chúng cần (`mkdir, readdir`, `createReadStream`, `rm`) — nhưng **quên hẳn `Param` và `Get` từ `@nestjs/common`**, vốn không có trong dòng import của khối §6 (`Controller, Post, Req, UseGuards, BadRequestException`). Gõ đúng như bài: 5 lỗi `TS2304: Cannot find name 'Param'` / `'Get'`. Cùng họ với #4, #10 — nhưng ở đây khó thấy hơn vì khối *có* phần import, chỉ là import không đủ | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm dòng chú thích nêu rõ phải bổ sung `Get, Param` vào dòng import `@nestjs/common` đã có, và đổi hai tiêu đề khối thành "THÊM method vào class đã có ở mục 6". Sau khi sửa: `tsc` sạch, cả 3 route `/media/upload/:uploadId/*` được map |
+| 29 | Part 2 §6.2, `uploadId` lấy thẳng từ `@Param` | Mơ hồ | `join(this.media.tempDir, uploadId)` với `uploadId` là chuỗi tuỳ ý từ URL. `join` chuẩn hoá `..`, nên `uploadId = '../../etc'` ghi ra ngoài `tempDir`. Ngoài ra không endpoint nào trong ba endpoint kiểm `uploadId` có thuộc về người gọi hay không — người dùng B đoán/biết `uploadId` của A thì gọi `complete` được và video về tài khoản B. Bài không nói gì về cả hai điểm; có thể là cố ý lược cho gọn, nhưng mục 6 vốn đã rất kỹ về chuyện "làm đúng" nên chỗ im lặng này lệch tông | ✅ **đã sửa** — thêm callout "Hai lỗ hổng cố tình để trống ở đây" nói thẳng cả hai (traversal qua `join`, và không kiểm chủ sở hữu `uploadId`) kèm hướng chữa (`ParseUUIDPipe`, lưu chủ sở hữu từ mảnh đầu). Giữ nguyên code — bài chọn không cài, giờ thì nói ra chứ không im lặng |
+
+### §6.2 đã chạy thật, đúng kịch bản bài dựng lên
+
+File 25 MB chia 5 mảnh: gửi 3 mảnh → `status` trả `{"received":[0,1,2]}` → gửi
+tiếp mảnh 3,4 → `complete` → `{"videoId":"..."}`. **SHA-256 của file ghép lại
+giống hệt file gốc**, và `uploads/tmp/<uploadId>` đã tự dọn. Logic §6.2 đúng
+hoàn toàn — chỉ thiếu đúng hai import.
+
 ## Việc còn lại của lượt rà soát này
 
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
