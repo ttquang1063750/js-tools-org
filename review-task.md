@@ -304,11 +304,19 @@ còn để trống ở các đợt trước, và dọn hai thứ chính tôi là
 - [x] Part 2 §8.2 (upload + player trong trình duyệt) — #33–#37
 - [x] Nhóm không chặn treo từ đợt đầu — **#2, #3, #5, #6, #9, #12 đã khép hết**
       ở đợt 13. **Không còn dòng nào mang trạng thái "chưa xử lý" trong file này.**
-- [ ] **Part 3 — chưa làm.** worker, ffmpeg, cluster, hàng đợi Redis Streams,
-      WebSocket. Đã thấy trước hai chỗ đáng ngờ khi grep, cần kiểm khi làm tới:
+- [x] **Part 3 §1** (event loop một luồng) — #38. Đo thật: `/ping` 4,6 s vs 0,001 s
+- [x] **Part 3 §2** (child_process, ffmpeg) — #39, #40. Chuyển mã thật ra file 472 KB
+- [x] **Part 3 §3** (worker_threads, hồ worker) — #41, #42. 5 việc qua hồ 2 worker
+- [ ] **Part 3 §2.3 — chưa làm.** Huỷ / hết giờ / tiến trình mồ côi. Đã đọc lướt,
+      chưa gõ: hai khối là mảnh minh hoạ, khối `stop()` dùng kiểu `ChildProcess`
+      mà không import — cần kiểm khi làm tới
+- [ ] **Part 3 §4 → §7 — chưa làm.** Hàng đợi Redis Streams, thử lại + DLQ, worker
+      là tiến trình riêng, dừng tử tế, `cluster`, WebSocket, và Mốc #3 (bảng tiến
+      độ realtime trong trình duyệt). Hai chỗ đáng ngờ đã thấy khi grep, cần kiểm:
       `docker-compose.yml` mục 4.3 dùng `DATABASE_URL: postgres://app:secret@postgres:5432/media`
       **lệch hẳn** với Compose của Part 1 (`forge/forge/media_forge`); và `build: .`
-      cần một `Dockerfile` mà chưa part nào đưa ra
+      cần một `Dockerfile` mà **chưa part nào đưa ra** (cùng họ với #39: phụ thuộc
+      hạ tầng không bao giờ được dựng)
 - [ ] **Part 4 — chưa làm.** microservice, gRPC. (Ghi chú: #6 từng nghi Part 4 có
       khối code thiếu `code-filename` — đã khép ở đợt 13, đó là lỗi regex của
       `extract-parts.py` chứ không phải lỗi bài. Part 4 vẫn chưa được đọc.)
