@@ -465,15 +465,17 @@ Trình duyệt thật, backend + worker + nginx + Redis + Postgres đều chạy
 - [x] **Part 3 §4.3 + §4.4** (worker là tiến trình riêng) — #46, #47, #48, #49, #50.
       **Chuyển mã thật chạy xong**: 202 → progress qua Redis → `completed` → file
       720p 807 KB → trừ đúng 10 credit
-- [ ] **Part 3 §5 (cluster) — chưa làm.** Gồm `src/cluster.ts` và §5.1 (nginx cân
-      tải nhiều instance). Đã thấy trước: §5 bảo bọc `bootstrap()` lại và dùng
-      `app.listen(process.env.PORT ?? 3000)` — **lệch với `main.ts` hiện tại** vốn
-      đọc cổng qua `ConfigService`, và `process.env.PORT` chính là thứ Part 1 §5
-      đã dạy là sai (lỗi `TS4111`). Cần kiểm khi làm tới
-- [ ] **Part 3 §6 (WebSocket realtime) — chưa làm.** `ProgressGateway`,
-      `ProgressSubscriber`, §6.1 (nginx nâng cấp giao thức), §6.2 (mất kết nối)
-- [ ] **Part 3 §7 (Mốc #3) — chưa làm.** Bảng tiến độ realtime trong trình duyệt.
-      Đây là mốc UI, **phải mở trình duyệt thật** mới tính là xong (bài học từ #37)
+- [x] **Part 3 §5** (cluster) — #51, #52. 10 tiến trình con; `/ping` 4,6 s → 0,004 s
+- [x] **Part 3 §6 + §6.1** (WebSocket realtime) — #53, #54. Tiến độ đi xuyên hai
+      tiến trình qua Redis pub/sub; WS qua nginx cổng 8443 bắt tay OK
+- [x] **Part 3 §7** (Mốc #3) — #55, #56, #57, #58. **Đã nhìn thấy trong trình duyệt
+      thật**: bấm *Chuyển mã 720p* → dòng mới hiện ra và chạy tới 100%
+
+**PART 3 ĐÃ ĐI HẾT, §1 → §7.** Chỉ còn §6.2 (mất kết nối và những gì bỏ lỡ) là
+đọc mà chưa dựng kịch bản rớt mạng để đo — phần code của nó (`progress.ts` phía
+client) trùng với đường `sync()` đã vá ở #58 và đã chạy đúng.
+
+- [ ] **Part 4 — chưa làm.** microservice, gRPC. Là part duy nhất còn nguyên
 - [ ] **Part 4 — chưa làm.** microservice, gRPC. (Ghi chú: #6 từng nghi Part 4 có
       khối code thiếu `code-filename` — đã khép ở đợt 13, đó là lỗi regex của
       `extract-parts.py` chứ không phải lỗi bài. Part 4 vẫn chưa được đọc.)
