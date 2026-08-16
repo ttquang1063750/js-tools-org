@@ -395,6 +395,29 @@ lệnh `curl`. Bài không hề đưa phép thử này dù nó là cách hiển 
 mục 5 có tác dụng — đã thêm vào, cùng một đoạn nói rõ `cluster` **không** chữa
 nguyên nhân gốc (tiến trình bị chiếm vẫn đứng hình đủ 5 giây).
 
+## Đợt hai mươi — Part 3 §6 (WebSocket realtime), 16/08/2026
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 53 | Part 3, cả part | Thiếu code | **Part 3 không có một khối lệnh cài gói nào.** Grep cả part: `npm i` xuất hiện đúng một lần, nằm lọt trong *câu văn* của một callout (`cần npm i @nestjs/schedule`), không phải khối Terminal. Còn §6 cần **`@nestjs/websockets`, `@nestjs/platform-socket.io`, `socket.io`** thì không được nhắc ở đâu cả. Gõ đúng như bài: `TS2307: Cannot find module '@nestjs/websockets'` và `Cannot find module 'socket.io'`. Cùng họ #21 (`ioredis`) và #39 (ffmpeg) — Part 3 là part nặng phụ thuộc nhất mà lại là part duy nhất không có mục cài đặt | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm khối Terminal gom cả `@nestjs/schedule` lẫn `@nestjs/websockets @nestjs/platform-socket.io socket.io` vào đầu §6. Sau khi cài: `tsc` sạch |
+| 54 | Part 3 §6, `ProgressGateway` + `ProgressSubscriber` | Thiếu code | **Không có `GatewayModule` ở bất kỳ đâu** — grep cả Part 3 lẫn Part 4: 0 kết quả. Hai class được viết đầy đủ rồi bỏ đó, không provider nào khai, không module nào import. `ProgressSubscriber` còn cần `ProgressGateway` tiêm vào, và `ProgressGateway` cần `JwtService` (tức phải import `AuthModule`, đúng cái bẫy #27). Đây là **lần thứ năm** cùng một thiếu sót (#23, #25, #31, #45) | ✅ **đã sửa, đã xác nhận bằng chạy** — viết hẳn khối `src/gateway/gateway.module.ts` (import `AuthModule`, providers cả hai class) kèm câu dặn thêm vào `AppModule` **chứ không phải `WorkerModule`** |
+
+### §6 đã chạy thật — xuyên hai tiến trình
+
+Client `socket.io-client` xác thực bằng JWT ở bước bắt tay, rồi đẩy một job:
+
+```
+>>> WS da ket noi
+>>> transcode 202 {"jobId":"f919b4e9-..."}
+>>> job:progress 22 / 47 / 70 / 94 / 99
+>>> job:done f919b4e9-...
+```
+
+Đường đi đầy đủ, qua **hai tiến trình tách biệt**: ffmpeg in ra `stderr` trong
+worker → `readline` (§2.2) → `redis.publish('progress')` → tiến trình API nghe
+qua kết nối `duplicate()` → `server.to('user:...')` → client. Và `99` rồi mới tới
+`job:done` — đúng nguyên tắc "phần trăm là ước lượng, mã thoát là sự thật" của §2.2.
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**
