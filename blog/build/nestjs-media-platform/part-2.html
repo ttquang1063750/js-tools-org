@@ -2766,7 +2766,9 @@ async play(
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">nginx — vùng nội bộ chỉ nhận lệnh từ ứng dụng</span>
+                <span class="code-filename"
+                  >nginx/media-forge.conf — THÊM location này vào trong khối <code>server</code> nghe cổng 443</span
+                >
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
               <pre><code class="language-bash">location /protected-media/ {
@@ -2775,6 +2777,26 @@ async play(
     sendfile on;
     tcp_nopush on;
 }</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ <code>/var/media/</code> chưa tồn tại với container nginx</div>
+              <div class="callout__content">
+                <code>alias /var/media/</code> là đường dẫn <strong>bên trong container nginx</strong>, còn file thì
+                đang nằm ở <code>./uploads</code> trên máy mình theo <code>UPLOAD_DIR</code> ở mục 6. Không nối hai chỗ
+                đó lại thì nginx trả <code>404</code> cho mọi lượt xem, và lỗi trông y hệt như signed URL bị sai. Thêm
+                một dòng mount vào dịch vụ nginx đã dựng ở mục 4:<br /><br />
+                <code
+                  >volumes:<br />
+                  &nbsp;&nbsp;- ../nginx/media-forge.conf:/etc/nginx/conf.d/default.conf:ro<br />
+                  &nbsp;&nbsp;- ./certs:/etc/nginx/certs:ro<br />
+                  &nbsp;&nbsp;<strong>- ../uploads:/var/media:ro</strong></code
+                >
+                <br /><br />
+                Chỉ đọc (<code>:ro</code>) là đủ và nên như vậy: nginx chỉ gửi file đi, việc ghi file là của NestJS. Ở
+                Part 3, khi API và worker cùng chạy trong Compose, chỗ này thành một volume dùng chung và
+                <code>UPLOAD_DIR</code> đổi thẳng thành <code>/var/media</code> — lúc đó không còn phải ánh xạ gì nữa.
+              </div>
             </div>
 
             <div class="code-window">
@@ -2962,6 +2984,84 @@ export class StreamController {
 // khong phai vai phut sau khi dang xuat.
 SIGNED_URL_SECRET: z.string().min(32),</code></pre>
             </div>
+
+            <p>
+              Biến này <strong>không</strong> có <code>.default()</code>, đúng như <code>JWT_SECRET</code> ở mục 2 — nên
+              thiếu nó là ứng dụng từ chối khởi động ngay:
+              <code>SIGNED_URL_SECRET: Invalid input: expected string, received undefined</code>. Sinh một khoá nữa,
+              khác khoá JWT:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">echo "SIGNED_URL_SECRET=$(openssl rand -hex 32)" &gt;&gt; .env
+echo "SIGNED_URL_SECRET=thay-bang-chuoi-ngau-nhien-tu-openssl-rand-hex-32" &gt;&gt; .env.example</code></pre>
+            </div>
+
+            <p>
+              Và mảnh cuối cùng, lại là chỗ dễ quên nhất: <code>MediaModule</code> ở mục 6 chưa biết gì về hai class vừa
+              viết. Không thêm vào thì hai route của cả mục 7 đơn giản là không tồn tại — ứng dụng vẫn khởi động bình
+              thường, chỉ có <code>/media/:id/play</code> trả 404.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/media/media.module.ts — bản đầy đủ sau mục 7</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">@Module({
+  imports: [TypeOrmModule.forFeature([Video]), AuthModule],
+  controllers: [UploadController, StreamController],
+  providers: [MediaService, SignedUrlService],
+  exports: [MediaService],
+})
+export class MediaModule {}</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — năm phép thử cho cả mục 7</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">VID=&lt;videoId tra ve tu buoc upload o muc 6&gt;
+
+# 1. Xin URL co chu ky (co Authorization, nhu mot lenh fetch tu trang)
+URL=$(curl -sk --resolve media-forge.local:8443:127.0.0.1 \
+  "https://media-forge.local:8443/media/$VID/signed-url" \
+  -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["url"])')
+
+# 2. Phat bang URL do, KHONG kem Authorization — dung nhu the &lt;video&gt; goi
+curl -sk --resolve media-forge.local:8443:127.0.0.1 -D- -o /dev/null \
+  "https://media-forge.local:8443$URL"
+# -> 200, content-length: 26214400, accept-ranges: bytes
+
+# 3. Tua: xin dung 1024 byte tu giua file
+curl -sk --resolve media-forge.local:8443:127.0.0.1 -D- -o /dev/null \
+  -H 'Range: bytes=10485760-10486783' "https://media-forge.local:8443$URL"
+# -> 206, content-range: bytes 10485760-10486783/26214400, content-length: 1024
+
+# 4. Go thang vung noi bo tu ngoai vao
+curl -sk --resolve media-forge.local:8443:127.0.0.1 -o /dev/null -w '%{http_code}\n' \
+  "https://media-forge.local:8443/protected-media/$VID.bin"
+# -> 404   (chi thi `internal` lam dung viec cua no)
+
+# 5. Sua mot ky tu cuoi cua chu ky
+curl -sk --resolve media-forge.local:8443:127.0.0.1 -o /dev/null -w '%{http_code}\n' \
+  "https://media-forge.local:8443${URL%?}X"
+# -> 401</code></pre>
+            </div>
+
+            <p>
+              Phép thử số 3 là cái đáng nhìn kỹ nhất: <code>206</code> và <code>Content-Range</code> đúng từng byte,
+              trong khi trong <code>stream.controller.ts</code> bản cuối <strong>không còn một dòng nào</strong> xử lý
+              <code>Range</code>. Toàn bộ đoạn tính <code>start</code>/<code>end</code>/<code>416</code> viết tay ở đầu
+              mục 7 đã bị xoá, và nginx làm lại phần đó đầy đủ hơn. Đó chính là điều mục 7.1 hứa, đo được bằng đúng một
+              lệnh <code>curl</code>.
+            </p>
 
             <h2>8. Giao diện: hai mốc để nhìn thấy thứ vừa dựng</h2>
 

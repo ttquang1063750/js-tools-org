@@ -205,6 +205,28 @@ tiếp mảnh 3,4 → `complete` → `{"videoId":"..."}`. **SHA-256 của file g
 giống hệt file gốc**, và `uploads/tmp/<uploadId>` đã tự dọn. Logic §6.2 đúng
 hoàn toàn — chỉ thiếu đúng hai import.
 
+## Đợt mười một — Part 2 §7 (download, Range, X-Accel-Redirect), 16/08/2026
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 30 | Part 2 §7.2, khối `configuration.ts — thêm biến cho URL có chữ ký` | Thiếu code | **Lặp lại nguyên xi #13.** `SIGNED_URL_SECRET: z.string().min(32)` là bắt buộc, không `.default()`, và không mục nào bảo thêm nó vào `.env` / `.env.example`. Làm đúng theo bài xong khởi động: `Error: Bien moi truong khong hop le: SIGNED_URL_SECRET: Invalid input: expected string, received undefined` — app không lên. #13 đã được vá bằng một đoạn văn + khối `openssl rand -hex 32` cho `JWT_SECRET`; chỗ này cần đúng cách xử lý đó | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm đoạn nói rõ biến này không có `.default()` kèm khối `openssl rand -hex 32` ghi vào `.env` và `.env.example`. App khởi động lại bình thường |
+| 31 | Part 2 §7, `stream.controller.ts` + `signed-url.service.ts` | Thiếu code | Không khối nào đăng ký `StreamController` hay `SignedUrlService` vào module. Sau khi thêm `SIGNED_URL_SECRET` cho app lên được: NestJS map 4 route `/media/upload*` và **không có `/media/:id/signed-url` lẫn `/media/:id/play`** — tức là cả hai route mà toàn bộ mục 7 dựng lên đều không tồn tại. Cùng họ #25/#23, và là lần thứ ba cùng một loại thiếu sót | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm khối `media.module.ts — bản đầy đủ sau mục 7` (thêm `StreamController` vào `controllers`, `SignedUrlService` vào `providers`) kèm câu cảnh báo app vẫn lên bình thường nên lỗi chỉ lộ ra ở 404. Sau khi sửa: cả `/media/:id/signed-url` và `/media/:id/play` được map |
+| 32 | Part 2 §7.1, khối `nginx — vùng nội bộ chỉ nhận lệnh từ ứng dụng` | Đứt mạch | Hai vấn đề chồng nhau. (a) Lại là một mảnh nginx trôi nổi không nói đặt vào đâu — cùng họ #20, nhưng lần này `location` phải nằm trong `server` block đã có. (b) Nghiêm trọng hơn: `alias /var/media/` **không bao giờ khớp với `UPLOAD_DIR` mặc định `./uploads`** trong chính Part 2. Container nginx cũng không mount thư mục uploads của host. Chính bài tự thú nhận điều này trong comment ở `media.service.ts` — *"dung khi uploadDir chinh la /var/media (xem docker-compose Part 3)"* — nghĩa là **điểm nhấn của mục 7.1 không thể chạy được trong phạm vi Part 2**, người đọc chỉ nhận 404 từ nginx. Bài không cảnh báo trước, và mục 7.1 được viết bằng giọng "làm xong rồi" chứ không phải "để Part 3 mới chạy được" | ✅ **đã sửa, đã xác nhận bằng chạy** — (a) tiêu đề khối đổi thành "THÊM location này vào trong khối `server` nghe cổng 443"; (b) thêm callout `/var/media/ chưa tồn tại với container nginx` kèm dòng mount `../uploads:/var/media:ro`, giải thích vì sao `:ro` là đúng, và nói trước rằng Part 3 sẽ đổi `UPLOAD_DIR` thành `/var/media` nên chỗ ánh xạ này biến mất |
+
+### §7 đã chạy thật — cả năm phép thử
+
+| Phép thử | Kết quả |
+|---|---|
+| Xin signed URL (có `Authorization`) | `/media/<id>/play?u=...&e=...&s=...` |
+| Phát bằng URL đó, **không** kèm `Authorization` | `200`, `content-length: 26214400`, `accept-ranges: bytes` |
+| Tua — `Range: bytes=10485760-10486783` | **`206`**, `content-range: bytes 10485760-10486783/26214400`, `content-length: 1024` |
+| Gõ thẳng `/protected-media/<id>.bin` từ ngoài | **`404`** — `internal` làm đúng việc |
+| Sửa một ký tự cuối của chữ ký | **`401`** |
+
+Đáng chú ý nhất: `206` và `Content-Range` đúng từng byte trong khi
+`stream.controller.ts` bản cuối **không còn một dòng nào** xử lý `Range` —
+nginx làm toàn bộ. Đó đúng là điều §7.1 hứa.
+
 ## Việc còn lại của lượt rà soát này
 
 - [ ] Sửa nhóm không chặn: #2, #3, #5, #6, #9
