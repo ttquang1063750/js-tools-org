@@ -599,7 +599,7 @@ try {
                 <span class="code-filename">src/worker/hash.worker.ts</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import { parentPort, workerData } from 'node:worker_threads';
+              <pre><code class="language-typescript">import { parentPort } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 
@@ -607,13 +607,36 @@ interface HashTask {
   readonly filePath: string;
 }
 
-const task = workerData as HashTask;
-const hash = createHash('sha256');
+// NGHE tung viec mot, thay vi doc workerData. Ho worker o duoi tai su dung
+// mot worker cho nhieu viec, ma workerData thi chi dat duoc DUNG MOT LAN
+// luc tao Worker — dung no thi worker chi lam duoc dung mot viec roi thanh
+// vo dung.
+parentPort?.on('message', (task: HashTask) =&gt; {
+  const hash = createHash('sha256');
 
-createReadStream(task.filePath)
-  .on('data', (chunk) =&gt; hash.update(chunk))
-  .on('end', () =&gt; parentPort?.postMessage({ digest: hash.digest('hex') }))
-  .on('error', (error: Error) =&gt; parentPort?.postMessage({ error: error.message }));</code></pre>
+  createReadStream(task.filePath)
+    .on('data', (chunk) =&gt; hash.update(chunk))
+    .on('end', () =&gt; parentPort?.postMessage({ digest: hash.digest('hex') }))
+    .on('error', (error: Error) =&gt; parentPort?.postMessage({ error: error.message }));
+});</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">
+                ⚠️ <code>workerData</code> và <code>postMessage</code> là hai mô hình khác nhau
+              </div>
+              <div class="callout__content">
+                Đây là chỗ rất dễ viết lệch mà TypeScript không cứu được. <code>workerData</code> là ảnh chụp
+                <strong>một lần</strong>, đóng băng lúc <code>new Worker(...)</code> — nó hợp với worker kiểu
+                <em>làm một việc rồi chết</em>. Còn hồ worker ở ngay dưới đây tồn tại chính là để
+                <strong>tái sử dụng</strong>, nên nó phải gửi việc bằng <code>postMessage</code>, và worker phải có
+                <code>parentPort.on('message')</code> để nghe.<br /><br />
+                Trộn hai mô hình thì <strong>biên dịch vẫn sạch</strong> nhưng chạy là hỏng ngay:
+                <code>new Worker(script)</code> không truyền <code>workerData</code> nên <code>task</code> là
+                <code>undefined</code>, worker chết với
+                <code>TypeError: Cannot read properties of undefined (reading 'filePath')</code>, và
+                <code>pool.run()</code> treo vĩnh viễn vì không bao giờ có <code>'message'</code> nào quay về.
+              </div>
             </div>
 
             <p>
@@ -678,6 +701,16 @@ export class WorkerPool&lt;T&gt; {
     });
 
     worker.postMessage(job.data);
+  }
+
+  // Moi Worker la mot handle giu event loop song. Khong co ham nay thi tien
+  // trinh KHONG BAO GIO tu thoat sau khi lam xong viec — xem muc 4.4, noi
+  // worker phai dung tu te trong gioi han thoi gian cua Docker.
+  async destroy(): Promise&lt;void&gt; {
+    const all = [...this.idle];
+    this.idle.length = 0;
+    await Promise.all(all.map((worker) =&gt; worker.terminate()));
+    this.spawned -= all.length;
   }
 }</code></pre>
             </div>
