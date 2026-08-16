@@ -418,6 +418,34 @@ worker → `readline` (§2.2) → `redis.publish('progress')` → tiến trình 
 qua kết nối `duplicate()` → `server.to('user:...')` → client. Và `99` rồi mới tới
 `job:done` — đúng nguyên tắc "phần trăm là ước lượng, mã thoát là sự thật" của §2.2.
 
+## Đợt hai mốt — Part 3 §6.1 + §7 (Mốc #3), 16/08/2026
+
+**§6.1 đúng, đã xác nhận:** áp khối `location /ws` vào `media-forge.conf`,
+`nginx -t` OK, và client `socket.io-client` nối qua **cổng 8443 của nginx**
+(TLS tự ký, `transports: ['websocket']`) bắt tay thành công.
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 55 | Part 3 §7, khối `src/components/JobList.tsx` | Thiếu code | Khối **không có một dòng import nào** — thiếu `useJobProgress` và `type JSX`: `TS2503: Cannot find namespace 'JSX'`, `TS2304: Cannot find name 'useJobProgress'`, kéo theo `TS7006`. Giống hệt #33 (`VideoPlayer.tsx` ở Part 2 §8.2) — cùng một loại khối, cùng một loại thiếu sót, hai part liên tiếp | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm 2 dòng import. `tsc -b` sạch |
+| 56 | Part 3 §7, cả mục | Đứt mạch | **Mốc #3 lại không có màn hình nào** — lần thứ ba sau #7 (mốc #1) và #36 (mốc #2). Bài đưa `useJobProgress.ts` và `JobList.tsx` rồi hết part: không có gì render `JobList`, không sửa `App.tsx`, và `JobList` cần prop `token` mà không chỗ nào truyền. Cũng không có nút nào gọi `POST /media/:videoId/transcode` — tức là ngay cả khi bảng hiện ra thì người đọc vẫn không có cách nào tạo job từ giao diện | ✅ **đã sửa, đã xác nhận trong trình duyệt** — thêm khối `UploadScreen.tsx` ráp `JobList` vào màn hình đã dựng ở Part 2 §8.2, truyền token từ `getAccessToken()`, kèm nút *Chuyển mã 720p* gọi `POST /media/:videoId/transcode` |
+
+| 57 | Part 3 §7 đối chiếu Part 2 §8 (cấu hình Vite) | Đứt mạch | **Cùng họ #37, và bài vẫn chưa học được từ lần đó.** §7 gọi `io('/', { path: '/ws' })` và `api('/jobs/active')` — cả hai đều là đường dẫn tương đối tới dev server của Vite, mà bài **chưa bao giờ nói frontend phải proxy những đường nào**. Đo thật trong trình duyệt: (a) WebSocket chết với `WebSocket connection to 'ws://localhost:5173/ws/...' failed` vì thiếu `ws: true` trong proxy; (b) `GET /jobs/active` trả **`200` kèm nguyên trang `index.html`** (SPA fallback của Vite) chứ không phải JSON, vì `/jobs` không được proxy — `JobController` khai `@Controller()` không tiền tố nên route nằm ở gốc. Cả hai đều im lặng: bảng chỉ hiện ra rỗng | ✅ **đã sửa, đã xác nhận trong trình duyệt** — thêm callout kèm hai dòng proxy (`'/jobs': gateway` và `'/ws': { ...gateway, ws: true }`). Sau khi thêm: WebSocket bắt tay thành công và bảng nạp đúng dữ liệu thật |
+| 58 | Part 3 §7, `useJobProgress.ts` | Đứt mạch | **Job tạo SAU khi socket đã kết nối không bao giờ hiện ra.** Hook chỉ gọi `/jobs/active` đúng một lần lúc `connect`, còn `job:progress` và `job:done` đều là `prev.map(...)` — không khớp id nào thì **im lặng không làm gì**. Đo thật trong trình duyệt: upload một video, bấm chuyển mã, worker chạy xong và DB ghi `completed`, mà **bảng không hề nhúc nhích**; tải lại trang thì job hiện ra ngay ở 100%. Tức là đúng kịch bản dùng chính của mốc #3 — "tạo job rồi xem nó chạy" — là kịch bản duy nhất không hoạt động, trong khi mục mang tên "bảng tiến độ chạy theo thời gian thực". Chỉ trình duyệt mới lộ ra: biên dịch sạch, logic đọc qua trông hợp lý | ✅ **đã sửa, đã xác nhận trong trình duyệt** — `job:progress` gặp `jobId` lạ thì gọi lại `/jobs/active` thay vì bỏ qua, kèm callout mô tả đúng triệu chứng. Đo lại: upload → bấm *Chuyển mã 720p* → dòng **`clip FIX.mp4` hiện ra ngay trong bảng và chạy tới 100%, không cần tải lại trang** |
+
+### Mốc #3 đã nhìn thấy trong trình duyệt thật
+
+Trình duyệt thật, backend + worker + nginx + Redis + Postgres đều chạy:
+
+1. Đăng nhập → màn "Tải video lên"
+2. Chọn file mp4 → upload xong, hiện nút **Chuyển mã 720p**
+3. Bấm nút → **một dòng mới xuất hiện ngay trong bảng "Tiến độ chuyển mã"** và
+   chạy tới 100%, không cần tải lại trang
+4. Danh sách hiện đúng tên file thật (`clip FIX.mp4`, `video thử nghiệm.mp4`) —
+   tức `videoTitle` lấy từ `video.originalName` đúng như `JobService` thiết kế
+
+**Trước khi vá #58**, đúng thao tác đó cho kết quả: worker chạy xong, database ghi
+`completed`, mà bảng **không nhúc nhích** — job chỉ hiện ra sau khi tải lại trang.
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**

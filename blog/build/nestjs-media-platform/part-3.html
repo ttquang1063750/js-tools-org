@@ -2163,16 +2163,25 @@ export function useJobProgress(accessToken: string): readonly JobState[] {
       auth: { token: accessToken },
     });
 
-    socket.on('connect', () =&gt; {
+    const sync = (): void =&gt; {
       void api('/jobs/active')
         .then((res) =&gt; res.json() as Promise&lt;JobState[]&gt;)
         .then(setJobs);
-    });
+    };
+
+    socket.on('connect', sync);
 
     socket.on('job:progress', ({ jobId, percent }: { jobId: string; percent: number }) =&gt; {
-      setJobs((prev) =&gt;
-        prev.map((job) =&gt; (job.id === jobId ? { ...job, percent, status: 'processing' } : job)),
-      );
+      setJobs((prev) =&gt; {
+        // Job MOI, tao sau luc connect: chua co trong danh sach nen map() se
+        // khong khop gi ca. Phai hoi lai /jobs/active de lay ten video, neu
+        // khong no VO HINH cho toi khi tai lai trang.
+        if (!prev.some((job) =&gt; job.id === jobId)) {
+          sync();
+          return prev;
+        }
+        return prev.map((job) =&gt; (job.id === jobId ? { ...job, percent, status: 'processing' } : job));
+      });
     });
 
     socket.on('job:done', ({ jobId }: { jobId: string }) =&gt; {
@@ -2197,7 +2206,10 @@ export function useJobProgress(accessToken: string): readonly JobState[] {
                 <span class="code-filename">src/components/JobList.tsx</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">export function JobList({ token }: { token: string }): JSX.Element {
+              <pre><code class="language-typescript">import type { JSX } from 'react';
+import { useJobProgress } from '../hooks/useJobProgress';
+
+export function JobList({ token }: { token: string }): JSX.Element {
   const jobs = useJobProgress(token);
 
   return (
@@ -2220,6 +2232,77 @@ export function useJobProgress(accessToken: string): readonly JobState[] {
   );
 }</code></pre>
             </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Job tạo sau khi kết nối thì không tự hiện ra</div>
+              <div class="callout__content">
+                Hook chỉ hỏi <code>/jobs/active</code> đúng một lần lúc <code>connect</code>, còn hai handler kia đều là
+                <code>prev.map(...)</code> — gặp một <code>jobId</code> chưa có trong danh sách thì chúng
+                <strong>im lặng không làm gì</strong>. Hệ quả đúng vào kịch bản dùng chính của mốc này: upload xong, bấm
+                chuyển mã, worker chạy và ghi <code>completed</code> vào database — mà bảng
+                <strong>không nhúc nhích</strong>, phải tải lại trang job mới hiện ra. Vài dòng
+                <code>if (!prev.some(...)) sync()</code> ở trên là để đóng đúng lỗ hổng đó.
+              </div>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Proxy của Vite phải mở thêm <code>/ws</code> và <code>/jobs</code></div>
+              <div class="callout__content">
+                <code>io('/', { path: '/ws' })</code> và <code>api('/jobs/active')</code> đều là đường dẫn tương đối,
+                tức là chúng đi tới dev server của Vite trước. Thiếu cấu hình thì hỏng theo hai kiểu đều
+                <strong>im lặng</strong>: WebSocket báo
+                <code>WebSocket connection to 'ws://localhost:5173/ws/...' failed</code>, còn
+                <code>/jobs/active</code> trả về <code>200</code> kèm nguyên trang <code>index.html</code> (SPA
+                fallback) thay vì JSON — bảng chỉ hiện ra rỗng, không có lỗi nào đỏ lên.<br /><br />
+                Bổ sung vào <code>vite.config.ts</code> đã dựng ở Part 2 mục 8.2:<br /><br />
+                <code
+                  >'/jobs': gateway,&nbsp;&nbsp;// JobController khai @Controller() khong tien to<br />
+                  '/ws': { ...gateway, <strong>ws: true</strong> },</code
+                >
+              </div>
+            </div>
+
+            <p>
+              Cuối cùng, ráp <code>JobList</code> vào màn hình đã dựng ở Part 2 mục 8.2 — truyền token lấy từ
+              <code>getAccessToken()</code>, và thêm một nút gọi <code>POST /media/:videoId/transcode</code> để có cách
+              tạo job từ giao diện:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/components/UploadScreen.tsx — thêm nút chuyển mã và bảng tiến độ</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { api, getAccessToken } from '../lib/api';
+import { JobList } from './JobList';
+
+// ...trong component, sau khi upload xong:
+async function startTranscode(id: string): Promise&lt;void&gt; {
+  await api(`/media/${id}/transcode`, { method: 'POST' });
+}
+
+const token = getAccessToken();
+
+// ...trong phan JSX:
+{videoId !== null &amp;&amp; (
+  &lt;button type="button" onClick={() =&gt; void startTranscode(videoId)}
+          className="rounded bg-emerald-600 px-3 py-2 text-sm text-white"&gt;
+    Chuyển mã 720p
+  &lt;/button&gt;
+)}
+
+{token !== null &amp;&amp; (
+  &lt;div className="space-y-2"&gt;
+    &lt;h2 className="text-sm font-semibold text-slate-700"&gt;Tiến độ chuyển mã&lt;/h2&gt;
+    &lt;JobList token={token} /&gt;
+  &lt;/div&gt;
+)}</code></pre>
+            </div>
+
+            <p>
+              Giờ mốc #3 mới thật sự nhìn thấy được: chọn một file, bấm <em>Chuyển mã 720p</em>, và một dòng mới xuất
+              hiện trong bảng rồi chạy tới 100% — không cần chạm vào nút tải lại trang.
+            </p>
 
             <p>
               <code>transition-[width] duration-300</code> làm thanh tiến trình trượt mượt giữa hai lần cập nhật. Không
