@@ -344,7 +344,7 @@ nằm trong **cùng một khối** `docker-compose.yml — dịch vụ worker`.
 | # | Vị trí | Loại | Mô tả | Trạng thái |
 |---|--------|------|-------|------------|
 | 49 | Part 3 §4.3, khối `package.json — thêm hai lệnh` | Đứt mạch | **Chạy API và worker cùng lúc ở chế độ dev thì API chết.** Bài đưa `start:dev` (`nest start --watch`) và `start:worker:dev` (`nest start --watch --entryFile worker/main`) rồi để người đọc chạy song song — đó là cách duy nhất để thử hàng đợi. Nhưng cả hai build vào **cùng một `dist/`**, mà `nest-cli.json` (Part 1) đặt `"deleteOutDir": true`. Worker khởi động xoá sạch `dist/`, và tiến trình API đang chạy chết ngay: `Error: Cannot find module '.../dist/main'`. Đo thật: sau khi bật worker, mọi request qua nginx trả **`502 Bad Gateway`**. Bài không hề nhắc, và triệu chứng (502 từ nginx) chỉ về phía nginx chứ không về phía cái vừa bật | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm callout mô tả đúng triệu chứng (`502` từ nginx, `Cannot find module .../dist/main`) kèm cách chữa `"deleteOutDir": false`. Sau khi tắt cờ: API và worker chạy song song ổn định, API trả `401` bình thường thay vì `502` |
-| 50 | Part 3 §4.3/§4.1, cột `attempts` của bảng `jobs` | Mơ hồ | Part 1 tạo cột `attempts integer DEFAULT 0` trong `job.entity.ts` với chú thích rõ ràng, nhưng **không code nào trong Part 3 tăng nó**. Số lần thử chỉ sống trong trường `attempt` của thông điệp Redis. Đo thật sau khi một job thất bại và đi hết vòng thử lại rồi vào hàng đợi chết: `attempts` trong Postgres vẫn là **0**. Không sai về chức năng (Redis giữ đủ thông tin), nhưng cột trong CSDL nói dối người đọc SQL, và đây đúng là chỗ người ta sẽ nhìn đầu tiên khi điều tra job hỏng | chưa xử lý |
+| 50 | Part 3 §4.3/§4.1, cột `attempts` của bảng `jobs` | Mơ hồ | Part 1 tạo cột `attempts integer DEFAULT 0` trong `job.entity.ts` với chú thích rõ ràng, nhưng **không code nào trong Part 3 tăng nó**. Số lần thử chỉ sống trong trường `attempt` của thông điệp Redis. Đo thật sau khi một job thất bại và đi hết vòng thử lại rồi vào hàng đợi chết: `attempts` trong Postgres vẫn là **0**. Không sai về chức năng (Redis giữ đủ thông tin), nhưng cột trong CSDL nói dối người đọc SQL, và đây đúng là chỗ người ta sẽ nhìn đầu tiên khi điều tra job hỏng | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm `await this.jobRepo.update(job.id, { attempts: attempt })` vào nhánh catch của `processOne`. Đẩy một job trỏ vào file hỏng và để nó đi hết vòng: `status = failed`, **`attempts = 3`**, `XLEN jobs:dead` tăng lên 2 |
 
 ### §4.1 — đường thất bại đã chạy thật (ngoài dự kiến)
 
@@ -456,7 +456,7 @@ Trình duyệt thật, backend + worker + nginx + Redis + Postgres đều chạy
 - [x] Part 2 §7 (download, Range, X-Accel-Redirect) — #30–#32
 - [x] Part 2 §8.2 (upload + player trong trình duyệt) — #33–#37
 - [x] Nhóm không chặn treo từ đợt đầu — **#2, #3, #5, #6, #9, #12 đã khép hết**
-      ở đợt 13. **Không còn dòng nào mang trạng thái "chưa xử lý" trong file này.**
+      ở đợt 13. (Đợt 14–21 thêm phát hiện #38–#58 cho Part 3, tất cả đều đã khép.)
 - [x] **Part 3 §1** (event loop một luồng) — #38. Đo thật: `/ping` 4,6 s vs 0,001 s
 - [x] **Part 3 §2** (child_process, ffmpeg) — #39, #40. Chuyển mã thật ra file 472 KB
 - [x] **Part 3 §3** (worker_threads, hồ worker) — #41, #42. 5 việc qua hồ 2 worker
