@@ -289,7 +289,26 @@ The convention already in use for the NestJS series, follow the same shape:
 ```
 ~/Projects/Scratchpad/media-forge/            # monolith, Part 1-3
 ~/Projects/Scratchpad/media-forge-services/   # microservices, Part 4
+~/Projects/Scratchpad/media-forge-web/        # frontend — SEPARATE project
 ```
+
+**If the series has a frontend, it is a second project and it is not
+optional.** This is the part that actually got skipped on the NestJS series:
+two sessions built and ran the backend, while the React code was only ever
+_read_ and simulated with `curl` and a bare `socket.io-client` script. The
+result is a series where the backend is verified and the UI is not, which is
+easy to misreport as "the project runs".
+
+Reading the frontend catches contract mismatches — a field name, an endpoint,
+an event name. It cannot catch the class of defect that only appears once a
+browser renders it: a progress bar that never moves because the state update
+does not re-render, a socket that reconnects in a loop, a player that shows
+controls but cannot seek, a component that crashes on the first empty
+response. Those need `npm create vite@latest`, `npm run dev`, and a real page
+open against the running backend.
+
+So: build it, run it, drive the actual flow end to end (log in, upload,
+watch progress move, play the result), and only then say the series runs.
 
 Name it `<slug-of-the-series>`, and when a later part changes the
 architecture enough that the old tree no longer represents it, start a

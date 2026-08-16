@@ -210,6 +210,7 @@ The shape already in use, follow it:
 ```
 ~/Projects/Scratchpad/media-forge/            # monolith, Part 1-3
 ~/Projects/Scratchpad/media-forge-services/   # microservices, Part 4
+~/Projects/Scratchpad/media-forge-web/        # frontend — SEPARATE project
 ```
 
 When a later part changes the architecture enough that the old tree no longer
@@ -217,6 +218,14 @@ represents what the text describes, open a **sibling** directory instead of
 mutating the old one — the earlier parts still need something that matches
 them. If the architecture arc above says the series will split, plan for two
 directories from the start and write both paths into the plan.
+
+**Count the frontend as its own directory from day one.** A series that
+spreads UI across several parts (this one puts a milestone in Part 2 and
+another in Part 3) is very easy to plan as "backend plus some React at the
+end", and then only the backend ever gets built and run — which is exactly
+what happened here. If the plan says there will be UI, the plan says where
+that UI project lives, and the definition of "this part is verified" includes
+opening it in a browser.
 
 These directories sit outside the repo and are never committed. The article
 ships as text; the thing proving the text runs stays on disk, reproducible,
