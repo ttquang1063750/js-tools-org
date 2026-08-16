@@ -263,14 +263,47 @@ deliberately does **not**:
 - Claim a finding is a confirmed bug — reading can show something is *used
   without being defined*, but only actually compiling and running the
   project proves it fails, and proves the fix works. That is a distinct,
-  much heavier follow-up pass (build a real scratchpad project from the
-  series' code, run it against real Postgres/Redis/whatever the stack needs,
-  fix what breaks, re-verify by running again) — do that only when asked,
-  separately, and expect it to take substantially longer than this pass.
+  much heavier follow-up pass (build a real project from the series' code,
+  run it against real Postgres/Redis/whatever the stack needs, fix what
+  breaks, re-verify by running again) — do that only when asked, separately,
+  and expect it to take substantially longer than this pass.
 
 If asked mid-review whether something is "actually broken," the honest
 answer at this stage is "reading says X is never defined — confirming it
 requires building it, which this pass does not do."
+
+## Where the build-for-real project must live
+
+When that follow-up pass does happen — or any time a session writes code to
+test what the article claims — **put the project under `~/Projects/Scratchpad/`,
+never in the session's own temporary scratchpad directory.**
+
+The per-session scratchpad is thrown away when the session ends. The next
+session that picks up `review-task.md` then has a list of findings and no
+project to check them against, so it either re-derives everything from zero
+or, worse, "verifies" a fix by reading it again — which is exactly the thing
+this skill exists to say is not verification.
+
+The convention already in use for the NestJS series, follow the same shape:
+
+```
+~/Projects/Scratchpad/media-forge/            # monolith, Part 1-3
+~/Projects/Scratchpad/media-forge-services/   # microservices, Part 4
+```
+
+Name it `<slug-of-the-series>`, and when a later part changes the
+architecture enough that the old tree no longer represents it, start a
+sibling directory rather than mutating the old one — the earlier parts still
+need something that matches what they describe.
+
+Record the path in `review-task.md` next to the findings, and say plainly
+which findings were confirmed by running that project and which are still
+reading-only. A finding marked "đã sửa" with no project behind it is a claim,
+not a result.
+
+These directories are outside the repo and are never committed. That is the
+point: the article ships as text, while the thing that proves the text runs
+stays reproducible on disk for whoever continues.
 
 ## After the review
 
