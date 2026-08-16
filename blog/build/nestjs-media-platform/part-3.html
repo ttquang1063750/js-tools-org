@@ -189,27 +189,62 @@
 
             <div class="code-window">
               <div class="code-header">
-                <span class="code-filename">Thử nghiệm 5 giây để tự thấy</span>
+                <span class="code-filename">src/demo/block.controller.ts — file tạm, xoá được sau khi xem xong</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">@Get('block')
-block(): string {
-  const end = Date.now() + 5000;
-  while (Date.now() &lt; end) {
-    // Nam giay tinh toan thuan tuy — dai dien cho bat ky viec nang CPU nao.
-  }
-  return 'xong';
-}
+              <pre><code class="language-typescript">import { Controller, Get } from '@nestjs/common';
 
-@Get('ping')
-ping(): string {
-  return 'pong';
+@Controller()
+export class BlockController {
+  @Get('block')
+  block(): string {
+    const end = Date.now() + 5000;
+    while (Date.now() &lt; end) {
+      // Nam giay tinh toan thuan tuy — dai dien cho bat ky viec nang CPU nao.
+    }
+    return 'xong';
+  }
+
+  @Get('ping')
+  ping(): string {
+    return 'pong';
+  }
 }</code></pre>
             </div>
 
             <p>
+              Thêm <code>BlockController</code> vào <code>controllers: [...]</code> của <code>AppModule</code> — cây thư
+              mục ở Part 1 mục 3 không giữ lại <code>AppController</code> mà <code>nest new</code> sinh ra, nên đây là
+              controller đầu tiên nằm thẳng ở gốc ứng dụng.
+            </p>
+
+            <p>
               Gọi <code>/block</code> ở một tab, rồi gọi <code>/ping</code> ở tab khác. <code>/ping</code> — một hàm trả
               về hằng số — sẽ chờ đủ năm giây. Đó là toàn bộ vấn đề, gói trong mười dòng.
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — hai tab, đo bằng đồng hồ</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash"># Tab 1 — chay nen roi doi mot chut cho no kip khoi dong
+( curl -s -o /dev/null -w 'block: %{time_total}s\n' http://localhost:3000/block &amp; ); sleep 0.4
+
+# Tab 2 — goi /ping trong luc /block dang chay
+curl -s -o /dev/null -w 'ping:  %{time_total}s\n' http://localhost:3000/ping
+# -> block: 5.005s
+# -> ping:  4.600s      <-- mot ham `return 'pong'` ma mat 4,6 giay
+
+# Doi chung: goi lai /ping luc event loop ranh
+curl -s -o /dev/null -w 'ping:  %{time_total}s\n' http://localhost:3000/ping
+# -> ping:  0.001s</code></pre>
+            </div>
+
+            <p>
+              Chênh lệch <strong>0,001 giây so với 4,6 giây</strong> cho cùng một handler là con số đáng nhớ nhất của cả
+              mục này. <code>/ping</code> không hề chậm đi — nó không được chạy chút nào cho tới khi
+              <code>/block</code> nhả event loop ra.
             </p>
 
             <figure style="margin: 24px 0; text-align: center">
@@ -309,6 +344,28 @@ ping(): string {
               Node. Node chỉ khởi động nó rồi ngồi nghe.
             </p>
 
+            <p>
+              Và vì nó là một chương trình riêng chứ không phải một gói npm, <code>npm i</code> không cài được nó — phải
+              cài ở mức hệ điều hành. Đây là phụ thuộc ngoài duy nhất của cả loạt bài:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — cài ffmpeg</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">brew install ffmpeg              # macOS
+sudo apt install -y ffmpeg       # Ubuntu/Debian
+
+ffmpeg -version                  # phai in ra so phien ban, khong phai "command not found"</code></pre>
+            </div>
+
+            <p>
+              Bước kiểm cuối đáng làm thật chứ không phải cho có: thiếu ffmpeg thì lỗi hiện ra ở tận trong worker dưới
+              dạng <code>spawn ffmpeg ENOENT</code>, cách xa nguyên nhân thật, và mục 2.2 ngay dưới đây sẽ cho thấy vì
+              sao kiểu lỗi đó đặc biệt khó chịu.
+            </p>
+
             <h3>2.1. <code>spawn</code> chứ không phải <code>exec</code></h3>
 
             <p>Bốn hàm trong <code>node:child_process</code> hay bị dùng lẫn lộn, và chỉ một cái đúng cho việc này.</p>
@@ -393,26 +450,59 @@ export async function transcode(options: TranscodeOptions): Promise&lt;void&gt; 
 
   const child = spawn('ffmpeg', args, { signal: options.signal });
 
+  // spawn bao loi KHOI DONG qua event 'error', KHONG qua ma thoat. Khong bat o
+  // day thi thieu ffmpeg nem ra mot loi khong ai bat va giet ca worker, thay vi
+  // hong mot job roi duoc thu lai nhu muc 4.1.
+  const failed = new Promise&lt;never&gt;((_, reject) =&gt; {
+    child.on('error', reject);
+  });
+
   // Doc theo DONG. Doc theo chunk thi mot dong co the bi cat lam doi.
   const lines = createInterface({ input: child.stderr });
 
-  for await (const line of lines) {
-    // ffmpeg in "out_time_ms=12345678" — don vi thuc te la MICRO giay,
-    // bat ke ten bien noi gi.
-    const match = /^out_time_ms=(\d+)$/.exec(line);
-    if (match?.[1] !== undefined) {
-      const seconds = Number(match[1]) / 1_000_000;
-      const percent = Math.min(99, Math.round((seconds / options.durationSeconds) * 100));
-      options.onProgress(percent);
+  const readProgress = (async () =&gt; {
+    for await (const line of lines) {
+      // ffmpeg in "out_time_ms=12345678" — don vi thuc te la MICRO giay,
+      // bat ke ten bien noi gi.
+      const match = /^out_time_ms=(\d+)$/.exec(line);
+      if (match?.[1] !== undefined) {
+        const seconds = Number(match[1]) / 1_000_000;
+        const percent = Math.min(99, Math.round((seconds / options.durationSeconds) * 100));
+        options.onProgress(percent);
+      }
     }
-  }
+  })();
 
-  const code = await new Promise&lt;number&gt;((resolve) =&gt; child.on('close', resolve));
+  const closed = new Promise&lt;number&gt;((resolve) =&gt; child.on('close', resolve));
+
+  // Chay dua voi `failed`: hong ngay luc khoi dong thi bat duoc lien, khong treo.
+  const code = await Promise.race([
+    (async () =&gt; {
+      await readProgress;
+      return closed;
+    })(),
+    failed,
+  ]);
 
   if (code !== 0) {
     throw new Error(`ffmpeg thoat voi ma ${code}`);
   }
 }</code></pre>
+            </div>
+
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ <code>'error'</code> và mã thoát là hai đường khác nhau</div>
+              <div class="callout__content">
+                Đây là chỗ dễ viết thiếu nhất khi dùng <code>spawn</code>. Tiến trình con báo hỏng theo
+                <strong>hai đường tách biệt</strong>: chạy được rồi thất bại thì báo qua <strong>mã thoát</strong>, còn
+                <strong>không khởi động nổi</strong> (không tìm thấy chương trình, sai quyền, hết file descriptor) thì
+                báo qua event <code>'error'</code> — và event đó không bao giờ đi kèm một mã thoát nào.<br /><br />
+                Bỏ qua <code>'error'</code> thì <code>ENOENT</code> trở thành lỗi không ai bắt.
+                <code>try/catch</code> quanh <code>transcode()</code> <strong>không chạy</strong>, và cả tiến trình
+                worker chết — tức là một job hỏng kéo theo mọi job khác đang chạy cùng worker đó. Toàn bộ cơ chế thử lại
+                ở mục 4.1 dựng trên giả định "job hỏng thì ném lỗi"; thiếu bốn dòng này thì giả định đó sai ngay từ kiểu
+                hỏng đầu tiên người đọc gặp phải.
+              </div>
             </div>
 
             <p>
