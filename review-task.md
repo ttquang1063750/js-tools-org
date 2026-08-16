@@ -1,55 +1,42 @@
 # review-task.md — NestJS Media Platform
 
-> File này do skill `review-build-series` ghi ra. Đây là lần đầu tiên dùng file
-> riêng này (trước đó review-build-series và design-build-series dùng chung
-> `task.md` với lịch sử đầy đủ của loạt bài — vẫn còn ở đó, xem `task.md` ở
-> repo root nếu cần bối cảnh cũ).
+## Rà soát bằng cách LÀM THEO — Part 1 (16/08/2026, review-build-series)
 
-## Rà soát tĩnh — NestJS Media Platform (15/08/2026, review-build-series)
+**Đây KHÔNG phải rà soát tĩnh.** Dự án được dựng lại từ con số 0 bằng đúng các
+lệnh và đúng các khối code bài đưa, theo thứ tự bài đưa, không thay thế công cụ.
 
-**Phạm vi lần này: CHỈ 3 chỗ mới thêm vào Part 4 ở phiên 7** — đoạn
-`ProgressBridge` trong mục 3.1, mục 3.2 "Auth-svc: cùng logic, khoác vỏ gRPC",
-mục 3.3 "Bắc cầu gRPC streaming sang WebSocket". KHÔNG audit lại Part 1-3 hay
-các mục khác của Part 4 (đã làm ở phiên 3-5, xem `task.md`) — phiên trước từng
-mở rộng nhầm ra cả 4 part, chủ dự án đã dừng lại và yêu cầu thu hẹp đúng phạm
-vi này.
+- Project: `~/Projects/Scratchpad/media-forge/` (bản do các phiên trước dựng đã
+  đổi tên thành `media-forge.truoc-review-16-08`, không xoá)
+- Đã đi hết: Part 1 §1 → §8.2. **Chưa làm**: Part 1 §8.3 trở đi, và toàn bộ
+  Part 2, 3, 4. Chưa dựng frontend.
+- Môi trường: Node v24.18.0, Docker Compose v5.3.1, Postgres 17-alpine
 
-Phương pháp: 1 agent đọc trực tiếp HTML (không chỉ dựa vào bản trích xuất của
-`extract-parts.py`), đối chiếu ngược Part 1-3 làm ngữ cảnh tham chiếu (không
-audit độc lập). Trong lúc chạy `extract-parts.py` để chuẩn bị, phát hiện thêm
-1 lỗi trong chính script (`EXPORT_RE`/`LOCAL_DECL_RE` bỏ sót `export async
-function` — đã vá, xem commit `b9dc494`).
+### Bài chạy đúng như hứa (đã thấy tận mắt)
 
-Khác với quy ước "chỉ đọc, không sửa" thường lệ của skill này: 4/6 phát hiện
-dưới đây **đã được sửa ngay** thay vì để "chưa xử lý" — vì phát hiện #1
-nghiêm trọng (mâu thuẫn trực tiếp với chính câu "đo thật" vừa viết ở phiên 7)
-và bắt nguồn từ lỗi khi TÔI tổng hợp báo cáo build thành văn bài, không phải
-lỗi cần một phiên build riêng mới xác nhận được — đã đối chiếu lại với code
-thật trong `~/Projects/Scratchpad/media-forge-services/` để biết chính xác
-cách sửa, không suy đoán.
+| Mục | Bài hứa | Thực tế |
+|---|---|---|
+| §4 | `nest new` rồi `Hello World!` | đúng |
+| §4.4 | thiếu biến môi trường thì app dừng ngay, thông báo rõ | đúng — `DATABASE_URL: Invalid input: expected string, received undefined` |
+| §4.5 | Postgres healthy qua healthcheck | đúng, `Up (healthy)` |
+| §5 | 4 mã lỗi `TS2322 / TS2375 / TS4114 / TS4111` | **khớp tuyệt đối, kể cả số dòng** (3,7 / 9,7 / 16,3 / 21,17) |
+| §5 | bật cờ xong `src/main.ts` sẽ vỡ ở `process.env.PORT` | đúng — `src/main.ts(6,32): TS4111` |
+| §7.4 | migration sinh ra rồi `\dt` ra 6 bảng | đúng, đủ 6 bảng |
+| §8 | bản naive không an toàn dưới tải đồng thời | **đúng** — số dư xuống `-40` sau 9 lần trừ (xem dòng 1) |
+
+### Phát hiện
 
 | # | Vị trí | Loại | Mô tả | Trạng thái |
 |---|--------|------|-------|------------|
-| 1 | Part 4, mục 3.1 (đoạn dẫn `ProgressBridge`) đối chiếu Part 3 mục 4.2 (`Math.min(99, ...)`, `redis.publish('job:done', ...)`) | Đứt mạch | Bài viết khẳng định "worker không đổi khi tách dịch vụ" — SAI. Worker thật của Part 3 báo tiến độ bằng HAI tín hiệu tách biệt (kênh `'progress'` mang `percent` chặn ở 99, kênh `'job:done'` riêng không mang `percent`/`status`), trong khi `rpc WatchJob` cần MỘT luồng `JobProgress` đồng nhất. Nếu thật sự "không đổi", `event.status` luôn `undefined` và `percent` không bao giờ chạm 100 — điều kiện `subscriber.complete()` ở `MediaGrpcController` và `status === 'completed'` ở `ProgressGateway` không bao giờ kích hoạt được, mâu thuẫn với callout "đo thật 0%, 96%, 100%, rồi job:done" ngay bên dưới. Đối chiếu code thật đã build ở phiên 7 (`apps/media-svc/src/worker/transcode-worker.ts`) xác nhận: worker THẬT SỰ đã gộp về một kênh, một hình dạng — bài chỉ quên nói rõ điều đó. | ✅ đã sửa — viết lại đoạn dẫn + thêm code-window "trước/sau" đối chiếu 2 kênh cũ của Part 3 với 1 kênh mới của media-svc |
-| 2 | Part 4, mục 3.3 (`ProgressGateway`, sự kiện `'job:subscribe'`) đối chiếu Part 3 mục 7 (`useJobProgress.ts`) | Thiếu code | Thiết kế mới đòi client phải chủ động `socket.emit('job:subscribe', {jobId})` thì gateway mới mở `watchJob(jobId)`. Nhưng `useJobProgress.ts` viết ở Part 3 chỉ lắng nghe thụ động `'job:progress'`/`'job:done'`, không bao giờ emit sự kiện mới này — theo đúng bài, giao diện Part 3 sẽ im lặng không nhận gì sau khi tách dịch vụ. | ✅ đã sửa — thêm đoạn cập nhật `useJobProgress.ts` (emit `job:subscribe` cho từng job đang `queued`/`processing` ngay sau khi nhận `/jobs/active`) |
-| 3 | Part 4, mục 3.1 `progress-bridge.ts` (`import { RedisService } from '../redis/redis.service'`) đối chiếu mục 5 `balance.cache.ts` (`import ... from '../../redis/redis.service'`) | Mơ hồ | Hai file cùng nằm ở độ sâu `apps/media-svc/src/<thư-mục-con>/` nhưng import `RedisService` với số cấp `../` khác nhau — một trong hai chắc chắn sai. Đối chiếu code thật đã build ở phiên 6-7 (`apps/media-svc/src/cache/balance.cache.ts`, `apps/media-svc/src/redis/redis.service.ts`): cấu trúc thật là `src/{cache,progress,redis,...}/` — cùng cấp, cả hai chỉ cần `../redis/redis.service`. Vậy dòng của `balance.cache.ts` (`../../redis/...`, viết ở phiên 6) mới là dòng sai, không phải dòng mới viết ở phiên 7. | ✅ đã sửa — `balance.cache.ts` đổi `../../redis/redis.service` thành `../redis/redis.service`, khớp `progress-bridge.ts` và code thật |
-| 4 | Part 4, callout mục 3.1 "⚠️ Hạn chót phải truyền tiếp" đối chiếu `AuthClient` mục 3.2 (`timeout(3000)` cố định) | Mơ hồ | Callout giải thích đúng nguyên tắc deadline phải trừ dần qua từng tầng, nhưng không có đoạn code nào trong cả bài — kể cả `AuthClient` mới ngay sau đó — minh hoạ cách làm; mọi client đều dùng `timeout(3000)` cố định. | can-xac-nhan, **cố ý không sửa lần này** — đối chiếu lại thì `BillingClient` (viết từ trước phiên 7, mục 3) đã dùng đúng cùng kiểu `timeout(3000)` cố định này rồi; `AuthClient` chỉ theo đúng khuôn có sẵn, không phải điểm không nhất quán MỚI do phiên 7 gây ra. Để phiên sau quyết định có muốn viết thêm ví dụ deadline lan truyền thật hay không — đó là bổ sung nội dung mới, không phải sửa lỗi |
-| 5 | Part 4, mục 3.2 ("đúng ba dòng trong bảng `refresh_tokens`") | Mơ hồ | Con số "ba dòng" không tự suy ra được từ mô tả định tính ở Part 2 mục 3.3 — cần đọc thêm để biết phép đếm | ✅ đã sửa — thêm mệnh đề ngắn liệt kê rõ 3 dòng đó là gì (token gốc đã dùng + 2 token mới sinh từ 2 nhánh của cuộc đua) |
-| 6 | Part 4, mục 3 ("Cài và sinh kiểu") đối chiếu `MediaGrpcController`/`ProgressBridge` (cả hai `import ... from '@nestjs/event-emitter'`) | Thiếu code | `@nestjs/event-emitter` chưa từng xuất hiện trong bất kỳ lệnh `npm i` nào. Gốc gác là từ `MediaGrpcController` (viết ở phiên 5, ngoài phạm vi phiên 7), `ProgressBridge` (phiên 7) chỉ kế thừa cùng phụ thuộc | ✅ đã sửa — thêm `@nestjs/event-emitter` vào lệnh `npm i` sẵn có ở mục 3 (tiện thể vì đang sửa mục này, dù gốc gác là gap từ phiên 5) |
+| 1 | Part 1 §8.2, khối `Terminal` chứa `seq 1 10 \| xargs -P 10` | Đứt mạch | **Demo trung tâm của Part 1 không chạy được như viết.** Body của `curl` chỉ có `userId` và `amount`, thiếu `reason`. Nhưng `ChargeDto` (§8.4) khai `reason!: CreditReason` kèm `@IsIn([...])`, controller truyền `dto.reason`, và cột `reason` trong `credit-entry.entity.ts` là `NOT NULL`. Kết quả chạy thật: **10/10 request trả 500**, `null value in column "reason" violates not-null constraint`, số dư đứng nguyên 50, không trừ đồng nào. Người đọc làm đúng theo bài sẽ không bao giờ thấy được lỗi double-spend mà cả mục 8 dựng lên để dạy. Thêm `"reason":"transcode"` vào body thì ra đúng kết quả bài mô tả (9×201, 1×400, số dư `-40`) | chưa xử lý |
+| 2 | Part 1 §5 ("Quy ước còn lại") đối chiếu `src/main.ts` | Thiếu code | Bài viết *"Dữ liệu vào từ bên ngoài luôn phải qua DTO + validation"* và cài `class-validator`, nhưng **không mục nào đăng ký `app.useGlobalPipes(new ValidationPipe())`**. Hệ quả đo được ở phát hiện 1: thiếu một trường bắt buộc của DTO không bị chặn ở tầng validation (400) mà lọt xuống tận Postgres rồi bật ra 500. Toàn bộ `class-validator` trong Part 1 hiện không có tác dụng | chưa xử lý |
+| 3 | Part 1 §5, khối `Kết quả chạy thật: npx tsc --noEmit` | Mơ hồ | Bài liệt kê đúng 4 lỗi. Chạy thật với chính `tsconfig.json` bài đưa ra **8 lỗi** — thêm 4 lỗi `TS6133`/`TS6196` (biến khai mà không dùng) do `noUnusedLocals`/`noUnusedParameters` cũng nằm trong khối cấu hình đó. Không sai, nhưng output đã được lọc mà không nói là lọc; người đọc thấy 8 dòng sẽ tưởng mình làm sai | chưa xử lý |
+| 4 | Part 1 §5, khối vá `src/main.ts` (2 dòng) | Thiếu code | Đoạn vá dùng `ConfigService` và `AppConfig` nhưng không kèm hai dòng `import`. Gõ đúng như bài: `TS2304: Cannot find name 'ConfigService'` và `TS2304: Cannot find name 'AppConfig'`. (Cú pháp `app.get(ConfigService<AppConfig, true>)` thì **hợp lệ** — instantiation expression của TS 5 — không phải lỗi) | chưa xử lý |
+| 5 | Part 1 §4.1, khối `npm i ...` | Mơ hồ | Không ghim phiên bản nào. Chạy hôm nay nhận `typeorm@1.1.0` và `zod@4.4.3` — đều là major mới hơn thời điểm viết bài. Lần này cả hai vẫn chạy đúng (đã kiểm), nhưng bài dựa vào API của TypeORM 0.3 (`DataSource`, `typeorm-ts-node-commonjs`) nên rủi ro vỡ theo thời gian là thật. Cần xác nhận: có nên ghim phiên bản trong lệnh `npm i` không | chưa xử lý |
+| 6 | Part 4, một khối code không có `<span class="code-filename">` | Mơ hồ | `extract-parts.py` cảnh báo: Part 4 có 32 khối code nhưng chỉ 31 khối có tên file. Khối còn lại vô hình với mọi công cụ đối chiếu. Chưa đọc tới Part 4 nên chưa biết nó là gì | chưa xử lý |
 
-**Không phải lỗi — đã kiểm và khớp** (không đưa vào bảng phát hiện chính):
-callout "5 dòng đổi" (mục 3.2) đúng khớp diff thật; constructor 6 tham số của
-`AuthService` khớp Part 2; cross-reference "Part 2 mục 3.3"/"mục 3.5" đúng số
-mục thật; mọi field trong `proto/auth.proto` dùng đúng dạng camelCase sinh từ
-ts-proto, không dư không thiếu; callout mở đầu + mục 8 "Nhìn lại cả bốn part"
-vẫn khớp ở mức trừu tượng đã chọn, không cần cập nhật. Không nêu thành phát
-hiện: thiếu `@Module`/bootstrap cho auth-svc/gateway ở mục 3.2/3.3 — cùng
-khuôn mẫu bỏ boilerplate mà cả mục 3 (billing-svc, media-svc) đã dùng từ
-trước, nhiều khả năng cố ý.
+### Việc còn lại của lượt rà soát này
 
-**Kiểm sau khi sửa:** `node check-lesson.js` xanh 11/11, `npx prettier
---write` sạch.
-
-**Commit:** (điền sau khi commit — xem `task.md` phiên tiếp theo hoặc git log
-`blog/build/nestjs-media-platform/part-4.html` nếu file này chưa được cập
-nhật kịp).
+- [ ] Part 1 §8.3 → hết part (bản đã vá `FOR UPDATE`, bảng so sánh 3 cách)
+- [ ] Part 2 — kèm **dựng frontend React thật** ở `~/Projects/Scratchpad/media-forge-web/`, mở trình duyệt, không thay bằng `curl`
+- [ ] Part 3 — worker, ffmpeg, WebSocket
+- [ ] Part 4 — microservice, gRPC
