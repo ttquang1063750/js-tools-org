@@ -385,16 +385,20 @@ Toàn bộ chuỗi §2.2 → §4 → §4.2 nối được với nhau và chạy 
 - [x] **Part 3 §1** (event loop một luồng) — #38. Đo thật: `/ping` 4,6 s vs 0,001 s
 - [x] **Part 3 §2** (child_process, ffmpeg) — #39, #40. Chuyển mã thật ra file 472 KB
 - [x] **Part 3 §3** (worker_threads, hồ worker) — #41, #42. 5 việc qua hồ 2 worker
-- [ ] **Part 3 §2.3 — chưa làm.** Huỷ / hết giờ / tiến trình mồ côi. Đã đọc lướt,
-      chưa gõ: hai khối là mảnh minh hoạ, khối `stop()` dùng kiểu `ChildProcess`
-      mà không import — cần kiểm khi làm tới
-- [ ] **Part 3 §4 → §7 — chưa làm.** Hàng đợi Redis Streams, thử lại + DLQ, worker
-      là tiến trình riêng, dừng tử tế, `cluster`, WebSocket, và Mốc #3 (bảng tiến
-      độ realtime trong trình duyệt). Hai chỗ đáng ngờ đã thấy khi grep, cần kiểm:
-      `docker-compose.yml` mục 4.3 dùng `DATABASE_URL: postgres://app:secret@postgres:5432/media`
-      **lệch hẳn** với Compose của Part 1 (`forge/forge/media_forge`); và `build: .`
-      cần một `Dockerfile` mà **chưa part nào đưa ra** (cùng họ với #39: phụ thuộc
-      hạ tầng không bao giờ được dựng)
+- [x] **Part 3 §2.3** (huỷ, hết giờ, mồ côi) — #43, #44. Abort → 0 tiến trình mồ côi
+- [x] **Part 3 §4 + §4.1 + §4.2** (hàng đợi, thử lại/DLQ, bình thản) — #45
+- [x] **Part 3 §4.3 + §4.4** (worker là tiến trình riêng) — #46, #47, #48, #49, #50.
+      **Chuyển mã thật chạy xong**: 202 → progress qua Redis → `completed` → file
+      720p 807 KB → trừ đúng 10 credit
+- [ ] **Part 3 §5 (cluster) — chưa làm.** Gồm `src/cluster.ts` và §5.1 (nginx cân
+      tải nhiều instance). Đã thấy trước: §5 bảo bọc `bootstrap()` lại và dùng
+      `app.listen(process.env.PORT ?? 3000)` — **lệch với `main.ts` hiện tại** vốn
+      đọc cổng qua `ConfigService`, và `process.env.PORT` chính là thứ Part 1 §5
+      đã dạy là sai (lỗi `TS4111`). Cần kiểm khi làm tới
+- [ ] **Part 3 §6 (WebSocket realtime) — chưa làm.** `ProgressGateway`,
+      `ProgressSubscriber`, §6.1 (nginx nâng cấp giao thức), §6.2 (mất kết nối)
+- [ ] **Part 3 §7 (Mốc #3) — chưa làm.** Bảng tiến độ realtime trong trình duyệt.
+      Đây là mốc UI, **phải mở trình duyệt thật** mới tính là xong (bài học từ #37)
 - [ ] **Part 4 — chưa làm.** microservice, gRPC. (Ghi chú: #6 từng nghi Part 4 có
       khối code thiếu `code-filename` — đã khép ở đợt 13, đó là lỗi regex của
       `extract-parts.py` chứ không phải lỗi bài. Part 4 vẫn chưa được đọc.)
