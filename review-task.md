@@ -446,6 +446,43 @@ Trình duyệt thật, backend + worker + nginx + Redis + Postgres đều chạy
 **Trước khi vá #58**, đúng thao tác đó cho kết quả: worker chạy xong, database ghi
 `completed`, mà bảng **không nhúc nhích** — job chỉ hiện ra sau khi tải lại trang.
 
+## Đợt hai hai — Part 4 §1–§3 (tách microservice, gRPC), 16/08/2026
+
+Project: `~/Projects/Scratchpad/media-forge-services/` (một phiên trước đã dựng,
+nhưng `review-task.md` chưa từng ghi phát hiện nào cho Part 4 — nên coi như chưa
+xác nhận gì).
+
+**Bài đúng ở hai chỗ đã kiểm:** lệnh sinh kiểu ở §3 chạy đúng như viết (`protoc`
++ `protoc-gen-ts_proto` với `--proto_path=./proto` sinh ra đủ `auth.ts`,
+`billing.ts`, `media.ts`); và §3 **có** đưa khối `tsconfig.json` cấu hình
+`paths` cho `@app/proto-types/*`, nên các import đó không phải mảnh treo.
+
+| # | Vị trí | Loại | Mô tả | Trạng thái |
+|---|--------|------|-------|------------|
+| 59 | Part 4 §3–§3.2, cả ba dịch vụ | Thiếu code | **Không dịch vụ nào được khởi động ở đâu cả.** Bài viết đầy đủ controller gRPC (`@GrpcMethod`), client gRPC (`@Client`), entity, module — nhưng **`NestFactory.createMicroservice` không xuất hiện một lần nào trong cả part**, và không có `main.ts` nào cho `auth-svc`, `media-svc`, `billing-svc`. Cả ba lần `Transport.GRPC` xuất hiện đều là phía **gọi** (`@Client({ transport: Transport.GRPC, ... })`). Người đọc có đủ mọi mảnh trừ mảnh làm cho chúng chạy: không biết mỗi service nghe cổng nào bằng cách nào, cũng không biết `protoPath` phía server trỏ đi đâu. Cùng họ với #18 (nginx không bao giờ được dựng) và #46 (`Dockerfile` không tồn tại) | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm khối `apps/billing-svc/src/main.ts` đầy đủ (`createMicroservice`, `Transport.GRPC`, `package`, `protoPath`, `url`) kèm câu chỉ rõ hai service kia đổi module/cổng thành 50052/50053 khớp với các `@Client({ url: ... })`. Chạy thật: cả `billing-svc` (50051) và `media-svc` (50052) đều lên |
+
+| 60 | Part 4 §4.1, `completeJob()` trong `apps/media-svc/src/job/job.service.ts` | Đứt mạch | **Trái tim của Part 4 không có đường nào chạm tới.** Bài tự gọi §4 là *"phần quan trọng nhất của Part 4"*, và `completeJob()` là hàm ghi outbox trong cùng transaction với `jobs.status` — nhưng **không gì gọi nó**. `media.proto` chỉ khai đúng một RPC là `WatchJob`; không có RPC `CompleteJob`, không route HTTP nào, và worker của media-svc (thứ đáng lẽ gọi nó) **chưa từng được viết ra** — nó chỉ xuất hiện trong một *chú thích code*: `// ... xong that (sau khi completeJob() da ghi outbox — muc 4.1)`. Hệ quả: người đọc không có cách nào nhìn thấy outbox hoạt động, cũng không nhìn thấy được ba kiểu hỏng mà §4 dựng lên để dạy. Cùng hình dạng #17 (khoảng ân hạn không quan sát được) nhưng nặng hơn nhiều vì đây là điểm nhấn của cả part | ✅ **đã sửa, đã xác nhận bằng chạy** — thêm `rpc CompleteJob` vào `media.proto`, thêm `@GrpcMethod('MediaService', 'CompleteJob')` vào `MediaGrpcController`, và một khối phép thử `docker compose stop billing-svc`. Xác nhận bằng chạy thật, gọi **qua gRPC** chứ không gọi thẳng class |
+
+| 61 | Part 4 §2 + §4, `credit_entries` sau khi tách | Đứt mạch | **Khoá ngoại xuyên biên giới dịch vụ, bài không nhắc một chữ.** Cây thư mục §2 ghi rõ `users` thuộc **auth-svc** còn `credit_entries` thuộc **billing-svc** — nhưng `CreditEntry` từ Part 1 mang `@ManyToOne(() => User, { onDelete: 'CASCADE' })`, tức Postgres tạo một FK thật tới bảng `users`. Sau khi tách, bảng đó nằm ở database khác. Đo thật: gọi RPC `Charge` với một `user_id` hợp lệ → **`QueryFailedError: insert or update on table "credit_entries" violates foreign key constraint`**. Bài dành cả §4 nói về việc *transaction* vỡ khi tách, nhưng không hề nói rằng **khoá ngoại cũng vỡ** — và đây là thứ vỡ trước tiên, ngay lần gọi đầu. Bài cũng không nói phải bỏ quan hệ đó đi hay đồng bộ `users` sang billing-db bằng cách nào | ✅ **đã sửa** — thêm callout "Khoá ngoại cũng vỡ, và nó vỡ trước cả transaction" ngay trước §4.1, kèm thông báo lỗi thật và hướng chữa đúng (bỏ quan hệ, giữ `user_id` trơn; tính hợp lệ là việc của auth-svc) |
+
+### §4.1 — outbox đã chạy thật, gọi qua gRPC
+
+Kịch bản đúng như §4 dựng lên, với `billing-svc` **tắt hẳn** trước khi hoàn thành job:
+
+| Bước | Kết quả |
+|---|---|
+| `docker compose stop billing-svc` | dịch vụ đích chết hoàn toàn |
+| Gọi `CompleteJob` qua gRPC | **`OK {"ok":true}`** — vẫn thành công |
+| `outbox` ngay sau đó | `sent_at = NULL`, `attempts = 7` |
+| 6 giây sau | `attempts = 13` → 30 → 95, vẫn `NULL` |
+| `docker compose start billing-svc` | — |
+| `outbox` | **`sent_at` đã có giá trị** |
+| `credit_entries` ở billing-db | **`-10 / transcode / 16a4bf70-...`** |
+
+Khoản trừ tiền không mất đi đâu qua một lần chết hoàn toàn của dịch vụ đích —
+đúng điều outbox hứa, và đúng cái mà "hỏng 1" ở đầu §4 mô tả sẽ xảy ra nếu gọi
+mạng thẳng trong transaction.
+
 ## Việc còn lại của lượt rà soát này
 
 **Part 2 đã đi hết, §1 → §8.2, tất cả xác nhận bằng chạy thật (kể cả trình duyệt).**

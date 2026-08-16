@@ -439,6 +439,46 @@ npx protoc \
               phải lỗi lúc chạy lúc 2 giờ sáng.
             </p>
 
+            <p>
+              Còn một mảnh nữa mà phần sau của bài luôn giả định là đã có:
+              <strong>mỗi dịch vụ cần một entry point riêng</strong>. Khác với gateway, chúng không mở cổng HTTP nào —
+              <code>createMicroservice</code> thay cho <code>create</code>, và cổng gRPC thay cho cổng web:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/billing-svc/src/main.ts — hai service kia đổi tên và số cổng</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { join } from 'node:path';
+import { BillingModule } from './billing.module';
+
+async function bootstrap(): Promise&lt;void&gt; {
+  // createMicroservice, KHONG phai create(): khong co cong HTTP, khong
+  // controller REST — chi mot server gRPC nghe theo hop dong .proto.
+  const app = await NestFactory.createMicroservice&lt;MicroserviceOptions&gt;(BillingModule, {
+    transport: Transport.GRPC,
+    options: {
+      package: 'billing', // PHAI khop `package billing;` trong .proto
+      protoPath: join(process.cwd(), 'proto/billing.proto'),
+      url: process.env['GRPC_URL'] ?? '0.0.0.0:50051',
+    },
+  });
+
+  await app.listen();
+}
+void bootstrap();</code></pre>
+            </div>
+
+            <p>
+              <code>media-svc</code> và <code>auth-svc</code> dùng đúng khuôn đó, chỉ đổi module, đổi
+              <code>package</code>/<code>protoPath</code>, và đổi cổng thành <code>50052</code> / <code>50053</code> —
+              đúng những con số mà các <code>@Client({ url: 'media-svc:50052' })</code> ở dưới trỏ tới.
+            </p>
+
             <div class="callout callout--warning">
               <div class="callout__title">⚠️ Thiếu <code>--proto_path</code> thì file sinh ra nằm sai chỗ</div>
               <div class="callout__content">
@@ -567,6 +607,10 @@ export class BillingClient implements OnModuleInit {
               <pre><code class="language-bash">service MediaService {
   // Mot request, NHIEU reply chay ve dan.
   rpc WatchJob (WatchJobRequest) returns (stream JobProgress);
+
+  // Worker cua media-svc goi khi chuyen ma xong — day la duong vao that su
+  // cua outbox o muc 4.1. Thieu RPC nay thi completeJob() khong ai goi duoc.
+  rpc CompleteJob (CompleteJobRequest) returns (CompleteJobReply);
 }
 
 message WatchJobRequest {
@@ -1189,6 +1233,23 @@ await this.billingClient.charge(userId, amount, jobId);  // qua mang, DB khac
               </div>
             </div>
 
+            <div class="callout callout--warning">
+              <div class="callout__title">⚠️ Khoá ngoại cũng vỡ, và nó vỡ trước cả transaction</div>
+              <div class="callout__content">
+                Mục này nói về transaction, nhưng có một thứ hỏng sớm hơn thế.
+                <code>CreditEntry</code> từ Part 1 mang <code>@ManyToOne(() =&gt; User, { onDelete: 'CASCADE' })</code>,
+                tức Postgres tạo một khoá ngoại thật tới bảng <code>users</code>. Sau khi tách, <code>users</code> thuộc
+                <strong>auth-svc</strong> còn <code>credit_entries</code> thuộc <strong>billing-svc</strong> — hai
+                database khác nhau, và khoá ngoại thì không đi xuyên qua ranh giới đó được.<br /><br />
+                Lần gọi <code>Charge</code> đầu tiên sẽ chết với
+                <code>QueryFailedError: insert or update on table "credit_entries" violates foreign key constraint</code
+                >. Cách chữa đúng là <strong>bỏ hẳn quan hệ đó</strong> ở billing-svc và chỉ giữ lại cột
+                <code>user_id</code> trơn: sau khi tách, tính hợp lệ của <code>user_id</code> là việc của auth-svc,
+                không phải của ràng buộc database. Đây là cái giá thứ hai của việc tách, ít được nhắc hơn nhưng gặp sớm
+                hơn nhiều.
+              </div>
+            </div>
+
             <h3>4.1. Outbox pattern</h3>
 
             <p>
@@ -1313,6 +1374,58 @@ export class OutboxMessage {
   // Ra khoi transaction: hoac ca hai dong cung ton tai, hoac khong dong nao.
 }</code></pre>
             </div>
+
+            <p>
+              Hàm này cần một đường vào từ bên ngoài, nếu không nó chỉ là code chết. Thêm vào
+              <code>MediaGrpcController</code> ở mục 3.1 — worker gọi đúng RPC <code>CompleteJob</code> vừa khai trong
+              <code>media.proto</code>:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">apps/media-svc/src/media.controller.ts — thêm method</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">@GrpcMethod('MediaService', 'CompleteJob')
+async completeJob(request: CompleteJobRequest): Promise&lt;CompleteJobReply&gt; {
+  await this.jobs.completeJob(request.jobId, request.userId, Number(request.amount));
+  return { ok: true };
+}</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Phép thử thật — tắt hẳn billing-svc rồi mới hoàn thành job</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">docker compose stop billing-svc      # dich vu dich CHET han
+
+# Goi CompleteJob qua gRPC (worker se lam dung viec nay)
+# -> OK {"ok":true}      <-- van thanh cong, du khong ai tru tien duoc
+
+docker exec ...media-db-1 psql -U media -d media \
+  -c "SELECT sent_at IS NULL AS chua_gui, attempts FROM outbox ORDER BY created_at DESC LIMIT 1;"
+# -> chua_gui = t, attempts = 7      (relay dang thu lai moi giay)
+# -> vai giay sau: attempts = 13, 30, 95 ... van chua gui duoc
+
+docker compose start billing-svc     # dich vu song lai
+
+docker exec ...media-db-1 psql -U media -d media \
+  -c "SELECT sent_at IS NOT NULL AS da_gui FROM outbox ORDER BY created_at DESC LIMIT 1;"
+# -> da_gui = t
+
+docker exec ...billing-db-1 psql -U billing -d billing \
+  -c "SELECT delta, reason, job_id FROM credit_entries ORDER BY created_at DESC LIMIT 1;"
+# -> -10 | transcode | 16a4bf70-...</code></pre>
+            </div>
+
+            <p>
+              Đây là toàn bộ giá trị của outbox, đo được bằng một lệnh <code>docker compose stop</code>: dịch vụ đích
+              chết hoàn toàn mà <code>CompleteJob</code> vẫn trả về thành công, job vẫn được đánh dấu xong, và khoản trừ
+              tiền <strong>không mất đi đâu cả</strong> — nó nằm trong bảng <code>outbox</code> đợi, rồi tự đi tiếp khi
+              bên kia sống lại. Viết ngây thơ theo kiểu gọi mạng thẳng trong transaction thì đúng tình huống này là
+              "hỏng 1" ở đầu mục 4: job <code>completed</code> mà không ai bị trừ tiền.
+            </p>
 
             <div class="code-window">
               <div class="code-header">
