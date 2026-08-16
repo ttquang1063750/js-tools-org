@@ -59,7 +59,10 @@ code — đó là phong cách của series, không phải lỗi.
       G1, G2, G3 đã sửa; G4 ghi nhận không sửa (lý do trong bảng). Bản EN 1072
       dòng, build 2 lần giống hệt, `check-lesson.js` 11/11 cả hai bản, đã đăng ký
       sitemap + search-index. Thời gian đọc 8 → 12 phút.
-- [ ] Bài 3 → 12 (cả VI lẫn EN)
+- [x] **Bài 3 `c-operators-and-bitwise` — XONG CẢ HAI LOCALE** (17/08/2026).
+      60 dòng tiếng Việt trong code → tiếng Anh; thêm hạ cánh cho 6 khối; thời
+      gian đọc 7 → 9 phút. Bản EN 1021 dòng.
+- [ ] Bài 4 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
 
 ---
 
