@@ -55,9 +55,10 @@ code — đó là phong cách của series, không phải lỗi.
       canonical/og trỏ `/en/`, `hreflang` vi/en/x-default đúng, đường dẫn tương
       đối đã lùi thêm một cấp, đã đăng ký vào `sitemap.xml` và `search-index.json`.
       Next-link khoá `--locked` vì Bài 2 chưa có bản EN.
-- [ ] **Bài 2 `c-basics-and-bitwise`** — ĐÃ ĐỌC HẾT, đã ghi phát hiện (dưới),
-      **chưa sửa dòng nào**. Cố ý dừng trước khi sửa: làm VI mà không kịp dịch EN
-      là lặp lại đúng lỗi của Bài 1.
+- [x] **Bài 2 `c-basics-and-bitwise` — XONG CẢ HAI LOCALE** (16/08/2026).
+      G1, G2, G3 đã sửa; G4 ghi nhận không sửa (lý do trong bảng). Bản EN 1072
+      dòng, build 2 lần giống hệt, `check-lesson.js` 11/11 cả hai bản, đã đăng ký
+      sitemap + search-index. Thời gian đọc 8 → 12 phút.
 - [ ] Bài 3 → 12 (cả VI lẫn EN)
 
 ---
