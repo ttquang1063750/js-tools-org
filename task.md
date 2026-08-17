@@ -72,7 +72,11 @@ code — đó là phong cách của series, không phải lỗi.
 - [x] **Bài 6 `c-arrays-and-strings` — XONG CẢ HAI LOCALE** (17/08/2026).
       Khôi phục dấu toàn bài: **33/40 câu không dấu → 0**. Thêm 4 hạ cánh, thời
       gian đọc 9 → 8 phút. Bản EN 1137 dòng, 13 khối code, build 2 lần giống hệt.
-- [ ] Bài 7 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
+- [x] **Bài 7 `c-struct-typedef` — XONG CẢ HAI LOCALE** (17/08/2026). Viết bổ sung
+      hẳn mục 4 "Struct với con trỏ và hàm" (lỗ hổng: toán tử `->` chưa từng được
+      dạy, cũng không có truyền struct vào hàm / mảng struct), code đã chạy thật.
+      6 dòng code tiếng Việt → Anh, 2 hạ cánh, sửa quiz ghi nhầm "bài 4".
+- [ ] Bài 8 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
 
 ---
 
