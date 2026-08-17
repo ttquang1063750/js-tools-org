@@ -78,7 +78,10 @@ code — đó là phong cách của series, không phải lỗi.
       6 dòng code tiếng Việt → Anh, 2 hạ cánh, sửa quiz ghi nhầm "bài 4".
 - [x] **Bài 8 `c-pointers-deep-dive` — XONG CẢ HAI LOCALE** (17/08/2026). Code đã
       sạch tiếng Anh sẵn; thêm 3 hạ cánh, thời gian đọc 10 → 12 phút, sửa quiz.
-- [ ] Bài 9 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
+- [x] **Bài 9 `c-memory-management` — XONG CẢ HAI LOCALE** (17/08/2026). Bài dài
+      nhất series (3019 từ). Thêm `malloc_basics.c`, sửa thời gian đọc 7 → 18 phút
+      (lệch lớn nhất series), quiz "bài 6" → 9, 9 dòng comment Terminal → Anh.
+- [ ] Bài 10 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
 
 ### ⚠️ Lỗi hệ thống: quiz đánh số SAI ở 4 bài liên tiếp (lệch đúng 3)
 
@@ -89,7 +92,7 @@ code — đó là phong cách của series, không phải lỗi.
 | 4 `c-control-flow` | "bài 3" | 4 — **đã sửa** |
 | 7 `c-struct-typedef` | "bài 4" | 7 — **đã sửa** |
 | 8 `c-pointers-deep-dive` | "bài 5" | 8 — **đã sửa** |
-| 9 `c-memory-management` | "bài 6" | 9 — **CHƯA sửa** |
+| 9 `c-memory-management` | "bài 6" | 9 — **đã sửa** |
 | 10 `c-data-structures` | "bài 7" | 10 — **CHƯA sửa** |
 | 11 `c-multifile-and-preprocessor` | "bài 11" | 11 — đúng sẵn |
 

@@ -1,0 +1,479 @@
+              <div>
+                <p>
+                  When you declare an ordinary variable or array (say <code>int a[100];</code>), the C compiler
+                  allocates it on the stack. That region has a size fixed at compile time and is released
+                  automatically when the function returns. But what if you do not know how many elements you need until
+                  run time? Or you want the memory to outlive the function that created it? To solve this, C offers
+                  <strong>dynamic memory allocation</strong> on the <strong>heap</strong>.
+                </p>
+
+                <h2>1. The memory layout of a process</h2>
+                <p>
+                  To understand memory management properly, we first need the whole picture of how the operating system
+                  divides memory for a running C process. A process's virtual memory is split into
+                  <strong>segments</strong>, each with a specialised role:
+                </p>
+
+                <pre>
++------------------------------------+ &lt;--- High address (0xFFFFFFFF)
+|   Environment &amp; command arguments  |
++------------------------------------+
+|              Stack                 |  (grows DOWN, towards low addresses)
+|                |                   |
+|                v                   |
+|                                    |
+|                ^                   |
+|                |                   |
+|              Heap                  |  (grows UP, towards high addresses)
++------------------------------------+
+|   BSS segment (uninitialised)      |  (zero-filled when the program loads)
++------------------------------------+
+|   Data segment (initialised)       |  (globals/statics with a value)
++------------------------------------+
+|   Text segment (machine code)      |  (read-only, the binary instructions)
++------------------------------------+ &lt;--- Low address (0x00000000)</pre
+                >
+
+                <ul>
+                  <li>
+                    <strong>Text segment:</strong> holds the program's machine code. It is
+                    <strong>read-only</strong>, protecting the instructions from being overwritten by accident.
+                  </li>
+                  <li>
+                    <strong>Data segment:</strong> holds global and static variables initialised to a non-zero value
+                    (for example <code>int g_var = 10;</code>).
+                  </li>
+                  <li>
+                    <strong>BSS segment:</strong> holds global and static variables that are
+                    <strong>uninitialised</strong> (or initialised to zero). At load time the operating system wipes
+                    this segment to zero.
+                  </li>
+                  <li>
+                    <strong>Stack segment:</strong> holds local variables, function arguments and return addresses. It
+                    works LIFO (last in, first out): calling a function pushes a <em>stack frame</em>, and returning
+                    destroys it entirely and automatically.
+                  </li>
+                  <li>
+                    <strong>Heap segment:</strong> the large region for dynamic allocation, managed directly by the
+                    programmer through library functions. Unlike the stack, which grows and shrinks by itself, the heap
+                    only changes size when you ask it to.
+                  </li>
+                </ul>
+
+                <h2>2. Stack versus heap in detail</h2>
+                <div class="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Property</th>
+                        <th>Stack memory</th>
+                        <th>Heap memory</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Allocation</td>
+                        <td>Automatic, managed by the CPU (via the stack pointer, SP).</td>
+                        <td>Manual, managed by the programmer through malloc/calloc/free.</td>
+                      </tr>
+                      <tr>
+                        <td>Size of the region</td>
+                        <td>Very small (typically 1 MB on Windows, 8 MB on Linux). Easy to overflow with unbounded recursion.</td>
+                        <td>Very large (bounded by the system's virtual memory or physical RAM).</td>
+                      </tr>
+                      <tr>
+                        <td>Speed</td>
+                        <td>Extremely fast (it only moves the stack pointer register).</td>
+                        <td>Slower (it must run an algorithm to find a suitable free block).</td>
+                      </tr>
+                      <tr>
+                        <td>Storage pattern</td>
+                        <td>Contiguous and strictly ordered.</td>
+                        <td>Scattered and discontinuous, which leads to fragmentation.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <h2>3. How a heap allocator really works: syscalls and chunk headers</h2>
+                <p>
+                  When you call <code>malloc(10)</code>, how does the C library find that memory? Behind it sits a
+                  <strong>heap allocator</strong> (ptmalloc in glibc, or jemalloc, dlmalloc) acting as an intermediary
+                  between your program and the operating system.
+                </p>
+
+                <h3>Operating system syscalls: <code>brk</code>/<code>sbrk</code> and <code>mmap</code></h3>
+                <p>The heap allocator asks the kernel for RAM through system calls:</p>
+                <ul>
+                  <li>
+                    <strong><code>brk</code>/<code>sbrk</code>:</strong> moves the program break pointer to extend the
+                    heap segment towards higher addresses. Typically used for small and medium requests.
+                  </li>
+                  <li>
+                    <strong><code>mmap</code>:</strong> creates an anonymous virtual memory mapping entirely separate
+                    from the ordinary heap segment. Typically used for very large requests (by default over 128 KB on
+                    Linux) to avoid fragmenting the main heap.
+                  </li>
+                </ul>
+
+                <h3>The secret of <code>free()</code>: metadata and the chunk header</h3>
+                <p>
+                  Why is <code>free(ptr)</code> enough — why don't you have to tell it how many bytes to release?
+                  Because the heap allocator quietly writes a block of management
+                  <strong>metadata (a chunk header)</strong> immediately before the address it hands back to you.
+                </p>
+
+                <pre>
++-------------------+-----------------------------------+
+|   Chunk Header    |   The memory actually given to you|
+|  (holds the size) |   (the address your pointer gets) |
++-------------------+-----------------------------------+
+         ^                          ^
+         |                          |
+   ptr - 8 bytes                   ptr  (assigned to arr)</pre
+                >
+
+                <p>
+                  When <code>malloc</code> gives you <code>ptr</code>, the real allocation starts a few bytes to the
+                  left. Those bytes hold the chunk size (32 bytes, say) and status flags (is this block in use or
+                  free). When you pass <code>ptr</code> to <code>free(ptr)</code>, the allocator simply looks at
+                  <code>ptr - sizeof(header)</code> to read the size and return the block to its free list.
+                </p>
+
+                <h3>Memory fragmentation</h3>
+                <ul>
+                  <li>
+                    <strong>Internal fragmentation:</strong> happens when the allocated size is larger than the
+                    requested one, because of CPU alignment or the allocator's minimum chunk size.
+                  </li>
+                  <li>
+                    <strong>External fragmentation:</strong> happens when many small free blocks lie scattered between
+                    blocks still in use. The total free space may be large, yet no single contiguous block is big
+                    enough to satisfy a new request.
+                  </li>
+                </ul>
+
+                <h2>4. The dynamic allocation functions in C</h2>
+                <p>To use these functions you must include <code>&lt;stdlib.h&gt;</code>.</p>
+
+                <h3><code>malloc</code></h3>
+                <p>Syntax: <code>void* malloc(size_t size);</code></p>
+                <p>
+                  Allocates a region of <code>size</code> bytes. Note that the cells contain
+                  <strong>random garbage</strong>.
+                </p>
+
+                <h3><code>calloc</code></h3>
+                <p>Syntax: <code>void* calloc(size_t num, size_t size);</code></p>
+                <p>
+                  Allocates room for <code>num</code> elements of <code>size</code> bytes each. The advantage of
+                  <code>calloc</code> is that it <strong>zeroes every byte of the region it allocates</strong>. That
+                  costs slightly more performance than <code>malloc</code>, since the CPU has to run a memory-clearing
+                  instruction (memset).
+                </p>
+
+                <p>
+                  All three explanations above are loose syntax. Assembled into a runnable program, the complete cycle
+                  — <strong>allocate → check → use → release</strong> — looks like this:
+                </p>
+
+                {{CODE:malloc_basics.c}}
+
+                {{CODE:Kết quả chạy thật}}
+
+                <p>
+                  The <code>calloc</code> line printing all zeroes is visible proof of the difference between the two
+                  functions. Change that <code>calloc</code> to <code>malloc</code> and the printed values become
+                  random garbage — and worse, sometimes they are <em>coincidentally</em> all zero, so the bug only
+                  shows up on somebody else's machine.
+                </p>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">📝 On casting the return value of malloc</div>
+                  <div class="callout__content">
+                    The example above writes <code>int *scores = malloc(...)</code> with no cast. In
+                    <strong>C</strong>, <code>void*</code> converts to any other pointer type automatically, so the
+                    cast is not required — and many people recommend leaving it out: if you happen to forget
+                    <code>#include &lt;stdlib.h&gt;</code>, the cast <em>hides</em> the warning the compiler should
+                    have given you. In <strong>C++</strong> the opposite holds: the cast is mandatory. You will meet
+                    both styles in real code, so understanding the reasoning on each side matters more than picking a
+                    side.
+                  </div>
+                </div>
+
+                <h3>A defensive pattern: safe <code>realloc</code></h3>
+                <p>
+                  <code>realloc</code> resizes a region that has already been allocated:
+                  <code>void* realloc(void* ptr, size_t new_size);</code>
+                </p>
+                <p>
+                  Many programmers write <code>arr = (int*)realloc(arr, new_size);</code>. This is a
+                  <strong>fatal mistake (a memory leak hazard)</strong>. If the system runs out of memory,
+                  <code>realloc</code> fails and returns <code>NULL</code>. That assignment then overwrites
+                  <code>arr</code> with <code>NULL</code>, while the old region still exists on the heap and you have
+                  completely lost the address needed to reach or release it. Always use a temporary pointer:
+                </p>
+
+                {{CODE:safe_realloc.c}}
+
+                <p>📥 Download the sample source: <a href="safe_realloc.c" download>safe_realloc.c</a></p>
+
+                <h2>5. The dangerous memory bugs and undefined behaviour</h2>
+                <p>
+                  Because C has no garbage collector, the programmer drives the hardware pointers directly. A small
+                  mistake produces <strong>undefined behaviour (UB)</strong>, crashing the program immediately or
+                  quietly producing wrong results:
+                </p>
+                <ul>
+                  <li>
+                    <strong>Memory leak:</strong> allocating dynamically but ending the function or program without
+                    releasing it with <code>free()</code>. The RAM stays occupied indefinitely.
+                  </li>
+                  <li>
+                    <strong>Dangling pointer:</strong> the memory has been released with <code>free(ptr)</code> but
+                    <code>ptr</code> still points at the old address. Reading or writing through <code>*ptr</code>
+                    afterwards is a serious bug, because the OS may have handed that memory to something else. Always
+                    assign <code>ptr = NULL;</code> immediately after <code>free</code>.
+                  </li>
+                  <li>
+                    <strong>Double free:</strong> calling <code>free()</code> twice on the same address without setting
+                    it to <code>NULL</code> in between. This corrupts the allocator's own bookkeeping structures.
+                  </li>
+                  <li>
+                    <strong>Invalid free:</strong> calling <code>free()</code> on an address that did not come from
+                    malloc/calloc/realloc — the address of a local variable on the stack, say, or an address in the
+                    middle of an allocated block.
+                  </li>
+                </ul>
+
+                <h2>6. Tools for finding and debugging memory bugs</h2>
+                <p>
+                  Memory bugs in C are notoriously hard to spot by eye, because the program may run "normally" many
+                  times before crashing at some apparently random moment. To find and eliminate them, professional
+                  developers use automated memory analysis tools.
+                </p>
+
+                <h3>6.1. Finding memory bugs with Valgrind</h3>
+                <p>
+                  <strong>Valgrind</strong> is an open-source dynamic analysis toolkit that detects memory leaks,
+                  invalid memory access and many other run-time errors. It works by running your program inside a
+                  virtual machine and watching every memory read and write.
+                </p>
+
+                <p><strong>Installing Valgrind:</strong></p>
+                {{CODE:Terminal}}
+
+                <p>
+                  <strong>An important note:</strong> Valgrind does not yet fully support macOS on Apple Silicon (ARM).
+                  If you are on an M1/M2/M3/M4 Mac, consider running Valgrind inside a Linux VM or a Docker container.
+                </p>
+
+                <p>
+                  For Valgrind to show detail (line numbers, function names), compile with debug symbols and
+                  optimisation disabled:
+                </p>
+                {{CODE:Terminal#2}}
+
+                <p>
+                  <strong>A worked example:</strong> the program below deliberately leaks memory, to show what
+                  Valgrind's output looks like:
+                </p>
+                {{CODE:leak_example.c}}
+
+                <p>Running <code>valgrind --leak-check=full ./leak_example</code> produces:</p>
+
+                <pre>
+==12345== Memcheck, a memory error detector
+==12345== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==12345==
+data[0] = 42
+==12345==
+==12345== HEAP SUMMARY:
+==12345==     in use at exit: 40 bytes in 1 blocks
+==12345==   total heap usage: 2 allocs, 1 frees, 1,064 bytes allocated
+==12345==
+==12345== 40 bytes in 1 blocks are definitely lost in loss record 1 of 1
+==12345==    at 0x4C2BBAF: malloc (vg_replace_malloc.c:299)
+==12345==    by 0x40054E: create_leak (leak_example.c:5)
+==12345==    by 0x400568: main (leak_example.c:11)
+==12345==
+==12345== LEAK SUMMARY:
+==12345==    definitely lost: 40 bytes in 1 blocks
+==12345==    indirectly lost: 0 bytes in 0 blocks
+==12345==      possibly lost: 0 bytes in 0 blocks
+==12345==    still reachable: 0 bytes in 0 blocks
+==12345==         suppressed: 0 bytes in 0 blocks
+==12345==
+==12345== ERROR SUMMARY: 1 errors from 1 contexts</pre
+                >
+
+                <p><strong>What Valgrind's key messages mean:</strong></p>
+                <ul>
+                  <li>
+                    <strong>definitely lost:</strong> memory that is certainly leaked — no pointer to it survives. This
+                    is the most serious category and should be fixed first.
+                  </li>
+                  <li>
+                    <strong>indirectly lost:</strong> memory lost indirectly — reachable only through a pointer that
+                    itself sits in a "definitely lost" block. Fixing the definite losses usually clears these
+                    automatically.
+                  </li>
+                  <li>
+                    <strong>possibly lost:</strong> Valgrind found a pointer into the middle of a block rather than to
+                    its start. This may be a bug, or a deliberate technique.
+                  </li>
+                  <li>
+                    <strong>still reachable:</strong> memory never released, but still pointed at when the program
+                    ended. Usually harmless, though worth cleaning up.
+                  </li>
+                </ul>
+
+                <h3>6.2. AddressSanitizer (ASan) — compile-time instrumentation</h3>
+                <p>
+                  <strong>AddressSanitizer (ASan)</strong> is a memory error detector built into GCC and Clang. Rather
+                  than running your program in a virtual machine as Valgrind does, ASan injects checking code into the
+                  program at compile time, catching memory errors at a substantially lower performance cost.
+                </p>
+
+                <p><strong>How to use it:</strong></p>
+                {{CODE:Terminal#3}}
+
+                <p>
+                  <strong>A worked example:</strong> this program deliberately overflows a heap buffer:
+                </p>
+                {{CODE:overflow_example.c}}
+
+                <p>Compiled with <code>-fsanitize=address</code> and run, ASan reports in detail:</p>
+
+                <pre>
+=================================================================
+==54321==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000024
+    at pc 0x00010a3f1e8c bp 0x7ff7b3a01e60 sp 0x7ff7b3a01e58
+WRITE of size 4 at 0x602000000024 thread T0
+    #0 0x10a3f1e8b in main overflow_example.c:9
+    #1 0x7fff20430620 in start (libdyld.dylib)
+
+0x602000000024 is located 0 bytes after 20-byte region [0x602000000010, 0x602000000024)
+allocated by thread T0 here:
+    #0 0x10a4a1a5d in wrap_malloc (libclang_rt.asan_osx_dynamic.dylib)
+    #1 0x10a3f1e4b in main overflow_example.c:5
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow overflow_example.c:9 in main</pre
+                >
+
+                <p><strong>Where ASan wins over Valgrind:</strong></p>
+                <ul>
+                  <li>
+                    Far faster (roughly 2x slower than the original program, where Valgrind is 10–50x slower).
+                  </li>
+                  <li>Works well on macOS Apple Silicon (ARM) — no Linux VM needed.</li>
+                  <li>
+                    Can detect stack buffer overflows (stack-buffer-overflow), which Valgrind cannot.
+                  </li>
+                </ul>
+
+                <p><strong>The error classes ASan detects:</strong></p>
+                <ul>
+                  <li><strong>heap-buffer-overflow:</strong> accessing beyond an allocated heap region.</li>
+                  <li><strong>stack-buffer-overflow:</strong> accessing beyond an array or local variable on the stack.</li>
+                  <li><strong>use-after-free:</strong> using memory after releasing it with <code>free()</code>.</li>
+                  <li><strong>double-free:</strong> calling <code>free()</code> twice on the same address.</li>
+                  <li>
+                    <strong>memory leaks:</strong> leak detection (compile with the additional
+                    <code>-fsanitize=leak</code> flag).
+                  </li>
+                </ul>
+
+                <h3>6.3. A professional memory audit workflow</h3>
+                <p>
+                  In real C projects, checking memory does not stop at running a single tool. Here is the audit
+                  workflow software engineers commonly follow:
+                </p>
+
+                <p><strong>Step 1: compile with strict warnings</strong></p>
+                {{CODE:Terminal#4}}
+
+                <p><strong>Step 2: run under AddressSanitizer</strong></p>
+                {{CODE:Terminal#5}}
+
+                <p><strong>Step 3: run under Valgrind</strong></p>
+                {{CODE:Terminal#6}}
+
+                <p><strong>Step 4: a manual code review checklist</strong></p>
+                <ul>
+                  <li>
+                    Every <code>malloc</code>/<code>calloc</code> has a matching <code>free()</code> on
+                    <strong>every</strong> execution path, including the error paths.
+                  </li>
+                  <li>
+                    Every <code>realloc</code> uses a temporary pointer, so the old address is not lost on failure.
+                  </li>
+                  <li>
+                    Every result from <code>malloc</code>/<code>calloc</code>/<code>realloc</code> is checked against
+                    <code>NULL</code> before use.
+                  </li>
+                  <li>
+                    Pointers are set to <code>NULL</code> immediately after <code>free()</code>, to avoid dangling
+                    pointers.
+                  </li>
+                </ul>
+
+                <p><strong>Static analysis tools, as a complement:</strong></p>
+                {{CODE:Terminal#7}}
+
+                <p>
+                  Static analysis tools inspect the source <strong>without running the program</strong>, catching
+                  latent problems such as uninitialised variables, leaked resources and unreachable code.
+                </p>
+
+                <h3>The golden rule of C programming</h3>
+                <p>
+                  Every time you write a dynamic allocation (<code>malloc</code>, <code>calloc</code>,
+                  <code>realloc</code>), immediately write the <code>NULL</code> check alongside it and decide on the
+                  matching <code>free()</code> + <code>NULL</code> assignment strategy. That habit is what keeps the
+                  resource handling safe.
+                </p>
+
+                <!-- ── INTERACTIVE QUIZ ── -->
+                <div class="quiz-container">
+                  <div class="quiz-title">
+                    <span>📝 Check your understanding — Lesson 9</span>
+                  </div>
+                  <div class="quiz-question">
+                    Which statement most accurately describes the heap compared with the stack in C?
+                  </div>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'Both halves are the wrong way round: the stack is the automatic one, and it is the faster of the two.')"
+                    >
+                      A. The heap is allocated automatically by the compiler and is faster to access than the stack.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'That describes the stack, which is typically 1-8 MB. The heap is bounded by the system memory, not by a few megabytes.')"
+                    >
+                      B. Heap memory is limited to a small size (just a few megabytes).
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'That is precisely what the heap does NOT do - and why forgetting free() leaks memory. Automatic release is a stack property.')"
+                    >
+                      C. Heap memory is released automatically when the enclosing function returns.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Correct: this is exactly why dynamic allocation exists - a size decided at run time, and a lifetime independent of any function.'
+                        )
+                      "
+                    >
+                      D. The heap allows a size chosen at run time and lives independently of any function's lifetime.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback"></div>
+                </div>
