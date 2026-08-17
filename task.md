@@ -62,7 +62,11 @@ code — đó là phong cách của series, không phải lỗi.
 - [x] **Bài 3 `c-operators-and-bitwise` — XONG CẢ HAI LOCALE** (17/08/2026).
       60 dòng tiếng Việt trong code → tiếng Anh; thêm hạ cánh cho 6 khối; thời
       gian đọc 7 → 9 phút. Bản EN 1021 dòng.
-- [ ] Bài 4 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
+- [x] **Bài 4 `c-control-flow` — XONG CẢ HAI LOCALE** (17/08/2026). Viết bổ sung
+      hẳn mục `break`/`continue` (chủ đề thiếu hẳn: `continue` 0 lần trong cả bài
+      dạy vòng lặp), kèm code đã chạy thật. 5 dòng code tiếng Việt → Anh, 1 hạ cánh,
+      sửa tiêu đề quiz ghi nhầm "bài 3". Thời gian đọc 6 → 8 phút.
+- [ ] Bài 5 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
 
 ---
 
