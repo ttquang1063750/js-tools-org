@@ -1,19 +1,21 @@
 #include <iostream>
 #include <string>
 
-// Ví dụ về namespace tự định nghĩa
+// A namespace of our own
 namespace Engine {
     void printV8Info() {
-        std::cout << "Google V8 JavaScript Engine được viết chủ yếu bằng C++ để biên dịch và chạy JS cực nhanh!" << std::endl;
+        // std::string is a safe, self-managing string type - unlike a raw C char array
+        std::string engine = "Google V8";
+        std::cout << engine << " is written mostly in C++, which is why it can run JS this fast!" << std::endl;
     }
 }
 
 int main() {
-    // std::cout nằm trong namespace std để ghi dữ liệu ra terminal
-    std::cout << "Chào mừng bạn đến với chuỗi học lập trình C++ từ js-tools.org!" << std::endl;
-    
-    // Gọi hàm từ namespace Engine
+    // std::cout lives in namespace std, and writes to the terminal
+    std::cout << "Welcome to the C++ series on js-tools.org!" << std::endl;
+
+    // Call the function from namespace Engine
     Engine::printV8Info();
-    
+
     return 0;
 }
