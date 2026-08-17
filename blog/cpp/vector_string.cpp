@@ -1,34 +1,39 @@
 #include <iostream>
-#include <vector>
 #include <string>
+#include <vector>
 
 int main() {
-    // 1. Sử dụng std::string (SSO kích hoạt do siteName ngắn)
+    // ===== std::string =====
     std::string siteName = "js-tools.org";
-    std::string message = "Học C++ hiện đại tại " + siteName;
-    std::cout << message << " | Do dai chuoi: " << message.length() << std::endl;
+    std::string message = "Hoc C++ hien dai tai " + siteName;
 
-    // 2. Sử dụng std::vector (mảng động tự co giãn)
+    message.append(" - series hoan toan mien phi!");
+    std::cout << message << std::endl;
+    std::cout << "Length: " << message.length() << std::endl;
+
+    // ===== std::vector with reserve() =====
     std::vector<std::string> tools;
-    
-    // Tối ưu hóa: đặt trước dung lượng để tránh Pointer Invalidation
-    tools.reserve(5);
-    
-    // Thêm các phần tử vào cuối vector
+    tools.reserve(5);  // Allocate up front: no reallocation, no invalidated pointers
+
     tools.push_back("Image Optimizer");
     tools.push_back("SnapCast");
     tools.push_back("ColorQuarium");
 
-    std::cout << "\nDanh sach cong cu hien co tren he thong:" << std::endl;
-    
-    // 3. Duyệt mảng bằng Range-based for loop & từ khóa auto
+    std::cout << "\nTool list:" << std::endl;
     for (const auto& tool : tools) {
         std::cout << "- " << tool << std::endl;
     }
 
-    // Kiểm tra kích thước và dung lượng thực tế
-    std::cout << "Tong so phan tu (size): " << tools.size() << std::endl;
-    std::cout << "Dung luong thuc te (capacity): " << tools.capacity() << std::endl;
+    // ===== insert() =====
+    tools.insert(tools.begin() + 1, "QR Generator");
+
+    std::cout << "\nAfter insert (size/capacity): "
+              << tools.size() << "/" << tools.capacity() << std::endl;
+
+    // ===== Move semantics =====
+    std::vector<std::string> tools2 = std::move(tools);
+    std::cout << "tools  size after move: " << tools.size() << std::endl;
+    std::cout << "tools2 size after move: " << tools2.size() << std::endl;
 
     return 0;
 }

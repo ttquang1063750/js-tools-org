@@ -1,0 +1,385 @@
+              <div>
+                <p>
+                  In traditional C you manage string length yourself with raw <code>char</code> arrays, and a static
+                  array's size is fixed the moment you declare it. Modern C++ answers both with the standard library:
+                  <code>std::string</code> and <code>std::vector</code>. We will also look under them — at SSO (small
+                  string optimisation), at pointer invalidation, and at what you can actually do about performance.
+                </p>
+
+                <h2>1. std::string and small string optimisation (SSO)</h2>
+                <p>
+                  <code>std::string</code> owns the memory holding its characters and grows the buffer for you when
+                  you append. No more <code>strcpy</code> or <code>strcat</code> and the buffer overflows they invite.
+                </p>
+
+                <h3>What SSO actually is</h3>
+                <p>
+                  Allocating on the heap is expensive: the allocator has to go looking for a free block. Since short
+                  strings are overwhelmingly common in real programs, modern C++ standard libraries apply
+                  <strong>small string optimisation</strong>:
+                </p>
+                <ul>
+                  <li>
+                    If the string is <strong>short enough</strong>, the characters are stored
+                    <strong>inside the <code>std::string</code> object itself</strong> — usually on the stack. Not a
+                    single heap allocation happens.
+                  </li>
+                  <li>
+                    Past that threshold, <code>std::string</code> switches to a heap allocation and keeps the address
+                    in an internal pointer.
+                  </li>
+                </ul>
+
+                <div class="callout callout--pitfall">
+                  <div class="callout__title">⚠️ "15 characters" is one library's number, not C++'s</div>
+                  <div class="callout__content">
+                    You will read everywhere that the SSO threshold is 15 characters on a 64-bit system. That is true
+                    of <strong>libstdc++</strong> (the standard library shipped with GCC). But the C++ standard
+                    specifies no threshold at all — it does not even require SSO to exist.
+                    <strong>libc++</strong> (the default on macOS and with Clang) picks a different one.
+                    <br /><br />
+                    So do not memorise a number, measure it on your own machine the way the code below does: compare
+                    the address of <code>s.data()</code> against the memory of the object <code>s</code> itself. Data
+                    inside the object means SSO is active; data outside it means the string went to the heap.
+                  </div>
+                </div>
+
+                {{CODE:sso_probe.cpp — tự tìm ngưỡng SSO của máy bạn}}
+
+                {{CODE:Kết quả chạy thật — macOS, clang 21, libc++ 210106}}
+
+                <p>
+                  <strong>22</strong>, not 15 — because this machine uses libc++. That number also shows libc++ fitting
+                  22 characters plus a terminator into the object's 24 bytes, by sharing space with the fields the heap
+                  mode needs. Run the same program on Linux with GCC and you will see 15.
+                </p>
+
+                {{CODE:sso_demo.cpp}}
+
+                <h2>2. std::vector and the pointers underneath it</h2>
+                <p>
+                  A <code>std::vector</code> is more than a growable array: at the memory level it is a structure
+                  holding exactly <strong>3 pointers</strong>. Their names differ per library — below are libstdc++'s
+                  (GCC); libc++ calls them <code>__begin_</code>, <code>__end_</code>, <code>__end_cap_</code> — but
+                  their roles are identical:
+                </p>
+                <ul>
+                  <li><code>_M_start</code>: the start of the buffer on the heap.</li>
+                  <li>
+                    <code>_M_finish</code>: one past the last valid element (this is what <code>size()</code> reflects).
+                  </li>
+                  <li>
+                    <code>_M_end_of_storage</code>: the end of the whole allocated buffer (this is what
+                    <code>capacity()</code> reflects).
+                  </li>
+                </ul>
+
+                <pre
+                  style="
+                    background: #0f1423;
+                    color: #a78bfa;
+                    padding: 15px;
+                    border-radius: 8px;
+                    font-family: monospace;
+                    overflow-x: auto;
+                    border: 1px solid var(--border);
+                    line-height: 1.4;
+                  "
+                >
+std::vector in RAM:
+┌────────────────────┐          ┌─────────┬─────────┬─────────┬─────────┬─────────┐
+│ Stack (3 pointers) │          │ Elem 0  │ Elem 1  │ Elem 2  │ (empty) │ (empty) │
+├────────────────────┤          └─────────┴─────────┴─────────┴─────────┴─────────┘
+│ _M_start           ├──────────^ (start of the heap buffer)
+│ _M_finish          ├──────────────────────────────^ (size = 3)
+│ _M_end_of_storage  ├──────────────────────────────────────────────────^ (capacity = 5)
+└────────────────────┘</pre
+                >
+
+                <h3>Growing the capacity, and pointer invalidation</h3>
+                <p>When you <code>push_back()</code> into a vector that is full (<code>size == capacity</code>):</p>
+                <ul>
+                  <li>
+                    The vector allocates a completely new region on the heap, typically twice the old capacity (×2 on
+                    GCC/Clang, ×1.5 on MSVC).
+                  </li>
+                  <li>It copies — or moves — every existing element into that new region.</li>
+                  <li>It frees the old region.</li>
+                </ul>
+                <p>
+                  <strong>Pointer invalidation:</strong> because the old region is gone, every pointer, reference and
+                  iterator that pointed into the vector becomes a <strong>dangling pointer</strong> at that instant.
+                  Using one is undefined behaviour, and it is miserable to debug.
+                </p>
+
+                <h3>reserve() as the fix</h3>
+                <p>
+                  To stop the vector reallocating over and over — and invalidating pointers each time — use
+                  <code>reserve(n)</code>. It asks for a buffer big enough for <code>n</code> elements up front:
+                </p>
+
+                {{CODE:vector_reserve.cpp}}
+
+                <h3>What reserve() is worth — measured</h3>
+                <p>
+                  Do not trust numbers someone hands you, this article's included. The program below counts how many
+                  times the vector reallocated, how much memory it asked for in total, and how long it took — run it on
+                  your machine and compare:
+                </p>
+
+                {{CODE:bench_reserve.cpp}}
+
+                {{CODE:Kết quả chạy thật — Apple M-series, clang 21, libc++, -O2}}
+
+                <p>Three numbers, each read at its proper weight:</p>
+                <ul>
+                  <li>
+                    <strong>15 reallocations down to 0.</strong> This is the one that matters most, because every
+                    reallocation turns <em>every</em> pointer and iterator into the vector into a dangling one.
+                  </li>
+                  <li>
+                    <strong>128 KB down to 39.1 KB.</strong> Without reserve the vector walks through capacities 1, 2,
+                    4, 8 … 16384, asking for memory at each step — more than three times what it actually needed.
+                  </li>
+                  <li>
+                    <strong>0.047 ms down to 0.012 ms</strong> — around 4× faster, but both are
+                    <em>thousandths of a second</em>. For 10,000 integers, speed is not why you use
+                    <code>reserve()</code>; the two points above are. The timing only becomes significant when the
+                    elements are heavy objects, so that each reallocation drags 10,000 copies or moves with it.
+                  </li>
+                </ul>
+
+                <div class="callout callout--note">
+                  <div class="callout__title">📌 Your numbers will differ, and that is fine</div>
+                  <div class="callout__content">
+                    Timing depends on the machine, the optimisation level and the standard library. The reallocation
+                    count depends on the implementation's <em>growth factor</em>: libstdc++ and libc++ double (×2),
+                    MSVC uses 1.5. What does not change between machines is the shape: without reserve the number of
+                    reallocations grows with <code>log(N)</code>; with reserve it is zero.
+                  </div>
+                </div>
+
+                <h2>3. The std::string methods worth knowing</h2>
+                <p>
+                  Beyond concatenation, <code>std::string</code> gives you plenty for searching, extracting substrings,
+                  replacing and comparing. These are the ones you will reach for daily:
+                </p>
+
+                <div style="overflow-x: auto">
+                  <table style="width: 100%; border-collapse: collapse; margin: 20px 0">
+                    <thead>
+                      <tr style="background: rgba(79, 142, 247, 0.1)">
+                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid var(--border)">Method</th>
+                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid var(--border)">
+                          What it does
+                        </th>
+                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid var(--border)">Example</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>append()</code></td>
+                        <td style="padding: 12px">Add to the end</td>
+                        <td style="padding: 12px"><code>str.append(".cpp")</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>find()</code></td>
+                        <td style="padding: 12px">Find a substring's position</td>
+                        <td style="padding: 12px"><code>str.find("tools")</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>substr()</code></td>
+                        <td style="padding: 12px">Extract a substring</td>
+                        <td style="padding: 12px"><code>str.substr(0, 3)</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>replace()</code></td>
+                        <td style="padding: 12px">Replace a substring</td>
+                        <td style="padding: 12px"><code>str.replace(0, 2, "JS")</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>compare()</code></td>
+                        <td style="padding: 12px">Compare two strings</td>
+                        <td style="padding: 12px"><code>str.compare(other)</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>length()</code></td>
+                        <td style="padding: 12px">Length of the string</td>
+                        <td style="padding: 12px"><code>str.length()</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>empty()</code></td>
+                        <td style="padding: 12px">Is it empty</td>
+                        <td style="padding: 12px"><code>if (str.empty())</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>clear()</code></td>
+                        <td style="padding: 12px">Remove all characters</td>
+                        <td style="padding: 12px"><code>str.clear()</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>at()</code></td>
+                        <td style="padding: 12px">Access a character (bounds checked)</td>
+                        <td style="padding: 12px"><code>char c = str.at(0)</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>operator[]</code></td>
+                        <td style="padding: 12px">Access a character (unchecked, fast)</td>
+                        <td style="padding: 12px"><code>char c = str[0]</code></td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid var(--border)">
+                        <td style="padding: 12px"><code>rfind()</code></td>
+                        <td style="padding: 12px">Search backwards from the end</td>
+                        <td style="padding: 12px"><code>str.rfind("tools")</code></td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 12px"><code>c_str()</code></td>
+                        <td style="padding: 12px">Get a C-style string</td>
+                        <td style="padding: 12px"><code>const char* p = str.c_str()</code></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <h3>Those methods in practice</h3>
+
+                {{CODE:string_methods.cpp}}
+
+                <h2>4. Vector operations and ways to reach an element</h2>
+                <p>
+                  Beyond <code>push_back()</code> and <code>size()</code>, a vector gives you plenty for accessing,
+                  inserting, erasing and traversing. Two distinctions matter: <code>at()</code> (checked but slower)
+                  versus <code>operator[]</code> (fast but unforgiving), and iterators.
+                </p>
+
+                <h3>Reaching an element: at() vs operator[]</h3>
+                <p>
+                  <code>at()</code> does bounds checking and throws if the index is out of range;
+                  <code>operator[]</code> does not check — faster, and undefined behaviour when you are wrong:
+                </p>
+
+                {{CODE:vector_access.cpp}}
+
+                <h3>Iterators: safer than raw pointers</h3>
+                <p>
+                  Iterators are the modern way to walk a vector instead of using indices. They insulate you from the
+                  low-level memory details and work the same way across every STL container:
+                </p>
+
+                {{CODE:vector_iterators.cpp}}
+
+                <h3>Inserting &amp; erasing: insert() vs erase()</h3>
+                <p>
+                  Careful here: <code>insert()</code> and <code>erase()</code> are O(n), because every element after
+                  the change has to shift:
+                </p>
+
+                {{CODE:vector_insert_erase.cpp}}
+
+                <h2>5. Move semantics: moving instead of copying</h2>
+                <p>
+                  One of C++11's most important additions is move semantics. Rather than copying all of an object's
+                  data into another object — costly in both memory and time — we can transfer <em>ownership</em> of the
+                  data from the old object to the new one. It matters most for large containers like string and vector.
+                </p>
+
+                <h3>Lvalue vs rvalue</h3>
+                <p>
+                  An <strong>lvalue</strong> is a variable with a stable memory address (the <code>x</code> in
+                  <code>int x = 5;</code>). An <strong>rvalue</strong> is a temporary about to be destroyed (the result
+                  of a function call, or of an expression).
+                </p>
+
+                {{CODE:lvalue_rvalue.cpp}}
+
+                <h3>Return value optimisation (RVO)</h3>
+                <p>
+                  Modern compilers optimise returning large objects by never creating the intermediate copy at all —
+                  known as RVO, or NRVO for a named variable. It happens automatically, with nothing required from you:
+                </p>
+
+                {{CODE:rvo_demo.cpp}}
+
+                <h3>Moving a vector or a string</h3>
+                <p>
+                  A vector is three pointers internally. Moving one does not copy the data (O(n)) — it just hands those
+                  three pointers over (O(1)):
+                </p>
+
+                {{CODE:move_vector.cpp}}
+
+                <h2>6. Putting it together: vector_string.cpp</h2>
+                <p>
+                  The program below combines everything from this lesson: string methods, vector operations, iterators
+                  and move semantics:
+                </p>
+
+                {{CODE:vector_string.cpp}}
+
+                {{CODE:Kết quả chạy thật}}
+
+                <p>
+                  The last two lines are the ones to look at closely: after <code>std::move</code>, <code>tools</code>
+                  holds <strong>0</strong> elements and <code>tools2</code> holds <strong>4</strong>. Not one element
+                  was copied — the three pointers inside <code>tools</code> simply moved to <code>tools2</code>, and
+                  <code>tools</code> was left in a valid empty state. That is the whole meaning of "move instead of
+                  copy" from section 5.
+                </p>
+
+                <!-- ── INTERACTIVE QUIZ ── -->
+                <div class="quiz-container">
+                  <div class="quiz-title">
+                    <span>📝 Check your understanding — Lesson 3</span>
+                  </div>
+                  <div class="quiz-question">
+                    You call <code>push_back()</code> on a vector that is already full
+                    (<code>capacity == size</code>). What happens?
+                  </div>
+                  <div class="quiz-options">
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'No. The vector handles this itself — it only throws bad_alloc when the system is genuinely out of memory, which is a different situation from the buffer being full.')"
+                    >
+                      A. The program throws an out-of-memory error and crashes immediately.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      data-correct="true"
+                      onclick="
+                        checkQuiz(
+                          this,
+                          true,
+                          'Correct. And that is exactly why every pointer and iterator into the vector goes dangling afterwards — the benchmark in section 2 counted 15 reallocations while adding 10,000 elements.'
+                        )
+                      "
+                    >
+                      B. The vector allocates a new region (usually twice the size), moves every existing element
+                      across, then frees the old one.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'It cannot. The memory right after the buffer may belong to something else; writing into it is memory corruption, not a mechanism.')"
+                    >
+                      C. The vector writes into the free memory immediately after the buffer, without moving anything.
+                    </button>
+                    <button
+                      class="quiz-option"
+                      onclick="checkQuiz(this, false, 'The opposite: elements are MOVED to a new address, which is precisely why old pointers dangle. It is also why reserve() matters for more than speed.')"
+                    >
+                      D. Elements keep their old addresses, so any pointer into them keeps working normally.
+                    </button>
+                  </div>
+                  <div class="quiz-feedback"></div>
+                </div>
+
+                <!-- Download the source -->
+                <div class="article-cta">
+                  <h3>Download the lesson's sample source</h3>
+                  <p>
+                    You can download the complete sample C++ file for this lesson and practise with it directly on your
+                    own machine.
+                  </p>
+                  <a href="../vector_string.cpp" class="article-cta__btn" download>Download vector_string.cpp</a>
+                </div>
+              </div>
+            </div>
