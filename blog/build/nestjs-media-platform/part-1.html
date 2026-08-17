@@ -1217,8 +1217,40 @@ export class SnakeNamingStrategy extends DefaultNamingStrategy implements Naming
             </div>
 
             <p>
-              Bản cho CLI. Đây là <strong>nơi duy nhất</strong> trong dự án còn đọc <code>process.env</code> trực tiếp,
-              và nó có lý do rõ ràng: script này chạy ngoài Nest:
+              Bản cho CLI. Chỗ này có một cái bẫy đáng dừng lại, vì nó quyết định cấu hình của bạn có một nguồn sự thật
+              hay hai.
+            </p>
+            <p>
+              Sự thật kỹ thuật là: TypeORM CLI chạy như một tiến trình Node thuần. Nó không boot ứng dụng Nest, nên
+              không có container DI, nên <strong>không lấy được <code>ConfigService</code></strong
+              >. Điều đó không tránh được. Nhưng kết luận "vậy thì CLI phải tự kiểm lấy" là một bước hụt — và nó dẫn
+              thẳng tới đoạn code mà nhiều dự án viết:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Cách hay gặp — và vì sao nó yếu</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">config();
+
+const url = process.env['DATABASE_URL'];
+if (!url) {
+  throw new Error('Thieu DATABASE_URL');
+}</code></pre>
+            </div>
+
+            <p>
+              Đoạn này chạy được, nhưng nó vừa tạo ra nguồn sự thật thứ hai. Schema zod ở
+              <code>configuration.ts</code> <strong>không hề chạy</strong> trên đường này: nó chỉ kiểm biến có tồn tại
+              hay không. Một <code>DATABASE_URL=mysql://...</code> mà ứng dụng từ chối khởi động thì CLI vẫn nhận và
+              chạy migration. Và <code>config()</code> gọi trần thì dotenv tìm <code>.env</code> theo thư mục hiện hành
+              — gõ lệnh migration từ thư mục khác là không thấy file, mà không có thông báo nào.
+            </p>
+            <p>
+              Cách sửa không nằm ở chỗ mang Nest vào CLI, mà ở chỗ nhận ra
+              <code>validateEnv</code> vốn <strong>chỉ là một hàm</strong>. Nó không phụ thuộc Nest, không cần DI — nên
+              cả hai đường đều gọi được nó, và đi qua đúng một schema:
             </p>
 
             <div class="code-window">
@@ -1226,18 +1258,49 @@ export class SnakeNamingStrategy extends DefaultNamingStrategy implements Naming
                 <span class="code-filename">src/database/data-source.ts — chỉ dành cho TypeORM CLI</span>
                 <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
               </div>
-              <pre><code class="language-typescript">import { config } from 'dotenv';
+              <pre><code class="language-typescript">import { resolve } from 'node:path';
+
+import { config as loadDotenv } from 'dotenv';
 import { DataSource } from 'typeorm';
+
+import { validateEnv } from '../config/configuration';
 import { sharedOptions } from './typeorm.options';
 
-config();
+// CLI la tien trinh Node thuan: khong boot duoc Nest nen khong co ConfigService.
+// Nhung validateEnv chi la mot HAM, khong dinh gi toi Nest — nen ca app lan CLI
+// deu di qua dung mot schema, khong the lech nhau.
 
-const url = process.env['DATABASE_URL'];
-if (!url) {
-  throw new Error('Thiếu DATABASE_URL — CLI không chạy qua ConfigModule nên phải tự kiểm.');
-}
+// Duong dan tinh tu chinh file nay, KHONG phu thuoc thu muc hien hanh: lenh
+// migration co the duoc go tu bat ky dau.
+loadDotenv({ path: resolve(__dirname, '../../.env') });
 
-export const AppDataSource = new DataSource({ ...sharedOptions, url });</code></pre>
+const env = validateEnv(process.env);
+
+export const AppDataSource = new DataSource({ ...sharedOptions, url: env.DATABASE_URL });</code></pre>
+            </div>
+
+            <p>Kiểm chứng ngay được, và đáng làm vì nó cho thấy khác biệt là thật chứ không phải chuyện thẩm mỹ:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — CLI giờ từ chối đúng thứ mà app từ chối</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">DATABASE_URL='mysql://forge@localhost/x' npm run typeorm -- migration:show
+
+# Bien moi truong khong hop le:
+#   DATABASE_URL: Invalid string: must start with "postgres://"
+#     at validateEnv (src/config/configuration.ts)</code></pre>
+            </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Chỉ được export đúng một <code>DataSource</code></div>
+              <div class="callout__content">
+                Đừng thêm <code>export default AppDataSource;</code> bên cạnh bản export có tên. TypeORM CLI đếm số
+                export trong file và dừng với
+                <code>Given data source file must contain only one export of DataSource instance</code>. Một export,
+                không hơn.
+              </div>
             </div>
 
             <h3>7.2 Viết entity</h3>
