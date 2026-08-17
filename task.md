@@ -69,8 +69,17 @@ code — đó là phong cách của series, không phải lỗi.
 - [x] **Bài 5 `c-functions-and-recursion` — XONG CẢ HAI LOCALE** (17/08/2026).
       46 comment + 7 định danh tiếng Việt → Anh; 2 hạ cánh; sửa 4 chỗ prose còn
       tên hàm cũ sau khi đổi định danh. Nội dung chủ đề đầy đủ, không có lỗ hổng.
-- [ ] **Bài 6 `c-arrays-and-strings` — ĐÃ RÀ, CHƯA SỬA. Bài này KHÁC HẲN 5 bài
-      trước, đọc mục dưới trước khi bắt tay.**
+- [~] **Bài 6 `c-arrays-and-strings` — BẢN VIỆT XONG, BẢN EN CHƯA LÀM.**
+      Khôi phục dấu: **33/40 câu không dấu → 1/45**. Thêm 4 hạ cánh, sửa thời
+      gian đọc 9 → 8 phút, thêm hero link + hreflang. `check-lesson.js` 11/11.
+      **Còn lại: `lessons/c-arrays-and-strings.body-en.html`** — 1369 từ, 13
+      placeholder `{{CODE:...}}` (array_basics, bounds_danger, find_max_min,
+      2d_array, transpose, jagged, string_types, parse_csv, safe_input,
+      buffer_overflow_demo, reverse_string, palindrome, my_atoi), 2 bảng lớn
+      (`string.h` và `ctype.h`), thân bài mở bằng một `<div>` trơn, **0 bare pre**
+      (mọi sơ đồ ASCII nằm trong code-window nên đã đổi nhãn sang tiếng Anh:
+      "Row 0", "Index:", "ASCII value", "marks the end of the string").
+      `meta-en.json` ĐÃ viết xong.
 - [ ] Bài 7 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
 
 ---
