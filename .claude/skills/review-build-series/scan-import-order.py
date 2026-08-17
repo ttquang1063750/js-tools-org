@@ -22,6 +22,9 @@ Dung:
 """
 import html
 import re
+
+# CHU Y: phai chiu duoc <span class="code-filename"\n  > — prettier ngat dong the
+# nay o nhung khoi co ten dai. Regex cung tung bo sot 14/83 khoi cua Part 2.
 import sys
 from pathlib import Path
 
@@ -40,12 +43,18 @@ defined, blocks, src = {}, [], {}
 for p in PARTS:
     src[p] = (DIR / f'part-{p}.html').read_text(encoding='utf-8')
     for m in re.finditer(
-        r'<span class="code-filename">([^<]*)</span>.*?<pre><code[^>]*>(.*?)</code></pre>',
+        r'<span class="code-filename"\s*>([^<]*)</span\s*>.*?<pre><code[^>]*>(.*?)</code></pre>',
         src[p], re.S,
     ):
-        fn = m.group(1).split(' —')[0].strip()
+        raw_name = m.group(1)
+        fn = raw_name.split(' —')[0].strip()
         blocks.append((p, m.start(), fn, html.unescape(m.group(2))))
-        if '/' in fn and fn.endswith(('.ts', '.js')):
+        # Mot khoi ghi "src/worker/job.runner.ts — trich doan processOne()" KHONG
+        # phai la file day du. Coi no la dinh nghia thi bo do dung cai loi can bat:
+        # worker.module.ts khai providers: [JobRunner] roi bai bao chay, trong khi
+        # class day du mai muc sau moi co.
+        partial = re.search(r'trích đoạn|trích|thêm vào|phần |bản đầu tiên|— trích', raw_name)
+        if '/' in fn and fn.endswith(('.ts', '.js')) and not partial:
             defined.setdefault(fn, (p, m.start()))
 
 forward, dangerous = [], []

@@ -8,6 +8,9 @@ TRUOC cho dinh nghia route thi doc gia chac chan nhan 404.
 """
 import html
 import re
+
+# CHU Y: phai chiu duoc <span class="code-filename"\n  > — prettier ngat dong the
+# nay o nhung khoi co ten dai. Regex cung tung bo sot 14/83 khoi cua Part 2.
 import sys
 from pathlib import Path
 
@@ -21,7 +24,7 @@ def blocks(src):
     """(vi_tri, ten_file, noi_dung) cho tung khoi code."""
     out = []
     for m in re.finditer(
-        r'<div class="code-window">.*?<span class="code-filename">([^<]*)</span>'
+        r'<div class="code-window">.*?<span class="code-filename"\s*>([^<]*)</span\s*>'
         r'.*?<pre><code[^>]*>(.*?)</code></pre>',
         src, re.S,
     ):

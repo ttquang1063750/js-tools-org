@@ -679,6 +679,9 @@ lại project từ đầu với bộ entity của riêng Part 1.
 | 77 | Part 2, §2 `src/auth/auth.module.ts` | Import trỏ tới file chưa được viết | Người đọc phát hiện: cả Part 2 không có chỗ nào nói tới `AuthController`. Đúng — module ở §2 (@22629) có `import { AuthController } from './auth.controller'` và `controllers: [AuthController]`, nhưng file `auth.controller.ts` mãi §3.5 (@67596) mới được viết, cách 43.000 ký tự. Tương tự `AuthService` (@61241, cách 38.000). Bản vá #72 của tôi còn làm nó tệ hơn: thêm bước cắm `AuthModule` vào `AppModule` ngay tại §2 kèm câu khuyên chạy thử sớm — làm đúng thế là `Cannot find module './auth.controller'`. | **đã sửa** — §2 nay khai `auth.module.ts` KHÔNG có controller (đúng sự thật: file đó chưa tồn tại), kèm con trỏ tiến nói rõ module chưa biên dịch được và đừng chạy vội. Khối `app.module.ts — thêm AuthModule` được chuyển xuống §3.5, đặt sau khối mới `auth.module.ts — thêm controller`, tức đúng chỗ mọi mảnh đã đủ; kèm một smoke test gọi `/auth/login` với mật khẩu sai, kỳ vọng `401`, và bảng đọc mã trả về (404 = chưa cắm module, 400 = ValidationPipe chặn). Thứ tự mới: auth.module 22657 < app.module+AuthModule (đã dời) < auth.controller 66672 < auth.module+controller 70156 < smoke test 72520 < demo thu hồi family 73633. |
 | 78 | Part 3, §4.3 `src/worker/main.ts` | Lệnh chạy đặt trước file cần thiết | Cùng loại với #77, tìm được nhờ quét cơ học. Khối "Terminal — chạy worker trên máy và xem nó ăn việc thật" (@66338) bảo chạy `npm run start:worker:dev`, nhưng `worker.module.ts` — thứ `src/worker/main.ts` import — mãi @67811 mới được viết. Chạy là `Cannot find module './worker.module'`. | **đã sửa** — chuyển khối `worker.module.ts` lên trước lệnh chạy. Khoảng cách từ 7.268 xuống 1.329 ký tự và không còn lệnh chạy nào nằm giữa. |
 
+| 79 | Part 2, §1 `src/auth/auth.service.ts` | Bài tự tạo ra lỗi biên dịch | Người đọc báo: `error TS6133: 'validateCredentials' is declared but its value is never read`. Đúng — phương thức private đó định nghĩa ở §1 (@17261) nhưng người gọi (`login()`) mãi §3.2 (@49737) mới có, cách 32.476 ký tự. Trong quãng đó nó là private không ai gọi, mà `noUnusedLocals: true` lại chính là cờ Part 1 §5 bảo bật. Bài tự dựng cái bẫy rồi để người đọc rơi vào. | **đã sửa** — thêm callout ngay sau khối, in đúng nguyên văn thông báo lỗi, nói rõ đây là `noUnusedLocals` đang làm đúng việc, người gọi ở §3.2, lỗi sẽ TỰ HẾT, và dặn đừng nới cờ trong tsconfig để tắt cảnh báo. |
+| 80 | Part 3, §4.3–§4.4 `src/worker/job.runner.ts` | Lệnh chạy đặt trước file cần thiết | Cùng loại #78, tìm được sau khi sửa bộ dò. `worker.module.ts` (@61872) khai `providers: [JobRunner]`, khối "Terminal — chạy worker" (@69876) bảo chạy, nhưng class `job.runner.ts` đầy đủ mãi §4.4 (@71286) mới có. Khối §4.1 mang cùng tên file nhưng ghi rõ "trích đoạn processOne()" nên không phải file đủ. | **đã sửa** — chuyển lệnh chạy xuống sau khối `job.runner.ts` của §4.4, kèm câu giải thích vì sao phải tới đây mới chạy được. Giữ nguyên `package.json` và `docker-compose` ở §4.3. |
+
 ### Bài học về quy trình rà soát (17/08/2026)
 
 #70 không phải do đọc sót — nó vô hình theo đúng nghĩa cấu trúc. Cả các lượt rà
@@ -693,3 +696,20 @@ Nói cho đúng: "đã chạy và được" ở các lượt trước chỉ ch�
 Chưa lượt nào bắt đầu từ một thư mục trống và gõ theo đúng thứ tự bài. Đó là bước
 duy nhất bắt được #70, và có lẽ cả #66–#68. Lượt sau phải làm đúng thế, ít nhất
 cho Part 1.
+
+### Hai bộ dò từng bị mù, đã sửa (17/08/2026)
+
+Cả `scan-call-order.py` lẫn `scan-import-order.py` ban đầu khớp
+`<span class="code-filename">` dạng cứng. Prettier ngắt dòng thẻ đó ở những khối
+có tên dài, nên **14/83 khối của Part 2** vô hình với chúng — kết quả "0 vi phạm"
+báo trước đó dựa trên dữ liệu thiếu. Đã đổi sang `<span class="code-filename"\s*>`;
+số khối đọc được tăng từ 204 lên 220. Đây đúng là cái bẫy `check-lesson.md` đã ghi
+từ trước cho `extract-parts.py` — lặp lại lần nữa vì tôi viết regex mới mà không
+đọc lại ghi chú cũ.
+
+`scan-import-order.py` còn một lỗ thứ hai: khối ghi "— trích đoạn" mang cùng tên
+file nên bị tính là "file đã được viết ra", che mất đúng ca #80. Đã loại các khối
+có nhãn trích đoạn/thêm vào/bản đầu tiên ra khỏi danh sách định nghĩa.
+
+Cả hai đều được negative-test: chạy trên bản trước khi sửa thì báo đúng lỗi, chạy
+trên bản hiện tại thì 0.
