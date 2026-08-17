@@ -66,7 +66,10 @@ code — đó là phong cách của series, không phải lỗi.
       hẳn mục `break`/`continue` (chủ đề thiếu hẳn: `continue` 0 lần trong cả bài
       dạy vòng lặp), kèm code đã chạy thật. 5 dòng code tiếng Việt → Anh, 1 hạ cánh,
       sửa tiêu đề quiz ghi nhầm "bài 3". Thời gian đọc 6 → 8 phút.
-- [ ] Bài 5 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
+- [x] **Bài 5 `c-functions-and-recursion` — XONG CẢ HAI LOCALE** (17/08/2026).
+      46 comment + 7 định danh tiếng Việt → Anh; 2 hạ cánh; sửa 4 chỗ prose còn
+      tên hàm cũ sau khi đổi định danh. Nội dung chủ đề đầy đủ, không có lỗ hổng.
+- [ ] Bài 6 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
 
 ---
 
