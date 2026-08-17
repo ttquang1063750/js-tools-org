@@ -66,7 +66,7 @@ for part in PARTS:
             before = code[max(0, um.start() - 200):um.start()]
             mm = re.search(r'-X\s+(GET|POST|PUT|PATCH|DELETE)', before)
             method = mm.group(1) if mm else ('POST' if '-d ' in code[um.start():um.start() + 400] else 'GET')
-            calls.append((part, pos, method, norm(path), fname, port))
+            calls.append((part, pos, method, norm(path), fname, port or '?'))
         # ── frontend: api('/jobs/active') hoac fetch('/api/...')
         for fm in re.finditer(r"""(?:api|fetch)\(\s*[`'"]([^`'"]+)[`'"]""", code):
             p = fm.group(1)
