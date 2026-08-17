@@ -35,7 +35,7 @@ int main() {
     insertAtHead(&head, 20);
     insertAtHead(&head, 10);
 
-    printf("Danh sach lien ket: ");
+    printf("Linked list: ");
     printList(head);
 
     Node *temp;
