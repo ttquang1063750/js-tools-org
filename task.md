@@ -76,7 +76,26 @@ code — đó là phong cách của series, không phải lỗi.
       hẳn mục 4 "Struct với con trỏ và hàm" (lỗ hổng: toán tử `->` chưa từng được
       dạy, cũng không có truyền struct vào hàm / mảng struct), code đã chạy thật.
       6 dòng code tiếng Việt → Anh, 2 hạ cánh, sửa quiz ghi nhầm "bài 4".
-- [ ] Bài 8 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
+- [x] **Bài 8 `c-pointers-deep-dive` — XONG CẢ HAI LOCALE** (17/08/2026). Code đã
+      sạch tiếng Anh sẵn; thêm 3 hạ cánh, thời gian đọc 10 → 12 phút, sửa quiz.
+- [ ] Bài 9 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
+
+### ⚠️ Lỗi hệ thống: quiz đánh số SAI ở 4 bài liên tiếp (lệch đúng 3)
+
+Đã đo bằng grep trên cả series:
+
+| Bài | Quiz đang ghi | Đúng ra |
+|---|---|---|
+| 4 `c-control-flow` | "bài 3" | 4 — **đã sửa** |
+| 7 `c-struct-typedef` | "bài 4" | 7 — **đã sửa** |
+| 8 `c-pointers-deep-dive` | "bài 5" | 8 — **đã sửa** |
+| 9 `c-memory-management` | "bài 6" | 9 — **CHƯA sửa** |
+| 10 `c-data-structures` | "bài 7" | 10 — **CHƯA sửa** |
+| 11 `c-multifile-and-preprocessor` | "bài 11" | 11 — đúng sẵn |
+
+Bốn bài 7–10 lệch đúng 3 đơn vị, gợi ý syllabus từng chèn thêm 3 bài mà tiêu đề
+quiz không được đánh số lại. Sửa nốt Bài 9 và 10 khi làm tới, trong chính commit
+của bài đó.
 
 ---
 
