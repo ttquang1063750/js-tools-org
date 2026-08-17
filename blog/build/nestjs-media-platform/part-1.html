@@ -1167,6 +1167,26 @@ export const sharedOptions = {
             </div>
 
             <div class="callout callout--warning">
+              <div class="callout__title">⚠️ <code>synchronize</code> phải là <code>false</code>, kể cả ở dev</div>
+              <div class="callout__content">
+                <code>synchronize: true</code> bảo TypeORM tự sửa schema cho khớp entity
+                <strong>mỗi lần app khởi động</strong>. Nghe tiện, và ở dev thì đúng là tiện — cho tới khi bạn nhận ra
+                ba hệ quả: <br /><br />
+                <strong>Một.</strong> Nó vô hiệu hoá toàn bộ hệ thống migration. Bảng được tạo thẳng từ entity nên
+                database không hề có bảng <code>migrations</code>, tức là không ai ghi nhận migration nào đã chạy. Đến
+                lúc bạn gõ <code>migration:generate</code> thì entity và database đã khớp sẵn, TypeORM báo
+                <em>no changes</em> và bạn không sinh được migration nào để mang lên production. <br /><br />
+                <strong>Hai.</strong> Nó xoá dữ liệu mà không hỏi. Đổi tên một thuộc tính entity, hoặc bỏ đi một trường,
+                thì lần khởi động kế tiếp TypeORM phát ra <code>DROP COLUMN</code> để "cho khớp". Ở dev thì mất dữ liệu
+                giả; nếu cấu hình này lỡ theo lên môi trường thật thì mất dữ liệu thật. <br /><br />
+                <strong>Ba.</strong> Migration của bạn không bao giờ được chạy thử trên chính database bạn ngồi code.
+                Lần đầu chúng chạy thật là lúc deploy — đúng nơi bạn ít muốn gặp bất ngờ nhất. <br /><br />
+                Đó là lý do series này để <code>false</code> ngay từ đầu và bắt bạn chạy <code>migration:run</code> cả ở
+                dev: database dev đi đúng con đường mà production sẽ đi.
+              </div>
+            </div>
+
+            <div class="callout callout--warning">
               <div class="callout__title">⚠️ Đừng cài <code>typeorm-naming-strategies</code></div>
               <div class="callout__content">
                 Gói này là lựa chọn quen thuộc cho đúng việc trên, nhưng bản mới nhất của nó (<code>4.1.0</code>) đã
@@ -1590,6 +1610,23 @@ import { sharedOptions } from './database/typeorm.options';
 export class AppModule {}</code></pre>
             </div>
 
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Key đặt sau <code>...sharedOptions</code> sẽ đè lên nó</div>
+              <div class="callout__content">
+                <code>useFactory</code> trải <code>...sharedOptions</code> trước rồi mới đặt <code>url</code> và
+                <code>logging</code>. Đó là cố ý — nhưng nó cũng có nghĩa là
+                <strong>bất kỳ key nào bạn thêm vào phía sau đều thắng</strong> giá trị trong
+                <code>sharedOptions</code>, kể cả <code>synchronize: false</code> đã đặt cẩn thận ở đó. <br /><br />
+                Cạm bẫy cụ thể: thấy mẫu <code>logging: config.get('NODE_ENV', ...) === 'development'</code> rồi viết
+                thêm một dòng y hệt cho <code>synchronize</code>. Lúc đó <code>sharedOptions.synchronize</code> bị vô
+                hiệu, app tự tạo bảng ở dev, và bạn dính đúng ba hệ quả ở cảnh báo mục 7.1 — nhưng không có gì báo cho
+                bạn biết, vì về mặt TypeScript dòng đó hoàn toàn hợp lệ. <br /><br />
+                Quy tắc: chỉ đặt ở đây những thứ <em>thật sự</em> phụ thuộc môi trường (<code>url</code>,
+                <code>logging</code>). <code>synchronize</code> không thuộc nhóm đó — nó phải luôn là
+                <code>false</code>, nên chỗ của nó là <code>sharedOptions</code> và không bao giờ được viết lại ở đây.
+              </div>
+            </div>
+
             <h3>7.4 Sinh và chạy migration</h3>
             <p>Thêm script vào <code>package.json</code>:</p>
 
@@ -1619,6 +1656,64 @@ export class AppModule {}</code></pre>
 
 # → Migration src/database/migrations/1755...-InitSchema.ts has been generated successfully.</code></pre>
             </div>
+
+            <div class="callout callout--pitfall">
+              <div class="callout__title">⚠️ Lệnh này cần một database RỖNG — và nó im lặng khi không phải vậy</div>
+              <div class="callout__content">
+                <code>migration:generate</code> không chụp ảnh entity của bạn. Nó
+                <strong>so entity với database thật rồi viết ra phần chênh lệch</strong>. Điều đó có nghĩa kết quả phụ
+                thuộc hoàn toàn vào việc database đang có gì — và đây là hai cách nó đi chệch: <br /><br />
+                <strong>Database đã có đủ schema.</strong> Chênh lệch bằng không, nên bạn nhận được
+                <code>No changes in database schema were found - cannot generate a migration</code>. Thông báo này không
+                nói vì sao, nên rất dễ tưởng mình cấu hình sai entity. <br /><br />
+                <strong>Database có schema một phần.</strong> Trường hợp này nguy hơn nhiều vì lệnh <em>thành công</em>:
+                bạn nhận được một file tên <code>InitSchema</code> nhưng bên trong chỉ là vài dòng
+                <code>ALTER TABLE</code> vá víu, không có <code>CREATE TABLE</code> nào. Nó chỉ nổ về sau, khi ai đó
+                chạy migration trên một database sạch và gặp <code>relation "refresh_tokens" does not exist</code>.
+                <br /><br />
+                Muốn biết mình đang ở đâu, hỏi thẳng TypeORM:
+              </div>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — chẩn đoán khi generate không ra kết quả mong đợi</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">npm run typeorm -- migration:show
+
+# [X] InitSchema1755...   -> da chay roi, khong con gi de sinh: dung, bo qua
+# [ ] InitSchema1755...   -> co file nhung chua chay: go migration:run
+# (khong in dong nao)     -> chua co migration nao ca
+
+# Xem database dang co bang gi
+docker exec -it forge-postgres psql -U forge -d media_forge -c '\dt'</code></pre>
+            </div>
+
+            <p>
+              Nếu database đã lỡ có bảng do một lần chạy trước — hoặc do <code>synchronize</code> bị bật, xem cảnh báo ở
+              mục 7.1 — thì ở Part 1 chưa có dữ liệu gì đáng giữ, cứ dọn sạch rồi sinh lại. Xoá luôn file migration cũ,
+              vì nếu nó được sinh trên database không rỗng thì nội dung đã sai:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Terminal — dọn sạch rồi làm lại (XOÁ TOÀN BỘ dữ liệu trong DB)</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">docker exec -it forge-postgres psql -U forge -d media_forge \
+  -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+
+rm -f src/database/migrations/*-InitSchema.ts
+npm run migration:generate -- src/database/migrations/InitSchema</code></pre>
+            </div>
+
+            <p>
+              Dấu hiệu file sinh ra lần này đã đúng: mở nó lên phải thấy
+              <strong>5 lệnh <code>CREATE TABLE</code></strong> (<code>users</code>, <code>refresh_tokens</code>,
+              <code>credit_entries</code>, <code>videos</code>, <code>jobs</code>). Thấy toàn
+              <code>ALTER TABLE</code> là database chưa thật sự rỗng.
+            </p>
 
             <p>
               <strong>Mở file vừa sinh ra và đọc nó.</strong> Đây là bước hay bị bỏ qua nhất, và cũng là lý do migration
