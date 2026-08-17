@@ -69,43 +69,10 @@ code — đó là phong cách của series, không phải lỗi.
 - [x] **Bài 5 `c-functions-and-recursion` — XONG CẢ HAI LOCALE** (17/08/2026).
       46 comment + 7 định danh tiếng Việt → Anh; 2 hạ cánh; sửa 4 chỗ prose còn
       tên hàm cũ sau khi đổi định danh. Nội dung chủ đề đầy đủ, không có lỗ hổng.
-- [~] **Bài 6 `c-arrays-and-strings` — BẢN VIỆT XONG, BẢN EN CHƯA LÀM.**
-      Khôi phục dấu: **33/40 câu không dấu → 1/45**. Thêm 4 hạ cánh, sửa thời
-      gian đọc 9 → 8 phút, thêm hero link + hreflang. `check-lesson.js` 11/11.
-      **Còn lại: `lessons/c-arrays-and-strings.body-en.html`** — 1369 từ, 13
-      placeholder `{{CODE:...}}` (array_basics, bounds_danger, find_max_min,
-      2d_array, transpose, jagged, string_types, parse_csv, safe_input,
-      buffer_overflow_demo, reverse_string, palindrome, my_atoi), 2 bảng lớn
-      (`string.h` và `ctype.h`), thân bài mở bằng một `<div>` trơn, **0 bare pre**
-      (mọi sơ đồ ASCII nằm trong code-window nên đã đổi nhãn sang tiếng Anh:
-      "Row 0", "Index:", "ASCII value", "marks the end of the string").
-      `meta-en.json` ĐÃ viết xong.
+- [x] **Bài 6 `c-arrays-and-strings` — XONG CẢ HAI LOCALE** (17/08/2026).
+      Khôi phục dấu toàn bài: **33/40 câu không dấu → 0**. Thêm 4 hạ cánh, thời
+      gian đọc 9 → 8 phút. Bản EN 1137 dòng, 13 khối code, build 2 lần giống hệt.
 - [ ] Bài 7 → 12 (cả VI lẫn EN). Dùng `audit-lesson.py` để rà nhanh từng bài.
-
----
-
-## Bài 6 — `c-arrays-and-strings` — PHÁT HIỆN (rà 17/08/2026, chưa sửa)
-
-| # | Vị trí | Loại | Mô tả |
-|---|--------|------|-------|
-| H1 | **Toàn bài** | Trình bày — **việc lớn nhất, làm trước** | **82% văn xuôi viết tiếng Việt KHÔNG DẤU.** Đo bằng máy: 33/40 câu dài không có một dấu thanh nào ("Trong C, khong co kieu du lieu string", "Tim gia tri lon nhat va nho nhat trong mang", "Bo cuc bo nho", "Chuyen vi ma tran"...). Đối chiếu hai bài lân cận: Bài 5 **1%**, Bài 4 **0%**. Tức đây là bài lạc chuẩn của cả series chứ không phải phong cách chung. Với người đọc Việt, chữ không dấu khó đọc hơn rõ rệt — và nó nằm ở cả **tiêu đề H3**, thứ đập vào mắt trước tiên |
-| H2 | 4 khối code | Thiếu hạ cánh | `find_max_min.c`, `jagged.c`, `parse_csv.c`, `buffer_overflow_demo.c` — đi thẳng sang H2/H3 kế tiếp |
-| H3 | Hero | Số sai | Ghi **9 phút** nhưng nội dung chỉ 1139 từ → đúng ra là **7 phút**. Đây là bài duy nhất ghi *thừa* thay vì thiếu |
-
-### Vì sao bài này tốn công hơn hẳn
-
-Năm bài trước, việc nặng nhất là dịch comment trong code (9–60 dòng/bài). Bài 6
-thì **code đã gần như sạch tiếng Anh sẵn** (đúng 1 dòng còn tiếng Việt, nằm trong
-một sơ đồ ASCII). Đổi lại, phần phải viết lại là **toàn bộ văn xuôi ~1139 từ** để
-khôi phục dấu thanh.
-
-**Cảnh báo cho người làm tiếp:** đừng khôi phục dấu nửa vời. Một bài mà nửa số câu
-có dấu, nửa không, trông hỏng hơn hẳn so với để nguyên không dấu đồng nhất. Hoặc
-làm trọn cả bài, hoặc chưa làm.
-
-Phủ chủ đề thì **đầy đủ** — có `strlen/strcpy/strcmp/strcat/strncpy`, mảng 2 chiều,
-mảng răng cưa, `\0`, `fgets` vs `gets`, buffer overflow, two-pointer, palindrome,
-tự cài `atoi`. Không có lỗ hổng nội dung kiểu `continue` ở Bài 4.
 
 ---
 
