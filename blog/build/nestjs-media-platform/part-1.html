@@ -1854,6 +1854,156 @@ export class BillingService {
 
             <h3>8.2 Tái hiện lỗi</h3>
             <p>
+              Trước khi bắn được request nào, <code>BillingService</code> phải lộ ra ngoài đã — một mình nó chỉ là
+              provider, không có đường HTTP nào dẫn tới. Cần ba thứ: một DTO kiểm dữ liệu vào, một controller nhận
+              request, và một module gói cả hai lại rồi cắm vào <code>AppModule</code>.
+            </p>
+            <div class="callout callout--note">
+              <div class="callout__title">📌 Giữ nguyên <code>billing.service.ts</code> bản sai ở trên</div>
+              <div class="callout__content">
+                Phần dưới đây chỉ dựng đường HTTP, không đụng tới logic <code>charge()</code>. Bản vá nằm ở mục 8.3 —
+                lấy nó lúc này là mất luôn cuộc thí nghiệm, vì bạn sẽ thấy 5 request thành công thay vì thấy lỗi.
+              </div>
+            </div>
+
+            <p>DTO đứng trước, kiểm dữ liệu vào bằng đúng bộ <code>class-validator</code> đã cài từ mục 4.1:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/charge.dto.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { IsIn, IsInt, IsUUID, Min } from 'class-validator';
+import type { CreditReason } from './credit-entry.entity';
+
+export class ChargeDto {
+  @IsUUID()
+  userId!: string;
+
+  @IsInt()
+  @Min(1)
+  amount!: number;
+
+  @IsIn(['topup', 'transcode', 'refund'])
+  reason!: CreditReason;
+}</code></pre>
+            </div>
+
+            <p>
+              Chỉ khai DTO thì chưa có gì xảy ra. Những decorator kia là dữ liệu đính kèm, phải có ai đó đọc và thi hành
+              — trong NestJS đó là <code>ValidationPipe</code>, và nó không bật sẵn. Đăng ký một lần cho toàn ứng dụng:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/main.ts — thêm dòng đăng ký</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { ValidationPipe } from '@nestjs/common';
+
+const app = await NestFactory.create(AppModule);
+app.useGlobalPipes(new ValidationPipe());</code></pre>
+            </div>
+
+            <div class="callout callout--warn">
+              <div class="callout__title">⚠️ Quên dòng này thì DTO thành đồ trang trí</div>
+              <div class="callout__content">
+                Không có pipe, một request thiếu <code>reason</code> vẫn đi lọt qua controller với
+                <code>dto.reason === undefined</code>, rồi chết ở tận Postgres:
+                <code>null value in column "reason" violates not-null constraint</code> — một lỗi
+                <strong>500</strong> nói về database, cho một lỗi vốn là của người gửi request. <br /><br />
+                Có pipe thì cùng request đó dừng ngay ở cửa với <strong>400</strong> và một thông báo chỉ đúng trường bị
+                thiếu. Part 2 sẽ siết thêm ba tuỳ chọn nữa cho pipe này.
+              </div>
+            </div>
+
+            <p>
+              Controller gọi thẳng xuống <code>BillingService</code>, nhận <code>userId</code> từ chính body — Part 2 sẽ
+              vá lại đúng chỗ này khi thêm xác thực:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/billing.controller.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Body, Controller, Post } from '@nestjs/common';
+import { BillingService } from './billing.service';
+import { ChargeDto } from './charge.dto';
+
+@Controller('billing')
+export class BillingController {
+  constructor(private readonly billing: BillingService) {}
+
+  @Post('charge')
+  charge(@Body() dto: ChargeDto) {
+    return this.billing.charge(dto.userId, dto.amount, dto.reason);
+  }
+}</code></pre>
+            </div>
+
+            <p>
+              Module gói cả hai lại, và export <code>BillingService</code> — Part 3 cần tới nó khi
+              <code>WorkerModule</code> gọi lại đúng hàm trừ credit này từ phía worker:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/billing.module.ts</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { CreditEntry } from './credit-entry.entity';
+import { BillingController } from './billing.controller';
+import { BillingService } from './billing.service';
+
+@Module({
+  imports: [TypeOrmModule.forFeature([CreditEntry])],
+  controllers: [BillingController],
+  providers: [BillingService],
+  exports: [BillingService],
+})
+export class BillingModule {}</code></pre>
+            </div>
+
+            <p>
+              Cuối cùng, đăng ký <code>BillingModule</code> vào <code>AppModule</code> — thiếu bước này thì route vẫn
+              nằm trong code nhưng Nest không bao giờ khởi tạo nó:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/app.module.ts — thêm BillingModule</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppConfigModule } from './config/config.module';
+import type { AppConfig } from './config/configuration';
+import { sharedOptions } from './database/typeorm.options';
+import { BillingModule } from './billing/billing.module';
+
+@Module({
+  imports: [
+    AppConfigModule,
+    // forRootAsync: cho ConfigModule san sang roi moi dung ConfigService
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService&lt;AppConfig, true&gt;) =&gt; ({
+        ...sharedOptions,
+        url: config.get('DATABASE_URL', { infer: true }),
+        logging: config.get('NODE_ENV', { infer: true }) === 'development',
+      }),
+    }),
+    BillingModule,
+  ],
+})
+export class AppModule {}</code></pre>
+            </div>
+
+            <p>
               Nạp cho một người dùng 50 credit, rồi bắn 10 request đồng thời, mỗi request trừ 10. Đúng ra chỉ 5 request
               được phép thành công:
             </p>
@@ -2023,153 +2173,9 @@ export class BillingService {
               một người dùng đều phải đi qua nó.
             </p>
             <p>
-              Chạy lại đúng lệnh ở mục 8.2. Lần này đúng 5 request trả <code>201</code>, 5 request trả <code>400</code>,
-              và số dư dừng ở 0.
+              Chạy lại đúng lệnh ở mục 8.2 — endpoint đã dựng từ đó nên không phải thêm gì. Lần này đúng 5 request trả
+              <code>201</code>, 5 request trả <code>400</code>, và số dư dừng ở 0.
             </p>
-
-            <p>
-              <code>BillingService</code> một mình chưa lộ ra ngoài được — nó chỉ là một provider. Cần thêm một
-              controller nhận request HTTP và một module gói cả hai lại, đúng khuôn các module khác trong dự án; thiếu
-              hai thứ này thì lệnh curl ở mục 8.2 chỉ nhận về <code>404</code>, không phải <code>201</code> hay
-              <code>400</code>.
-            </p>
-
-            <p>DTO đứng trước, kiểm dữ liệu vào bằng đúng bộ <code>class-validator</code> đã cài từ mục 4.1:</p>
-
-            <div class="code-window">
-              <div class="code-header">
-                <span class="code-filename">src/billing/charge.dto.ts</span>
-                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
-              </div>
-              <pre><code class="language-typescript">import { IsIn, IsInt, IsUUID, Min } from 'class-validator';
-import type { CreditReason } from './credit-entry.entity';
-
-export class ChargeDto {
-  @IsUUID()
-  userId!: string;
-
-  @IsInt()
-  @Min(1)
-  amount!: number;
-
-  @IsIn(['topup', 'transcode', 'refund'])
-  reason!: CreditReason;
-}</code></pre>
-            </div>
-
-            <p>
-              Chỉ khai DTO thì chưa có gì xảy ra. Những decorator kia là dữ liệu đính kèm, phải có ai đó đọc và thi hành
-              — trong NestJS đó là <code>ValidationPipe</code>, và nó không bật sẵn. Đăng ký một lần cho toàn ứng dụng:
-            </p>
-
-            <div class="code-window">
-              <div class="code-header">
-                <span class="code-filename">src/main.ts — thêm dòng đăng ký</span>
-                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
-              </div>
-              <pre><code class="language-typescript">import { ValidationPipe } from '@nestjs/common';
-
-const app = await NestFactory.create(AppModule);
-app.useGlobalPipes(new ValidationPipe());</code></pre>
-            </div>
-
-            <div class="callout callout--warn">
-              <div class="callout__title">⚠️ Quên dòng này thì DTO thành đồ trang trí</div>
-              <div class="callout__content">
-                Không có pipe, một request thiếu <code>reason</code> vẫn đi lọt qua controller với
-                <code>dto.reason === undefined</code>, rồi chết ở tận Postgres:
-                <code>null value in column "reason" violates not-null constraint</code> — một lỗi
-                <strong>500</strong> nói về database, cho một lỗi vốn là của người gửi request. <br /><br />
-                Có pipe thì cùng request đó dừng ngay ở cửa với <strong>400</strong> và một thông báo chỉ đúng trường bị
-                thiếu. Part 2 sẽ siết thêm ba tuỳ chọn nữa cho pipe này.
-              </div>
-            </div>
-
-            <p>
-              Controller gọi thẳng xuống <code>BillingService</code>, nhận <code>userId</code> từ chính body — Part 2 sẽ
-              vá lại đúng chỗ này khi thêm xác thực:
-            </p>
-
-            <div class="code-window">
-              <div class="code-header">
-                <span class="code-filename">src/billing/billing.controller.ts</span>
-                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
-              </div>
-              <pre><code class="language-typescript">import { Body, Controller, Post } from '@nestjs/common';
-import { BillingService } from './billing.service';
-import { ChargeDto } from './charge.dto';
-
-@Controller('billing')
-export class BillingController {
-  constructor(private readonly billing: BillingService) {}
-
-  @Post('charge')
-  charge(@Body() dto: ChargeDto) {
-    return this.billing.charge(dto.userId, dto.amount, dto.reason);
-  }
-}</code></pre>
-            </div>
-
-            <p>
-              Module gói cả hai lại, và export <code>BillingService</code> — Part 3 cần tới nó khi
-              <code>WorkerModule</code> gọi lại đúng hàm trừ credit này từ phía worker:
-            </p>
-
-            <div class="code-window">
-              <div class="code-header">
-                <span class="code-filename">src/billing/billing.module.ts</span>
-                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
-              </div>
-              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { CreditEntry } from './credit-entry.entity';
-import { BillingController } from './billing.controller';
-import { BillingService } from './billing.service';
-
-@Module({
-  imports: [TypeOrmModule.forFeature([CreditEntry])],
-  controllers: [BillingController],
-  providers: [BillingService],
-  exports: [BillingService],
-})
-export class BillingModule {}</code></pre>
-            </div>
-
-            <p>
-              Cuối cùng, đăng ký <code>BillingModule</code> vào <code>AppModule</code> — thiếu bước này thì route vẫn
-              nằm trong code nhưng Nest không bao giờ khởi tạo nó:
-            </p>
-
-            <div class="code-window">
-              <div class="code-header">
-                <span class="code-filename">src/app.module.ts — thêm BillingModule</span>
-                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
-              </div>
-              <pre><code class="language-typescript">import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { AppConfigModule } from './config/config.module';
-import type { AppConfig } from './config/configuration';
-import { sharedOptions } from './database/typeorm.options';
-import { BillingModule } from './billing/billing.module';
-
-@Module({
-  imports: [
-    AppConfigModule,
-    // forRootAsync: cho ConfigModule san sang roi moi dung ConfigService
-    TypeOrmModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService&lt;AppConfig, true&gt;) =&gt; ({
-        ...sharedOptions,
-        url: config.get('DATABASE_URL', { infer: true }),
-        logging: config.get('NODE_ENV', { infer: true }) === 'development',
-      }),
-    }),
-    BillingModule,
-  ],
-})
-export class AppModule {}</code></pre>
-            </div>
 
             <h3>8.4 Còn cách nào khác</h3>
             <p>Khoá bi quan không phải lựa chọn duy nhất. Hai hướng còn lại, và lý do bài này chọn cách trên:</p>
