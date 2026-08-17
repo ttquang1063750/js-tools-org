@@ -111,11 +111,45 @@
       btn.focus();
     }
   });
-  // Trên màn hình hẹp panel chiếm cả trang, nên bấm xong phải đóng lại.
+  // ── nhảy tới mục ─────────────────────────────────────────────────────────
+  // html { scroll-behavior: smooth } cua styles.css lam viec nay san, nhung tren
+  // trang dai 37.000px thi mot cu nhay tu dau xuong muc 8 chay gan 9 GIAY — thanh
+  // mot vet mo, doc gia mat phuong huong. Nen: quang xa thi nhay thang gan tới
+  // dich truoc, chi animate doan cuoi ~1 man hinh. Do bang tay chu khong doan.
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+
   list.addEventListener('click', function (e) {
-    if (e.target.tagName === 'A' && window.matchMedia('(max-width: 900px)').matches) {
-      setOpen(false);
+    var a = e.target.closest ? e.target.closest('a') : null;
+    if (!a || !list.contains(a)) return;
+
+    var target = document.getElementById(a.getAttribute('href').slice(1));
+    if (!target) return;
+
+    e.preventDefault();
+    // Dong luon, ke ca tren desktop: o 1440px le phai chi con 154px ma panel can
+    // 360px, nen no phu len chu — bam xong ma con che thi khong doc duoc gi.
+    setOpen(false);
+
+    // URL van phai doi de con chia se duoc, nhung khong dung location.hash
+    // (no keo theo mot cu nhay tuc thi, dap len animation).
+    if (window.history && history.pushState) {
+      history.pushState(null, '', a.getAttribute('href'));
     }
+
+    if (reduce.matches) {
+      target.scrollIntoView({ behavior: 'auto', block: 'start' });
+      return;
+    }
+
+    var top = target.getBoundingClientRect().top + window.pageYOffset;
+    var far = Math.abs(top - window.pageYOffset) > window.innerHeight * 2;
+    if (far) {
+      // Nhay tuc thi tới truoc dich khoang mot man hinh...
+      var jumpTo = top - window.innerHeight * 0.9;
+      window.scrollTo({ top: jumpTo < 0 ? 0 : jumpTo, behavior: 'instant' });
+    }
+    // ...roi de doan cuoi chay muot, de mat kip nhan ra minh dang di dau.
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
   // ── highlight mục đang đọc ───────────────────────────────────────────────
@@ -128,7 +162,16 @@
     current = it;
     if (!current) return;
     current.link.classList.add('is-current');
-    btn.querySelector('.ptoc-btn__label').textContent = current.level === 2 ? current.text.slice(0, 22) : 'Mục lục';
+    // Nhan nut luon hien muc H2 dang o trong, ke ca khi dang doc mot muc con —
+    // truoc day dang o H3 thi nhan quay ve "Muc luc", mat luon chi dan vi tri.
+    // Khong cat chuoi o day: cat tay sinh ra nhan lo lung nhu "8. ACID trong
+    // thuc te:". De CSS cat bang text-overflow: ellipsis, no them "…" dung cho
+    // va giu be ngang nut on dinh khi cuon.
+    var h2 = null;
+    for (var i = 0; i <= items.indexOf(current); i++) {
+      if (items[i].level === 2) h2 = items[i];
+    }
+    btn.querySelector('.ptoc-btn__label').textContent = h2 ? h2.text : 'Mục lục';
   }
 
   if ('IntersectionObserver' in window) {
