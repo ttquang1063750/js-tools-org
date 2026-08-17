@@ -2245,6 +2245,157 @@ Khoa lac quan (version column) - kiem tra luc ghi, that bai thi thu lai
   - Hop voi UPDATE mot dong; kho ap cho mo hinh so cai chi INSERT</code></pre>
             </div>
 
+            <h4>Cách 2 — mức cô lập SERIALIZABLE</h4>
+            <p>
+              Không khoá gì cả. Bạn nâng mức cô lập lên <code>SERIALIZABLE</code> và để Postgres tự phát hiện hai
+              transaction không thể xếp tuần tự được, rồi <strong>huỷ</strong> một cái với SQLSTATE <code>40001</code>.
+              Cái giá là bạn phải tự viết vòng thử lại — và chỉ thử lại đúng lỗi đó:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">src/billing/billing.service.ts — biến thể SERIALIZABLE</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-typescript">async chargeSerializable(
+  userId: string,
+  amount: number,
+  reason: CreditReason,
+  maxAttempts = 5,
+): Promise&lt;{ attempts: number }&gt; {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await this.dataSource.transaction('SERIALIZABLE', async (manager) =&gt; {
+        const row = await manager
+          .createQueryBuilder(CreditEntry, 'e')
+          .select('COALESCE(SUM(e.delta), 0)', 'balance')
+          .where('e.user_id = :userId', { userId })
+          .getRawOne&lt;{ balance: string }&gt;();
+
+        const balance = Number(row?.balance ?? 0);
+        if (balance &lt; amount) {
+          throw new BadRequestException('Không đủ credit');
+        }
+
+        await manager.insert(CreditEntry, { userId, delta: -amount, reason });
+      });
+      return { attempts: attempt };
+    } catch (err: unknown) {
+      // 40001 = serialization_failure. CHI loi nay duoc thu lai; con
+      // BadRequestException ("khong du credit") phai nem ra ngoai ngay,
+      // neu khong ban se thu lai mot request dang le phai bi tu choi.
+      const code = (err as { code?: string }).code;
+      if (code !== '40001' || attempt &gt;= maxAttempts) {
+        throw err;
+      }
+      // Lui ngau nhien mot chut, tranh ca dam thu lai dung cung luc
+      await new Promise((r) =&gt; setTimeout(r, 10 * attempt + Math.random() * 10));
+    }
+  }
+}</code></pre>
+            </div>
+
+            <p>Chạy đúng bài kiểm 10 request song song ở mục 8.2, đổi sang endpoint này:</p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Kết quả chạy thật — SERIALIZABLE</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">   3 {"attempts":1} &lt;- 201
+   2 {"attempts":2} &lt;- 201
+   5 [400 khong du credit]
+
+# so du cuoi: 0
+# (chay lai lan nua ra 1,1,2,2,3 — so lan thu doi theo tung lan chay,
+#  nhung LUON dung 5 request thanh cong va so du LUON ve 0)</code></pre>
+            </div>
+
+            <p>
+              Đúng 5 request thành công và số dư dừng ở 0 — giống khoá bi quan. Điểm khác nằm ở
+              <code>"attempts":2</code>: hai request đã bị Postgres huỷ giữa đường rồi tự chạy lại. Đó chính là chi phí
+              bạn nhận: <strong>một transaction đã chạy gần xong vẫn có thể bị huỷ</strong>, nên mọi việc trong nó phải
+              chịu được chạy hai lần. Gửi email hay gọi API bên thứ ba trong một transaction như vậy là công thức gửi
+              trùng.
+            </p>
+
+            <h4>Cách 3 — khoá lạc quan bằng cột version</h4>
+            <p>
+              Đọc kèm <code>version</code>, rồi khi ghi thì đặt điều kiện
+              <code>WHERE version = &lt;giá trị vừa đọc&gt;</code>. Ai ghi trước sẽ tăng version, nên người còn lại thấy
+              <code>rowCount = 0</code> và biết mình cần đọc lại. Chú ý ngay dòng <code>CREATE TABLE</code>: cách này
+              cần <strong>một dòng để đặt version lên</strong> — nên nó không áp được cho sổ cái chỉ INSERT, phải đổi
+              sang lưu số dư thành một dòng có thể UPDATE:
+            </p>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">optimistic-demo.mjs — chạy bằng: node optimistic-demo.mjs</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-javascript">import pg from 'pg';
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 12 });
+const USER = '11111111-1111-4111-8111-111111111111';
+
+// Chu y: co MOT DONG giu balance + version. So cai chi INSERT khong co dong
+// nao de dat version len — do la ly do cach nay khong ap duoc o tren.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS demo_optimistic (
+    user_id uuid PRIMARY KEY,
+    balance integer NOT NULL,
+    version integer NOT NULL DEFAULT 0
+  )`);
+await pool.query('TRUNCATE demo_optimistic');
+await pool.query('INSERT INTO demo_optimistic (user_id, balance) VALUES ($1, 50)', [USER]);
+
+async function charge(amount, maxAttempts = 10) {
+  for (let attempt = 1; ; attempt++) {
+    // 1. DOC ca balance lan version. Khong khoa dong nao.
+    const { rows } = await pool.query(
+      'SELECT balance, version FROM demo_optimistic WHERE user_id = $1', [USER]);
+    const { balance, version } = rows[0];
+
+    if (balance &lt; amount) return { ok: false, attempts: attempt, reason: 'khong du credit' };
+
+    // 2. GHI co dieu kien: chi thanh cong neu version CHUA doi ke tu luc doc.
+    const res = await pool.query(
+      `UPDATE demo_optimistic
+          SET balance = balance - $1, version = version + 1
+        WHERE user_id = $2 AND version = $3`,
+      [amount, USER, version]);
+
+    if (res.rowCount === 1) return { ok: true, attempts: attempt };
+    // 3. rowCount = 0 -> co nguoi ghi truoc, version da khac. Doc lai, thu lai.
+    if (attempt &gt;= maxAttempts) return { ok: false, attempts: attempt, reason: 'het luot thu' };
+    await new Promise((r) =&gt; setTimeout(r, 5 * attempt + Math.random() * 10));
+  }
+}
+
+const results = await Promise.all(Array.from({ length: 10 }, () =&gt; charge(10)));
+const ok = results.filter((r) =&gt; r.ok);
+console.log('thanh cong :', ok.length, '| so lan thu:', ok.map((r) =&gt; r.attempts).join(','));
+console.log('con lai    :', (await pool.query(
+  'SELECT balance, version FROM demo_optimistic WHERE user_id=$1', [USER])).rows[0]);
+await pool.end();</code></pre>
+            </div>
+
+            <div class="code-window">
+              <div class="code-header">
+                <span class="code-filename">Kết quả chạy thật — khoá lạc quan</span>
+                <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code class="language-bash">thanh cong : 5 | so lan thu: 1,2,1,2,2
+con lai    : { balance: 0, version: 5 }</code></pre>
+            </div>
+
+            <p>
+              <code>version</code> dừng ở đúng 5 — nó đếm chính xác số lần ghi thành công, nên bản thân nó là bằng chứng
+              không có lần ghi nào chồng lên lần khác. Nhưng hãy để ý điều đã phải đánh đổi để có được nó: số dư giờ là
+              một con số trong một dòng, không còn là tổng của các bút toán. Mất luôn khả năng trả lời "50 credit đó đến
+              từ đâu" — mà đó chính là lý do mục 6.2 chọn sổ cái từ đầu.
+            </p>
+
             <p>
               Với sổ cái, khoá bi quan là lựa chọn hợp lý: thao tác rất ngắn (một <code>SUM</code> và một
               <code>INSERT</code>), tranh chấp chỉ xảy ra giữa các request của <em>cùng một người dùng</em> — không phải
