@@ -1210,8 +1210,36 @@ private async reissueFrom(manager: EntityManager, hash: string): Promise&lt;Toke
             <p>
               Có khoá thì tab thứ hai xếp hàng, và khi tới lượt nó đọc được <code>used_at</code> đã có giá trị. Nhưng
               như vậy nó rơi thẳng vào nhánh báo động — cũng đăng xuất người dùng vô tội. Cách xử lý thực dụng là cho
-              token vừa dùng một <strong>khoảng ân hạn</strong>: nếu nó mới bị dùng trong vòng vài chục giây, trả lại
-              đúng cặp token đã phát ở lần đó thay vì hô báo động.
+              token vừa dùng một <strong>khoảng ân hạn</strong>: nếu nó mới bị dùng trong vòng vài chục giây, đi theo
+              dấu vết tới token đã thay thế nó và phát tiếp từ đó, thay vì hô báo động.
+            </p>
+
+            <p>
+              Đây là chỗ cột <code>replaced_by_hash</code> ở mục 3.1 kiếm sống. Nhớ lại dòng cuối của
+              <code>reissueFrom</code>: mỗi lần xoay vòng, token cũ ghi lại
+              <code>row.replacedByHash = this.sha256(pair.refreshToken)</code> — tức là
+              <strong>hash của token vừa thay thế nó</strong>. Một con trỏ, từ mắt xích cũ sang mắt xích kế tiếp.
+            </p>
+            <p>
+              Vì sao cần con trỏ đó? Khi tab thứ hai đưa lên một token vừa bị dùng, bạn không thể trả lại chính token đó
+              (nó đã bị đánh dấu <code>used</code>), và cũng không thể coi như không có chuyện gì. Thứ bạn cần là
+              <em>đi tới mắt xích còn sống của chuỗi</em> — mà token cũ thì không biết gì về nó, trừ khi lúc xoay vòng
+              ta đã ghi lại. <code>replaced_by_hash</code> chính là ghi chép đó, và vì <code>reissueFrom</code> vốn tra
+              cứu bằng hash nên con trỏ này dùng thẳng làm khoá tra được. Lưu hash chứ không lưu token gốc, cùng lý do
+              với <code>token_hash</code>: database bị đọc trộm cũng không đổi ra được token dùng thật.
+            </p>
+            <p>
+              Nói cho chính xác điều xảy ra sau đó, vì nó không hẳn như trực giác:
+              <code>reissueFrom(manager, row.replacedByHash)</code>
+              <strong>không trả lại token mà tab thứ nhất đang giữ</strong>. Nó tìm tới dòng của token thay thế, thấy
+              dòng đó chưa dùng, nên xoay tiếp một nhịp nữa và trả về một token <em>mới</em>. Kết quả: cả hai tab đều
+              cầm token hợp lệ trong cùng một family, không ai bị đăng xuất. Cái giá là mỗi lần va chạm như vậy tiêu
+              thêm một mắt xích — chấp nhận được, vì nó chỉ xảy ra khi hai tab refresh cách nhau vài giây.
+            </p>
+            <p>
+              Và đây là ranh giới của cơ chế, đáng nhớ: ân hạn chỉ che trong <code>GRACE_MS</code>. Một tab ngủ quên rồi
+              refresh bằng token đã dùng từ mười phút trước thì vẫn rơi vào nhánh báo động và cả family bị thu hồi —
+              đúng như thiết kế, vì ở khoảng cách đó không còn phân biệt được tab chậm với kẻ trộm.
             </p>
 
             <div class="code-window">
@@ -1228,8 +1256,8 @@ if (row.usedAt !== null) {
   const age = Date.now() - row.usedAt.getTime();
 
   if (age &lt; GRACE_MS &amp;&amp; row.replacedByHash !== null) {
-    // Gan nhu chac chan la tab thu hai, khong phai ke trom.
-    // Tra lai dung token da phat cho tab thu nhat.
+    // Gan nhu chac chan la tab thu hai, khong phai ke trom. Di theo con tro
+    // replaced_by_hash toi token da thay the token nay, roi xoay tiep tu do.
     return this.reissueFrom(manager, row.replacedByHash);
   }
 
